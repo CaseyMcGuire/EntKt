@@ -10,8 +10,12 @@ import entkt.runtime.hook.Hook
 import entkt.runtime.mutation.CreatePreparation
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EdgeMapping
+import entkt.runtime.query.execution.LoadPrivacyEvaluation
+import entkt.runtime.query.execution.correlateLoadPrivacyEvaluationsForInternalUse
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -23,6 +27,8 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ValidationViolation
+import entkt.runtime.validation.ValidationDecision
+import entkt.runtime.validation.batchValidationRule
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -108,55 +114,71 @@ class MutationEvaluatorTest {
         private val events: MutableList<String>,
         entity: EntityMapping<Widget>,
     ) {
-        var createDenial: String? = null
+        var createDecision: PrivacyDecision = PrivacyDecision.Allow
         var validationViolations: List<ValidationViolation> = emptyList()
         var loadDenial: PrivacyDenial? = null
         var beforeCreateAction: () -> Unit = {}
         var afterCreateAction: (Widget) -> Unit = {}
         val receivedPrivacyContexts = mutableListOf<PrivacyContext>()
 
-        val value = CreateMutationSpec(
+        val value: CreateMutationSpec<
+            RecordingInput,
+            String,
+            String,
+            Candidate,
+            Candidate,
+            Widget,
+            Unit,
+            Unit,
+            > =
+            CreateMutationSpec(
             entity = entity,
-            beforeSaveHooks = listOf(Hook { value -> events += "before-save:$value" }),
-            beforeCreateHooks = listOf(
+            resolveDraft = RecordingInput::resolve,
+            beforeSave = listOf(Hook { value -> events += "before-save:$value" }),
+            beforeCreate = listOf(
                 Hook { value ->
                     events += "before-create:$value"
                     beforeCreateAction()
                 },
             ),
-            afterCreateHooks = listOf(
+            afterCreate = listOf(
                 Hook { value ->
                     events += "after-create:${value.id}"
                     afterCreateAction(value)
                 },
             ),
-            beforeSaveHookValue = RecordingInput::beforeSaveHookValue,
-            beforeCreateHookValue = RecordingInput::beforeCreateHookValue,
-            resolve = RecordingInput::resolve,
-            createDenialReasons = { privacy, candidates ->
-                events += "create-privacy"
-                receivedPrivacyContexts += privacy
-                candidates.map { createDenial }
-            },
-            validationViolations = { candidates ->
-                events += "validate"
-                candidates.map { validationViolations }
-            },
-            loadDenials = { privacy, entities ->
-                events += "load-privacy"
-                receivedPrivacyContexts += privacy
-                entities.map { loadDenial }
-            },
-        )
+            privacyRules = listOf(
+                batchPrivacyRule<Unit, Candidate> { context, batch ->
+                    events += "create-privacy"
+                    receivedPrivacyContexts += context.privacy
+                    batch.decideEach { createDecision }
+                },
+            ),
+            validationRules = listOf(
+                batchValidationRule<Unit, Candidate> { _, batch ->
+                    events += "validate"
+                    batch.decideEach {
+                        validationViolations.firstOrNull()?.let { violation ->
+                            ValidationDecision.Invalid(
+                                message = violation.message,
+                                field = violation.field,
+                                code = violation.code,
+                            )
+                        } ?: ValidationDecision.Valid
+                    }
+                },
+            ),
+            )
     }
 
     private class RecordingInput(
         private val events: MutableList<String>,
     ) {
-        var preparation: CreatePreparation<Candidate> = CreatePreparation.Ready(
+        var preparation: CreatePreparation<Candidate, Candidate> = CreatePreparation.Ready(
             PreparedCreate(
                 values = mapOf("name" to "Ada"),
-                candidate = Candidate("Ada"),
+                privacyItem = { Candidate("Ada") },
+                validationItem = { Candidate("Ada") },
             ),
         )
 
@@ -170,10 +192,17 @@ class MutationEvaluatorTest {
             return "create"
         }
 
-        fun resolve(): CreatePreparation<Candidate> {
+        fun resolve(): CreatePreparation<Candidate, Candidate> {
             events += "prepare"
             return preparation
         }
+
+        fun mutationInput(): CreateMutationInput<RecordingInput, String, String> =
+            CreateMutationInput(
+                draft = this,
+                beforeSave = beforeSaveHookValue(),
+                beforeCreate = beforeCreateHookValue(),
+            )
     }
 
     @Test
@@ -181,7 +210,7 @@ class MutationEvaluatorTest {
         val fixture = fixture()
 
         val result = fixture.evaluator.create(
-            draft = fixture.input,
+            input = fixture.input.mutationInput(),
             spec = fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -191,11 +220,11 @@ class MutationEvaluatorTest {
         assertEquals(mapOf("name" to "Ada"), fixture.driver.insertedValues)
         assertEquals(
             listOf(
+                "before-save-value",
+                "before-create-value",
                 "transaction-state",
                 "transaction-preflight:Widget create",
-                "before-save-value",
                 "before-save:save",
-                "before-create-value",
                 "before-create:create",
                 "prepare",
                 "privacy-context",
@@ -223,7 +252,7 @@ class MutationEvaluatorTest {
         )
 
         val result = fixture.evaluator.create(
-            fixture.input,
+            fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -240,10 +269,10 @@ class MutationEvaluatorTest {
     @Test
     fun `create privacy denial fails closed before validation and persistence`() {
         val fixture = fixture()
-        fixture.spec.createDenial = "not yours"
+        fixture.spec.createDecision = PrivacyDecision.Deny("not yours")
 
         val result = fixture.evaluator.create(
-            fixture.input,
+            fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -260,13 +289,32 @@ class MutationEvaluatorTest {
     }
 
     @Test
+    fun `unresolved create privacy fails closed before validation and persistence`() {
+        val fixture = fixture()
+        fixture.spec.createDecision = PrivacyDecision.Continue
+
+        val result = fixture.evaluator.create(
+            fixture.input.mutationInput(),
+            fixture.spec.value,
+            checkReturnedEntityPrivacy = true,
+        )
+
+        val failure = assertIs<EntMutationPrivacyDeniedException>(
+            assertIs<MutationResult.Failed>(result).exception,
+        )
+        assertEquals("no create rule allowed access", failure.reason)
+        assertFalse("validate" in fixture.events)
+        assertFalse("insert" in fixture.events)
+    }
+
+    @Test
     fun `unclassified insert failure reports an unknown persistence outcome`() {
         val fixture = fixture()
         val driverFailure = IllegalStateException("connection lost")
         fixture.driver.insertFailure = driverFailure
 
         val result = fixture.evaluator.create(
-            fixture.input,
+            fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -294,7 +342,7 @@ class MutationEvaluatorTest {
         fixture.driver.classifiedFailure = classified
 
         val result = fixture.evaluator.create(
-            fixture.input,
+            fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -314,7 +362,7 @@ class MutationEvaluatorTest {
             fixture.spec.afterCreateAction = { throw callbackFailure }
 
             val result = fixture.evaluator.create(
-                fixture.input,
+                fixture.input.mutationInput(),
                 fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
             )
@@ -339,7 +387,7 @@ class MutationEvaluatorTest {
         )
 
         val result = fixture.evaluator.create(
-            fixture.input,
+            fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -363,7 +411,7 @@ class MutationEvaluatorTest {
         )
 
         val result = fixture.evaluator.create(
-            fixture.input,
+            fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = false,
         )
@@ -382,13 +430,14 @@ class MutationEvaluatorTest {
             preparation = CreatePreparation.Ready(
                 PreparedCreate(
                     values = mapOf("name" to "Grace"),
-                    candidate = Candidate("Grace"),
+                    privacyItem = { Candidate("Grace") },
+                    validationItem = { Candidate("Grace") },
                 ),
             )
         }
 
         val result = fixture.evaluator.createMany(
-            drafts = listOf(fixture.input, secondInput),
+            inputs = listOf(fixture.input.mutationInput(), secondInput.mutationInput()),
             spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
         )
@@ -405,13 +454,13 @@ class MutationEvaluatorTest {
         )
         assertEquals(
             listOf(
+                "before-save-value",
+                "before-create-value",
+                "before-save-value",
+                "before-create-value",
                 "transaction-state",
-                "before-save-value",
-                "before-save-value",
                 "before-save:save",
                 "before-save:save",
-                "before-create-value",
-                "before-create-value",
                 "before-create:create",
                 "before-create:create",
                 "prepare",
@@ -437,7 +486,7 @@ class MutationEvaluatorTest {
         fixture.spec.beforeCreateAction = { throw callbackFailure }
 
         val result = fixture.evaluator.createMany(
-            drafts = listOf(fixture.input),
+            inputs = listOf(fixture.input.mutationInput()),
             spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
         )
@@ -460,7 +509,7 @@ class MutationEvaluatorTest {
 
         val thrown = assertFailsWith<CancellationException> {
             fixture.evaluator.create(
-                fixture.input,
+                fixture.input.mutationInput(),
                 fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
             )
@@ -481,7 +530,7 @@ class MutationEvaluatorTest {
         val recordedFailures = mutableListOf<EntMutationException>()
         val evaluator = MutationEvaluator(
             driver = driver,
-            mutationRuntime = object : MutationRuntime {
+            mutationRuntime = object : MutationRuntime<Unit, Unit> {
                 override fun get(): PrivacyContext {
                     events += "privacy-context"
                     return privacyContext
@@ -496,6 +545,25 @@ class MutationEvaluatorTest {
                     recordedFailures += exception
                 }
 
+                override fun privacyRuleClient(privacyContext: PrivacyContext) = Unit
+
+                override fun validationRuleClient() = Unit
+
+                override fun isConfigured(entity: EntityMapping<*>): Boolean = true
+
+                override fun <Entity : EntEntity<*>> evaluate(
+                    entity: EntityMapping<Entity>,
+                    privacyContext: PrivacyContext,
+                    entities: List<Entity>,
+                ): List<LoadPrivacyEvaluation<Entity>> {
+                    events += "load-privacy"
+                    spec.receivedPrivacyContexts += privacyContext
+                    return correlateLoadPrivacyEvaluationsForInternalUse(
+                        lifecycle = "Widget LOAD privacy",
+                        entities = entities,
+                        denials = entities.map { spec.loadDenial },
+                    )
+                }
             },
         )
         return Fixture(
@@ -514,7 +582,7 @@ class MutationEvaluatorTest {
         val driver: RecordingDriver,
         val spec: RecordingSpec,
         val input: RecordingInput,
-        val evaluator: MutationEvaluator,
+        val evaluator: MutationEvaluator<Unit, Unit>,
         val privacyContext: PrivacyContext,
         val recordedFailures: MutableList<EntMutationException>,
     )

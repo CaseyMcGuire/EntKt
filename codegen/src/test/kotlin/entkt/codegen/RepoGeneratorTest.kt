@@ -29,17 +29,17 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "evaluateBatchPrivacyRulesForInternalUse(\"RepoBytesRecord CREATE privacy\", candidateSnapshot, rules, ruleContext) { item -> RepoBytesRecordCreatePrivacyItem",
+                "privacyItem = { RepoBytesRecordCreatePrivacyItem(snapshotCreateCandidate(candidate)) }",
             ),
         ) {
-            "create privacy should delegate through the batch evaluator with a fresh-item factory\n$output"
+            "draft resolution should provide a fresh detached item for each privacy rule\n$output"
         }
         assert(
             output.contains(
-                "evaluateBatchValidationRulesForInternalUse(\"RepoBytesRecord CREATE validation\", candidateSnapshot, rules, ruleContext) { item -> RepoBytesRecordCreateValidationItem",
+                "validationItem = { RepoBytesRecordCreateValidationItem(snapshotCreateCandidate(candidate)) }",
             ),
         ) {
-            "create validation should delegate through the batch evaluator with a fresh-item factory\n$output"
+            "draft resolution should provide a fresh detached item for each validation rule\n$output"
         }
         assert(
             output.contains(
@@ -55,16 +55,19 @@ class RepoGeneratorTest {
         ) {
             "update validation should delegate through the batch evaluator with a fresh-item factory\n$output"
         }
+        assert(output.contains("private fun snapshotCreateCandidate(candidate: RepoBytesRecordWriteCandidate): RepoBytesRecordWriteCandidate")) {
+            "mutable create candidates should be detached by one generated mapping helper\n$output"
+        }
         val privacyContexts = Regex(
             Regex.escape("val ruleContext = PrivacyRuleContext(privacy, privacyClient)"),
         ).findAll(output).count()
-        assert(privacyContexts == 4) {
+        assert(privacyContexts == 3) {
             "Each privacy lifecycle helper should construct shared state exactly once; found $privacyContexts\n$output"
         }
         val validationContexts = Regex(
             Regex.escape("val ruleContext = ValidationRuleContext(validationClient)"),
         ).findAll(output).count()
-        assert(validationContexts == 3) {
+        assert(validationContexts == 2) {
             "Each validation lifecycle helper should construct shared state exactly once; found $validationContexts\n$output"
         }
         assert(output.contains("item.copy( payload = item.payload.copyOf(), thumbnail = item.thumbnail?.copyOf(), )")) {
@@ -274,10 +277,10 @@ class RepoGeneratorTest {
             "The EntResult / EntError types should not be referenced anywhere\n$output"
         }
         assert(
-            !output.contains("evaluateLoadPrivacy") && !output.contains("evaluateCreatePrivacy") &&
+            !output.contains("evaluateLoadPrivacy") &&
                 !output.contains("evaluateUpdatePrivacy") && !output.contains("evaluateDeletePrivacy"),
         ) {
-            "Throwing evaluate*Privacy members should be gone (denial evaluators are decision-returning)\n$output"
+            "Legacy throwing privacy evaluators should be gone\n$output"
         }
     }
 
@@ -495,15 +498,15 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "val drafts = ArrayList<CarCreateDraft>(blocks.size) for (block in blocks) { " +
-                    "drafts += CarCreateDraft().apply(block)",
+                "val inputs = ArrayList<CreateMutationInput<CarCreateDraft, CarMutation, CarCreateHookContext>>(blocks.size) for (block in blocks) { " +
+                    "inputs += createMutationInput(CarCreateDraft().apply(block))",
             ),
         ) {
             "createMany should instantiate and configure every draft in input order\n$output"
         }
         assert(
             output.contains(
-                "return client.mutations.createMany( drafts = drafts, " +
+                "return client.mutations.createMany( inputs = inputs, " +
                     "spec = createSpec, " +
                     "promoteDriverNotPersisted = promoteDriverNotPersisted, )",
             ),
@@ -756,12 +759,8 @@ class RepoGeneratorTest {
             "Singleton LOAD evaluation should delegate to the plural evaluator\n$output"
         }
 
-        // The write side returns the bare denial reason — terminals
-        // construct EntMutationPrivacyDeniedException at classification.
-        // A rule-thrown exception escapes every helper to the terminal
-        // capture boundary as an operational failure.
-        assert(output.contains("internal fun createDenialReasonOrNull(privacy: PrivacyContext, candidate: CarWriteCandidate): String?")) {
-            "Should have createDenialReasonOrNull returning String?\n$output"
+        assert(!output.contains("fun evaluateCreatePrivacy")) {
+            "CREATE privacy should run in MutationEvaluator from the rules in createSpec\n$output"
         }
         assert(
             output.contains(
@@ -797,9 +796,6 @@ class RepoGeneratorTest {
         ) {
             "loadDenials should map a continued decision to the fail-closed keyed denial\n$output"
         }
-        assert(output.contains("is PrivacyDecision.Continue -> \"no create rule allowed access\"")) {
-            "createDenialReasonOrNull should end in the fail-closed default reason\n$output"
-        }
         assert(output.contains("is PrivacyDecision.Continue -> \"no update rule allowed access\"")) {
             "updateDenialReasonOrNull should end in the fail-closed default reason\n$output"
         }
@@ -815,13 +811,6 @@ class RepoGeneratorTest {
             ),
         ) {
             "Plural LOAD bypass should retain one null slot per snapshotted entity\n$output"
-        }
-        assert(
-            output.contains(
-                "if (privacy.viewer is Viewer.PrivacyBypass) return List(candidateSnapshot.size) { null }",
-            ),
-        ) {
-            "Plural CREATE bypass should retain one null slot per candidate\n$output"
         }
         val entityBatchBypasses = Regex(
             Regex.escape("if (privacy.viewer is Viewer.PrivacyBypass) return List(entitySnapshot.size) { null }")
@@ -1062,13 +1051,13 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has evaluate methods for create, update, and delete validation`() {
+    fun `repo keeps update and delete validation while create uses its runtime specification`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fun evaluateCreateValidation(candidate: CarWriteCandidate)")) {
-            "Should have evaluateCreateValidation\n$output"
+        assert(!output.contains("fun evaluateCreateValidation")) {
+            "CREATE validation should run in MutationEvaluator from the rules in createSpec\n$output"
         }
         assert(output.contains("evaluateUpdateValidation")) {
             "Should have evaluateUpdateValidation\n$output"
@@ -1145,13 +1134,13 @@ class RepoGeneratorTest {
         // The bypass context is fixed inside the adapter, not at the call
         // site — evaluators cannot construct a validation reader under an
         // arbitrary context, so no context literal appears here. All
-        // three evaluators (create/update/delete) emit the call
+        // Update and delete evaluators emit the call
         // independently, so pin the count, not mere presence.
         val mints = Regex(
             Regex.escape("val validationClient = client.asValidationReadClientForInternalUse()")
         ).findAll(output).count()
-        assert(mints == 3) {
-            "All three validation evaluators should mint the validation-posture read client; found $mints\n$output"
+        assert(mints == 2) {
+            "Update and delete validation evaluators should mint the validation-posture read client; found $mints\n$output"
         }
         assert(!output.contains("asReadClientForInternalUse")) {
             "The arbitrary-context adapter must not be called anymore\n$output"
@@ -1169,16 +1158,16 @@ class RepoGeneratorTest {
 
         // Privacy rule reads are viewer-scoped: the evaluator passes the
         // caller's context into the posture-specific adapter, which
-        // freezes it for the reader's lifetime. Each of the four
-        // evaluators (load/create/update/delete) emits the call
+        // freezes it for the reader's lifetime. LOAD, update, and delete
+        // evaluators emit the call
         // independently — and unlike the nullary validation adapter, this
         // one accepts any context, so a single diverging site would still
         // compile. Pin the count, not mere presence.
         val mints = Regex(
             Regex.escape("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
         ).findAll(output).count()
-        assert(mints == 4) {
-            "All four privacy evaluators should freeze the caller's context; found $mints\n$output"
+        assert(mints == 3) {
+            "LOAD, update, and delete privacy evaluators should freeze the caller's context; found $mints\n$output"
         }
     }
 }

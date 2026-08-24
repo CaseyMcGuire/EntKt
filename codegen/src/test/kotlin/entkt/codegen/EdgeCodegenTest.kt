@@ -1190,11 +1190,20 @@ class EdgeCodegenTest {
         // mutation-view adapter, not the concrete draft. This matches the runtime-enforced contract
         // the update path has had since transaction locking and link-table M2M helpers — a hook
         // attempting `ctx.mutation as PetCreateDraft` throws.
-        assert(output.contains("private fun beforeCreateHookValue(draft: PetCreateDraft): PetCreateHookContext")) {
+        assert(output.contains("private fun createBeforeCreateContext(draft: PetCreateDraft): PetCreateHookContext")) {
             "the repo should construct the typed hook context for its create specification\n$output"
         }
         assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetMutation, PetCreateHookContext,")) {
             "the repo should pass a distinct immutable specification to MutationEvaluator\n$output"
+        }
+        assert(output.contains("resolveDraft = ::resolve, beforeSave = beforeSaveHooks, beforeCreate = beforeCreateHooks, afterCreate = afterCreateHooks, privacyRules = privacyConfig.createRules.toList(), validationRules = validationConfig.createRules.toList(),")) {
+            "the create hook lists and rule snapshots should remain explicit specification inputs\n$output"
+        }
+        assert(output.contains("private fun createMutationInput(draft: PetCreateDraft): CreateMutationInput<PetCreateDraft, PetMutation, PetCreateHookContext>")) {
+            "the repo should keep each draft correlated with its generated hook values\n$output"
+        }
+        assert(!output.contains("createDenialReasons =") && !output.contains("validationViolations =") && !output.contains("loadDenials =")) {
+            "the create specification should not contain already-evaluated rule callbacks\n$output"
         }
         assert(!output.contains(": PetReadSurface, CreateMutationSpec"))
         assert(!output.contains("CreateMutationDelegate")) {

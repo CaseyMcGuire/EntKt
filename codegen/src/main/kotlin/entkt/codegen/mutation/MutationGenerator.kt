@@ -51,23 +51,17 @@ import entkt.schema.EntSchema
  * inspection, or `unset{Field}()`.
  *
  * Also generates two restricted hook-facing views that extend the
- * shared `Mutation` interface. Both views are now
- * **runtime-enforced** via private anonymous adapter properties
- * on the respective Create / Update builders:
+ * shared `Mutation` interface. Both views are
+ * **runtime-enforced** through private anonymous adapters generated at
+ * the lifecycle boundary:
  *
  * - `${SchemaName}CreateMutationView` — the typed surface for
  *   `beforeCreate` hook lambdas. Adds immutable scalar fields
  *   (writable on create only). The hook receives a private
- *   adapter (`_createMutationView`) whose runtime type implements
- *   only this view — it forwards property reads/writes to the
- *   outer `${SchemaName}Create` builder but does not extend or
- *   expose the concrete builder type. A hook that casts
- *   `ctx.mutation` to `${SchemaName}Create` throws
- *   `ClassCastException`. The concrete `${SchemaName}Create`
- *   class continues to implement `${SchemaName}CreateMutationView`
- *   as a static type relationship (so non-hook code that upcasts
- *   the builder keeps working), but the runtime object handed
- *   to each hook is the adapter, not the builder.
+ *   adapter whose runtime type implements only this view. The generated
+ *   repository forwards its reads and writes to the state-only
+ *   `${SchemaName}CreateDraft`; neither the draft nor its executable
+ *   `CreateMutation` wrapper is exposed to the hook.
  *
  * - `${SchemaName}UpdateMutationView` — the typed surface for
  *   `beforeUpdate` hook lambdas (via `ctx.mutation`). Adds
@@ -77,9 +71,8 @@ import entkt.schema.EntSchema
  *   throws `ClassCastException`.
  *
  * `beforeSave` hooks on both create and update receive a
- * `${SchemaName}Mutation`-typed adapter (`_beforeSaveView` on
- * each builder) — the shared writable surface, with no view-
- * specific extensions reachable.
+ * `${SchemaName}Mutation`-typed adapter — the shared writable surface,
+ * with no view-specific extensions reachable.
  *
  * The Update view's `unset` methods live only on the update side because
  * the patch model they remove from is update-specific.

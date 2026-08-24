@@ -323,23 +323,32 @@ internal class CreateGenerator(
     ): FunSpec {
         val draftClass = ClassName(packageName, "${schemaName}CreateDraft")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
+        val privacyItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
+        val validationItemClass = ClassName(packageName, "${schemaName}CreateValidationItem")
         val allFields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
         return function(
             "resolve",
-            returnType = CREATE_PREPARATION.parameterizedBy(candidateClass),
+            returnType = CREATE_PREPARATION.parameterizedBy(
+                privacyItemClass,
+                validationItemClass,
+            ),
         ) {
             addModifiers(KModifier.PRIVATE)
             parameter("draft", draftClass)
             beginControlFlow("return draft.run")
             emitCreatePreparation(this, schemaName, schema, allFields, edgeFks)
             val candidateArgs = buildCandidateArgs(allFields, edgeFks)
-            statement(
-                "%T.Ready(%T(values, %T(${candidateArgs.joinToString(", ")})))",
-                CREATE_PREPARATION,
-                PREPARED_CREATE,
-                candidateClass,
-            )
+            addStatement("val candidate = %T(${candidateArgs.joinToString(", ")})", candidateClass)
+            addCode(codeBlock {
+                add("%T.Ready(\n", CREATE_PREPARATION)
+                add("  %T(\n", PREPARED_CREATE)
+                add("    values = values,\n")
+                add("    privacyItem = { %T(snapshotCreateCandidate(candidate)) },\n", privacyItemClass)
+                add("    validationItem = { %T(snapshotCreateCandidate(candidate)) },\n", validationItemClass)
+                add("  ),\n")
+                add(")\n")
+            })
             endControlFlow()
         }
     }

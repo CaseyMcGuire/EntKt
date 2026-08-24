@@ -162,6 +162,18 @@ class ClientGeneratorTest {
     }
 
     @Test
+    fun `EntClient supplies rule clients without entity dispatch`() {
+        val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("MutationRuntime<EntPrivacyReadClient, EntValidationReadClient>"))
+        assert(output.contains("override fun privacyRuleClient(privacyContext: PrivacyContext): EntPrivacyReadClient"))
+        assert(output.contains("override fun validationRuleClient(): EntValidationReadClient"))
+        assert(!output.contains("evaluateCreatePrivacy") && !output.contains("evaluateCreateValidation")) {
+            "The generic mutation evaluator should consume typed rules directly\n$output"
+        }
+    }
+
+    @Test
     fun `EntClientConfig snapshot detaches every mutable configuration registry`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 

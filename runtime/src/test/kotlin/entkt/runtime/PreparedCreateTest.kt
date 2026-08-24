@@ -13,9 +13,14 @@ class PreparedCreateTest {
         val candidate = Any()
         val values = mapOf<String, Any?>("name" to "Ada", "age" to 37)
 
-        val prepared = PreparedCreate(values, candidate)
+        val prepared = PreparedCreate(
+            values = values,
+            privacyItem = { candidate },
+            validationItem = { candidate },
+        )
 
         assertEquals(values, prepared.values)
-        assertSame(candidate, prepared.candidate)
+        assertSame(candidate, prepared.freshPrivacyItem())
+        assertSame(candidate, prepared.freshValidationItem())
     }
 }

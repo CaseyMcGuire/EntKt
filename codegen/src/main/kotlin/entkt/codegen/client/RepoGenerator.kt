@@ -75,6 +75,7 @@ private val VALIDATION_RULE_CONTEXT = ClassName("entkt.runtime.validation", "Val
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val ENTITY_KEY = ClassName("entkt.runtime.result", "EntityKey")
 private val PRIVACY_DECISION = ClassName("entkt.runtime.privacy", "PrivacyDecision")
+private val VALIDATION_DECISION = ClassName("entkt.runtime.validation", "ValidationDecision")
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val EVALUATE_BATCH_PRIVACY_RULES =
     MemberName("entkt.runtime.privacy", "evaluateBatchPrivacyRulesForInternalUse")
@@ -89,6 +90,8 @@ private val CREATE_MUTATION_OUTPUT =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationOutput")
 private val CREATE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationSpec")
+private val CREATE_MUTATION_INPUT =
+    ClassName("entkt.runtime.mutation.execution", "CreateMutationInput")
 private val CREATE_MUTATION = ClassName("entkt.runtime.mutation", "CreateMutation")
 private val CREATE_MUTATION_REPOSITORY =
     ClassName("entkt.runtime.mutation", "CreateMutationRepository")
@@ -215,8 +218,9 @@ internal class RepoGenerator(
                     createDraftClass = createDraftClass,
                     mutationClass = mutationClass,
                     createHookContextClass = createHookCtxClass,
-                    candidateClass = candidateClass,
                     entityClass = entityClass,
+                    privacyItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem"),
+                    validationItemClass = ClassName(packageName, "${schemaName}CreateValidationItem"),
                 ),
             )
             addInitializerBlock(
@@ -233,7 +237,14 @@ internal class RepoGenerator(
             addFunction(buildSaveCreation(createDraftClass))
             addFunction(buildSaveAndLoadCreation(createDraftClass, entityClass))
             addFunction(
-                buildBeforeSaveHookValue(
+                buildCreateMutationInput(
+                    createDraftClass = createDraftClass,
+                    mutationClass = mutationClass,
+                    createHookContextClass = createHookCtxClass,
+                ),
+            )
+            addFunction(
+                buildCreateBeforeSaveView(
                     createDraftClass,
                     mutationClass,
                     fields.filter { !it.immutable },
@@ -241,7 +252,7 @@ internal class RepoGenerator(
                 ),
             )
             addFunction(
-                buildBeforeCreateHookValue(
+                buildBeforeCreateContext(
                     createDraftClass,
                     createHookCtxClass,
                     ClassName(packageName, "${schemaName}CreateMutationView"),
@@ -250,6 +261,7 @@ internal class RepoGenerator(
                 ),
             )
             addFunction(CreateGenerator(packageName).buildResolveFunction(schemaName, schema, schemaNames))
+            addFunction(buildSnapshotCreateCandidate(entityClass, candidateClass, fields))
                 // Per-save UpdateConsistency override (transaction locking). Defaults
                 // to the client's `defaultUpdateConsistency` so callers
                 // who don't pass `consistency =` get the configured
@@ -302,8 +314,6 @@ internal class RepoGenerator(
             addFunction(buildHasPrivacy("hasDeletePrivacy"))
             addFunction(buildLoadDenials(schemaName, entityClass, loadItemClass, fields))
             addFunction(buildLoadDenialOrNull(entityClass))
-            addFunction(buildCreateDenialReasons(schemaName, candidateClass, fields))
-            addFunction(buildCreateDenialReasonOrNull(candidateClass))
             addFunction(
                 buildUpdateDenialReasonOrNull(
                     schemaName,
@@ -316,8 +326,6 @@ internal class RepoGenerator(
             addFunction(buildDeleteDenialReasons(schemaName, entityClass, candidateClass, fields))
             addFunction(buildDeleteDenialReasonOrNull(entityClass, candidateClass))
             addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
-            addFunction(buildEvaluateCreateValidations(schemaName, candidateClass, fields))
-            addFunction(buildEvaluateCreateValidation(candidateClass))
             addFunction(
                 buildEvaluateUpdateValidation(
                     schemaName,
@@ -989,59 +997,6 @@ internal class RepoGenerator(
     // Allow, the helper returns the "no <op> rule allowed access"
     // reason.
 
-    private fun buildCreateDenialReasons(
-        schemaName: String,
-        candidateClass: ClassName,
-        fields: List<Field>,
-    ): FunSpec {
-        val entityClass = ClassName(packageName, schemaName)
-        val createItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
-        return function(
-            "createDenialReasons",
-            LIST.parameterizedBy(String::class.asClassName().copy(nullable = true)),
-        ) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("privacy", PRIVACY_CONTEXT)
-            parameter("candidates", LIST.parameterizedBy(candidateClass))
-            addCode(codeBlock {
-                addStatement("if (candidates.isEmpty()) return emptyList()")
-                .addStatement("val candidateSnapshot = candidates.toList()")
-                .addStatement(
-                    "if (privacy.viewer is %T.PrivacyBypass) return %T(candidateSnapshot.size) { null }",
-                    VIEWER,
-                    LIST,
-                )
-                .addStatement("val rules = privacyConfig.createRules")
-                .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .addStatement("val ruleContext = %T(privacy, privacyClient)", PRIVACY_RULE_CONTEXT)
-                .addStatement(
-                    "val decisions = %M(%S, candidateSnapshot, rules, ruleContext) { item ->\n" +
-                        "  %T(%L)\n" +
-                        "}",
-                    EVALUATE_BATCH_PRIVACY_RULES,
-                    "$schemaName CREATE privacy",
-                    createItemClass,
-                    lifecycleValueSnapshot("item", fields, entityClass),
-                )
-                .beginControlFlow("return decisions.map { decision ->")
-                .beginControlFlow("when (decision)")
-                .addStatement("is %T.Allow -> null", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> decision.reason", PRIVACY_DECISION)
-                .addStatement("is %T.Continue -> %S", PRIVACY_DECISION, "no create rule allowed access")
-                .endControlFlow()
-                .endControlFlow()
-            })
-        }
-    }
-
-    private fun buildCreateDenialReasonOrNull(candidateClass: ClassName): FunSpec =
-        function("createDenialReasonOrNull", String::class.asClassName().copy(nullable = true)) {
-            addModifiers(KModifier.INTERNAL)
-            parameter("privacy", PRIVACY_CONTEXT)
-            parameter("candidate", candidateClass)
-            statement("return createDenialReasons(privacy, listOf(candidate)).single()")
-        }
-
     /**
      * Build a fresh per-rule edge-change sidecar. A Kotlin `Set` is only
      * read-only at compile time, so each runtime EdgeChanges value also wraps
@@ -1238,21 +1193,36 @@ internal class RepoGenerator(
         }
     }
 
+    /** Detach mutable candidate fields before exposing them to one CREATE rule. */
+    private fun buildSnapshotCreateCandidate(
+        entityClass: ClassName,
+        candidateClass: ClassName,
+        fields: List<Field>,
+    ): FunSpec = function("snapshotCreateCandidate", candidateClass) {
+        addModifiers(KModifier.PRIVATE)
+        parameter("candidate", candidateClass)
+        statement("return %L", lifecycleValueSnapshot("candidate", fields, entityClass))
+    }
+
     /** Capture the immutable inputs consumed by the shared runtime create lifecycle. */
     private fun buildCreateMutationSpec(
         queryClass: ClassName,
         createDraftClass: ClassName,
         mutationClass: ClassName,
         createHookContextClass: ClassName,
-        candidateClass: ClassName,
         entityClass: ClassName,
+        privacyItemClass: ClassName,
+        validationItemClass: ClassName,
     ): PropertySpec {
         val specType = CREATE_MUTATION_SPEC.parameterizedBy(
             createDraftClass,
             mutationClass,
             createHookContextClass,
-            candidateClass,
+            privacyItemClass,
+            validationItemClass,
             entityClass,
+            ClassName(packageName, "EntPrivacyReadClient"),
+            ClassName(packageName, "EntValidationReadClient"),
         )
         return property("createSpec", specType) {
             addModifiers(KModifier.PRIVATE)
@@ -1260,15 +1230,12 @@ internal class RepoGenerator(
                 add("%T(\n", CREATE_MUTATION_SPEC)
                 indent()
                 add("entity = %T.GeneratedEntityMapping,\n", queryClass)
-                add("beforeSaveHooks = beforeSaveHooks,\n")
-                add("beforeCreateHooks = beforeCreateHooks,\n")
-                add("afterCreateHooks = afterCreateHooks,\n")
-                add("beforeSaveHookValue = ::beforeSaveHookValue,\n")
-                add("beforeCreateHookValue = ::beforeCreateHookValue,\n")
-                add("resolve = ::resolve,\n")
-                add("createDenialReasons = ::createDenialReasons,\n")
-                add("validationViolations = ::validationViolations,\n")
-                add("loadDenials = ::loadDenials,\n")
+                add("resolveDraft = ::resolve,\n")
+                add("beforeSave = beforeSaveHooks,\n")
+                add("beforeCreate = beforeCreateHooks,\n")
+                add("afterCreate = afterCreateHooks,\n")
+                add("privacyRules = privacyConfig.createRules.toList(),\n")
+                add("validationRules = validationConfig.createRules.toList(),\n")
                 unindent()
                 add(")")
             })
@@ -1301,7 +1268,7 @@ internal class RepoGenerator(
             addCode(codeBlock {
                     add("return when (val result = client.mutations.create(\n")
                     .indent()
-                    .add("draft = draft,\n")
+                    .add("input = createMutationInput(draft),\n")
                     .add("spec = createSpec,\n")
                     .add("checkReturnedEntityPrivacy = false,\n")
                     .unindent()
@@ -1321,11 +1288,32 @@ internal class RepoGenerator(
             addModifiers(KModifier.OVERRIDE)
             parameter("draft", createDraftClass)
             statement(
-                "return client.mutations.create(draft, createSpec, checkReturnedEntityPrivacy = true)",
+                "return client.mutations.create(createMutationInput(draft), createSpec, checkReturnedEntityPrivacy = true)",
             )
         }
 
-    private fun buildBeforeSaveHookValue(
+    /** Keep each draft correlated with the generated values exposed to its before hooks. */
+    private fun buildCreateMutationInput(
+        createDraftClass: ClassName,
+        mutationClass: ClassName,
+        createHookContextClass: ClassName,
+    ): FunSpec {
+        val inputType = CREATE_MUTATION_INPUT.parameterizedBy(
+            createDraftClass,
+            mutationClass,
+            createHookContextClass,
+        )
+        return function("createMutationInput", inputType) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("draft", createDraftClass)
+            statement(
+                "return %T(draft, createBeforeSaveView(draft), createBeforeCreateContext(draft))",
+                CREATE_MUTATION_INPUT,
+            )
+        }
+    }
+
+    private fun buildCreateBeforeSaveView(
         createDraftClass: ClassName,
         mutationClass: ClassName,
         fields: List<Field>,
@@ -1347,14 +1335,14 @@ internal class RepoGenerator(
                 ))
             }
         }
-        return function("beforeSaveHookValue", mutationClass) {
+        return function("createBeforeSaveView", mutationClass) {
             addModifiers(KModifier.PRIVATE)
             parameter("draft", createDraftClass)
             statement("return %L", adapter)
         }
     }
 
-    private fun buildBeforeCreateHookValue(
+    private fun buildBeforeCreateContext(
         createDraftClass: ClassName,
         createHookContextClass: ClassName,
         createMutationViewClass: ClassName,
@@ -1377,7 +1365,7 @@ internal class RepoGenerator(
                 ))
             }
         }
-        return function("beforeCreateHookValue", createHookContextClass) {
+        return function("createBeforeCreateContext", createHookContextClass) {
             addModifiers(KModifier.PRIVATE)
             parameter("draft", createDraftClass)
             statement(
@@ -1466,13 +1454,13 @@ internal class RepoGenerator(
             addCode(codeBlock {
                     add("try {\n")
                     .add("  check(driver.inTransaction) { %S }\n", "createMany write phases require a transaction-scoped driver")
-                    .add("  val drafts = %T<%T>(blocks.size)\n", ArrayList::class, createDraftClass)
+                    .add("  val inputs = %T<%T<%T, %T, %T>>(blocks.size)\n", ArrayList::class, CREATE_MUTATION_INPUT, createDraftClass, ClassName(packageName, "${schemaName}Mutation"), ClassName(packageName, "${schemaName}CreateHookContext"))
                     .add("  for (block in blocks) {\n")
-                    .add("    drafts += %T().apply(block)\n", createDraftClass)
+                    .add("    inputs += createMutationInput(%T().apply(block))\n", createDraftClass)
                     .add("  }\n")
                     .add(
                             "  return client.mutations.createMany(\n" +
-                            "    drafts = drafts,\n" +
+                            "    inputs = inputs,\n" +
                             "    spec = createSpec,\n" +
                             "    promoteDriverNotPersisted = promoteDriverNotPersisted,\n" +
                             "  )\n",
@@ -1660,48 +1648,6 @@ internal class RepoGenerator(
     // a rule-THROWN exception escapes (no catch here) to the
     // terminal's capture boundary as a foreign failure — even when the
     // rule threw an EntValidationException itself.
-
-    private fun buildEvaluateCreateValidations(
-        schemaName: String,
-        candidateClass: ClassName,
-        fields: List<Field>,
-    ): FunSpec {
-        val entityClass = ClassName(packageName, schemaName)
-        val createItemClass = ClassName(packageName, "${schemaName}CreateValidationItem")
-        val violationList = LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)
-        return function("validationViolations", LIST.parameterizedBy(violationList)) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("candidates", LIST.parameterizedBy(candidateClass))
-            addCode(codeBlock {
-                addStatement("if (candidates.isEmpty()) return emptyList()")
-                .addStatement("val candidateSnapshot = candidates.toList()")
-                .addStatement("val rules = validationConfig.createRules")
-                .addStatement("if (rules.isEmpty()) return %T(candidateSnapshot.size) { emptyList() }", LIST)
-                .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
-                .addStatement("val ruleContext = %T(validationClient)", VALIDATION_RULE_CONTEXT)
-                .addStatement(
-                    "val invalidsByCandidate = %M(%S, candidateSnapshot, rules, ruleContext) { item ->\n" +
-                        "  %T(%L)\n" +
-                        "}",
-                    EVALUATE_BATCH_VALIDATION_RULES,
-                    "$schemaName CREATE validation",
-                    createItemClass,
-                    lifecycleValueSnapshot("item", fields, entityClass),
-                )
-                .addStatement(
-                    "return invalidsByCandidate.map { invalids -> invalids.map { it.%M() } }",
-                    TO_VALIDATION_VIOLATION,
-                )
-            })
-        }
-    }
-
-    private fun buildEvaluateCreateValidation(candidateClass: ClassName): FunSpec =
-        function("evaluateCreateValidation", LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)) {
-            addModifiers(KModifier.INTERNAL)
-            parameter("candidate", candidateClass)
-            statement("return validationViolations(listOf(candidate)).single()")
-        }
 
     private fun buildEvaluateUpdateValidation(
         schemaName: String,

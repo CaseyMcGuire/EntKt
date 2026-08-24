@@ -137,7 +137,12 @@ internal class ClientGenerator(
             // existed — the query constructors' `EntReadRuntime?` accepts
             // the full client by upcast.
             addSuperinterface(ClassName(packageName, "EntReadRuntime"))
-            addSuperinterface(MUTATION_RUNTIME)
+            addSuperinterface(
+                MUTATION_RUNTIME.parameterizedBy(
+                    ClassName(packageName, "EntPrivacyReadClient"),
+                    ClassName(packageName, "EntValidationReadClient"),
+                ),
+            )
             addSuperinterface(clientScopeClass)
             primaryConstructor {
                 addModifiers(KModifier.PRIVATE)
@@ -170,7 +175,13 @@ internal class ClientGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("configuration")
             }
-            property("mutations", MUTATION_EVALUATOR) {
+            property(
+                "mutations",
+                MUTATION_EVALUATOR.parameterizedBy(
+                    ClassName(packageName, "EntPrivacyReadClient"),
+                    ClassName(packageName, "EntValidationReadClient"),
+                ),
+            ) {
                 addKdoc("Mutation lifecycles shared by this client's generated repositories.")
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.INTERNAL)
@@ -339,6 +350,8 @@ internal class ClientGenerator(
             addFunction(buildReadClientImplBuilder(sorted))
             addFunction(buildAsValidationReadClientForInternalUse())
             addFunction(buildAsPrivacyReadClientForInternalUse())
+            addFunction(buildPrivacyRuleClient())
+            addFunction(buildValidationRuleClient())
             addFunction(buildWithPrivacyContext(clientClass, t))
             addFunction(buildBypassPrivacyDangerous(clientClass, t))
             addFunction(buildWithTransaction(clientClass, transactionClientClass, t))
@@ -531,6 +544,25 @@ internal class ClientGenerator(
             }
             addFunction(buildConfigSnapshot(configClass, schemas))
         }
+    }
+
+    /** Supply the viewer-scoped read client used by generic CREATE-privacy evaluation. */
+    private fun buildPrivacyRuleClient(): FunSpec = function(
+        "privacyRuleClient",
+        ClassName(packageName, "EntPrivacyReadClient"),
+    ) {
+        addModifiers(KModifier.OVERRIDE)
+        parameter("privacyContext", PRIVACY_CONTEXT)
+        statement("return asPrivacyReadClientForInternalUse(privacyContext)")
+    }
+
+    /** Supply the privileged read client used by generic CREATE-validation evaluation. */
+    private fun buildValidationRuleClient(): FunSpec = function(
+        "validationRuleClient",
+        ClassName(packageName, "EntValidationReadClient"),
+    ) {
+        addModifiers(KModifier.OVERRIDE)
+        statement("return asValidationReadClientForInternalUse()")
     }
 
     /** Freeze the mutable construction DSL into the configuration shared by every client scope. */

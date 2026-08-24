@@ -40,8 +40,10 @@ above it.
   scopes cannot mutate a live client or any client derived from it.
   _Migration:_ construct repositories through `EntClient` instead of calling a
   `${Entity}Repo` constructor directly. Internal integrations that implemented
-  `CreateMutationSpec` should instantiate it with their entity mapping, hooks,
-  and lifecycle callbacks.
+  `CreateMutationSpec` should instantiate it with the entity mapping, draft
+  resolver, hook lists, and CREATE privacy and validation rule lists. Generated
+  repositories now pass each draft's hook views separately; `MutationEvaluator`
+  owns rule evaluation, persistence, and returned-entity LOAD authorization.
 
 - **Separate create drafts from executable create mutations** (`codegen`, `runtime`)
   Generated `${Entity}Create` builders are replaced by state-only

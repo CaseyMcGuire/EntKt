@@ -9,6 +9,10 @@ import entkt.runtime.hook.BatchHook
 import entkt.runtime.mutation.CreatePreparation
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.PrivacyRuleContext
+import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.evaluateBatchPrivacyRulesForInternalUse
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -16,18 +20,37 @@ import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.toValidationViolation
+import entkt.runtime.validation.ValidationRuleContext
+import entkt.runtime.validation.evaluateBatchValidationRulesForInternalUse
 import java.util.concurrent.CancellationException
 
-/** Runs mutation lifecycles for generated drafts and entity specifications. */
+/**
+ * Runs mutation lifecycles for generated drafts and entity specifications.
+ *
+ * A create runs before hooks, resolves every draft, evaluates CREATE privacy,
+ * evaluates CREATE validation, persists the rows, runs after hooks, and then
+ * applies returned-entity LOAD privacy when the terminal exposes entities.
+ */
 @EntktInternal
-class MutationEvaluator(
+class MutationEvaluator<PrivacyClient, ValidationClient>(
     private val driver: DatabaseDriver,
-    private val mutationRuntime: MutationRuntime,
+    private val mutationRuntime: MutationRuntime<PrivacyClient, ValidationClient>,
 ) {
     /** Execute one create lifecycle and optionally authorize the returned entity. */
-    fun <Draft, BeforeSave, BeforeCreate, Candidate, Entity : EntEntity<*>> create(
-        draft: Draft,
-        spec: CreateMutationSpec<Draft, BeforeSave, BeforeCreate, Candidate, Entity>,
+    fun <
+        Draft,
+        BeforeSave,
+        BeforeCreate,
+        PrivacyItem,
+        ValidationItem,
+        Entity : EntEntity<*>,
+        > create(
+        input: CreateMutationInput<Draft, BeforeSave, BeforeCreate>,
+        spec: CreateMutationSpec<
+            Draft, BeforeSave, BeforeCreate, PrivacyItem, ValidationItem,
+            Entity, PrivacyClient, ValidationClient,
+        >,
         checkReturnedEntityPrivacy: Boolean,
     ): MutationResult<Entity> = executeMutation { attempt ->
         val postWriteState = if (driver.inTransaction) {
@@ -37,16 +60,17 @@ class MutationEvaluator(
         }
         mutationRuntime.checkTransactionRequirement("${spec.entity.entityName} create")
 
-        val created = runCreateLifecycle(
+        val lifecycle = CreateLifecycle(
             attempt = attempt,
-            drafts = listOf(draft),
+            inputs = listOf(input),
             spec = spec,
             persistence = CreatePersistence.One,
             postWriteState = postWriteState,
             promoteDriverNotPersisted = false,
         )
+        val created = lifecycle.run()
         if (checkReturnedEntityPrivacy) {
-            authorizeReturnedEntities(attempt, created, spec)
+            lifecycle.evaluateReturnedEntityPrivacy(created)
         }
         created.entities.single()
     }
@@ -60,238 +84,244 @@ class MutationEvaluator(
     }
 
     /** Execute the phase-major create lifecycle for inputs in an active transaction. */
-    fun <Draft, BeforeSave, BeforeCreate, Candidate, Entity : EntEntity<*>> createMany(
-        drafts: List<Draft>,
-        spec: CreateMutationSpec<Draft, BeforeSave, BeforeCreate, Candidate, Entity>,
+    fun <
+        Draft,
+        BeforeSave,
+        BeforeCreate,
+        PrivacyItem,
+        ValidationItem,
+        Entity : EntEntity<*>,
+        > createMany(
+        inputs: List<CreateMutationInput<Draft, BeforeSave, BeforeCreate>>,
+        spec: CreateMutationSpec<
+            Draft, BeforeSave, BeforeCreate, PrivacyItem, ValidationItem,
+            Entity, PrivacyClient, ValidationClient,
+        >,
         promoteDriverNotPersisted: Boolean,
     ): MutationResult<CreateMutationOutput<Entity>> = executeMutation { attempt ->
-        require(drafts.isNotEmpty()) { "createMany requires at least one draft" }
+        require(inputs.isNotEmpty()) { "createMany requires at least one input" }
         check(driver.inTransaction) { "createMany write phases require a transaction" }
 
-        runCreateLifecycle(
+        CreateLifecycle(
             attempt = attempt,
-            drafts = drafts,
+            inputs = inputs,
             spec = spec,
             persistence = CreatePersistence.Many,
             postWriteState = MutationWriteState.TransactionPending,
             promoteDriverNotPersisted = promoteDriverNotPersisted,
-        )
+        ).run()
     }
 
-    /** Run the lifecycle phases shared by one-item and multi-item creates. */
-    private fun <Draft, BeforeSave, BeforeCreate, Candidate, Entity : EntEntity<*>> runCreateLifecycle(
-        attempt: MutationAttempt,
-        drafts: List<Draft>,
-        spec: CreateMutationSpec<Draft, BeforeSave, BeforeCreate, Candidate, Entity>,
-        persistence: CreatePersistence,
-        postWriteState: MutationWriteState,
-        promoteDriverNotPersisted: Boolean,
-    ): CreateMutationOutput<Entity> {
-        runHooks(
-            drafts.map(spec.beforeSaveHookValue),
-            spec.beforeSaveHooks,
-        )
-
-        runHooks(
-            drafts.map(spec.beforeCreateHookValue),
-            spec.beforeCreateHooks,
-        )
-
-        val preparedCreates = prepareCreates(
-            attempt = attempt,
-            drafts = drafts,
-            spec = spec,
-        )
-        val privacyContext = mutationRuntime.get()
-
-        authorizeCreates(
-            attempt = attempt,
-            prepared = preparedCreates,
-            privacyContext = privacyContext,
-            spec = spec,
-        )
-        validateCreates(
-            attempt = attempt,
-            prepared = preparedCreates,
-            spec = spec,
-        )
-
-        val createdEntities = persistCreates(
-            attempt = attempt,
-            prepared = preparedCreates,
-            spec = spec,
-            persistence = persistence,
-            postWriteState = postWriteState,
-            promoteDriverNotPersisted = promoteDriverNotPersisted,
-        )
-
-        runHooks(createdEntities, spec.afterCreateHooks)
-
-        return CreateMutationOutput(
-            entities = createdEntities,
-            privacyContext = privacyContext,
-        )
-    }
-
-    /** Run each hook once with the same non-empty ordered batch. */
-    private fun <Value> runHooks(
-        values: List<Value>,
-        hooks: List<BatchHook<Value>>,
+    /** State and phases for one scalar or batch create evaluation. */
+    private inner class CreateLifecycle<
+        Draft,
+        BeforeSave,
+        BeforeCreate,
+        PrivacyItem,
+        ValidationItem,
+        Entity : EntEntity<*>,
+        >(
+        private val attempt: MutationAttempt,
+        private val inputs: List<CreateMutationInput<Draft, BeforeSave, BeforeCreate>>,
+        private val spec: CreateMutationSpec<
+            Draft, BeforeSave, BeforeCreate, PrivacyItem, ValidationItem,
+            Entity, PrivacyClient, ValidationClient,
+        >,
+        private val persistence: CreatePersistence,
+        private val postWriteState: MutationWriteState,
+        private val promoteDriverNotPersisted: Boolean,
     ) {
-        if (values.isEmpty()) return
+        /** Run every create phase in lifecycle order. */
+        fun run(): CreateMutationOutput<Entity> {
+            runHooks(inputs.map { it.beforeSave }, spec.beforeSave)
+            runHooks(inputs.map { it.beforeCreate }, spec.beforeCreate)
 
-        for (hook in hooks) {
-            hook.runBatch(values)
-        }
-    }
+            val resolvedCreates = resolveDrafts()
+            val privacyContext = mutationRuntime.get()
 
-    /** Normalize every input before any privacy or entity-level validation runs. */
-    private fun <Draft, BeforeSave, BeforeCreate, Candidate, Entity : EntEntity<*>> prepareCreates(
-        attempt: MutationAttempt,
-        drafts: List<Draft>,
-        spec: CreateMutationSpec<Draft, BeforeSave, BeforeCreate, Candidate, Entity>,
-    ): List<PreparedCreate<Candidate>> = drafts.map { draft ->
-        val preparation = spec.resolve(draft)
-        when (preparation) {
-            is CreatePreparation.Ready -> preparation.value
-            is CreatePreparation.Invalid -> attempt.reject(
-                EntValidationException(
-                    entityType = spec.entity.entityName,
-                    operation = EntOperation.CREATE,
-                    violations = preparation.violations,
-                ),
+            evaluateCreatePrivacy(resolvedCreates, privacyContext)
+            evaluateCreateValidation(resolvedCreates)
+
+            val createdEntities = persistCreates(resolvedCreates)
+            runHooks(createdEntities, spec.afterCreate)
+
+            return CreateMutationOutput(
+                entities = createdEntities,
+                privacyContext = privacyContext,
             )
         }
-    }
 
-    /** Reject the entire create operation when any candidate is denied. */
-    private fun <Draft, BeforeSave, BeforeCreate, Candidate, Entity : EntEntity<*>> authorizeCreates(
-        attempt: MutationAttempt,
-        prepared: List<PreparedCreate<Candidate>>,
-        privacyContext: PrivacyContext,
-        spec: CreateMutationSpec<Draft, BeforeSave, BeforeCreate, Candidate, Entity>,
-    ) {
-        val denialReasons = spec.createDenialReasons(
-            privacyContext,
-            prepared.map { it.candidate },
-        )
-        check(denialReasons.size == prepared.size) {
-            "CREATE privacy returned ${denialReasons.size} decisions for " +
-                "${prepared.size} candidates"
-        }
-        denialReasons.firstOrNull { it != null }?.let { reason ->
-            attempt.reject(
-                EntMutationPrivacyDeniedException(
-                    writeState = MutationWriteState.NotPersisted,
-                    entityType = spec.entity.entityName,
-                    operation = EntOperation.CREATE,
-                    entityKey = null,
-                    reason = reason,
-                ),
+        /** Apply returned-entity LOAD privacy under the context used by CREATE privacy. */
+        fun evaluateReturnedEntityPrivacy(created: CreateMutationOutput<Entity>) {
+            val evaluations = mutationRuntime.evaluate(
+                entity = spec.entity,
+                privacyContext = created.privacyContext,
+                entities = created.entities,
             )
-        }
-    }
-
-    /** Reject the entire create operation when any candidate is invalid. */
-    private fun <Draft, BeforeSave, BeforeCreate, Candidate, Entity : EntEntity<*>> validateCreates(
-        attempt: MutationAttempt,
-        prepared: List<PreparedCreate<Candidate>>,
-        spec: CreateMutationSpec<Draft, BeforeSave, BeforeCreate, Candidate, Entity>,
-    ) {
-        val violationsByCandidate = spec.validationViolations(prepared.map { it.candidate })
-        check(violationsByCandidate.size == prepared.size) {
-            "CREATE validation returned ${violationsByCandidate.size} results for " +
-                "${prepared.size} candidates"
-        }
-        violationsByCandidate.firstOrNull { it.isNotEmpty() }?.let { violations ->
-            attempt.reject(
-                EntValidationException(
-                    entityType = spec.entity.entityName,
-                    operation = EntOperation.CREATE,
-                    violations = violations,
-                ),
-            )
-        }
-    }
-
-    /** Persist prepared rows with the one-item or multi-item driver primitive. */
-    private fun <Draft, BeforeSave, BeforeCreate, Candidate, Entity : EntEntity<*>> persistCreates(
-        attempt: MutationAttempt,
-        prepared: List<PreparedCreate<Candidate>>,
-        spec: CreateMutationSpec<Draft, BeforeSave, BeforeCreate, Candidate, Entity>,
-        persistence: CreatePersistence,
-        postWriteState: MutationWriteState,
-        promoteDriverNotPersisted: Boolean,
-    ): List<Entity> {
-        val rows = try {
-            when (persistence) {
-                CreatePersistence.One -> listOf(
-                    driver.insert(spec.entity.table, prepared.single().values),
+            check(evaluations.size == created.entities.size) {
+                "LOAD privacy returned ${evaluations.size} decisions for " +
+                    "${created.entities.size} created entities"
+            }
+            evaluations.firstNotNullOfOrNull { it.denialOrNull() }?.let { denial ->
+                attempt.reject(
+                    EntMutationPrivacyDeniedException(
+                        writeState = attempt.writeState,
+                        entityType = spec.entity.entityName,
+                        operation = EntOperation.LOAD,
+                        entityKey = denial.entityKey,
+                        reason = denial.reason,
+                    ),
                 )
+            }
+        }
 
-                CreatePersistence.Many -> {
-                    attempt.writeState = MutationWriteState.TransactionPending
-                    driver.insertMany(spec.entity.table, prepared.map { it.values })
+        private fun <Value> runHooks(
+            values: List<Value>,
+            hooks: List<BatchHook<Value>>,
+        ) {
+            if (values.isEmpty()) return
+
+            for (hook in hooks) {
+                hook.runBatch(values)
+            }
+        }
+
+        private fun resolveDrafts(): List<PreparedCreate<PrivacyItem, ValidationItem>> =
+            inputs.map { input ->
+                when (val preparation = spec.resolveDraft(input.draft)) {
+                    is CreatePreparation.Ready -> preparation.value
+                    is CreatePreparation.Invalid -> attempt.reject(
+                        EntValidationException(
+                            entityType = spec.entity.entityName,
+                            operation = EntOperation.CREATE,
+                            violations = preparation.violations,
+                        ),
+                    )
                 }
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            val fallback = when (persistence) {
-                CreatePersistence.One -> MutationWriteState.PersistenceUnknown
-                CreatePersistence.Many -> MutationWriteState.TransactionPending
+
+        private fun evaluateCreatePrivacy(
+            prepared: List<PreparedCreate<PrivacyItem, ValidationItem>>,
+            privacyContext: PrivacyContext,
+        ) {
+            val decisions = when {
+                privacyContext.viewer is Viewer.PrivacyBypass ->
+                    List(prepared.size) { PrivacyDecision.Allow }
+
+                spec.privacyRules.isEmpty() ->
+                    List(prepared.size) { PrivacyDecision.Continue }
+
+                else -> evaluateBatchPrivacyRulesForInternalUse(
+                    lifecycle = "${spec.entity.entityName} CREATE privacy",
+                    items = prepared,
+                    rules = spec.privacyRules,
+                    context = PrivacyRuleContext(
+                        privacyContext,
+                        mutationRuntime.privacyRuleClient(privacyContext),
+                    ),
+                    freshItem = PreparedCreate<PrivacyItem, ValidationItem>::freshPrivacyItem,
+                )
             }
-            val classified = driver.classifyMutationException(
-                e,
-                spec.entity.entityName,
-                EntOperation.CREATE,
-            ) ?: EntUnexpectedMutationException(fallback, e)
-            val reported = if (
-                persistence == CreatePersistence.Many &&
-                promoteDriverNotPersisted &&
-                prepared.size > 1 &&
-                classified.writeState == MutationWriteState.NotPersisted
-            ) {
-                EntUnexpectedMutationException(MutationWriteState.TransactionPending, classified)
-            } else {
-                classified
+            check(decisions.size == prepared.size) {
+                "CREATE privacy returned ${decisions.size} decisions for " +
+                    "${prepared.size} candidates"
             }
-            attempt.reject(reported)
+            val denialReason = decisions.firstNotNullOfOrNull { decision ->
+                when (decision) {
+                    PrivacyDecision.Allow -> null
+                    is PrivacyDecision.Deny -> decision.reason
+                    PrivacyDecision.Continue -> "no create rule allowed access"
+                }
+            }
+            denialReason?.let { reason ->
+                attempt.reject(
+                    EntMutationPrivacyDeniedException(
+                        writeState = MutationWriteState.NotPersisted,
+                        entityType = spec.entity.entityName,
+                        operation = EntOperation.CREATE,
+                        entityKey = null,
+                        reason = reason,
+                    ),
+                )
+            }
         }
 
-        check(rows.size == prepared.size) {
-            "DatabaseDriver.${if (persistence == CreatePersistence.One) "insert" else "insertMany"} " +
-                "contract violation for ${spec.entity.entityName}: expected " +
-                "${prepared.size} persisted rows but received ${rows.size}"
-        }
-        attempt.writeState = postWriteState
-        return rows.map(spec.entity::decode)
-    }
+        private fun evaluateCreateValidation(
+            prepared: List<PreparedCreate<PrivacyItem, ValidationItem>>,
+        ) {
+            if (spec.validationRules.isEmpty()) return
 
-    /** Apply returned-entity LOAD privacy under the context captured before CREATE privacy. */
-    private fun <Draft, BeforeSave, BeforeCreate, Candidate, Entity : EntEntity<*>> authorizeReturnedEntities(
-        attempt: MutationAttempt,
-        created: CreateMutationOutput<Entity>,
-        spec: CreateMutationSpec<Draft, BeforeSave, BeforeCreate, Candidate, Entity>,
-    ) {
-        val denials = spec.loadDenials(
-            created.privacyContext,
-            created.entities,
-        )
-        check(denials.size == created.entities.size) {
-            "LOAD privacy returned ${denials.size} decisions for " +
-                "${created.entities.size} created entities"
-        }
-        denials.firstOrNull { it != null }?.let { denial ->
-            attempt.reject(
-                EntMutationPrivacyDeniedException(
-                    writeState = attempt.writeState,
-                    entityType = spec.entity.entityName,
-                    operation = EntOperation.LOAD,
-                    entityKey = denial.entityKey,
-                    reason = denial.reason,
-                ),
+            val invalidsByCandidate = evaluateBatchValidationRulesForInternalUse(
+                lifecycle = "${spec.entity.entityName} CREATE validation",
+                items = prepared,
+                rules = spec.validationRules,
+                context = ValidationRuleContext(mutationRuntime.validationRuleClient()),
+                freshItem = PreparedCreate<PrivacyItem, ValidationItem>::freshValidationItem,
             )
+            check(invalidsByCandidate.size == prepared.size) {
+                "CREATE validation returned ${invalidsByCandidate.size} results for " +
+                    "${prepared.size} candidates"
+            }
+            invalidsByCandidate.firstOrNull { it.isNotEmpty() }?.let { invalids ->
+                attempt.reject(
+                    EntValidationException(
+                        entityType = spec.entity.entityName,
+                        operation = EntOperation.CREATE,
+                        violations = invalids.map { it.toValidationViolation() },
+                    ),
+                )
+            }
+        }
+
+        private fun persistCreates(
+            prepared: List<PreparedCreate<PrivacyItem, ValidationItem>>,
+        ): List<Entity> {
+            val rows = try {
+                when (persistence) {
+                    CreatePersistence.One -> listOf(
+                        driver.insert(spec.entity.table, prepared.single().values),
+                    )
+
+                    CreatePersistence.Many -> {
+                        attempt.writeState = MutationWriteState.TransactionPending
+                        driver.insertMany(spec.entity.table, prepared.map { it.values })
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val fallback = when (persistence) {
+                    CreatePersistence.One -> MutationWriteState.PersistenceUnknown
+                    CreatePersistence.Many -> MutationWriteState.TransactionPending
+                }
+                val classified = driver.classifyMutationException(
+                    e,
+                    spec.entity.entityName,
+                    EntOperation.CREATE,
+                ) ?: EntUnexpectedMutationException(fallback, e)
+                val reported = if (
+                    persistence == CreatePersistence.Many &&
+                    promoteDriverNotPersisted &&
+                    prepared.size > 1 &&
+                    classified.writeState == MutationWriteState.NotPersisted
+                ) {
+                    EntUnexpectedMutationException(
+                        MutationWriteState.TransactionPending,
+                        classified,
+                    )
+                } else {
+                    classified
+                }
+                attempt.reject(reported)
+            }
+
+            check(rows.size == prepared.size) {
+                "DatabaseDriver.${if (persistence == CreatePersistence.One) "insert" else "insertMany"} " +
+                    "contract violation for ${spec.entity.entityName}: expected " +
+                    "${prepared.size} persisted rows but received ${rows.size}"
+            }
+            attempt.writeState = postWriteState
+            return rows.map(spec.entity::decode)
         }
     }
 
