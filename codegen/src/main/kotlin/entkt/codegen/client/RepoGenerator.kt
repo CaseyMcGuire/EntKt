@@ -19,6 +19,19 @@ import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.lifecyclePatchSnapshot
 import entkt.codegen.lifecycleValueSnapshot
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.anonymousType
+import entkt.codegen.kotlinpoet.classType
+import entkt.codegen.kotlinpoet.codeBlock
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.getter
+import entkt.codegen.kotlinpoet.interfaceType
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.primaryConstructor
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.setter
+import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.HelperEligibleM2M
 import entkt.codegen.metadata.helperEligibleM2MEdges
@@ -83,6 +96,15 @@ private val CREATE_MUTATION_REPOSITORY =
 private val ENTITY_MAPPING = ClassName("entkt.runtime.entity", "EntityMapping")
 private val SNAPSHOT_EDGE_CHANGES =
     MemberName("entkt.runtime.mutation", "snapshotEdgeChangesForInternalUse")
+private val hookPhases = listOf(
+    "beforeSave",
+    "beforeCreate",
+    "afterCreate",
+    "beforeUpdate",
+    "afterUpdate",
+    "beforeDelete",
+    "afterDelete",
+)
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -153,13 +175,13 @@ internal class RepoGenerator(
         fun mutableHookList(hookType: com.squareup.kotlinpoet.TypeName) =
             MUTABLE_LIST.parameterizedBy(hookType)
 
-        val typeSpec = TypeSpec.classBuilder(className)
+        val typeSpec = classType(className) {
             // The repo is the entity's read surface: query terminals reach
             // `hasLoadPrivacy()` / `loadDenials(...)` through the
             // EntReadRuntime contract's `${prop}: ${Entity}ReadSurface`
             // accessor, which EntClient overrides with this repo.
-            .addSuperinterface(ClassName(packageName, "${schemaName}ReadSurface"))
-            .addSuperinterface(
+            addSuperinterface(ClassName(packageName, "${schemaName}ReadSurface"))
+            addSuperinterface(
                 CREATE_MUTATION_SPEC.parameterizedBy(
                     createDraftClass,
                     mutationClass,
@@ -168,83 +190,65 @@ internal class RepoGenerator(
                     entityClass,
                 ),
             )
-            .addSuperinterface(
+            addSuperinterface(
                 CREATE_MUTATION_REPOSITORY.parameterizedBy(createDraftClass, entityClass),
             )
-            .primaryConstructor(
-                FunSpec.constructorBuilder()
-                    .addParameter("driver", DRIVER)
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder("driver", DRIVER)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("driver")
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder("entity", ENTITY_MAPPING.parameterizedBy(entityClass))
-                    .addAnnotation(ENTKT_INTERNAL)
-                    .addModifiers(KModifier.OVERRIDE)
-                    .initializer("%T.GeneratedEntityMapping", queryClass)
-                    .build(),
-            )
+            primaryConstructor { parameter("driver", DRIVER) }
+            property("driver", DRIVER) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("driver")
+            }
+            property("entity", ENTITY_MAPPING.parameterizedBy(entityClass)) {
+                addAnnotation(ENTKT_INTERNAL)
+                addModifiers(KModifier.OVERRIDE)
+                initializer("%T.GeneratedEntityMapping", queryClass)
+            }
             // Client reference — attached by EntClient after construction.
             // Private so a repository exposed through EntTransactionClient
             // cannot leak its hidden full EntClient and restore the nested
             // transaction entry point.
-            .addProperty(
-                PropertySpec.builder("client", clientClass)
-                    .addModifiers(KModifier.PRIVATE, KModifier.LATEINIT)
-                    .mutable(true)
-                    .build()
-            )
-            .addFunction(
-                FunSpec.builder("attachClientForInternalUse")
-                    .addAnnotation(ENTKT_INTERNAL)
-                    .addModifiers(KModifier.INTERNAL)
-                    .addParameter("client", clientClass)
-                    .addStatement("this.client = client")
-                    .build()
-            )
+            property("client", clientClass) {
+                addModifiers(KModifier.PRIVATE, KModifier.LATEINIT)
+                mutable(true)
+            }
+            function("attachClientForInternalUse") {
+                addAnnotation(ENTKT_INTERNAL)
+                addModifiers(KModifier.INTERNAL)
+                parameter("client", clientClass)
+                statement("this.client = client")
+            }
             // Hook list properties
-            .addProperty(hookListProperty("beforeSaveHooks", mutableHookList(batchHookClass.parameterizedBy(mutationClass)), createSpecOverride = true))
-            .addProperty(hookListProperty("beforeCreateHooks", mutableHookList(beforeCreateHookType), createSpecOverride = true))
-            .addProperty(hookListProperty("afterCreateHooks", mutableHookList(afterCreateHookType), createSpecOverride = true))
-            .addProperty(hookListProperty("beforeUpdateHooks", mutableHookList(beforeUpdateHookType)))
-            .addProperty(hookListProperty("afterUpdateHooks", mutableHookList(afterUpdateHookType)))
-            .addProperty(hookListProperty("beforeDeleteHooks", mutableHookList(beforeDeleteHookType)))
-            .addProperty(hookListProperty("afterDeleteHooks", mutableHookList(afterDeleteHookType)))
+            addProperty(hookListProperty("beforeSaveHooks", mutableHookList(batchHookClass.parameterizedBy(mutationClass)), createSpecOverride = true))
+            addProperty(hookListProperty("beforeCreateHooks", mutableHookList(beforeCreateHookType), createSpecOverride = true))
+            addProperty(hookListProperty("afterCreateHooks", mutableHookList(afterCreateHookType), createSpecOverride = true))
+            addProperty(hookListProperty("beforeUpdateHooks", mutableHookList(beforeUpdateHookType)))
+            addProperty(hookListProperty("afterUpdateHooks", mutableHookList(afterUpdateHookType)))
+            addProperty(hookListProperty("beforeDeleteHooks", mutableHookList(beforeDeleteHookType)))
+            addProperty(hookListProperty("afterDeleteHooks", mutableHookList(afterDeleteHookType)))
             // Privacy config
-            .addProperty(
-                PropertySpec.builder("privacyConfig", privacyConfigClass)
-                    .addModifiers(KModifier.INTERNAL)
-                    .initializer("%T()", privacyConfigClass)
-                    .build()
-            )
+            property("privacyConfig", privacyConfigClass) {
+                addModifiers(KModifier.INTERNAL)
+                initializer("%T()", privacyConfigClass)
+            }
             // Validation config
-            .addProperty(
-                PropertySpec.builder("validationConfig", validationConfigClass)
-                    .addModifiers(KModifier.INTERNAL)
-                    .initializer("%T()", validationConfigClass)
-                    .build()
-            )
-            .addInitializerBlock(
+            property("validationConfig", validationConfigClass) {
+                addModifiers(KModifier.INTERNAL)
+                initializer("%T()", validationConfigClass)
+            }
+            addInitializerBlock(
                 CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
             )
-            .addFunction(buildQueryEntry(queryClass, clientRef = "client"))
+            addFunction(buildQueryEntry(queryClass, clientRef = "client"))
             // Index-helper namespace. Emitted only when the schema has at
             // least one eligible index (matching the conditional
             // `${schemaName}Indexes` file).
-            .also { builder ->
-                if (indexHelperTree(schema, schemaNames) != null) {
-                    builder.addProperty(buildIndexesProperty(indexesClass, clientRef = "client"))
-                }
+            if (indexHelperTree(schema, schemaNames) != null) {
+                addProperty(buildIndexesProperty(indexesClass, clientRef = "client"))
             }
-            .addFunction(buildRepoCreate(schema, entityClass, createDraftClass, createLambda))
-            .addFunction(buildSaveCreation(createDraftClass))
-            .addFunction(buildSaveAndLoadCreation(createDraftClass, entityClass))
-            .addFunction(
+            addFunction(buildRepoCreate(schema, entityClass, createDraftClass, createLambda))
+            addFunction(buildSaveCreation(createDraftClass))
+            addFunction(buildSaveAndLoadCreation(createDraftClass, entityClass))
+            addFunction(
                 buildBeforeSaveHookValue(
                     createDraftClass,
                     mutationClass,
@@ -252,7 +256,7 @@ internal class RepoGenerator(
                     edgeFks.filter { !it.immutable },
                 ),
             )
-            .addFunction(
+            addFunction(
                 buildBeforeCreateHookValue(
                     createDraftClass,
                     createHookCtxClass,
@@ -261,75 +265,66 @@ internal class RepoGenerator(
                     edgeFks,
                 ),
             )
-            .addFunction(CreateGenerator(packageName).buildResolveFunction(schemaName, schema, schemaNames))
-            .addFunction(
+            addFunction(CreateGenerator(packageName).buildResolveFunction(schemaName, schema, schemaNames))
                 // Per-save UpdateConsistency override (transaction locking). Defaults
                 // to the client's `defaultUpdateConsistency` so callers
                 // who don't pass `consistency =` get the configured
                 // baseline (`ReadCurrent` unless the EntClientConfig
                 // sets otherwise).
-                FunSpec.builder("update")
-                    .addParameter("id", idType)
-                    .addParameter(
-                        ParameterSpec.builder("consistency", UPDATE_CONSISTENCY)
-                            .defaultValue("client.defaultUpdateConsistency")
-                            .build(),
-                    )
+            function("update", updateClass) {
+                parameter("id", idType)
+                parameter("consistency", UPDATE_CONSISTENCY) {
+                    defaultValue("client.defaultUpdateConsistency")
+                }
                     // Per-save RelationshipLocking override.
                     // Defaults to the client's `defaultRelationshipLocking`
                     // (OwnerOnly unless the EntClientConfig sets otherwise).
-                    .addParameter(
-                        ParameterSpec.builder("relationshipLocking", RELATIONSHIP_LOCKING)
-                            .defaultValue("client.defaultRelationshipLocking")
-                            .build(),
-                    )
-                    .addParameter("block", updateLambda)
-                    .returns(updateClass)
-                    .addStatement(
+                parameter("relationshipLocking", RELATIONSHIP_LOCKING) {
+                    defaultValue("client.defaultRelationshipLocking")
+                }
+                parameter("block", updateLambda)
+                statement(
                         "return %T(driver, client, id, consistency, relationshipLocking, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
                         updateClass,
                     )
-                    .build()
-            )
-            .addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "client"))
-            .addFunction(buildDelete(schemaName, entityClass))
-            .addFunction(buildDeleteLoaded(schemaName, entityClass))
-            .addFunction(buildDeleteById(schemaName, entityClass, idType))
-            .also { builder ->
-                if (idStrategyName(schema) != "EXPLICIT") {
-                    builder.addType(buildCreateManyDisclosureType(entityClass))
-                    builder.addFunction(
+            }
+            addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "client"))
+            addFunction(buildDelete(schemaName, entityClass))
+            addFunction(buildDeleteLoaded(schemaName, entityClass))
+            addFunction(buildDeleteById(schemaName, entityClass, idType))
+            if (idStrategyName(schema) != "EXPLICIT") {
+                    addType(buildCreateManyDisclosureType(entityClass))
+                    addFunction(
                         buildExecuteCreateManyWritePhases(
                             schemaName = schemaName,
                             entityClass = entityClass,
                             createLambda = createLambda,
                         ),
                     )
-                    builder.addFunction(buildCreateMany(schemaName, schema.clientName, entityClass, createLambda))
-                }
+                    addFunction(buildCreateMany(schemaName, schema.clientName, entityClass, createLambda))
             }
-            .addFunction(buildExecuteDeleteManyPhases(schemaName, entityClass))
-            .addFunction(buildDeleteMany(schemaName, schema.clientName, entityClass))
-            .addFunction(
+            addFunction(buildExecuteDeleteManyPhases(schemaName, entityClass))
+            addFunction(buildDeleteMany(schemaName, schema.clientName, entityClass))
+            addFunction(
                 buildClassifyDriverFailureHelper(
                     schemaName,
                     "DELETE",
                     helperName = "_classifyDeleteDriverFailure",
                 ),
             )
-            .addFunction(buildApplyHooks(entityHooksClass))
-            .addFunction(buildCopyHooksFrom(repoClass))
-            .addFunction(buildApplyPrivacy(privacyConfigClass))
-            .addFunction(buildCopyPrivacyFrom(repoClass))
-            .addFunction(buildHasPrivacy("hasLoadPrivacy", readSurfaceOverride = true))
-            .addFunction(buildHasPrivacy("hasCreatePrivacy"))
-            .addFunction(buildHasPrivacy("hasUpdatePrivacy"))
-            .addFunction(buildHasPrivacy("hasDeletePrivacy"))
-            .addFunction(buildLoadDenials(schemaName, entityClass, loadItemClass, fields))
-            .addFunction(buildLoadDenialOrNull(entityClass))
-            .addFunction(buildCreateDenialReasons(schemaName, candidateClass, fields))
-            .addFunction(buildCreateDenialReasonOrNull(candidateClass))
-            .addFunction(
+            addFunction(buildApplyHooks(entityHooksClass))
+            addFunction(buildCopyHooksFrom(repoClass))
+            addFunction(buildApplyPrivacy(privacyConfigClass))
+            addFunction(buildCopyPrivacyFrom(repoClass))
+            addFunction(buildHasPrivacy("hasLoadPrivacy", readSurfaceOverride = true))
+            addFunction(buildHasPrivacy("hasCreatePrivacy"))
+            addFunction(buildHasPrivacy("hasUpdatePrivacy"))
+            addFunction(buildHasPrivacy("hasDeletePrivacy"))
+            addFunction(buildLoadDenials(schemaName, entityClass, loadItemClass, fields))
+            addFunction(buildLoadDenialOrNull(entityClass))
+            addFunction(buildCreateDenialReasons(schemaName, candidateClass, fields))
+            addFunction(buildCreateDenialReasonOrNull(candidateClass))
+            addFunction(
                 buildUpdateDenialReasonOrNull(
                     schemaName,
                     entityClass,
@@ -338,14 +333,14 @@ internal class RepoGenerator(
                     helperEligibleEdges,
                 ),
             )
-            .addFunction(buildDeleteDenialReasons(schemaName, entityClass, candidateClass, fields))
-            .addFunction(buildDeleteDenialReasonOrNull(entityClass, candidateClass))
-            .addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
-            .addFunction(buildApplyValidation(validationConfigClass))
-            .addFunction(buildCopyValidationFrom(repoClass))
-            .addFunction(buildEvaluateCreateValidations(schemaName, candidateClass, fields))
-            .addFunction(buildEvaluateCreateValidation(candidateClass))
-            .addFunction(
+            addFunction(buildDeleteDenialReasons(schemaName, entityClass, candidateClass, fields))
+            addFunction(buildDeleteDenialReasonOrNull(entityClass, candidateClass))
+            addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
+            addFunction(buildApplyValidation(validationConfigClass))
+            addFunction(buildCopyValidationFrom(repoClass))
+            addFunction(buildEvaluateCreateValidations(schemaName, candidateClass, fields))
+            addFunction(buildEvaluateCreateValidation(candidateClass))
+            addFunction(
                 buildEvaluateUpdateValidation(
                     schemaName,
                     entityClass,
@@ -354,23 +349,21 @@ internal class RepoGenerator(
                     helperEligibleEdges,
                 ),
             )
-            .addFunction(buildEvaluateDeleteValidations(schemaName, entityClass, candidateClass, fields))
-            .addFunction(buildEvaluateDeleteValidation(entityClass, candidateClass))
-            .build()
+            addFunction(buildEvaluateDeleteValidations(schemaName, entityClass, candidateClass, fields))
+            addFunction(buildEvaluateDeleteValidation(entityClass, candidateClass))
+        }
 
         // The repo class implements the `@EntktInternal`-guarded
         // `${schemaName}ReadSurface`; the file-level OptIn consumes the
         // requirement at the declaration site without propagating it to
         // application code using the repo.
-        return FileSpec.builder(packageName, className)
-            .addAnnotation(
-                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
-                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
-                    .addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
-                    .build()
-            )
-            .addType(typeSpec)
-            .build()
+        return kotlinFile(packageName, className) {
+            addAnnotation(annotation(ClassName("kotlin", "OptIn")) {
+                useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
+            })
+            addType(typeSpec)
+        }
     }
 
     /**
@@ -380,10 +373,9 @@ internal class RepoGenerator(
      */
     private fun buildDelete(schemaName: String, entityClass: ClassName): FunSpec {
         val resultType = MUTATION_RESULT.parameterizedBy(UNIT)
-        return FunSpec.builder("delete")
-            .addParameter("entity", entityClass)
-            .returns(resultType)
-            .addKdoc(
+        return function("delete", resultType) {
+            parameter("entity", entityClass)
+            addKdoc(
                 "Delete [entity]'s row. The passed entity is an **id handle\n" +
                     "only**: the current row is reloaded (bypassing LOAD privacy — the\n" +
                     "delete-side privacy rule is the authoritative check) and DELETE\n" +
@@ -398,9 +390,8 @@ internal class RepoGenerator(
                     "rolled back. There is no `orNull()` projection — project with\n" +
                     "`getOrThrow()` or match on the result.",
             )
-            .addCode(
-                CodeBlock.builder()
-                    .add("return try {\n")
+            addCode(codeBlock {
+                    add("return try {\n")
                     .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
                     .add("  val row = try {\n")
                     .add("    driver.byId(%T.TABLE, entity.id)\n", entityClass)
@@ -419,9 +410,8 @@ internal class RepoGenerator(
                     .add("    }\n")
                     .add("  }\n")
                     .add(terminalBoundaryTailExpression())
-                    .build(),
-            )
-            .build()
+            })
+        }
     }
 
     /**
@@ -452,13 +442,14 @@ internal class RepoGenerator(
         schemaName: String,
         entityClass: ClassName,
     ): FunSpec {
-        return FunSpec.builder("deleteLoaded")
-            .addModifiers(KModifier.PRIVATE)
-            .addParameter("entity", entityClass)
-            .returns(MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName()))
-            .addCode(
-                CodeBlock.builder()
-                    .add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
+        return function(
+            "deleteLoaded",
+            MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName()),
+        ) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("entity", entityClass)
+            addCode(codeBlock {
+                    add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
                     .add("try {\n")
                     // Posture snapshot inside the terminal boundary —
                     // see CreateGenerator.
@@ -516,9 +507,8 @@ internal class RepoGenerator(
                         ).indented(),
                     )
                     .add("}\n")
-                    .build(),
-            )
-            .build()
+            })
+        }
     }
 
     /**
@@ -531,10 +521,9 @@ internal class RepoGenerator(
         idType: com.squareup.kotlinpoet.TypeName,
     ): FunSpec {
         val resultType = MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName())
-        return FunSpec.builder("deleteById")
-            .addParameter("id", idType)
-            .returns(resultType)
-            .addKdoc(
+        return function("deleteById", resultType) {
+            parameter("id", idType)
+            addKdoc(
                 "Delete the row with [id] through the same reload-then-delete\n" +
                     "pipeline as [delete], preserving the affected-row signal:\n" +
                     "`Success(true)` only when this call deleted the row,\n" +
@@ -549,9 +538,8 @@ internal class RepoGenerator(
                     "rolled back. There is no `orNull()` projection — project with\n" +
                     "`getOrThrow()` or match on the result.",
             )
-            .addCode(
-                CodeBlock.builder()
-                    .add("return try {\n")
+            addCode(codeBlock {
+                    add("return try {\n")
                     .add("  client.checkTransactionRequirement(%S)\n", "$schemaName delete")
                     .add("  val row = try {\n")
                     .add("    driver.byId(%T.TABLE, id)\n", entityClass)
@@ -567,9 +555,8 @@ internal class RepoGenerator(
                     .add("    deleteLoaded(%T.fromRow(row))\n", entityClass)
                     .add("  }\n")
                     .add(terminalBoundaryTailExpression())
-                    .build(),
-            )
-            .build()
+            })
+        }
     }
 
     /** Execute the phase-major delete-many pipeline on a transaction-scoped repo. */
@@ -579,14 +566,12 @@ internal class RepoGenerator(
     ): FunSpec {
         val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
         val predicateType = PREDICATE.parameterizedBy(entityClass)
-        return FunSpec.builder("_executeDeleteManyPhases")
-            .addModifiers(KModifier.PRIVATE)
-            .addParameter("predicates", LIST.parameterizedBy(predicateType))
-            .addParameter("promoteDriverNotPersisted", BOOLEAN)
-            .returns(MUTATION_RESULT.parameterizedBy(INT))
-            .addCode(
-                CodeBlock.builder()
-                    .add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
+        return function("_executeDeleteManyPhases", MUTATION_RESULT.parameterizedBy(INT)) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("predicates", LIST.parameterizedBy(predicateType))
+            parameter("promoteDriverNotPersisted", BOOLEAN)
+            addCode(codeBlock {
+                    add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
                     .add("try {\n")
                     .add("  check(driver.inTransaction) { %S }\n", "deleteMany phases require a transaction-scoped driver")
                     .add(
@@ -689,9 +674,8 @@ internal class RepoGenerator(
                         ).indented(),
                     )
                     .add("}\n")
-                    .build(),
-            )
-            .build()
+            })
+        }
     }
 
     /**
@@ -710,18 +694,16 @@ internal class RepoGenerator(
     ): FunSpec {
         val repoPropName = clientName
         val resultType = MUTATION_RESULT.parameterizedBy(INT)
-        return FunSpec.builder("deleteMany")
-            .addParameter(
+        return function("deleteMany", resultType) {
+            parameter(
                 // vararg predicates: Predicate<EntityClass> — typed in
                 // the entity scope so callers can only pass predicates
                 // for this repo's entity, matching the rest of the
                 // typed query DSL surface.
-                ParameterSpec.builder("predicates", PREDICATE.parameterizedBy(entityClass))
-                    .addModifiers(KModifier.VARARG)
-                    .build(),
-            )
-            .returns(resultType)
-            .addKdoc(
+                "predicates",
+                PREDICATE.parameterizedBy(entityClass),
+            ) { addModifiers(KModifier.VARARG) }
+            addKdoc(
                 "Atomically delete every row matching [predicates].\n" +
                     "`Success(n)` is the number of rows removed; the whole operation\n" +
                     "shares one transaction (the caller's, or an EntKt-owned one), so\n" +
@@ -737,9 +719,8 @@ internal class RepoGenerator(
                     "implying an immediate rollback. There is no `orNull()`\n" +
                     "projection — project with `getOrThrow()` or match on the result.",
             )
-            .addCode(
-                CodeBlock.builder()
-                    .add("return try {\n")
+            addCode(codeBlock {
+                    add("return try {\n")
                     .add(
                         "  client.checkTransactionRequirement(%S, multiWrite = true)\n",
                         "$schemaName deleteMany",
@@ -763,9 +744,8 @@ internal class RepoGenerator(
                     .add("    }\n")
                     .add("  }\n")
                     .add(terminalBoundaryTailExpression())
-                    .build(),
-            )
-            .build()
+            })
+        }
     }
 
     /**
@@ -788,8 +768,8 @@ internal class RepoGenerator(
      * transaction) but keeps every Failed construction site uniform.
      */
     private fun txFailureConversion(): CodeBlock =
-        CodeBlock.builder()
-            .add("val stored = txResult.exception\n")
+        codeBlock {
+            add("val stored = txResult.exception\n")
             .add(
                 "val exception = if (txResult.transactionState == %T.OutcomeUnknown) {\n",
                 TRANSACTION_FAILURE_STATE,
@@ -813,7 +793,7 @@ internal class RepoGenerator(
             .add("}\n")
             .add("client.recordTransactionMutationFailure(exception)\n")
             .add("%T.failedForInternalUse(exception)\n", MUTATION_RESULT)
-            .build()
+        }
 
     /**
      * Create-many returned LOAD failures normally become `Committed` after a
@@ -826,8 +806,8 @@ internal class RepoGenerator(
      * unknown transaction outcome always stays primary.
      */
     private fun createManyTxFailureConversion(schemaName: String): CodeBlock =
-        CodeBlock.builder()
-            .add("val stored = txResult.exception\n")
+        codeBlock {
+            add("val stored = txResult.exception\n")
             .add("val disclosure = disclosureFailure\n")
             .add("val denial = disclosureDenial\n")
             .add(
@@ -915,7 +895,7 @@ internal class RepoGenerator(
             .add("}\n")
             .add("client.recordTransactionMutationFailure(exception)\n")
             .add("%T.failedForInternalUse(exception)\n", MUTATION_RESULT)
-            .build()
+        }
 
     /**
      * The expression-style terminal capture boundary shared by the
@@ -927,8 +907,8 @@ internal class RepoGenerator(
      * opened by the caller.
      */
     private fun terminalBoundaryTailExpression(): CodeBlock =
-        CodeBlock.builder()
-            .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+        codeBlock {
+            add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
             .add("  throw e\n")
             .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
             .add(
@@ -938,31 +918,31 @@ internal class RepoGenerator(
             .add("  client.recordTransactionMutationFailure(exception)\n")
             .add("  %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
             .add("}\n")
-            .build()
+        }
 
     private fun buildApplyPrivacy(privacyConfigClass: ClassName): FunSpec =
-        FunSpec.builder("applyPrivacy")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("config", privacyConfigClass)
-            .addStatement("privacyConfig.loadRules.addAll(config.loadRules)")
-            .addStatement("privacyConfig.createRules.addAll(config.createRules)")
-            .addStatement("privacyConfig.updateRules.addAll(config.updateRules)")
-            .addStatement("privacyConfig.deleteRules.addAll(config.deleteRules)")
-            .addStatement("if (config.updateDerivesFromCreate) privacyConfig.updateDerivesFromCreate = true")
-            .addStatement("if (config.deleteDerivesFromCreate) privacyConfig.deleteDerivesFromCreate = true")
-            .build()
+        function("applyPrivacy") {
+            addModifiers(KModifier.INTERNAL)
+            parameter("config", privacyConfigClass)
+            statement("privacyConfig.loadRules.addAll(config.loadRules)")
+            statement("privacyConfig.createRules.addAll(config.createRules)")
+            statement("privacyConfig.updateRules.addAll(config.updateRules)")
+            statement("privacyConfig.deleteRules.addAll(config.deleteRules)")
+            statement("if (config.updateDerivesFromCreate) privacyConfig.updateDerivesFromCreate = true")
+            statement("if (config.deleteDerivesFromCreate) privacyConfig.deleteDerivesFromCreate = true")
+        }
 
     private fun buildCopyPrivacyFrom(repoClass: ClassName): FunSpec =
-        FunSpec.builder("copyPrivacyFrom")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("other", repoClass)
-            .addStatement("privacyConfig.loadRules.addAll(other.privacyConfig.loadRules)")
-            .addStatement("privacyConfig.createRules.addAll(other.privacyConfig.createRules)")
-            .addStatement("privacyConfig.updateRules.addAll(other.privacyConfig.updateRules)")
-            .addStatement("privacyConfig.deleteRules.addAll(other.privacyConfig.deleteRules)")
-            .addStatement("privacyConfig.updateDerivesFromCreate = other.privacyConfig.updateDerivesFromCreate")
-            .addStatement("privacyConfig.deleteDerivesFromCreate = other.privacyConfig.deleteDerivesFromCreate")
-            .build()
+        function("copyPrivacyFrom") {
+            addModifiers(KModifier.INTERNAL)
+            parameter("other", repoClass)
+            statement("privacyConfig.loadRules.addAll(other.privacyConfig.loadRules)")
+            statement("privacyConfig.createRules.addAll(other.privacyConfig.createRules)")
+            statement("privacyConfig.updateRules.addAll(other.privacyConfig.updateRules)")
+            statement("privacyConfig.deleteRules.addAll(other.privacyConfig.deleteRules)")
+            statement("privacyConfig.updateDerivesFromCreate = other.privacyConfig.updateDerivesFromCreate")
+            statement("privacyConfig.deleteDerivesFromCreate = other.privacyConfig.deleteDerivesFromCreate")
+        }
 
     // Privacy is fail-closed: every operation requires an explicit Allow, so
     // every entity is privacy-enforced regardless of which rules are declared.
@@ -973,11 +953,10 @@ internal class RepoGenerator(
     // `${Entity}ReadSurface` (public — interface members can't be
     // internal); the write-side flags stay internal.
     private fun buildHasPrivacy(name: String, readSurfaceOverride: Boolean = false): FunSpec =
-        FunSpec.builder(name)
-            .addModifiers(if (readSurfaceOverride) KModifier.OVERRIDE else KModifier.INTERNAL)
-            .returns(Boolean::class)
-            .addStatement("return true")
-            .build()
+        function(name, Boolean::class.asClassName()) {
+            addModifiers(if (readSurfaceOverride) KModifier.OVERRIDE else KModifier.INTERNAL)
+            statement("return true")
+        }
 
     private fun buildLoadDenials(
         schemaName: String,
@@ -995,13 +974,12 @@ internal class RepoGenerator(
         // distinguishable from a rule-THROWN exception: the former
         // becomes a typed PrivacyDenial here, the latter escapes to the
         // terminal's capture boundary as an operational failure.
-        return FunSpec.builder("loadDenials")
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("privacy", PRIVACY_CONTEXT)
-            .addParameter("entities", LIST.parameterizedBy(entityClass))
-            .returns(LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)))
-            .addCode(CodeBlock.builder()
-                .addStatement("if (entities.isEmpty()) return emptyList()")
+        return function("loadDenials", LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true))) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("entities", LIST.parameterizedBy(entityClass))
+            addCode(codeBlock {
+                addStatement("if (entities.isEmpty()) return emptyList()")
                 .addStatement("val entitySnapshot = entities.toList()")
                 .addStatement(
                     "if (privacy.viewer is %T.PrivacyBypass) return %T(entitySnapshot.size) { null }",
@@ -1034,19 +1012,17 @@ internal class RepoGenerator(
                 )
                 .endControlFlow()
                 .endControlFlow()
-                .build()
-            )
-            .build()
+            })
+        }
     }
 
     private fun buildLoadDenialOrNull(entityClass: ClassName): FunSpec =
-        FunSpec.builder("loadDenialOrNull")
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("privacy", PRIVACY_CONTEXT)
-            .addParameter("entity", entityClass)
-            .returns(PRIVACY_DENIAL.copy(nullable = true))
-            .addStatement("return loadDenials(privacy, listOf(entity)).single()")
-            .build()
+        function("loadDenialOrNull", PRIVACY_DENIAL.copy(nullable = true)) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("entity", entityClass)
+            statement("return loadDenials(privacy, listOf(entity)).single()")
+        }
 
     // ── Write-side privacy evaluators ─────────────────────────────
     // DECISION-RETURNING (String? denial reason; null = allowed), so
@@ -1066,14 +1042,16 @@ internal class RepoGenerator(
     ): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         val createItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
-        return FunSpec.builder("createDenialReasons")
-            .addAnnotation(ENTKT_INTERNAL)
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("privacy", PRIVACY_CONTEXT)
-            .addParameter("candidates", LIST.parameterizedBy(candidateClass))
-            .returns(LIST.parameterizedBy(String::class.asClassName().copy(nullable = true)))
-            .addCode(CodeBlock.builder()
-                .addStatement("if (candidates.isEmpty()) return emptyList()")
+        return function(
+            "createDenialReasons",
+            LIST.parameterizedBy(String::class.asClassName().copy(nullable = true)),
+        ) {
+            addAnnotation(ENTKT_INTERNAL)
+            addModifiers(KModifier.OVERRIDE)
+            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("candidates", LIST.parameterizedBy(candidateClass))
+            addCode(codeBlock {
+                addStatement("if (candidates.isEmpty()) return emptyList()")
                 .addStatement("val candidateSnapshot = candidates.toList()")
                 .addStatement(
                     "if (privacy.viewer is %T.PrivacyBypass) return %T(candidateSnapshot.size) { null }",
@@ -1099,19 +1077,17 @@ internal class RepoGenerator(
                 .addStatement("is %T.Continue -> %S", PRIVACY_DECISION, "no create rule allowed access")
                 .endControlFlow()
                 .endControlFlow()
-                .build()
-            )
-            .build()
+            })
+        }
     }
 
     private fun buildCreateDenialReasonOrNull(candidateClass: ClassName): FunSpec =
-        FunSpec.builder("createDenialReasonOrNull")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("privacy", PRIVACY_CONTEXT)
-            .addParameter("candidate", candidateClass)
-            .returns(String::class.asClassName().copy(nullable = true))
-            .addStatement("return createDenialReasons(privacy, listOf(candidate)).single()")
-            .build()
+        function("createDenialReasonOrNull", String::class.asClassName().copy(nullable = true)) {
+            addModifiers(KModifier.INTERNAL)
+            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("candidate", candidateClass)
+            statement("return createDenialReasons(privacy, listOf(candidate)).single()")
+        }
 
     /**
      * Build a fresh per-rule edge-change sidecar. A Kotlin `Set` is only
@@ -1124,9 +1100,8 @@ internal class RepoGenerator(
     ): CodeBlock {
         if (helperEligibleEdges.isEmpty()) return CodeBlock.of("%L", source)
 
-        return CodeBlock.builder()
-            .add("%L.copy(\n", source)
-            .apply {
+        return codeBlock {
+            add("%L.copy(\n", source)
                 for (edge in helperEligibleEdges) {
                     add(
                         "  %L = %M(%L.%L),\n",
@@ -1136,9 +1111,8 @@ internal class RepoGenerator(
                         edge.mutatorPropertyName,
                     )
                 }
-            }
-            .add(")")
-            .build()
+            add(")")
+        }
     }
 
     private fun buildUpdateDenialReasonOrNull(
@@ -1152,17 +1126,16 @@ internal class RepoGenerator(
         val createItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
-        return FunSpec.builder("updateDenialReasonOrNull")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("privacy", PRIVACY_CONTEXT)
-            .addParameter("before", entityClass)
-            .addParameter("requestedPatch", patchClass)
-            .addParameter("effectivePatch", patchClass)
-            .addParameter("candidate", candidateClass)
-            .addParameter("edgeChanges", edgeChangesViewClass)
-            .returns(String::class.asClassName().copy(nullable = true))
-            .addCode(CodeBlock.builder()
-                .addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
+        return function("updateDenialReasonOrNull", String::class.asClassName().copy(nullable = true)) {
+            addModifiers(KModifier.INTERNAL)
+            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("before", entityClass)
+            parameter("requestedPatch", patchClass)
+            parameter("effectivePatch", patchClass)
+            parameter("candidate", candidateClass)
+            parameter("edgeChanges", edgeChangesViewClass)
+            addCode(codeBlock {
+                addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
                 .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
                 .addStatement("val ruleContext = %T(privacy, privacyClient)", PRIVACY_RULE_CONTEXT)
@@ -1198,9 +1171,8 @@ internal class RepoGenerator(
                 .addStatement("is %T.Deny -> decision.reason", PRIVACY_DECISION)
                 .addStatement("is %T.Continue -> %S", PRIVACY_DECISION, "no update rule allowed access")
                 .endControlFlow()
-                .build()
-            )
-            .build()
+            })
+        }
     }
 
     private fun buildDeleteDenialReasons(
@@ -1211,14 +1183,16 @@ internal class RepoGenerator(
     ): FunSpec {
         val deleteItemClass = ClassName(packageName, "${schemaName}DeletePrivacyItem")
         val createItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
-        return FunSpec.builder("deleteDenialReasons")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("privacy", PRIVACY_CONTEXT)
-            .addParameter("entities", LIST.parameterizedBy(entityClass))
-            .addParameter("candidates", LIST.parameterizedBy(candidateClass))
-            .returns(LIST.parameterizedBy(String::class.asClassName().copy(nullable = true)))
-            .addCode(CodeBlock.builder()
-                .addStatement("require(entities.size == candidates.size) { %S }", "DELETE entity/candidate count mismatch")
+        return function(
+            "deleteDenialReasons",
+            LIST.parameterizedBy(String::class.asClassName().copy(nullable = true)),
+        ) {
+            addModifiers(KModifier.INTERNAL)
+            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("entities", LIST.parameterizedBy(entityClass))
+            parameter("candidates", LIST.parameterizedBy(candidateClass))
+            addCode(codeBlock {
+                addStatement("require(entities.size == candidates.size) { %S }", "DELETE entity/candidate count mismatch")
                 .addStatement("if (entities.isEmpty()) return emptyList()")
                 .addStatement("val entitySnapshot = entities.toList()")
                 .addStatement("val candidateSnapshot = candidates.toList()")
@@ -1267,24 +1241,22 @@ internal class RepoGenerator(
                 .addStatement("is %T.Continue -> %S", PRIVACY_DECISION, "no delete rule allowed access")
                 .endControlFlow()
                 .endControlFlow()
-                .build()
-            )
-            .build()
+            })
+        }
     }
 
     private fun buildDeleteDenialReasonOrNull(
         entityClass: ClassName,
         candidateClass: ClassName,
-    ): FunSpec = FunSpec.builder("deleteDenialReasonOrNull")
-        .addModifiers(KModifier.INTERNAL)
-        .addParameter("privacy", PRIVACY_CONTEXT)
-        .addParameter("entity", entityClass)
-        .addParameter("candidate", candidateClass)
-        .returns(String::class.asClassName().copy(nullable = true))
-        .addStatement(
+    ): FunSpec = function("deleteDenialReasonOrNull", String::class.asClassName().copy(nullable = true)) {
+        addModifiers(KModifier.INTERNAL)
+        parameter("privacy", PRIVACY_CONTEXT)
+        parameter("entity", entityClass)
+        parameter("candidate", candidateClass)
+        statement(
             "return deleteDenialReasons(privacy, listOf(entity), listOf(candidate)).single()",
         )
-        .build()
+    }
 
     private fun buildBuildDeleteCandidate(
         schemaName: String,
@@ -1295,23 +1267,22 @@ internal class RepoGenerator(
     ): FunSpec {
         val fields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
-        val body = CodeBlock.builder()
-        body.add("return %T(\n", candidateClass)
-        for (field in fields) {
-            val propName = field.apiName
-            body.add("  %L = entity.%L,\n", propName, propName)
+        val body = codeBlock {
+            add("return %T(\n", candidateClass)
+            for (field in fields) {
+                add("  %L = entity.%L,\n", field.apiName, field.apiName)
+            }
+            for (fk in edgeFks) {
+                add("  %L = entity.%L,\n", fk.propertyName, fk.propertyName)
+            }
+            add(")\n")
         }
-        for (fk in edgeFks) {
-            body.add("  %L = entity.%L,\n", fk.propertyName, fk.propertyName)
-        }
-        body.add(")\n")
 
-        return FunSpec.builder("buildDeleteCandidate")
-            .addModifiers(KModifier.PRIVATE)
-            .addParameter("entity", entityClass)
-            .returns(candidateClass)
-            .addCode(body.build())
-            .build()
+        return function("buildDeleteCandidate", candidateClass) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("entity", entityClass)
+            addCode(body)
+        }
     }
 
     private fun buildRepoCreate(
@@ -1321,27 +1292,24 @@ internal class RepoGenerator(
         createLambda: LambdaTypeName,
     ): FunSpec {
         val idStrategy = idStrategyName(schema)
-        val builder = FunSpec.builder("create")
-        if (idStrategy == "EXPLICIT") {
-            builder.addParameter("id", schema.id().type.toTypeName())
+        return function("create", CREATE_MUTATION.parameterizedBy(createDraftClass, entityClass)) {
+            if (idStrategy == "EXPLICIT") {
+                parameter("id", schema.id().type.toTypeName())
+            }
+            parameter("block", createLambda)
+            val createArgs = if (idStrategy == "EXPLICIT") "id = id" else ""
+            statement("val draft = %T($createArgs).apply(block)", createDraftClass)
+            statement("return %T(draft, this)", CREATE_MUTATION)
         }
-        builder.addParameter("block", createLambda)
-            .returns(CREATE_MUTATION.parameterizedBy(createDraftClass, entityClass))
-        val createArgs = if (idStrategy == "EXPLICIT") "id = id" else ""
-        builder.addStatement("val draft = %T($createArgs).apply(block)", createDraftClass)
-        builder.addStatement("return %T(draft, this)", CREATE_MUTATION)
-        return builder.build()
     }
 
     private fun buildSaveCreation(createDraftClass: ClassName): FunSpec =
-        FunSpec.builder("saveCreation")
-            .addAnnotation(ENTKT_INTERNAL)
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("draft", createDraftClass)
-            .returns(MUTATION_RESULT.parameterizedBy(UNIT))
-            .addCode(
-                CodeBlock.builder()
-                    .add("return when (val result = client.mutations.create(\n")
+        function("saveCreation", MUTATION_RESULT.parameterizedBy(UNIT)) {
+            addAnnotation(ENTKT_INTERNAL)
+            addModifiers(KModifier.OVERRIDE)
+            parameter("draft", createDraftClass)
+            addCode(codeBlock {
+                    add("return when (val result = client.mutations.create(\n")
                     .indent()
                     .add("draft = draft,\n")
                     .add("spec = this,\n")
@@ -1351,23 +1319,21 @@ internal class RepoGenerator(
                     .add("  is %T.Success -> %T.Success(Unit)\n", MUTATION_RESULT, MUTATION_RESULT)
                     .add("  is %T.Failed -> result\n", MUTATION_RESULT)
                     .add("}\n")
-                    .build(),
-            )
-            .build()
+            })
+        }
 
     private fun buildSaveAndLoadCreation(
         createDraftClass: ClassName,
         entityClass: ClassName,
     ): FunSpec =
-        FunSpec.builder("saveAndLoadCreation")
-            .addAnnotation(ENTKT_INTERNAL)
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("draft", createDraftClass)
-            .returns(MUTATION_RESULT.parameterizedBy(entityClass))
-            .addStatement(
+        function("saveAndLoadCreation", MUTATION_RESULT.parameterizedBy(entityClass)) {
+            addAnnotation(ENTKT_INTERNAL)
+            addModifiers(KModifier.OVERRIDE)
+            parameter("draft", createDraftClass)
+            statement(
                 "return client.mutations.create(draft, this, checkReturnedEntityPrivacy = true)",
             )
-            .build()
+        }
 
     private fun buildBeforeSaveHookValue(
         createDraftClass: ClassName,
@@ -1375,32 +1341,28 @@ internal class RepoGenerator(
         fields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): FunSpec {
-        val adapter = TypeSpec.anonymousClassBuilder()
-            .addSuperinterface(mutationClass)
-        fields.forEach { field ->
-            adapter.addProperty(
-                createDraftForwarder(
+        val adapter = anonymousType {
+            addSuperinterface(mutationClass)
+            fields.forEach { field ->
+                addProperty(createDraftForwarder(
                     field.apiName,
                     field.resolvedTypeName().copy(nullable = true),
-                ),
-            )
-        }
-        edgeFks.forEach { fk ->
-            adapter.addProperty(
-                createDraftForwarder(
+                ))
+            }
+            edgeFks.forEach { fk ->
+                addProperty(createDraftForwarder(
                     fk.propertyName,
                     fk.idType.toTypeName().copy(nullable = !fk.required),
                     required = fk.required,
-                ),
-            )
+                ))
+            }
         }
-        return FunSpec.builder("beforeSaveHookValue")
-            .addAnnotation(ENTKT_INTERNAL)
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("draft", createDraftClass)
-            .returns(mutationClass)
-            .addStatement("return %L", adapter.build())
-            .build()
+        return function("beforeSaveHookValue", mutationClass) {
+            addAnnotation(ENTKT_INTERNAL)
+            addModifiers(KModifier.OVERRIDE)
+            parameter("draft", createDraftClass)
+            statement("return %L", adapter)
+        }
     }
 
     private fun buildBeforeCreateHookValue(
@@ -1410,36 +1372,32 @@ internal class RepoGenerator(
         fields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): FunSpec {
-        val adapter = TypeSpec.anonymousClassBuilder()
-            .addSuperinterface(createMutationViewClass)
-        fields.forEach { field ->
-            adapter.addProperty(
-                createDraftForwarder(
+        val adapter = anonymousType {
+            addSuperinterface(createMutationViewClass)
+            fields.forEach { field ->
+                addProperty(createDraftForwarder(
                     field.apiName,
                     field.resolvedTypeName().copy(nullable = true),
-                ),
-            )
-        }
-        edgeFks.forEach { fk ->
-            adapter.addProperty(
-                createDraftForwarder(
+                ))
+            }
+            edgeFks.forEach { fk ->
+                addProperty(createDraftForwarder(
                     fk.propertyName,
                     fk.idType.toTypeName().copy(nullable = !fk.required),
                     required = fk.required,
-                ),
-            )
+                ))
+            }
         }
-        return FunSpec.builder("beforeCreateHookValue")
-            .addAnnotation(ENTKT_INTERNAL)
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("draft", createDraftClass)
-            .returns(createHookContextClass)
-            .addStatement(
+        return function("beforeCreateHookValue", createHookContextClass) {
+            addAnnotation(ENTKT_INTERNAL)
+            addModifiers(KModifier.OVERRIDE)
+            parameter("draft", createDraftClass)
+            statement(
                 "return %T(client.hookClientScopeForInternalUse, %L)",
                 createHookContextClass,
-                adapter.build(),
+                adapter,
             )
-            .build()
+        }
     }
 
     private fun createDraftForwarder(
@@ -1447,27 +1405,25 @@ internal class RepoGenerator(
         type: com.squareup.kotlinpoet.TypeName,
         required: Boolean = false,
     ): PropertySpec {
-        val getter = FunSpec.getterBuilder()
-        if (required) {
-            getter.addStatement(
-                "return draft.%L ?: throw IllegalStateException(%S)",
-                propertyName,
-                "$propertyName is required",
-            )
-        } else {
-            getter.addStatement("return draft.%L", propertyName)
+        return property(propertyName, type) {
+            addModifiers(KModifier.OVERRIDE)
+            mutable(true)
+            getter {
+                if (required) {
+                    statement(
+                        "return draft.%L ?: throw IllegalStateException(%S)",
+                        propertyName,
+                        "$propertyName is required",
+                    )
+                } else {
+                    statement("return draft.%L", propertyName)
+                }
+            }
+            setter {
+                parameter("value", type)
+                statement("draft.%L = value", propertyName)
+            }
         }
-        return PropertySpec.builder(propertyName, type)
-            .addModifiers(KModifier.OVERRIDE)
-            .mutable(true)
-            .getter(getter.build())
-            .setter(
-                FunSpec.setterBuilder()
-                    .addParameter("value", type)
-                    .addStatement("draft.%L = value", propertyName)
-                    .build(),
-            )
-            .build()
     }
 
     /**
@@ -1479,57 +1435,25 @@ internal class RepoGenerator(
     private fun buildCreateManyDisclosureType(entityClass: ClassName): TypeSpec {
         val repoClass = ClassName(packageName, "${entityClass.simpleName}Repo")
         val disclosureClass = repoClass.nestedClass("CreateManyDisclosure")
-        return TypeSpec.interfaceBuilder("CreateManyDisclosure")
-            .addModifiers(KModifier.PRIVATE, KModifier.SEALED)
-            .addType(
-                TypeSpec.classBuilder("Allowed")
-                    .addModifiers(KModifier.DATA)
-                    .primaryConstructor(
-                        FunSpec.constructorBuilder()
-                            .addParameter("entities", LIST.parameterizedBy(entityClass))
-                            .build(),
-                    )
-                    .addProperty(
-                        PropertySpec.builder("entities", LIST.parameterizedBy(entityClass))
-                            .initializer("entities")
-                            .build(),
-                    )
-                    .addSuperinterface(disclosureClass)
-                    .build(),
-            )
-            .addType(
-                TypeSpec.classBuilder("Denied")
-                    .addModifiers(KModifier.DATA)
-                    .primaryConstructor(
-                        FunSpec.constructorBuilder()
-                            .addParameter("denial", PRIVACY_DENIAL)
-                            .build(),
-                    )
-                    .addProperty(
-                        PropertySpec.builder("denial", PRIVACY_DENIAL)
-                            .initializer("denial")
-                            .build(),
-                    )
-                    .addSuperinterface(disclosureClass)
-                    .build(),
-            )
-            .addType(
-                TypeSpec.classBuilder("Failed")
-                    .addModifiers(KModifier.DATA)
-                    .primaryConstructor(
-                        FunSpec.constructorBuilder()
-                            .addParameter("exception", KOTLIN_EXCEPTION)
-                            .build(),
-                    )
-                    .addProperty(
-                        PropertySpec.builder("exception", KOTLIN_EXCEPTION)
-                            .initializer("exception")
-                            .build(),
-                    )
-                    .addSuperinterface(disclosureClass)
-                    .build(),
-            )
-            .build()
+        return interfaceType("CreateManyDisclosure") {
+            addModifiers(KModifier.PRIVATE, KModifier.SEALED)
+            addType(disclosureCase("Allowed", "entities", LIST.parameterizedBy(entityClass), disclosureClass))
+            addType(disclosureCase("Denied", "denial", PRIVACY_DENIAL, disclosureClass))
+            addType(disclosureCase("Failed", "exception", KOTLIN_EXCEPTION, disclosureClass))
+        }
+    }
+
+    /** One typed outcome in the private create-many disclosure protocol. */
+    private fun disclosureCase(
+        name: String,
+        propertyName: String,
+        propertyType: com.squareup.kotlinpoet.TypeName,
+        disclosureClass: ClassName,
+    ): TypeSpec = classType(name) {
+        addModifiers(KModifier.DATA)
+        addSuperinterface(disclosureClass)
+        primaryConstructor { parameter(propertyName, propertyType) }
+        property(propertyName, propertyType) { initializer(propertyName) }
     }
 
     /**
@@ -1544,14 +1468,15 @@ internal class RepoGenerator(
     ): FunSpec {
         val createDraftClass = ClassName(packageName, "${schemaName}CreateDraft")
         val completionType = CREATE_MUTATION_OUTPUT.parameterizedBy(entityClass)
-        return FunSpec.builder("_executeCreateManyWritePhases")
-            .addModifiers(KModifier.PRIVATE)
-            .addParameter("blocks", LIST.parameterizedBy(createLambda))
-            .addParameter("promoteDriverNotPersisted", BOOLEAN)
-            .returns(MUTATION_RESULT.parameterizedBy(completionType))
-            .addCode(
-                CodeBlock.builder()
-                    .add("try {\n")
+        return function(
+            "_executeCreateManyWritePhases",
+            MUTATION_RESULT.parameterizedBy(completionType),
+        ) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("blocks", LIST.parameterizedBy(createLambda))
+            parameter("promoteDriverNotPersisted", BOOLEAN)
+            addCode(codeBlock {
+                    add("try {\n")
                     .add("  check(driver.inTransaction) { %S }\n", "createMany write phases require a transaction-scoped driver")
                     .add("  val drafts = %T<%T>(blocks.size)\n", ArrayList::class, createDraftClass)
                     .add("  for (block in blocks) {\n")
@@ -1577,9 +1502,8 @@ internal class RepoGenerator(
                         ).indented(),
                     )
                     .add("}\n")
-                    .build(),
-            )
-            .build()
+            })
+        }
     }
 
     /**
@@ -1605,14 +1529,9 @@ internal class RepoGenerator(
         val repoClass = ClassName(packageName, "${schemaName}Repo")
         val disclosureClass = repoClass.nestedClass("CreateManyDisclosure")
         val resultType = MUTATION_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))
-        return FunSpec.builder("createMany")
-            .addParameter(
-                ParameterSpec.builder("blocks", createLambda)
-                    .addModifiers(KModifier.VARARG)
-                    .build(),
-            )
-            .returns(resultType)
-            .addKdoc(
+        return function("createMany", resultType) {
+            parameter("blocks", createLambda) { addModifiers(KModifier.VARARG) }
+            addKdoc(
                 "Atomically create one row per block. Lifecycle work is phase-major:\n" +
                     "all before-hooks, CREATE privacy, and validation finish before one\n" +
                     "set-based insert. `Success` carries the complete hydrated list in\n" +
@@ -1627,9 +1546,8 @@ internal class RepoGenerator(
                     "There is no `orNull()` projection — use `getOrThrow()` or match on\n" +
                     "the result.",
             )
-            .addCode(
-                CodeBlock.builder()
-                    .add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
+            addCode(codeBlock {
+                    add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
                     .add("try {\n")
                     .add(
                         "  client.mutations.checkCreateManyTransactionRequirement(%S, blocks.size)\n",
@@ -1734,75 +1652,63 @@ internal class RepoGenerator(
                         ).indented(),
                     )
                     .add("}\n")
-                    .build(),
-            )
-            .build()
+            })
+        }
     }
 
 
 
     private fun buildApplyHooks(entityHooksClass: ClassName): FunSpec =
-        FunSpec.builder("applyHooks")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("hooks", entityHooksClass)
-            .addStatement("beforeSaveHooks.addAll(hooks.beforeSaveHooks)")
-            .addStatement("beforeCreateHooks.addAll(hooks.beforeCreateHooks)")
-            .addStatement("afterCreateHooks.addAll(hooks.afterCreateHooks)")
-            .addStatement("beforeUpdateHooks.addAll(hooks.beforeUpdateHooks)")
-            .addStatement("afterUpdateHooks.addAll(hooks.afterUpdateHooks)")
-            .addStatement("beforeDeleteHooks.addAll(hooks.beforeDeleteHooks)")
-            .addStatement("afterDeleteHooks.addAll(hooks.afterDeleteHooks)")
-            .build()
+        function("applyHooks") {
+            addModifiers(KModifier.INTERNAL)
+            parameter("hooks", entityHooksClass)
+            for (phase in hookPhases) {
+                statement("%LHooks.addAll(hooks.%LHooks)", phase, phase)
+            }
+        }
 
     private fun buildCopyHooksFrom(repoClass: ClassName): FunSpec =
-        FunSpec.builder("copyHooksFrom")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("other", repoClass)
-            .addStatement("beforeSaveHooks.addAll(other.beforeSaveHooks)")
-            .addStatement("beforeCreateHooks.addAll(other.beforeCreateHooks)")
-            .addStatement("afterCreateHooks.addAll(other.afterCreateHooks)")
-            .addStatement("beforeUpdateHooks.addAll(other.beforeUpdateHooks)")
-            .addStatement("afterUpdateHooks.addAll(other.afterUpdateHooks)")
-            .addStatement("beforeDeleteHooks.addAll(other.beforeDeleteHooks)")
-            .addStatement("afterDeleteHooks.addAll(other.afterDeleteHooks)")
-            .build()
+        function("copyHooksFrom") {
+            addModifiers(KModifier.INTERNAL)
+            parameter("other", repoClass)
+            for (phase in hookPhases) {
+                statement("%LHooks.addAll(other.%LHooks)", phase, phase)
+            }
+        }
 
     private fun hookListProperty(
         name: String,
         type: com.squareup.kotlinpoet.TypeName,
         createSpecOverride: Boolean = false,
-    ): PropertySpec =
-        PropertySpec.builder(name, type)
-            .apply {
-                if (createSpecOverride) {
-                    addAnnotation(ENTKT_INTERNAL)
-                    addModifiers(KModifier.OVERRIDE)
-                } else {
-                    addModifiers(KModifier.PRIVATE)
-                }
-            }
-            .initializer("mutableListOf()")
-            .build()
+    ): PropertySpec = property(name, type) {
+        if (createSpecOverride) {
+            addAnnotation(ENTKT_INTERNAL)
+            addModifiers(KModifier.OVERRIDE)
+        } else {
+            addModifiers(KModifier.PRIVATE)
+        }
+        initializer("mutableListOf()")
+    }
 
     private fun buildApplyValidation(validationConfigClass: ClassName): FunSpec =
-        FunSpec.builder("applyValidation")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("config", validationConfigClass)
-            .addStatement("validationConfig.createRules.addAll(config.createRules)")
-            .addStatement("validationConfig.updateRules.addAll(config.updateRules)")
-            .addStatement("validationConfig.deleteRules.addAll(config.deleteRules)")
-            .addStatement("if (config.updateDerivesFromCreate) validationConfig.updateDerivesFromCreate = true")
-            .build()
+        function("applyValidation") {
+            addModifiers(KModifier.INTERNAL)
+            parameter("config", validationConfigClass)
+            statement("validationConfig.createRules.addAll(config.createRules)")
+            statement("validationConfig.updateRules.addAll(config.updateRules)")
+            statement("validationConfig.deleteRules.addAll(config.deleteRules)")
+            statement("if (config.updateDerivesFromCreate) validationConfig.updateDerivesFromCreate = true")
+        }
 
     private fun buildCopyValidationFrom(repoClass: ClassName): FunSpec =
-        FunSpec.builder("copyValidationFrom")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("other", repoClass)
-            .addStatement("validationConfig.createRules.addAll(other.validationConfig.createRules)")
-            .addStatement("validationConfig.updateRules.addAll(other.validationConfig.updateRules)")
-            .addStatement("validationConfig.deleteRules.addAll(other.validationConfig.deleteRules)")
-            .addStatement("validationConfig.updateDerivesFromCreate = other.validationConfig.updateDerivesFromCreate")
-            .build()
+        function("copyValidationFrom") {
+            addModifiers(KModifier.INTERNAL)
+            parameter("other", repoClass)
+            statement("validationConfig.createRules.addAll(other.validationConfig.createRules)")
+            statement("validationConfig.updateRules.addAll(other.validationConfig.updateRules)")
+            statement("validationConfig.deleteRules.addAll(other.validationConfig.deleteRules)")
+            statement("validationConfig.updateDerivesFromCreate = other.validationConfig.updateDerivesFromCreate")
+        }
 
     // ── Write-side validation evaluators ──────────────────────────
     // DECISION-RETURNING (List<ValidationViolation>; empty = valid),
@@ -1821,13 +1727,12 @@ internal class RepoGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val createItemClass = ClassName(packageName, "${schemaName}CreateValidationItem")
         val violationList = LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)
-        return FunSpec.builder("validationViolations")
-            .addAnnotation(ENTKT_INTERNAL)
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("candidates", LIST.parameterizedBy(candidateClass))
-            .returns(LIST.parameterizedBy(violationList))
-            .addCode(CodeBlock.builder()
-                .addStatement("if (candidates.isEmpty()) return emptyList()")
+        return function("validationViolations", LIST.parameterizedBy(violationList)) {
+            addAnnotation(ENTKT_INTERNAL)
+            addModifiers(KModifier.OVERRIDE)
+            parameter("candidates", LIST.parameterizedBy(candidateClass))
+            addCode(codeBlock {
+                addStatement("if (candidates.isEmpty()) return emptyList()")
                 .addStatement("val candidateSnapshot = candidates.toList()")
                 .addStatement("val rules = validationConfig.createRules")
                 .addStatement("if (rules.isEmpty()) return %T(candidateSnapshot.size) { emptyList() }", LIST)
@@ -1846,18 +1751,16 @@ internal class RepoGenerator(
                     "return invalidsByCandidate.map { invalids -> invalids.map { it.%M() } }",
                     TO_VALIDATION_VIOLATION,
                 )
-                .build()
-            )
-            .build()
+            })
+        }
     }
 
     private fun buildEvaluateCreateValidation(candidateClass: ClassName): FunSpec =
-        FunSpec.builder("evaluateCreateValidation")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("candidate", candidateClass)
-            .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
-            .addStatement("return validationViolations(listOf(candidate)).single()")
-            .build()
+        function("evaluateCreateValidation", LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)) {
+            addModifiers(KModifier.INTERNAL)
+            parameter("candidate", candidateClass)
+            statement("return validationViolations(listOf(candidate)).single()")
+        }
 
     private fun buildEvaluateUpdateValidation(
         schemaName: String,
@@ -1870,16 +1773,15 @@ internal class RepoGenerator(
         val createItemClass = ClassName(packageName, "${schemaName}CreateValidationItem")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
         val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
-        return FunSpec.builder("evaluateUpdateValidation")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("before", entityClass)
-            .addParameter("requestedPatch", patchClass)
-            .addParameter("effectivePatch", patchClass)
-            .addParameter("candidate", candidateClass)
-            .addParameter("edgeChanges", edgeChangesViewClass)
-            .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
-            .addCode(CodeBlock.builder()
-                .addStatement("val rules = validationConfig.updateRules")
+        return function("evaluateUpdateValidation", LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)) {
+            addModifiers(KModifier.INTERNAL)
+            parameter("before", entityClass)
+            parameter("requestedPatch", patchClass)
+            parameter("effectivePatch", patchClass)
+            parameter("candidate", candidateClass)
+            parameter("edgeChanges", edgeChangesViewClass)
+            addCode(codeBlock {
+                addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return emptyList()")
                 .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
                 .addStatement("val ruleContext = %T(validationClient)", VALIDATION_RULE_CONTEXT)
@@ -1908,9 +1810,8 @@ internal class RepoGenerator(
                 )
                 .endControlFlow()
                 .addStatement("return invalids.map { it.%M() }", TO_VALIDATION_VIOLATION)
-                .build()
-            )
-            .build()
+            })
+        }
     }
 
     private fun buildEvaluateDeleteValidations(
@@ -1921,13 +1822,12 @@ internal class RepoGenerator(
     ): FunSpec {
         val deleteItemClass = ClassName(packageName, "${schemaName}DeleteValidationItem")
         val violationList = LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)
-        return FunSpec.builder("evaluateDeleteValidations")
-            .addModifiers(KModifier.INTERNAL)
-            .addParameter("entities", LIST.parameterizedBy(entityClass))
-            .addParameter("candidates", LIST.parameterizedBy(candidateClass))
-            .returns(LIST.parameterizedBy(violationList))
-            .addCode(CodeBlock.builder()
-                .addStatement("require(entities.size == candidates.size) { %S }", "DELETE entity/candidate count mismatch")
+        return function("evaluateDeleteValidations", LIST.parameterizedBy(violationList)) {
+            addModifiers(KModifier.INTERNAL)
+            parameter("entities", LIST.parameterizedBy(entityClass))
+            parameter("candidates", LIST.parameterizedBy(candidateClass))
+            addCode(codeBlock {
+                addStatement("require(entities.size == candidates.size) { %S }", "DELETE entity/candidate count mismatch")
                 .addStatement("if (entities.isEmpty()) return emptyList()")
                 .addStatement("val entitySnapshot = entities.toList()")
                 .addStatement("val candidateSnapshot = candidates.toList()")
@@ -1949,19 +1849,17 @@ internal class RepoGenerator(
                     "return invalidsByCandidate.map { invalids -> invalids.map { it.%M() } }",
                     TO_VALIDATION_VIOLATION,
                 )
-                .build()
-            )
-            .build()
+            })
+        }
     }
 
     private fun buildEvaluateDeleteValidation(
         entityClass: ClassName,
         candidateClass: ClassName,
-    ): FunSpec = FunSpec.builder("evaluateDeleteValidation")
-        .addModifiers(KModifier.INTERNAL)
-        .addParameter("entity", entityClass)
-        .addParameter("candidate", candidateClass)
-        .returns(LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION))
-        .addStatement("return evaluateDeleteValidations(listOf(entity), listOf(candidate)).single()")
-        .build()
+    ): FunSpec = function("evaluateDeleteValidation", LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)) {
+        addModifiers(KModifier.INTERNAL)
+        parameter("entity", entityClass)
+        parameter("candidate", candidateClass)
+        statement("return evaluateDeleteValidations(listOf(entity), listOf(candidate)).single()")
+    }
 }

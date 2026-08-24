@@ -1,6 +1,5 @@
 package entkt.codegen.query
 
-import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -13,6 +12,11 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeVariableName
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.codeBlock
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.statement
 
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
 private val AGG_FUNCTION = ClassName("entkt.runtime.query", "AggregateFunction")
@@ -26,29 +30,29 @@ private val NULLABLE_GROUPABLE_COLUMN = ClassName("entkt.query", "NullableGroupa
 private val KOTLIN_COMPARABLE = ClassName("kotlin", "Comparable")
 
 /** Generate the raw count terminal as a thin runtime delegation. */
-internal fun buildRawCount(): FunSpec = FunSpec.builder("rawCount")
-    .addKdoc(
-        "Count matching rows without materializing entities or evaluating LOAD privacy.\n",
-    )
-    .returns(READ_RESULT.parameterizedBy(LONG))
-    .addStatement("return _readQueryEvaluator.rawCount { captureEntityQuery() }")
-    .build()
+internal fun buildRawCount(): FunSpec = function(
+    "rawCount",
+    returnType = READ_RESULT.parameterizedBy(LONG),
+) {
+    addKdoc("Count matching rows without materializing entities or evaluating LOAD privacy.\n")
+    statement("return _readQueryEvaluator.rawCount { captureEntityQuery() }")
+}
 
 /** Generate the raw existence terminal as a thin runtime delegation. */
-internal fun buildRawExists(): FunSpec = FunSpec.builder("rawExists")
-    .addKdoc(
-        "Test whether the configured storage window contains a row without evaluating LOAD privacy.\n",
-    )
-    .returns(READ_RESULT.parameterizedBy(BOOLEAN))
-    .addStatement("return _readQueryEvaluator.rawExists { captureEntityQuery() }")
-    .build()
+internal fun buildRawExists(): FunSpec = function(
+    "rawExists",
+    returnType = READ_RESULT.parameterizedBy(BOOLEAN),
+) {
+    addKdoc("Test whether the configured storage window contains a row without evaluating LOAD privacy.\n")
+    statement("return _readQueryEvaluator.rawExists { captureEntityQuery() }")
+}
 
 /** Generate typed raw aggregate terminals over the shared runtime aggregate execution. */
 internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
     val specs = mutableListOf<FunSpec>()
-    val suppress = AnnotationSpec.builder(Suppress::class)
-        .addMember("%S", "UNCHECKED_CAST")
-        .build()
+    val suppress = annotation(ClassName("kotlin", "Suppress")) {
+        addMember("%S", "UNCHECKED_CAST")
+    }
 
     fun comparableT(): TypeVariableName {
         val type = TypeVariableName("T")
@@ -61,21 +65,21 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
         column: String,
         groupBy: String,
         transform: CodeBlock,
-    ): CodeBlock = CodeBlock.builder()
-        .add("return _readQueryEvaluator.rawAggregate(\n")
-        .indent()
-        .add("captureQuery = { captureEntityQuery() },\n")
-        .add("terminal = %S,\n", terminal)
-        .add("function = %T.%L,\n", AGG_FUNCTION, function)
-        .add("column = %L,\n", column)
-        .add("groupBy = %L,\n", groupBy)
-        .unindent()
-        .add(") { rows ->\n")
-        .indent()
-        .add(transform)
-        .unindent()
-        .add("}\n")
-        .build()
+    ): CodeBlock = codeBlock {
+        add("return _readQueryEvaluator.rawAggregate(\n")
+        indent()
+        add("captureQuery = { captureEntityQuery() },\n")
+        add("terminal = %S,\n", terminal)
+        add("function = %T.%L,\n", AGG_FUNCTION, function)
+        add("column = %L,\n", column)
+        add("groupBy = %L,\n", groupBy)
+        unindent()
+        add(") { rows ->\n")
+        indent()
+        add(transform)
+        unindent()
+        add("}\n")
+    }
 
     fun scalar(
         name: String,
@@ -84,12 +88,11 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
         returnType: TypeName,
         typeVariables: List<TypeVariableName>,
     ) {
-        specs += FunSpec.builder(name)
-            .addAnnotation(suppress)
-            .addTypeVariables(typeVariables)
-            .addParameter(column)
-            .returns(READ_RESULT.parameterizedBy(returnType))
-            .addCode(
+        specs += function(name, returnType = READ_RESULT.parameterizedBy(returnType)) {
+            addAnnotation(suppress)
+            addTypeVariables(typeVariables)
+            addParameter(column)
+            addCode(
                 aggregateCall(
                     terminal = name,
                     function = function,
@@ -98,7 +101,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
                     transform = CodeBlock.of("rows.single().value as %T\n", returnType),
                 ),
             )
-            .build()
+        }
     }
 
     run {
@@ -106,7 +109,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
         scalar(
             "rawMin",
             "MIN",
-            ParameterSpec.builder("column", COMPARABLE_COLUMN.parameterizedBy(entityClass, type)).build(),
+            parameter("column", COMPARABLE_COLUMN.parameterizedBy(entityClass, type)),
             type.copy(nullable = true),
             listOf(type),
         )
@@ -116,7 +119,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
         scalar(
             "rawMax",
             "MAX",
-            ParameterSpec.builder("column", COMPARABLE_COLUMN.parameterizedBy(entityClass, type)).build(),
+            parameter("column", COMPARABLE_COLUMN.parameterizedBy(entityClass, type)),
             type.copy(nullable = true),
             listOf(type),
         )
@@ -124,21 +127,21 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
     scalar(
         "rawSum",
         "SUM",
-        ParameterSpec.builder("column", INTEGRAL_COLUMN.parameterizedBy(entityClass, STAR)).build(),
+        parameter("column", INTEGRAL_COLUMN.parameterizedBy(entityClass, STAR)),
         LONG.copy(nullable = true),
         emptyList(),
     )
     scalar(
         "rawSum",
         "SUM",
-        ParameterSpec.builder("column", FLOATING_COLUMN.parameterizedBy(entityClass, STAR)).build(),
+        parameter("column", FLOATING_COLUMN.parameterizedBy(entityClass, STAR)),
         DOUBLE.copy(nullable = true),
         emptyList(),
     )
     scalar(
         "rawAvg",
         "AVG",
-        ParameterSpec.builder("column", NUMERIC_COLUMN.parameterizedBy(entityClass, STAR)).build(),
+        parameter("column", NUMERIC_COLUMN.parameterizedBy(entityClass, STAR)),
         DOUBLE.copy(nullable = true),
         emptyList(),
     )
@@ -163,15 +166,14 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
             }
             val columnName = if (valueColumn == null) "null" else "column.name"
             val parameters = listOfNotNull(
-                ParameterSpec.builder("groupBy", groupColumnType).build(),
+                parameter("groupBy", groupColumnType),
                 valueColumn,
             )
-            specs += FunSpec.builder(name)
-                .addAnnotation(suppress)
-                .addTypeVariables(listOf(key) + valueTypeVariables)
-                .addParameters(parameters)
-                .returns(READ_RESULT.parameterizedBy(buckets))
-                .addCode(
+            specs += function(name, returnType = READ_RESULT.parameterizedBy(buckets)) {
+                addAnnotation(suppress)
+                addTypeVariables(listOf(key) + valueTypeVariables)
+                addParameters(parameters)
+                addCode(
                     aggregateCall(
                         terminal = name,
                         function = function,
@@ -185,7 +187,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
                         ),
                     ),
                 )
-                .build()
+            }
         }
     }
 
@@ -195,7 +197,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
         grouped(
             "rawMinBy",
             "MIN",
-            ParameterSpec.builder("column", COMPARABLE_COLUMN.parameterizedBy(entityClass, type)).build(),
+            parameter("column", COMPARABLE_COLUMN.parameterizedBy(entityClass, type)),
             type.copy(nullable = true),
             listOf(type),
         )
@@ -205,7 +207,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
         grouped(
             "rawMaxBy",
             "MAX",
-            ParameterSpec.builder("column", COMPARABLE_COLUMN.parameterizedBy(entityClass, type)).build(),
+            parameter("column", COMPARABLE_COLUMN.parameterizedBy(entityClass, type)),
             type.copy(nullable = true),
             listOf(type),
         )
@@ -213,21 +215,21 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
     grouped(
         "rawSumBy",
         "SUM",
-        ParameterSpec.builder("column", INTEGRAL_COLUMN.parameterizedBy(entityClass, STAR)).build(),
+        parameter("column", INTEGRAL_COLUMN.parameterizedBy(entityClass, STAR)),
         LONG.copy(nullable = true),
         emptyList(),
     )
     grouped(
         "rawSumBy",
         "SUM",
-        ParameterSpec.builder("column", FLOATING_COLUMN.parameterizedBy(entityClass, STAR)).build(),
+        parameter("column", FLOATING_COLUMN.parameterizedBy(entityClass, STAR)),
         DOUBLE.copy(nullable = true),
         emptyList(),
     )
     grouped(
         "rawAvgBy",
         "AVG",
-        ParameterSpec.builder("column", NUMERIC_COLUMN.parameterizedBy(entityClass, STAR)).build(),
+        parameter("column", NUMERIC_COLUMN.parameterizedBy(entityClass, STAR)),
         DOUBLE.copy(nullable = true),
         emptyList(),
     )

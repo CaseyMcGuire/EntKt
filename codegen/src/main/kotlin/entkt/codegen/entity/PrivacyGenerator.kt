@@ -6,13 +6,21 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.TypeAliasSpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
+import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.metadata.EdgeFk
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.classType
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.primaryConstructor
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
+import entkt.codegen.kotlinpoet.typeAlias
 import entkt.codegen.metadata.HelperEligibleM2M
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.helperEligibleM2MEdges
@@ -86,8 +94,6 @@ internal class PrivacyGenerator(
         // hook context shape across entities).
         val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
 
-        val fileBuilder = FileSpec.builder(packageName, "${schemaName}Privacy")
-
         // Operation item class names. The runtime PrivacyRuleContext holds
         // privacy/client state once for the whole evaluation phase; these generated
         // values contain only state that varies per item.
@@ -106,46 +112,30 @@ internal class PrivacyGenerator(
         val updateBatchRule = "${schemaName}UpdateBatchPrivacyRule"
         val deleteBatchRule = "${schemaName}DeleteBatchPrivacyRule"
 
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(loadRule, PRIVACY_RULE.parameterizedBy(readClientClass, loadItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(createRule, PRIVACY_RULE.parameterizedBy(readClientClass, createItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(updateRule, PRIVACY_RULE.parameterizedBy(readClientClass, updateItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(deleteRule, PRIVACY_RULE.parameterizedBy(readClientClass, deleteItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, loadItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, createItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, updateItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, deleteItem)).build(),
-        )
+        return kotlinFile(packageName, "${schemaName}Privacy") {
+            typeAlias(loadRule, PRIVACY_RULE.parameterizedBy(readClientClass, loadItem))
+            typeAlias(createRule, PRIVACY_RULE.parameterizedBy(readClientClass, createItem))
+            typeAlias(updateRule, PRIVACY_RULE.parameterizedBy(readClientClass, updateItem))
+            typeAlias(deleteRule, PRIVACY_RULE.parameterizedBy(readClientClass, deleteItem))
+            typeAlias(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, loadItem))
+            typeAlias(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, createItem))
+            typeAlias(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, updateItem))
+            typeAlias(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, deleteItem))
 
-        // Operation item data classes
-        fileBuilder.addType(buildLoadItem(entityClass, loadItem))
-        fileBuilder.addType(buildCreateItem(candidateClass, createItem))
-        fileBuilder.addType(
+            addType(buildLoadItem(entityClass, loadItem))
+            addType(buildCreateItem(candidateClass, createItem))
+            addType(
             buildUpdateItem(
                 entityClass, candidateClass, patchClass, edgeChangesViewClass, updateItem,
             ),
-        )
-        fileBuilder.addType(buildDeleteItem(entityClass, candidateClass, deleteItem))
+            )
+            addType(buildDeleteItem(entityClass, candidateClass, deleteItem))
 
         // WriteCandidate
-        fileBuilder.addType(buildWriteCandidate(schemaName, candidateClass, fields, edgeFks))
+            addType(buildWriteCandidate(candidateClass, fields, edgeFks))
 
         // UpdatePatch
-        fileBuilder.addType(buildUpdatePatch(patchClass, fields, edgeFks))
+            addType(buildUpdatePatch(patchClass, fields, edgeFks))
 
         // PendingEdgeOps aggregator. One typed
         // `PendingEdgeOps<TargetIdType>` per helper-eligible M2M edge,
@@ -153,7 +143,7 @@ internal class PrivacyGenerator(
         // mutation view. Schemas without helper-eligible M2M edges still
         // get a type — a no-fields class — so hook authors can write
         // `ctx.pendingEdges` without entity-conditional types.
-        fileBuilder.addType(buildPendingEdgeOpsAggregator(pendingEdgeOpsClass, helperEligibleEdges))
+            addType(buildPendingEdgeOpsAggregator(pendingEdgeOpsClass, helperEligibleEdges))
 
         // EdgeChangesView aggregator.
         // One typed `EdgeChanges<TargetIdType>` per helper-eligible M2M
@@ -161,10 +151,10 @@ internal class PrivacyGenerator(
         // caller intent and computed database delta. Same empty-class
         // fallback for schemas without helper-eligible edges so the
         // privacy/validation item shape is uniform.
-        fileBuilder.addType(buildEdgeChangesViewAggregator(edgeChangesViewClass, helperEligibleEdges))
+            addType(buildEdgeChangesViewAggregator(edgeChangesViewClass, helperEligibleEdges))
 
         // UpdateHookContext (received by beforeUpdate hooks)
-        fileBuilder.addType(
+            addType(
             buildUpdateHookContext(
                 ctxClass = updateHookCtxClass,
                 clientClass = hookClientScopeClass,
@@ -173,22 +163,22 @@ internal class PrivacyGenerator(
                 mutationClass = updateMutationViewClass,
                 pendingEdgesClass = pendingEdgeOpsClass,
             ),
-        )
+            )
 
         // CreateHookContext (received by beforeCreate hooks). Mirrors
         // the update side: a restricted writable view plus `client` so
         // hooks can query the DB. The view hides the concrete builder's
         // save()/driver/hook-list surface.
-        fileBuilder.addType(
+            addType(
             buildCreateHookContext(
                 ctxClass = createHookCtxClass,
                 clientClass = hookClientScopeClass,
                 mutationClass = createMutationViewClass,
             ),
-        )
+            )
 
         // PrivacyConfig
-        fileBuilder.addType(
+            addType(
             buildPrivacyConfig(
                 configClass,
                 ClassName(packageName, loadBatchRule),
@@ -196,10 +186,10 @@ internal class PrivacyGenerator(
                 ClassName(packageName, updateBatchRule),
                 ClassName(packageName, deleteBatchRule),
             ),
-        )
+            )
 
         // PrivacyScope
-        fileBuilder.addType(
+            addType(
             buildPrivacyScope(
                 privacyScopeClass,
                 configClass,
@@ -212,39 +202,22 @@ internal class PrivacyGenerator(
                 ClassName(packageName, updateBatchRule),
                 ClassName(packageName, deleteBatchRule),
             ),
-        )
+            )
 
         // PolicyScope
-        fileBuilder.addType(buildPolicyScope(schemaName, policyScopeClass, privacyScopeClass, configClass))
-
-        return fileBuilder.build()
+            addType(buildPolicyScope(schemaName, policyScopeClass, privacyScopeClass, configClass))
+        }
     }
 
     private fun buildLoadItem(
         entityClass: ClassName,
         itemClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(itemClass)
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("entity", entityClass)
-                .build(),
-        )
-        .addProperty(PropertySpec.builder("entity", entityClass).initializer("entity").build())
-        .build()
+    ): TypeSpec = privacyItem(itemClass, "entity" to entityClass)
 
     private fun buildCreateItem(
         candidateClass: ClassName,
         itemClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(itemClass)
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("candidate", candidateClass)
-                .build(),
-        )
-        .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
-        .build()
+    ): TypeSpec = privacyItem(itemClass, "candidate" to candidateClass)
 
     private fun buildUpdateItem(
         entityClass: ClassName,
@@ -252,69 +225,69 @@ internal class PrivacyGenerator(
         patchClass: ClassName,
         edgeChangesViewClass: ClassName,
         itemClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(itemClass)
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("before", entityClass)
-                .addParameter("requestedPatch", patchClass)
-                .addParameter("effectivePatch", patchClass)
-                .addParameter("candidate", candidateClass)
-                .addParameter("edgeChanges", edgeChangesViewClass)
-                .build(),
-        )
-        .addProperty(PropertySpec.builder("before", entityClass).initializer("before").build())
-        .addProperty(PropertySpec.builder("requestedPatch", patchClass).initializer("requestedPatch").build())
-        .addProperty(PropertySpec.builder("effectivePatch", patchClass).initializer("effectivePatch").build())
-        .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
-        .addProperty(PropertySpec.builder("edgeChanges", edgeChangesViewClass).initializer("edgeChanges").build())
-        .build()
+    ): TypeSpec = privacyItem(
+        itemClass,
+        "before" to entityClass,
+        "requestedPatch" to patchClass,
+        "effectivePatch" to patchClass,
+        "candidate" to candidateClass,
+        "edgeChanges" to edgeChangesViewClass,
+    )
 
     private fun buildDeleteItem(
         entityClass: ClassName,
         candidateClass: ClassName,
         itemClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(itemClass)
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("entity", entityClass)
-                .addParameter("candidate", candidateClass)
-                .build(),
-        )
-        .addProperty(PropertySpec.builder("entity", entityClass).initializer("entity").build())
-        .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
-        .build()
+    ): TypeSpec = privacyItem(
+        itemClass,
+        "entity" to entityClass,
+        "candidate" to candidateClass,
+    )
+
+    /** Data shape shared by load, create, update, and delete privacy items. */
+    private fun privacyItem(
+        itemClass: ClassName,
+        vararg members: Pair<String, com.squareup.kotlinpoet.TypeName>,
+    ): TypeSpec = classType(itemClass) {
+        addModifiers(KModifier.DATA)
+        primaryConstructor {
+            for ((name, type) in members) parameter(name, type)
+        }
+        for ((name, type) in members) {
+            property(name, type) { initializer(name) }
+        }
+    }
+
+    /** Immutable generated value whose constructor parameters are also properties. */
+    private fun immutableValueType(
+        type: ClassName,
+        members: List<Pair<String, com.squareup.kotlinpoet.TypeName>>,
+    ): TypeSpec = classType(type) {
+        if (members.isNotEmpty()) {
+            addModifiers(KModifier.DATA)
+            primaryConstructor {
+                for ((name, memberType) in members) parameter(name, memberType)
+            }
+            for ((name, memberType) in members) {
+                property(name, memberType) { initializer(name) }
+            }
+        }
+    }
 
     private fun buildWriteCandidate(
-        schemaName: String,
         candidateClass: ClassName,
         fields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): TypeSpec {
-        val ctor = FunSpec.constructorBuilder()
-        val props = mutableListOf<PropertySpec>()
-
-        for (field in fields) {
-            val propName = field.apiName
-            val typeName = field.resolvedTypeName().copy(nullable = field.nullable)
-            ctor.addParameter(propName, typeName)
-            props.add(PropertySpec.builder(propName, typeName).initializer(propName).build())
+        val members = buildList {
+            fields.forEach { field ->
+                add(field.apiName to field.resolvedTypeName().copy(nullable = field.nullable))
+            }
+            edgeFks.forEach { fk ->
+                add(fk.propertyName to fk.idType.toTypeName().copy(nullable = !fk.required))
+            }
         }
-        for (fk in edgeFks) {
-            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-            ctor.addParameter(fk.propertyName, typeName)
-            props.add(PropertySpec.builder(fk.propertyName, typeName).initializer(fk.propertyName).build())
-        }
-
-        if (props.isEmpty()) {
-            return TypeSpec.classBuilder(candidateClass).build()
-        }
-        return TypeSpec.classBuilder(candidateClass)
-            .addModifiers(KModifier.DATA)
-            .primaryConstructor(ctor.build())
-            .addProperties(props)
-            .build()
+        return immutableValueType(candidateClass, members)
     }
 
     /**
@@ -338,23 +311,16 @@ internal class PrivacyGenerator(
         patchClass: ClassName,
         mutationClass: ClassName,
         pendingEdgesClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(ctxClass)
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("client", clientClass)
-                .addParameter("before", entityClass)
-                .addParameter("patch", patchClass)
-                .addParameter("pendingEdges", pendingEdgesClass)
-                .addParameter("mutation", mutationClass)
-                .build(),
-        )
-        .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
-        .addProperty(PropertySpec.builder("before", entityClass).initializer("before").build())
-        .addProperty(PropertySpec.builder("patch", patchClass).initializer("patch").build())
-        .addProperty(PropertySpec.builder("pendingEdges", pendingEdgesClass).initializer("pendingEdges").build())
-        .addProperty(PropertySpec.builder("mutation", mutationClass).initializer("mutation").build())
-        .build()
+    ): TypeSpec = immutableValueType(
+        ctxClass,
+        listOf(
+            "client" to clientClass,
+            "before" to entityClass,
+            "patch" to patchClass,
+            "pendingEdges" to pendingEdgesClass,
+            "mutation" to mutationClass,
+        ),
+    )
 
     /**
      * Hook context for `beforeCreate` hooks. Carries the restricted
@@ -366,17 +332,10 @@ internal class PrivacyGenerator(
         ctxClass: ClassName,
         clientClass: ClassName,
         mutationClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(ctxClass)
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("client", clientClass)
-                .addParameter("mutation", mutationClass)
-                .build(),
-        )
-        .addProperty(PropertySpec.builder("client", clientClass).initializer("client").build())
-        .addProperty(PropertySpec.builder("mutation", mutationClass).initializer("mutation").build())
-        .build()
+    ): TypeSpec = immutableValueType(
+        ctxClass,
+        listOf("client" to clientClass, "mutation" to mutationClass),
+    )
 
     /**
      * Per-entity update patch type. Each mutable field and edge FK is a
@@ -390,44 +349,36 @@ internal class PrivacyGenerator(
         fields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): TypeSpec {
-        val ctor = FunSpec.constructorBuilder()
-        val props = mutableListOf<PropertySpec>()
-
-        for (field in fields) {
+        val members = buildList {
+            for (field in fields) {
             if (field.immutable) continue
             val propName = field.apiName
             val valueType = field.resolvedTypeName().copy(nullable = field.nullable)
             val patchType = FIELD_PATCH.parameterizedBy(valueType)
-            ctor.addParameter(
-                ParameterSpec.builder(propName, patchType)
-                    .defaultValue("%T.Unset", FIELD_PATCH)
-                    .build(),
-            )
-            props.add(PropertySpec.builder(propName, patchType).initializer(propName).build())
-        }
-        for (fk in edgeFks) {
+                add(propName to patchType)
+            }
+            for (fk in edgeFks) {
             // Immutable FKs can't be patched on update — they're
             // create-only — so omit them from the patch type to mirror
             // the immutable-scalar skip above.
             if (fk.immutable) continue
             val valueType = fk.idType.toTypeName().copy(nullable = !fk.required)
             val patchType = FIELD_PATCH.parameterizedBy(valueType)
-            ctor.addParameter(
-                ParameterSpec.builder(fk.propertyName, patchType)
-                    .defaultValue("%T.Unset", FIELD_PATCH)
-                    .build(),
-            )
-            props.add(PropertySpec.builder(fk.propertyName, patchType).initializer(fk.propertyName).build())
+                add(fk.propertyName to patchType)
+            }
         }
-
-        if (props.isEmpty()) {
-            return TypeSpec.classBuilder(patchClass).build()
+        if (members.isEmpty()) return classType(patchClass) {}
+        return classType(patchClass) {
+            addModifiers(KModifier.DATA)
+            primaryConstructor {
+                for ((name, type) in members) {
+                    parameter(name, type) { defaultValue("%T.Unset", FIELD_PATCH) }
+                }
+            }
+            for ((name, type) in members) {
+                property(name, type) { initializer(name) }
+            }
         }
-        return TypeSpec.classBuilder(patchClass)
-            .addModifiers(KModifier.DATA)
-            .primaryConstructor(ctor.build())
-            .addProperties(props)
-            .build()
     }
 
     /**
@@ -448,30 +399,25 @@ internal class PrivacyGenerator(
         helperEligibleEdges: List<HelperEligibleM2M>,
     ): TypeSpec {
         if (helperEligibleEdges.isEmpty()) {
-            return TypeSpec.classBuilder(aggregatorClass)
-                .primaryConstructor(FunSpec.constructorBuilder().build())
-                .build()
+            return classType(aggregatorClass) { primaryConstructor {} }
         }
-        val ctor = FunSpec.constructorBuilder()
-        val props = mutableListOf<PropertySpec>()
-        for (edge in helperEligibleEdges) {
-            val pendingEdgeOpsType = PENDING_EDGE_OPS.parameterizedBy(edge.targetIdTypeName)
-            ctor.addParameter(
-                ParameterSpec.builder(edge.mutatorPropertyName, pendingEdgeOpsType)
-                    .defaultValue("%T()", PENDING_EDGE_OPS)
-                    .build(),
-            )
-            props.add(
-                PropertySpec.builder(edge.mutatorPropertyName, pendingEdgeOpsType)
-                    .initializer(edge.mutatorPropertyName)
-                    .build(),
-            )
+        return classType(aggregatorClass) {
+            addModifiers(KModifier.DATA)
+            primaryConstructor {
+                for (edge in helperEligibleEdges) {
+                    parameter(
+                        edge.mutatorPropertyName,
+                        PENDING_EDGE_OPS.parameterizedBy(edge.targetIdTypeName),
+                    ) { defaultValue("%T()", PENDING_EDGE_OPS) }
+                }
+            }
+            for (edge in helperEligibleEdges) {
+                property(
+                    edge.mutatorPropertyName,
+                    PENDING_EDGE_OPS.parameterizedBy(edge.targetIdTypeName),
+                ) { initializer(edge.mutatorPropertyName) }
+            }
         }
-        return TypeSpec.classBuilder(aggregatorClass)
-            .addModifiers(KModifier.DATA)
-            .primaryConstructor(ctor.build())
-            .addProperties(props)
-            .build()
     }
 
     /**
@@ -487,30 +433,25 @@ internal class PrivacyGenerator(
         helperEligibleEdges: List<HelperEligibleM2M>,
     ): TypeSpec {
         if (helperEligibleEdges.isEmpty()) {
-            return TypeSpec.classBuilder(aggregatorClass)
-                .primaryConstructor(FunSpec.constructorBuilder().build())
-                .build()
+            return classType(aggregatorClass) { primaryConstructor {} }
         }
-        val ctor = FunSpec.constructorBuilder()
-        val props = mutableListOf<PropertySpec>()
-        for (edge in helperEligibleEdges) {
-            val edgeChangesType = EDGE_CHANGES.parameterizedBy(edge.targetIdTypeName)
-            ctor.addParameter(
-                ParameterSpec.builder(edge.mutatorPropertyName, edgeChangesType)
-                    .defaultValue("%T()", EDGE_CHANGES)
-                    .build(),
-            )
-            props.add(
-                PropertySpec.builder(edge.mutatorPropertyName, edgeChangesType)
-                    .initializer(edge.mutatorPropertyName)
-                    .build(),
-            )
+        return classType(aggregatorClass) {
+            addModifiers(KModifier.DATA)
+            primaryConstructor {
+                for (edge in helperEligibleEdges) {
+                    parameter(
+                        edge.mutatorPropertyName,
+                        EDGE_CHANGES.parameterizedBy(edge.targetIdTypeName),
+                    ) { defaultValue("%T()", EDGE_CHANGES) }
+                }
+            }
+            for (edge in helperEligibleEdges) {
+                property(
+                    edge.mutatorPropertyName,
+                    EDGE_CHANGES.parameterizedBy(edge.targetIdTypeName),
+                ) { initializer(edge.mutatorPropertyName) }
+            }
         }
-        return TypeSpec.classBuilder(aggregatorClass)
-            .addModifiers(KModifier.DATA)
-            .primaryConstructor(ctor.build())
-            .addProperties(props)
-            .build()
     }
 
     private fun buildPrivacyConfig(
@@ -520,40 +461,24 @@ internal class PrivacyGenerator(
         updateRuleType: ClassName,
         deleteRuleType: ClassName,
     ): TypeSpec {
-        return TypeSpec.classBuilder(configClass)
-            .addProperty(
-                PropertySpec.builder("loadRules", MUTABLE_LIST.parameterizedBy(loadRuleType))
-                    .initializer("mutableListOf()")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("createRules", MUTABLE_LIST.parameterizedBy(createRuleType))
-                    .initializer("mutableListOf()")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("updateRules", MUTABLE_LIST.parameterizedBy(updateRuleType))
-                    .initializer("mutableListOf()")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("deleteRules", MUTABLE_LIST.parameterizedBy(deleteRuleType))
-                    .initializer("mutableListOf()")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("updateDerivesFromCreate", Boolean::class)
-                    .mutable(true)
-                    .initializer("false")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("deleteDerivesFromCreate", Boolean::class)
-                    .mutable(true)
-                    .initializer("false")
-                    .build(),
-            )
-            .build()
+        return classType(configClass) {
+            for ((name, ruleType) in listOf(
+                "loadRules" to loadRuleType,
+                "createRules" to createRuleType,
+                "updateRules" to updateRuleType,
+                "deleteRules" to deleteRuleType,
+            )) {
+                property(name, MUTABLE_LIST.parameterizedBy(ruleType)) {
+                    initializer("mutableListOf()")
+                }
+            }
+            for (name in listOf("updateDerivesFromCreate", "deleteDerivesFromCreate")) {
+                property(name, Boolean::class.asClassName()) {
+                    mutable(true)
+                    initializer("false")
+                }
+            }
+        }
     }
 
     private fun buildPrivacyScope(
@@ -568,87 +493,44 @@ internal class PrivacyGenerator(
         updateBatchRuleType: ClassName,
         deleteBatchRuleType: ClassName,
     ): TypeSpec {
-        return TypeSpec.classBuilder(scopeClass)
-            .primaryConstructor(
-                FunSpec.constructorBuilder()
-                    .addModifiers(KModifier.INTERNAL)
-                    .addParameter("config", configClass)
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("config", configClass)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("config")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("load")
-                    .addParameter("rules", loadRuleType, KModifier.VARARG)
-                    .addStatement("config.loadRules.addAll(rules)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("load")
-                    .addAnnotation(jvmName("loadBatchRule"))
-                    .addParameter("rule", loadBatchRuleType)
-                    .addStatement("config.loadRules.add(rule)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("create")
-                    .addParameter("rules", createRuleType, KModifier.VARARG)
-                    .addStatement("config.createRules.addAll(rules)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("create")
-                    .addAnnotation(jvmName("createBatchRule"))
-                    .addParameter("rule", createBatchRuleType)
-                    .addStatement("config.createRules.add(rule)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("update")
-                    .addParameter("rules", updateRuleType, KModifier.VARARG)
-                    .addStatement("config.updateRules.addAll(rules)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("update")
-                    .addAnnotation(jvmName("updateBatchRule"))
-                    .addParameter("rule", updateBatchRuleType)
-                    .addStatement("config.updateRules.add(rule)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("delete")
-                    .addParameter("rules", deleteRuleType, KModifier.VARARG)
-                    .addStatement("config.deleteRules.addAll(rules)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("delete")
-                    .addAnnotation(jvmName("deleteBatchRule"))
-                    .addParameter("rule", deleteBatchRuleType)
-                    .addStatement("config.deleteRules.add(rule)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("updateDerivesFromCreate")
-                    .addStatement("config.updateDerivesFromCreate = true")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("deleteDerivesFromCreate")
-                    .addStatement("config.deleteDerivesFromCreate = true")
-                    .build(),
-            )
-            .build()
+        return classType(scopeClass) {
+            primaryConstructor {
+                addModifiers(KModifier.INTERNAL)
+                parameter("config", configClass)
+            }
+            property("config", configClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("config")
+            }
+            addRuleFunctions("load", loadRuleType, loadBatchRuleType)
+            addRuleFunctions("create", createRuleType, createBatchRuleType)
+            addRuleFunctions("update", updateRuleType, updateBatchRuleType)
+            addRuleFunctions("delete", deleteRuleType, deleteBatchRuleType)
+            function("updateDerivesFromCreate") {
+                statement("config.updateDerivesFromCreate = true")
+            }
+            function("deleteDerivesFromCreate") {
+                statement("config.deleteDerivesFromCreate = true")
+            }
+        }
     }
 
-    private fun jvmName(name: String): AnnotationSpec = AnnotationSpec.builder(JVM_NAME)
-        .addMember("%S", name)
-        .build()
+    /** Emit scalar and batch-rule overloads for one privacy operation. */
+    private fun TypeSpec.Builder.addRuleFunctions(
+        operation: String,
+        ruleType: ClassName,
+        batchRuleType: ClassName,
+    ) {
+        function(operation) {
+            parameter("rules", ruleType) { addModifiers(KModifier.VARARG) }
+            statement("config.%LRules.addAll(rules)", operation)
+        }
+        function(operation) {
+            addAnnotation(annotation(JVM_NAME) { addMember("%S", "${operation}BatchRule") })
+            parameter("rule", batchRuleType)
+            statement("config.%LRules.add(rule)", operation)
+        }
+    }
 
     private fun buildPolicyScope(
         schemaName: String,
@@ -666,38 +548,28 @@ internal class PrivacyGenerator(
             receiver = validationScopeClass,
             returnType = UNIT,
         )
-        return TypeSpec.classBuilder(policyScopeClass)
-            .primaryConstructor(
-                FunSpec.constructorBuilder()
-                    .addModifiers(KModifier.INTERNAL)
-                    .addParameter("privacyConfig", configClass)
-                    .addParameter("validationConfig", validationConfigClass)
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("privacyConfig", configClass)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("privacyConfig")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("validationConfig", validationConfigClass)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("validationConfig")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("privacy")
-                    .addParameter("block", privacyBlockLambda)
-                    .addStatement("%T(privacyConfig).apply(block)", privacyScopeClass)
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("validation")
-                    .addParameter("block", validationBlockLambda)
-                    .addStatement("%T(validationConfig).apply(block)", validationScopeClass)
-                    .build(),
-            )
-            .build()
+        return classType(policyScopeClass) {
+            primaryConstructor {
+                addModifiers(KModifier.INTERNAL)
+                parameter("privacyConfig", configClass)
+                parameter("validationConfig", validationConfigClass)
+            }
+            property("privacyConfig", configClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("privacyConfig")
+            }
+            property("validationConfig", validationConfigClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("validationConfig")
+            }
+            function("privacy") {
+                parameter("block", privacyBlockLambda)
+                statement("%T(privacyConfig).apply(block)", privacyScopeClass)
+            }
+            function("validation") {
+                parameter("block", validationBlockLambda)
+                statement("%T(validationConfig).apply(block)", validationScopeClass)
+            }
+        }
     }
 }

@@ -1,16 +1,25 @@
 package entkt.codegen.client
 
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
-import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.SchemaInput
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.classType
+import entkt.codegen.kotlinpoet.codeBlock
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.interfaceType
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.primaryConstructor
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
@@ -79,55 +88,54 @@ internal class ReadClientGenerator(
         // readClientImpl()'s positional host arguments.
         val sorted = topologicalSort(schemas)
 
-        val fileBuilder = FileSpec.builder(packageName, "EntReadClient")
+        return kotlinFile(packageName, "EntReadClient") {
             // The impl implements the `@EntktInternal`-guarded
             // EntReadRuntime, the repos implement the guarded read
             // surfaces, and the constructors are themselves guarded; the
             // file-level OptIn consumes the requirement here without
             // propagating it to rule code.
-            .addAnnotation(
-                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
-                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
-                    .addMember("%T::class", ENTKT_INTERNAL)
-                    .build()
+            addAnnotation(
+                annotation(ClassName("kotlin", "OptIn")) {
+                    useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    addMember("%T::class", ENTKT_INTERNAL)
+                },
             )
 
-        for (input in schemas) {
-            fileBuilder.addType(buildReadRepo(input, schemaNames))
+            for (input in schemas) {
+                addType(buildReadRepo(input, schemaNames))
+            }
+            addType(buildClientInterface(sorted))
+            addType(
+                buildPostureWrapper(
+                    name = "EntValidationReadClient",
+                    kdoc = "Read client handed to validation rules through `ValidationRuleContext`. Reads bypass\n" +
+                        "LOAD privacy (fixed `PrivacyBypass(\"validation read\")` context), so\n" +
+                        "invariant checks observe all rows and raw terminals (`rawCount`,\n" +
+                        "`rawExists`, raw aggregates) are available. Same driver instance as\n" +
+                        "the operation's client (transaction-scoped reads see prior writes),\n" +
+                        "same read interceptors. The posture is fixed for the instance's\n" +
+                        "lifetime — there is no re-scoping surface. Helpers that require\n" +
+                        "privacy-bypassing reads should accept this type; posture-agnostic\n" +
+                        "helpers accept [EntReadClient].",
+                ),
+            )
+            addType(
+                buildPostureWrapper(
+                    name = "EntPrivacyReadClient",
+                    kdoc = "Read client handed to privacy rules through `PrivacyRuleContext`. Reads are\n" +
+                        "viewer-scoped when they materialize rows: returned entities are\n" +
+                        "evaluated under the caller's LOAD privacy. Raw terminals (`rawCount`,\n" +
+                        "`rawExists`, raw aggregates) are explicit storage-level reads that\n" +
+                        "skip LOAD privacy and entity materialization. Same\n" +
+                        "driver instance as the operation's client (transaction-scoped reads\n" +
+                        "see prior writes), same read interceptors. The posture is fixed for\n" +
+                        "the instance's lifetime — there is no re-scoping surface. Helpers\n" +
+                        "that participate in authorization decisions should accept this\n" +
+                        "type; posture-agnostic helpers accept [EntReadClient].",
+                ),
+            )
+            addType(buildClientImpl(sorted))
         }
-        fileBuilder.addType(buildClientInterface(sorted))
-        fileBuilder.addType(
-            buildPostureWrapper(
-                name = "EntValidationReadClient",
-                kdoc = "Read client handed to validation rules through `ValidationRuleContext`. Reads bypass\n" +
-                    "LOAD privacy (fixed `PrivacyBypass(\"validation read\")` context), so\n" +
-                    "invariant checks observe all rows and raw terminals (`rawCount`,\n" +
-                    "`rawExists`, raw aggregates) are available. Same driver instance as\n" +
-                    "the operation's client (transaction-scoped reads see prior writes),\n" +
-                    "same read interceptors. The posture is fixed for the instance's\n" +
-                    "lifetime — there is no re-scoping surface. Helpers that require\n" +
-                    "privacy-bypassing reads should accept this type; posture-agnostic\n" +
-                    "helpers accept [EntReadClient].",
-            )
-        )
-        fileBuilder.addType(
-            buildPostureWrapper(
-                name = "EntPrivacyReadClient",
-                kdoc = "Read client handed to privacy rules through `PrivacyRuleContext`. Reads are\n" +
-                    "viewer-scoped when they materialize rows: returned entities are\n" +
-                    "evaluated under the caller's LOAD privacy. Raw terminals (`rawCount`,\n" +
-                    "`rawExists`, raw aggregates) are explicit storage-level reads that\n" +
-                    "skip LOAD privacy and entity materialization. Same\n" +
-                    "driver instance as the operation's client (transaction-scoped reads\n" +
-                    "see prior writes), same read interceptors. The posture is fixed for\n" +
-                    "the instance's lifetime — there is no re-scoping surface. Helpers\n" +
-                    "that participate in authorization decisions should accept this\n" +
-                    "type; posture-agnostic helpers accept [EntReadClient].",
-            )
-        )
-        fileBuilder.addType(buildClientImpl(sorted))
-
-        return fileBuilder.build()
     }
 
     private fun buildReadRepo(
@@ -141,8 +149,8 @@ internal class ReadClientGenerator(
         val readSurfaceClass = ClassName(packageName, "${schemaName}ReadSurface")
         val idType = input.schema.id().type.toTypeName()
 
-        return TypeSpec.classBuilder("${schemaName}ReadRepo")
-            .addKdoc(
+        return classType("${schemaName}ReadRepo") {
+            addKdoc(
                 "Read-only `%L` repository handed to validators and privacy rules via\n" +
                     "`EntReadClient`. Reads behave exactly like the full repo's (same query\n" +
                     "machinery, read interceptors, LOAD-privacy delegation) under the\n" +
@@ -150,82 +158,72 @@ internal class ReadClientGenerator(
                     "rule writes fail to compile.",
                 schemaName,
             )
-            .addSuperinterface(readSurfaceClass)
-            .primaryConstructor(
-                FunSpec.constructorBuilder()
-                    .addAnnotation(ENTKT_INTERNAL)
-                    .addModifiers(KModifier.INTERNAL)
-                    .addParameter("driver", DRIVER)
-                    .addParameter("host", readSurfaceClass)
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder("driver", DRIVER)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("driver")
-                    .build()
-            )
-            .addProperty(
+            addSuperinterface(readSurfaceClass)
+            primaryConstructor {
+                addAnnotation(ENTKT_INTERNAL)
+                addModifiers(KModifier.INTERNAL)
+                parameter("driver", DRIVER)
+                parameter("host", readSurfaceClass)
+            }
+            property("driver", DRIVER) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("driver")
+            }
+            property(
                 // The host client's repo, narrowed to the read surface: the
                 // LOAD-privacy delegation target. The narrow type keeps the
                 // no-writes guarantee structural — no member anywhere in the
                 // read client's object graph is typed EntClient or
                 // ${schemaName}Repo.
-                PropertySpec.builder("host", readSurfaceClass)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("host")
-                    .build()
-            )
-            .addProperty(
+                "host",
+                readSurfaceClass,
+            ) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("host")
+            }
+            property(
                 // Set by EntReadClient's init block (the client and its
                 // repos reference each other, mirroring the EntClient/repo
                 // wiring).
-                PropertySpec.builder("runtime", ClassName(packageName, "EntReadRuntime"))
-                    .addModifiers(KModifier.INTERNAL, KModifier.LATEINIT)
-                    .mutable(true)
-                    .build()
-            )
-            .addFunction(
-                FunSpec.builder("hasLoadPrivacy")
-                    .addModifiers(KModifier.OVERRIDE)
-                    .returns(Boolean::class)
-                    .addStatement("return host.hasLoadPrivacy()")
-                    .build()
-            )
-            .addFunction(
-                FunSpec.builder("loadDenials")
-                    .addModifiers(KModifier.OVERRIDE)
-                    .addParameter("privacy", PRIVACY_CONTEXT)
-                    .addParameter("entities", LIST.parameterizedBy(entityClass))
-                    .returns(LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)))
-                    .addStatement("return host.loadDenials(privacy, entities)")
-                    .build()
-            )
-            .addFunction(
-                FunSpec.builder("loadDenialOrNull")
-                    .addModifiers(KModifier.OVERRIDE)
-                    .addParameter("privacy", PRIVACY_CONTEXT)
-                    .addParameter("entity", entityClass)
-                    .returns(PRIVACY_DENIAL.copy(nullable = true))
-                    .addStatement("return host.loadDenialOrNull(privacy, entity)")
-                    .build()
-            )
-            .addFunction(buildQueryEntry(queryClass, clientRef = "runtime"))
+                "runtime",
+                ClassName(packageName, "EntReadRuntime"),
+            ) {
+                addModifiers(KModifier.INTERNAL, KModifier.LATEINIT)
+                mutable(true)
+            }
+            function("hasLoadPrivacy", returnType = BOOLEAN) {
+                addModifiers(KModifier.OVERRIDE)
+                statement("return host.hasLoadPrivacy()")
+            }
+            function(
+                "loadDenials",
+                returnType = LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)),
+            ) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("privacy", PRIVACY_CONTEXT)
+                parameter("entities", LIST.parameterizedBy(entityClass))
+                statement("return host.loadDenials(privacy, entities)")
+            }
+            function("loadDenialOrNull", returnType = PRIVACY_DENIAL.copy(nullable = true)) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("privacy", PRIVACY_CONTEXT)
+                parameter("entity", entityClass)
+                statement("return host.loadDenialOrNull(privacy, entity)")
+            }
+            addFunction(buildQueryEntry(queryClass, clientRef = "runtime"))
             // Index-helper namespace: the same `${schemaName}Indexes`
             // stages the full repo exposes, constructed with the read
             // runtime. Emitted under the same eligibility condition.
-            .also { builder ->
-                if (indexHelperTree(input.schema, schemaNames) != null) {
-                    builder.addProperty(buildIndexesProperty(indexesClass, clientRef = "runtime"))
-                }
+            if (indexHelperTree(input.schema, schemaNames) != null) {
+                addProperty(buildIndexesProperty(indexesClass, clientRef = "runtime"))
             }
-            .addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "runtime"))
-            .build()
+            addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "runtime"))
+        }
     }
 
     private fun buildClientInterface(sorted: List<SchemaInput>): TypeSpec {
-        val builder = TypeSpec.interfaceBuilder("EntReadClient")
-            .addKdoc(
+        return interfaceType("EntReadClient") {
+            addKdoc(
                 "Shared read-only repository surface exposed in validation and privacy\n" +
                     "rule contexts. Implemented by [EntValidationReadClient]\n" +
                     "(privacy-bypassing reads, for validators) and [EntPrivacyReadClient]\n" +
@@ -239,15 +237,12 @@ internal class ReadClientGenerator(
                     "absent from the whole surface — its absence is part of the\n" +
                     "no-writes guarantee.",
             )
-        for (input in sorted) {
-            val propName = input.clientName
-            builder.addProperty(
-                PropertySpec.builder(propName, ClassName(packageName, "${input.name}ReadRepo"))
-                    .addModifiers(KModifier.ABSTRACT)
-                    .build()
-            )
+            for (input in sorted) {
+                property(input.clientName, ClassName(packageName, "${input.name}ReadRepo")) {
+                    addModifiers(KModifier.ABSTRACT)
+                }
+            }
         }
-        return builder.build()
     }
 
     /**
@@ -259,32 +254,28 @@ internal class ReadClientGenerator(
      */
     private fun buildPostureWrapper(name: String, kdoc: String): TypeSpec {
         val implClass = ClassName(packageName, "EntReadClientImpl")
-        return TypeSpec.classBuilder(name)
-            .addKdoc(kdoc)
-            .primaryConstructor(
-                FunSpec.constructorBuilder()
-                    .addAnnotation(ENTKT_INTERNAL)
-                    .addModifiers(KModifier.INTERNAL)
-                    .addParameter("delegate", implClass)
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder("delegate", implClass)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("delegate")
-                    .build()
-            )
-            .addSuperinterface(ClassName(packageName, "EntReadClient"), CodeBlock.of("delegate"))
-            .build()
+        return classType(name) {
+            addKdoc(kdoc)
+            primaryConstructor {
+                addAnnotation(ENTKT_INTERNAL)
+                addModifiers(KModifier.INTERNAL)
+                parameter("delegate", implClass)
+            }
+            property("delegate", implClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("delegate")
+            }
+            addSuperinterface(ClassName(packageName, "EntReadClient"), CodeBlock.of("delegate"))
+        }
     }
 
     private fun buildClientImpl(sorted: List<SchemaInput>): TypeSpec {
-        val builder = TypeSpec.classBuilder("EntReadClientImpl")
-            .addKdoc(
+        return classType("EntReadClientImpl") {
+            addKdoc(
                 "Shared implementation behind [EntValidationReadClient] and\n" +
                     "[EntPrivacyReadClient]. Constructed by the `EntClient` posture\n" +
-                "adapters from the operation's current client: same driver instance\n" +
-                "(a transaction-scoped client yields a transaction-scoped read\n" +
+                    "adapters from the operation's current client: same driver instance\n" +
+                    "(a transaction-scoped client yields a transaction-scoped read\n" +
                     "client), same transaction execution authorization, same read\n" +
                     "interceptors, same per-repo LOAD-privacy\n" +
                     "behavior, and the passed context fixed for this instance's lifetime\n" +
@@ -293,96 +284,91 @@ internal class ReadClientGenerator(
                     "contract so the two wrappers cannot drift; no public generated\n" +
                     "signature exposes this type.",
             )
-            .addAnnotation(ENTKT_INTERNAL)
-            .addModifiers(KModifier.INTERNAL)
-            .addSuperinterface(ClassName(packageName, "EntReadClient"))
-            .addSuperinterface(ClassName(packageName, "EntReadRuntime"))
+            addAnnotation(ENTKT_INTERNAL)
+            addModifiers(KModifier.INTERNAL)
+            addSuperinterface(ClassName(packageName, "EntReadClient"))
+            addSuperinterface(ClassName(packageName, "EntReadRuntime"))
 
-        val ctor = FunSpec.constructorBuilder()
-            .addParameter("driver", DRIVER)
-            .addParameter("privacyContext", PRIVACY_CONTEXT)
-            .addParameter("entityInterceptors", ENT_INTERCEPTORS_CONFIG)
-            .addParameter("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD)
-            .addParameter(
-                "transactionExecutionToken",
-                TRANSACTION_EXECUTION_TOKEN.copy(nullable = true),
-            )
-        for (input in sorted) {
-            val propName = input.clientName
-            ctor.addParameter("${propName}Host", ClassName(packageName, "${input.name}ReadSurface"))
-        }
-        builder.primaryConstructor(ctor.build())
-
-        builder.addProperty(
-            PropertySpec.builder("privacyContext", PRIVACY_CONTEXT)
-                .addModifiers(KModifier.PRIVATE)
-                .initializer("privacyContext")
-                .build()
-        )
-        builder.addProperty(
-            PropertySpec.builder("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD)
-                .addModifiers(KModifier.PRIVATE)
-                .initializer("transactionExecutionGuard")
-                .build()
-        )
-        builder.addProperty(
-            PropertySpec.builder(
-                "transactionExecutionToken",
-                TRANSACTION_EXECUTION_TOKEN.copy(nullable = true),
-            )
-                .addModifiers(KModifier.PRIVATE)
-                .initializer("transactionExecutionToken")
-                .build()
-        )
-        builder.addProperty(
-            // Same instance as the host client's registry, same
-            // `@EntktInternal` guard on the override. KotlinPoet merges
-            // this same-name-initialized property into the constructor, so
-            // the marker needs the `property:` use-site target — opt-in
-            // markers can't annotate a parameter.
-            PropertySpec.builder("entityInterceptors", ENT_INTERCEPTORS_CONFIG)
-                .addAnnotation(
-                    AnnotationSpec.builder(ENTKT_INTERNAL)
-                        .useSiteTarget(AnnotationSpec.UseSiteTarget.PROPERTY)
-                        .build()
+            primaryConstructor {
+                parameter("driver", DRIVER)
+                parameter("privacyContext", PRIVACY_CONTEXT)
+                parameter("entityInterceptors", ENT_INTERCEPTORS_CONFIG)
+                parameter("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD)
+                parameter(
+                    "transactionExecutionToken",
+                    TRANSACTION_EXECUTION_TOKEN.copy(nullable = true),
                 )
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("entityInterceptors")
-                .build()
-        )
-        for (input in sorted) {
-            val propName = input.clientName
-            val repoClass = ClassName(packageName, "${input.name}ReadRepo")
-            builder.addProperty(
-                // One override satisfies both supertypes: EntReadClient's
-                // `${prop}: ${Entity}ReadRepo` accessor exactly, and
-                // EntReadRuntime's `${prop}: ${Entity}ReadSurface`
-                // accessor covariantly.
-                PropertySpec.builder(propName, repoClass)
-                    .addModifiers(KModifier.OVERRIDE)
-                    .initializer("%T(driver, %LHost)", repoClass, propName)
-                    .build()
+                for (input in sorted) {
+                    parameter(
+                        "${input.clientName}Host",
+                        ClassName(packageName, "${input.name}ReadSurface"),
+                    )
+                }
+            }
+
+            property("privacyContext", PRIVACY_CONTEXT) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("privacyContext")
+            }
+            property("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("transactionExecutionGuard")
+            }
+            property(
+                "transactionExecutionToken",
+                TRANSACTION_EXECUTION_TOKEN.copy(nullable = true),
+            ) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("transactionExecutionToken")
+            }
+            property(
+                // Same instance as the host client's registry, same
+                // `@EntktInternal` guard on the override. KotlinPoet merges
+                // this same-name-initialized property into the constructor, so
+                // the marker needs the `property:` use-site target — opt-in
+                // markers can't annotate a parameter.
+                "entityInterceptors",
+                ENT_INTERCEPTORS_CONFIG,
+            ) {
+                addAnnotation(
+                    annotation(ENTKT_INTERNAL) {
+                        useSiteTarget(AnnotationSpec.UseSiteTarget.PROPERTY)
+                    },
+                )
+                addModifiers(KModifier.OVERRIDE)
+                initializer("entityInterceptors")
+            }
+            for (input in sorted) {
+                val propName = input.clientName
+                val repoClass = ClassName(packageName, "${input.name}ReadRepo")
+                property(
+                    // One override satisfies both supertypes: EntReadClient's
+                    // `${prop}: ${Entity}ReadRepo` accessor exactly, and
+                    // EntReadRuntime's `${prop}: ${Entity}ReadSurface`
+                    // accessor covariantly.
+                    propName,
+                    repoClass,
+                ) {
+                    addModifiers(KModifier.OVERRIDE)
+                    initializer("%T(driver, %LHost)", repoClass, propName)
+                }
+            }
+
+            addInitializerBlock(
+                codeBlock {
+                    for (input in sorted) {
+                        statement("%L.runtime = this", input.clientName)
+                    }
+                },
             )
-        }
 
-        val init = CodeBlock.builder()
-        for (input in sorted) {
-            val propName = input.clientName
-            init.addStatement("%L.runtime = this", propName)
-        }
-        builder.addInitializerBlock(init.build())
-
-        builder.addFunction(
-            FunSpec.builder("currentPrivacyContext")
-                .addModifiers(KModifier.OVERRIDE)
-                .returns(PRIVACY_CONTEXT)
-                .addStatement(
+            function("currentPrivacyContext", returnType = PRIVACY_CONTEXT) {
+                addModifiers(KModifier.OVERRIDE)
+                statement(
                     "transactionExecutionGuard.checkClientOperation(transactionExecutionToken)",
                 )
-                .addStatement("return privacyContext")
-                .build()
-        )
-
-        return builder.build()
+                statement("return privacyContext")
+            }
+        }
     }
 }

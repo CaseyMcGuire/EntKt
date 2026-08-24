@@ -6,12 +6,18 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
-import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.classType
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.primaryConstructor
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.setter
+import entkt.codegen.kotlinpoet.statement
 import entkt.schema.EntSchema
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
@@ -66,8 +72,8 @@ internal class QueryGenerator(
 
         val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
 
-        val typeSpec = TypeSpec.classBuilder(className)
-            .addKdoc(
+        val typeSpec = classType(className) {
+            addKdoc(
                 "Mutable query builder for [%T]. Configure and execute this instance from one " +
                     "thread at a time; query builders are not thread-safe. Do not mutate or " +
                     "execute the same instance concurrently. Create a separate query builder " +
@@ -75,11 +81,11 @@ internal class QueryGenerator(
                     "executed repeatedly when those executions are sequential.\n",
                 entityClass,
             )
-            .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
+            addAnnotation(annotation(ENTKT_DSL))
             // Generated query class implements EdgeQuery<EntityClass>;
             // the scope flows out of combinedPredicate() typed as
             // `Predicate<EntityClass>`.
-            .addSuperinterface(EDGE_QUERY.parameterizedBy(entityClass))
+            addSuperinterface(EDGE_QUERY.parameterizedBy(entityClass))
             // Also implements `EdgePredicateScope<EntityClass>` so it
             // can be used as the narrow receiver inside
             // `EdgeRef.has { ... }` blocks. The generated `where()`
@@ -89,53 +95,35 @@ internal class QueryGenerator(
             // type covariantly from `EdgePredicateScope<E>` to the
             // concrete query type so chaining outside `has` blocks
             // still returns the wider type.
-            .addSuperinterface(
+            addSuperinterface(
                 ClassName("entkt.query", "EdgePredicateScope").parameterizedBy(entityClass),
             )
-            .primaryConstructor(
-                FunSpec.constructorBuilder()
-                    .addParameter("driver", DRIVER)
-                    .addParameter(
-                        ParameterSpec.builder("client", clientClass.copy(nullable = true))
-                            .defaultValue("null")
-                            .build()
-                    )
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder("driver", DRIVER)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("driver")
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder("client", clientClass.copy(nullable = true))
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("client")
-                    .build()
-            )
+            primaryConstructor {
+                parameter("driver", DRIVER)
+                parameter("client", clientClass.copy(nullable = true)) {
+                    defaultValue("null")
+                }
+            }
+            property("driver", DRIVER) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("driver")
+            }
+            property("client", clientClass.copy(nullable = true)) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("client")
+            }
             // Mutable query state stays private so application code cannot
             // bypass the public where/order/bounds DSL before capture.
-            .addProperty(
-                PropertySpec.builder(
-                    "predicates",
-                    List::class.asClassName().parameterizedBy(predicateForEntity),
-                )
-                    .addModifiers(KModifier.PRIVATE)
-                    .mutable(true)
-                    .initializer("emptyList()")
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder(
-                    "orderFields",
-                    List::class.asClassName().parameterizedBy(orderFieldForEntity),
-                )
-                    .addModifiers(KModifier.PRIVATE)
-                    .mutable(true)
-                    .initializer("emptyList()")
-                    .build()
-            )
+            property("predicates", List::class.asClassName().parameterizedBy(predicateForEntity)) {
+                addModifiers(KModifier.PRIVATE)
+                mutable(true)
+                initializer("emptyList()")
+            }
+            property("orderFields", List::class.asClassName().parameterizedBy(orderFieldForEntity)) {
+                addModifiers(KModifier.PRIVATE)
+                mutable(true)
+                initializer("emptyList()")
+            }
             // queryLimit / queryOffset: public getter, private setter.
             // The eager-load codegen path reads them on a sibling
             // `subQuery` (cross-class read), so the getter must be
@@ -143,66 +131,62 @@ internal class QueryGenerator(
             // the only legitimate write path and enforce `require(n >= 0)`
             // — direct app-code mutation bypassing the guard is closed
             // by `private set`.
-            .addProperty(
-                PropertySpec.builder("queryLimit", INT.copy(nullable = true))
-                    .mutable(true)
-                    .initializer("null")
-                    .setter(FunSpec.setterBuilder().addModifiers(KModifier.PRIVATE).build())
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder("queryOffset", INT.copy(nullable = true))
-                    .mutable(true)
-                    .initializer("null")
-                    .setter(FunSpec.setterBuilder().addModifiers(KModifier.PRIVATE).build())
-                    .build()
-            )
-            .addProperty(buildEntityQuerySourceProperty(entityClass))
-            .addProperties(eagerEdgeSpecs.map { it.property })
-            .addProperties(eagerEdgeSpecs.map { it.filterVisibleProperty })
-            .addProperty(buildReadQueryEvaluatorProperty(entityClass))
-            .addTypes(buildEntityQueryMappings(resolved))
-            .addFunction(buildWhere(queryClass, predicateForEntity))
-            .addFunction(buildOrderBy(queryClass, orderFieldForEntity))
-            .addFunction(buildLimit(queryClass))
-            .addFunction(buildOffset(queryClass))
-            .addFunction(buildCombinedPredicate(predicateForEntity))
-            .addFunctions(eagerEdgeSpecs.map { it.loadMethod })
-            .addFunction(buildRequireClient(schemaName))
-            .addFunction(buildSetEntityQuerySource(entityClass))
-            .addFunction(buildCaptureEntityQuery(resolved))
-            .addFunction(buildReadRootQuery(entityClass))
-            .addFunction(buildCompileEntityQuery(entityClass))
-            .addFunction(buildAll(entityClass))
-            .addFunction(buildFirstOrNull(entityClass))
-            .addFunction(buildRawCount())
-            .addFunctions(buildAggregateTerminals(entityClass))
-            .addFunction(buildRawExists())
-            .addFunctions(traversalMethods)
+            property("queryLimit", INT.copy(nullable = true)) {
+                mutable(true)
+                initializer("null")
+                setter { addModifiers(KModifier.PRIVATE) }
+            }
+            property("queryOffset", INT.copy(nullable = true)) {
+                mutable(true)
+                initializer("null")
+                setter { addModifiers(KModifier.PRIVATE) }
+            }
+            addProperty(buildEntityQuerySourceProperty(entityClass))
+            addProperties(eagerEdgeSpecs.map { it.property })
+            addProperties(eagerEdgeSpecs.map { it.filterVisibleProperty })
+            addProperty(buildReadQueryEvaluatorProperty(entityClass))
+            addTypes(buildEntityQueryMappings(resolved))
+            addFunction(buildWhere(queryClass, predicateForEntity))
+            addFunction(buildOrderBy(queryClass, orderFieldForEntity))
+            addFunction(buildLimit(queryClass))
+            addFunction(buildOffset(queryClass))
+            addFunction(buildCombinedPredicate(predicateForEntity))
+            addFunctions(eagerEdgeSpecs.map { it.loadMethod })
+            addFunction(buildRequireClient(schemaName))
+            addFunction(buildSetEntityQuerySource(entityClass))
+            addFunction(buildCaptureEntityQuery(resolved))
+            addFunction(buildReadRootQuery(entityClass))
+            addFunction(buildCompileEntityQuery(entityClass))
+            addFunction(buildAll(entityClass))
+            addFunction(buildFirstOrNull(entityClass))
+            addFunction(buildRawCount())
+            addFunctions(buildAggregateTerminals(entityClass))
+            addFunction(buildRawExists())
+            addFunctions(traversalMethods)
+        }
 
         // Generated mappings and recursive query capture use framework-internal
         // runtime contracts; the generated file owns that opt-in.
-        return FileSpec.builder(packageName, className)
-            .addAnnotation(
-                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
-                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
-                    .addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
-                    .build()
+        return kotlinFile(packageName, className) {
+            addAnnotation(
+                annotation(ClassName("kotlin", "OptIn")) {
+                    useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
+                },
             )
-            .addType(typeSpec.build())
-            .build()
+            addType(typeSpec)
+        }
     }
 
     private fun buildRequireClient(schemaName: String): FunSpec {
         val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
-        return FunSpec.builder("requireClient")
-            .addModifiers(KModifier.PRIVATE)
-            .returns(clientClass)
-            .addStatement(
+        return function("requireClient", returnType = clientClass) {
+            addModifiers(KModifier.PRIVATE)
+            statement(
                 "return client ?: error(%S)",
                 "$schemaName query requires a client for privacy enforcement",
             )
-            .build()
+        }
     }
 
     private fun buildWhere(queryClass: ClassName, predicateForEntity: TypeName): FunSpec {
@@ -211,46 +195,42 @@ internal class QueryGenerator(
         // interface declares `EdgePredicateScope<E>` and the
         // concrete query class returns its own concrete type for
         // fluent chaining outside `has { }` blocks.
-        return FunSpec.builder("where")
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("predicate", predicateForEntity)
-            .returns(queryClass)
-            .addStatement("this.predicates = this.predicates + predicate")
-            .addStatement("return this")
-            .build()
+        return function("where", returnType = queryClass) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("predicate", predicateForEntity)
+            statement("this.predicates = this.predicates + predicate")
+            statement("return this")
+        }
     }
 
     private fun buildOrderBy(queryClass: ClassName, orderFieldForEntity: TypeName): FunSpec {
-        return FunSpec.builder("orderBy")
-            .addParameter("field", orderFieldForEntity)
-            .returns(queryClass)
-            .addStatement("this.orderFields = this.orderFields + field")
-            .addStatement("return this")
-            .build()
+        return function("orderBy", returnType = queryClass) {
+            parameter("field", orderFieldForEntity)
+            statement("this.orderFields = this.orderFields + field")
+            statement("return this")
+        }
     }
 
     private fun buildLimit(queryClass: ClassName): FunSpec {
-        return FunSpec.builder("limit")
-            .addParameter("n", INT)
-            .returns(queryClass)
+        return function("limit", returnType = queryClass) {
+            parameter("n", INT)
             // Reject negatives at the boundary so the bad input never
             // reaches the driver. Postgres rejects LIMIT -1 with a
             // syntax error one layer removed from the caller — loud-fail
             // here instead.
-            .addStatement("require(n >= 0) { %S + n }", "limit must be non-negative; was ")
-            .addStatement("this.queryLimit = n")
-            .addStatement("return this")
-            .build()
+            statement("require(n >= 0) { %S + n }", "limit must be non-negative; was ")
+            statement("this.queryLimit = n")
+            statement("return this")
+        }
     }
 
     private fun buildOffset(queryClass: ClassName): FunSpec {
-        return FunSpec.builder("offset")
-            .addParameter("n", INT)
-            .returns(queryClass)
-            .addStatement("require(n >= 0) { %S + n }", "offset must be non-negative; was ")
-            .addStatement("this.queryOffset = n")
-            .addStatement("return this")
-            .build()
+        return function("offset", returnType = queryClass) {
+            parameter("n", INT)
+            statement("require(n >= 0) { %S + n }", "offset must be non-negative; was ")
+            statement("this.queryOffset = n")
+            statement("return this")
+        }
     }
 
     /**
@@ -260,14 +240,13 @@ internal class QueryGenerator(
      * call to fold a query's filters into a single Predicate.
      */
     private fun buildCombinedPredicate(predicateForEntity: TypeName): FunSpec {
-        return FunSpec.builder("combinedPredicate")
-            .addModifiers(KModifier.OVERRIDE)
-            .returns(predicateForEntity.copy(nullable = true))
-            .addStatement(
+        return function("combinedPredicate", returnType = predicateForEntity.copy(nullable = true)) {
+            addModifiers(KModifier.OVERRIDE)
+            statement(
                 "return predicates.reduceOrNull { acc, p -> %T.And(acc, p) }",
                 predicateClass,
             )
-            .build()
+        }
     }
 
 }

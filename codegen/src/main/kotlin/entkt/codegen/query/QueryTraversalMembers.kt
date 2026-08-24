@@ -4,8 +4,10 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.MemberName
-import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.UNIT
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.statement
 
 private val QUERY_SOURCE = ClassName("entkt.runtime.query", "QuerySource")
 private val REQUIRE_NO_SELECTED_EDGES =
@@ -50,26 +52,23 @@ private fun buildTraversalMethod(
         receiver = edge.targetQueryClass,
         returnType = UNIT,
     )
-    return FunSpec.builder(edge.queryMethodName)
-        .addParameter(
-            ParameterSpec.builder("block", block)
-                .defaultValue("{}")
-                .build(),
-        )
-        .returns(edge.targetQueryClass)
-        .addStatement("val source = captureEntityQuery()")
-        .addStatement(
+    return function(edge.queryMethodName, returnType = edge.targetQueryClass) {
+        parameter("block", block) {
+            defaultValue("{}")
+        }
+        statement("val source = captureEntityQuery()")
+        statement(
             "source.%M(%S, %S)",
             REQUIRE_NO_SELECTED_EDGES,
             "${edge.queryMethodName}()",
             TRAVERSAL_EDGE_REASON,
         )
-        .addStatement("val target = %T(driver, client)", edge.targetQueryClass)
-        .addStatement(
+        statement("val target = %T(driver, client)", edge.targetQueryClass)
+        statement(
             "target.setEntityQuerySource(%T.Traversal(source, %L))",
             QUERY_SOURCE,
             edge.mappingName,
         )
-        .addStatement("return target.apply(block)")
-        .build()
+        statement("return target.apply(block)")
+    }
 }

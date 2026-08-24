@@ -75,6 +75,7 @@ class KotlinPoetDslTest {
         }
 
         val output = kotlinFile("com.example", "Names") {
+            typeAlias("Name", STRING)
             addType(named)
             addType(names)
         }.toString()
@@ -84,6 +85,8 @@ class KotlinPoetDslTest {
             package com.example
 
             import kotlin.String
+
+            public typealias Name = String
 
             public interface Named {
               public val name: String

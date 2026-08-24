@@ -2,6 +2,7 @@ package entkt.codegen
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
+import entkt.codegen.kotlinpoet.codeBlock
 import entkt.schema.Field
 import entkt.schema.FieldType
 
@@ -20,28 +21,26 @@ internal fun lifecycleValueSnapshot(
     val mutableFields = fields.filter { it.type == FieldType.BYTES || it.type == FieldType.JSON }
     if (mutableFields.isEmpty()) return CodeBlock.of("%L", source)
 
-    return CodeBlock.builder()
-        .add("%L.copy(\n", source)
-        .apply {
-            for (field in mutableFields) {
-                val property = field.apiName
-                if (field.type == FieldType.BYTES) {
-                    val nullableAccess = if (field.nullable) "?" else ""
-                    add("  %L = %L.%L$nullableAccess.copyOf(),\n", property, source, property)
-                } else {
-                    add(
-                        "  %L = driver.copyJsonValue(%T.TABLE, %S, %L.%L),\n",
-                        property,
-                        entityClass,
-                        field.columnName,
-                        source,
-                        property,
-                    )
-                }
+    return codeBlock {
+        add("%L.copy(\n", source)
+        for (field in mutableFields) {
+            val property = field.apiName
+            if (field.type == FieldType.BYTES) {
+                val nullableAccess = if (field.nullable) "?" else ""
+                add("  %L = %L.%L$nullableAccess.copyOf(),\n", property, source, property)
+            } else {
+                add(
+                    "  %L = driver.copyJsonValue(%T.TABLE, %S, %L.%L),\n",
+                    property,
+                    entityClass,
+                    field.columnName,
+                    source,
+                    property,
+                )
             }
         }
-        .add(")")
-        .build()
+        add(")")
+    }
 }
 
 /**
@@ -58,32 +57,30 @@ internal fun lifecyclePatchSnapshot(
     }
     if (mutableFields.isEmpty()) return CodeBlock.of("%L", source)
 
-    return CodeBlock.builder()
-        .add("%L.copy(\n", source)
-        .apply {
-            for (field in mutableFields) {
-                val property = field.apiName
-                add("  %L = when (val entry = %L.%L) {\n", property, source, property)
-                if (field.type == FieldType.BYTES) {
-                    val nullableAccess = if (field.nullable) "?" else ""
-                    add(
-                        "    is %T.Set -> %T.Set(entry.value$nullableAccess.copyOf())\n",
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                    )
-                } else {
-                    add(
-                        "    is %T.Set -> %T.Set(driver.copyJsonValue(%T.TABLE, %S, entry.value))\n",
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                        entityClass,
-                        field.columnName,
-                    )
-                }
-                add("    %T.Unset -> %T.Unset\n", FIELD_PATCH, FIELD_PATCH)
-                add("  },\n")
+    return codeBlock {
+        add("%L.copy(\n", source)
+        for (field in mutableFields) {
+            val property = field.apiName
+            add("  %L = when (val entry = %L.%L) {\n", property, source, property)
+            if (field.type == FieldType.BYTES) {
+                val nullableAccess = if (field.nullable) "?" else ""
+                add(
+                    "    is %T.Set -> %T.Set(entry.value$nullableAccess.copyOf())\n",
+                    FIELD_PATCH,
+                    FIELD_PATCH,
+                )
+            } else {
+                add(
+                    "    is %T.Set -> %T.Set(driver.copyJsonValue(%T.TABLE, %S, entry.value))\n",
+                    FIELD_PATCH,
+                    FIELD_PATCH,
+                    entityClass,
+                    field.columnName,
+                )
             }
+            add("    %T.Unset -> %T.Unset\n", FIELD_PATCH, FIELD_PATCH)
+            add("  },\n")
         }
-        .add(")")
-        .build()
+        add(")")
+    }
 }

@@ -8,6 +8,7 @@ import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
+import com.squareup.kotlinpoet.TypeAliasSpec
 import com.squareup.kotlinpoet.TypeSpec
 
 /** Build a Kotlin file while keeping KotlinPoet's builder available as the DSL receiver. */
@@ -111,6 +112,13 @@ internal inline fun annotation(
     build: AnnotationSpec.Builder.() -> Unit = {},
 ): AnnotationSpec = AnnotationSpec.builder(type).apply(build).build()
 
+/** Build a type alias declaration. */
+internal inline fun typeAlias(
+    name: String,
+    type: TypeName,
+    build: TypeAliasSpec.Builder.() -> Unit = {},
+): TypeAliasSpec = TypeAliasSpec.builder(name, type).apply(build).build()
+
 /** Build a reusable fragment of generated Kotlin code. */
 internal inline fun codeBlock(
     build: CodeBlock.Builder.() -> Unit,
@@ -213,6 +221,15 @@ internal inline fun FileSpec.Builder.property(
     build: PropertySpec.Builder.() -> Unit = {},
 ) {
     addProperty(entkt.codegen.kotlinpoet.property(name, type, build))
+}
+
+/** Add a type alias to this file. */
+internal inline fun FileSpec.Builder.typeAlias(
+    name: String,
+    type: TypeName,
+    build: TypeAliasSpec.Builder.() -> Unit = {},
+) {
+    addTypeAlias(entkt.codegen.kotlinpoet.typeAlias(name, type, build))
 }
 
 /** Add a parameter to this function or constructor. */

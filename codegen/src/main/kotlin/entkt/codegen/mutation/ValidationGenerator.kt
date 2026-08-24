@@ -1,15 +1,22 @@
 package entkt.codegen.mutation
 
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
-import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.TypeAliasSpec
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.UNIT
+import com.squareup.kotlinpoet.TypeName
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.classType
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.primaryConstructor
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
+import entkt.codegen.kotlinpoet.typeAlias
 import entkt.schema.EntSchema
 
 private val VALIDATION_RULE = ClassName("entkt.runtime.validation", "ValidationRule")
@@ -53,8 +60,6 @@ internal class ValidationGenerator(
         val configClass = ClassName(packageName, "${schemaName}ValidationConfig")
         val scopeClass = ClassName(packageName, "${schemaName}ValidationScope")
 
-        val fileBuilder = FileSpec.builder(packageName, "${schemaName}Validation")
-
         // Operation item class names. The runtime ValidationRuleContext holds
         // the shared read client once for the whole evaluation phase.
         val createItem = ClassName(packageName, "${schemaName}CreateValidationItem")
@@ -69,73 +74,48 @@ internal class ValidationGenerator(
         val updateBatchRule = "${schemaName}UpdateBatchValidationRule"
         val deleteBatchRule = "${schemaName}DeleteBatchValidationRule"
 
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(createRule, VALIDATION_RULE.parameterizedBy(clientClass, createItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(updateRule, VALIDATION_RULE.parameterizedBy(clientClass, updateItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(deleteRule, VALIDATION_RULE.parameterizedBy(clientClass, deleteItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(createBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, createItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(updateBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, updateItem)).build(),
-        )
-        fileBuilder.addTypeAlias(
-            TypeAliasSpec.builder(deleteBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, deleteItem)).build(),
-        )
+        return kotlinFile(packageName, "${schemaName}Validation") {
+            typeAlias(createRule, VALIDATION_RULE.parameterizedBy(clientClass, createItem))
+            typeAlias(updateRule, VALIDATION_RULE.parameterizedBy(clientClass, updateItem))
+            typeAlias(deleteRule, VALIDATION_RULE.parameterizedBy(clientClass, deleteItem))
+            typeAlias(createBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, createItem))
+            typeAlias(updateBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, updateItem))
+            typeAlias(deleteBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, deleteItem))
 
-        // Operation item data classes
-        fileBuilder.addType(buildCreateItem(candidateClass, createItem))
-        fileBuilder.addType(
-            buildUpdateItem(
-                entityClass, candidateClass, patchClass, edgeChangesViewClass, updateItem,
-            ),
-        )
-        fileBuilder.addType(buildDeleteItem(entityClass, candidateClass, deleteItem))
-
-        // ValidationConfig
-        fileBuilder.addType(
-            buildValidationConfig(
-                configClass,
-                ClassName(packageName, createBatchRule),
-                ClassName(packageName, updateBatchRule),
-                ClassName(packageName, deleteBatchRule),
-            ),
-        )
-
-        // ValidationScope
-        fileBuilder.addType(
-            buildValidationScope(
-                scopeClass,
-                configClass,
-                ClassName(packageName, createRule),
-                ClassName(packageName, updateRule),
-                ClassName(packageName, deleteRule),
-                ClassName(packageName, createBatchRule),
-                ClassName(packageName, updateBatchRule),
-                ClassName(packageName, deleteBatchRule),
-            ),
-        )
-
-        return fileBuilder.build()
+            addType(buildCreateItem(candidateClass, createItem))
+            addType(
+                buildUpdateItem(
+                    entityClass, candidateClass, patchClass, edgeChangesViewClass, updateItem,
+                ),
+            )
+            addType(buildDeleteItem(entityClass, candidateClass, deleteItem))
+            addType(
+                buildValidationConfig(
+                    configClass,
+                    ClassName(packageName, createBatchRule),
+                    ClassName(packageName, updateBatchRule),
+                    ClassName(packageName, deleteBatchRule),
+                ),
+            )
+            addType(
+                buildValidationScope(
+                    scopeClass,
+                    configClass,
+                    ClassName(packageName, createRule),
+                    ClassName(packageName, updateRule),
+                    ClassName(packageName, deleteRule),
+                    ClassName(packageName, createBatchRule),
+                    ClassName(packageName, updateBatchRule),
+                    ClassName(packageName, deleteBatchRule),
+                ),
+            )
+        }
     }
 
     private fun buildCreateItem(
         candidateClass: ClassName,
         itemClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(itemClass)
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("candidate", candidateClass)
-                .build(),
-        )
-        .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
-        .build()
+    ): TypeSpec = validationItem(itemClass, "candidate" to candidateClass)
 
     private fun buildUpdateItem(
         entityClass: ClassName,
@@ -143,39 +123,38 @@ internal class ValidationGenerator(
         patchClass: ClassName,
         edgeChangesViewClass: ClassName,
         itemClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(itemClass)
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("before", entityClass)
-                .addParameter("requestedPatch", patchClass)
-                .addParameter("effectivePatch", patchClass)
-                .addParameter("candidate", candidateClass)
-                .addParameter("edgeChanges", edgeChangesViewClass)
-                .build(),
-        )
-        .addProperty(PropertySpec.builder("before", entityClass).initializer("before").build())
-        .addProperty(PropertySpec.builder("requestedPatch", patchClass).initializer("requestedPatch").build())
-        .addProperty(PropertySpec.builder("effectivePatch", patchClass).initializer("effectivePatch").build())
-        .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
-        .addProperty(PropertySpec.builder("edgeChanges", edgeChangesViewClass).initializer("edgeChanges").build())
-        .build()
+    ): TypeSpec = validationItem(
+        itemClass,
+        "before" to entityClass,
+        "requestedPatch" to patchClass,
+        "effectivePatch" to patchClass,
+        "candidate" to candidateClass,
+        "edgeChanges" to edgeChangesViewClass,
+    )
 
     private fun buildDeleteItem(
         entityClass: ClassName,
         candidateClass: ClassName,
         itemClass: ClassName,
-    ): TypeSpec = TypeSpec.classBuilder(itemClass)
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(
-            FunSpec.constructorBuilder()
-                .addParameter("entity", entityClass)
-                .addParameter("candidate", candidateClass)
-                .build(),
-        )
-        .addProperty(PropertySpec.builder("entity", entityClass).initializer("entity").build())
-        .addProperty(PropertySpec.builder("candidate", candidateClass).initializer("candidate").build())
-        .build()
+    ): TypeSpec = validationItem(
+        itemClass,
+        "entity" to entityClass,
+        "candidate" to candidateClass,
+    )
+
+    /** Data shape shared by create, update, and delete validation items. */
+    private fun validationItem(
+        itemClass: ClassName,
+        vararg members: Pair<String, TypeName>,
+    ): TypeSpec = classType(itemClass) {
+        addModifiers(KModifier.DATA)
+        primaryConstructor {
+            for ((name, type) in members) parameter(name, type)
+        }
+        for ((name, type) in members) {
+            property(name, type) { initializer(name) }
+        }
+    }
 
     private fun buildValidationConfig(
         configClass: ClassName,
@@ -183,29 +162,21 @@ internal class ValidationGenerator(
         updateRuleType: ClassName,
         deleteRuleType: ClassName,
     ): TypeSpec {
-        return TypeSpec.classBuilder(configClass)
-            .addProperty(
-                PropertySpec.builder("createRules", MUTABLE_LIST.parameterizedBy(createRuleType))
-                    .initializer("mutableListOf()")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("updateRules", MUTABLE_LIST.parameterizedBy(updateRuleType))
-                    .initializer("mutableListOf()")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("deleteRules", MUTABLE_LIST.parameterizedBy(deleteRuleType))
-                    .initializer("mutableListOf()")
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("updateDerivesFromCreate", Boolean::class)
-                    .mutable(true)
-                    .initializer("false")
-                    .build(),
-            )
-            .build()
+        return classType(configClass) {
+            for ((name, ruleType) in listOf(
+                "createRules" to createRuleType,
+                "updateRules" to updateRuleType,
+                "deleteRules" to deleteRuleType,
+            )) {
+                property(name, MUTABLE_LIST.parameterizedBy(ruleType)) {
+                    initializer("mutableListOf()")
+                }
+            }
+            property("updateDerivesFromCreate", BOOLEAN) {
+                mutable(true)
+                initializer("false")
+            }
+        }
     }
 
     private fun buildValidationScope(
@@ -218,67 +189,42 @@ internal class ValidationGenerator(
         updateBatchRuleType: ClassName,
         deleteBatchRuleType: ClassName,
     ): TypeSpec {
-        return TypeSpec.classBuilder(scopeClass)
-            .primaryConstructor(
-                FunSpec.constructorBuilder()
-                    .addModifiers(KModifier.INTERNAL)
-                    .addParameter("config", configClass)
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("config", configClass)
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("config")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("create")
-                    .addParameter("rules", createRuleType, KModifier.VARARG)
-                    .addStatement("config.createRules.addAll(rules)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("create")
-                    .addAnnotation(jvmName("createBatchRule"))
-                    .addParameter("rule", createBatchRuleType)
-                    .addStatement("config.createRules.add(rule)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("update")
-                    .addParameter("rules", updateRuleType, KModifier.VARARG)
-                    .addStatement("config.updateRules.addAll(rules)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("update")
-                    .addAnnotation(jvmName("updateBatchRule"))
-                    .addParameter("rule", updateBatchRuleType)
-                    .addStatement("config.updateRules.add(rule)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("delete")
-                    .addParameter("rules", deleteRuleType, KModifier.VARARG)
-                    .addStatement("config.deleteRules.addAll(rules)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("delete")
-                    .addAnnotation(jvmName("deleteBatchRule"))
-                    .addParameter("rule", deleteBatchRuleType)
-                    .addStatement("config.deleteRules.add(rule)")
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("updateDerivesFromCreate")
-                    .addStatement("config.updateDerivesFromCreate = true")
-                    .build(),
-            )
-            .build()
+        return classType(scopeClass) {
+            primaryConstructor {
+                addModifiers(KModifier.INTERNAL)
+                parameter("config", configClass)
+            }
+            property("config", configClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("config")
+            }
+            addRuleFunctions("create", createRuleType, createBatchRuleType)
+            addRuleFunctions("update", updateRuleType, updateBatchRuleType)
+            addRuleFunctions("delete", deleteRuleType, deleteBatchRuleType)
+            function("updateDerivesFromCreate") {
+                statement("config.updateDerivesFromCreate = true")
+            }
+        }
     }
 
-    private fun jvmName(name: String): AnnotationSpec = AnnotationSpec.builder(JVM_NAME)
-        .addMember("%S", name)
-        .build()
+    /** Add scalar and batch overloads for one validation operation. */
+    private fun TypeSpec.Builder.addRuleFunctions(
+        operation: String,
+        ruleType: ClassName,
+        batchRuleType: ClassName,
+    ) {
+        function(operation) {
+            addParameter("rules", ruleType, KModifier.VARARG)
+            statement("config.%LRules.addAll(rules)", operation)
+        }
+        function(operation) {
+            addAnnotation(jvmName("${operation}BatchRule"))
+            parameter("rule", batchRuleType)
+            statement("config.%LRules.add(rule)", operation)
+        }
+    }
+
+    private fun jvmName(name: String): AnnotationSpec = annotation(JVM_NAME) {
+        addMember("%S", name)
+    }
 }

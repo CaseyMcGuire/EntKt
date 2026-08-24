@@ -1,17 +1,25 @@
 package entkt.codegen.client
 
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.STAR
 import entkt.codegen.SchemaInput
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.codeBlock
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.interfaceType
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
 
 private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_CONTEXT_PROVIDER =
@@ -63,30 +71,28 @@ internal class ReadRuntimeGenerator(
         // Same accessor order as EntClient's repo properties.
         val sorted = topologicalSort(schemas)
 
-        val fileBuilder = FileSpec.builder(packageName, "EntReadRuntime")
+        return kotlinFile(packageName, "EntReadRuntime") {
             // The declarations below reference each other and are all
             // `@EntktInternal`-marked; the file-level OptIn covers the
             // marked-type usages without re-marking every member.
-            .addAnnotation(
-                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
-                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
-                    .addMember("%T::class", ENTKT_INTERNAL)
-                    .build()
+            addAnnotation(
+                annotation(ClassName("kotlin", "OptIn")) {
+                    useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    addMember("%T::class", ENTKT_INTERNAL)
+                },
             )
-
-        for (input in schemas) {
-            fileBuilder.addType(buildReadSurface(input))
+            for (input in schemas) {
+                addType(buildReadSurface(input))
+            }
+            addType(buildReadRuntime(sorted))
         }
-        fileBuilder.addType(buildReadRuntime(sorted))
-
-        return fileBuilder.build()
     }
 
     private fun buildReadSurface(input: SchemaInput): TypeSpec {
         val entityClass = ClassName(packageName, input.name)
-        return TypeSpec.interfaceBuilder("${input.name}ReadSurface")
-            .addAnnotation(ENTKT_INTERNAL)
-            .addKdoc(
+        return interfaceType("${input.name}ReadSurface") {
+            addAnnotation(ENTKT_INTERNAL)
+            addKdoc(
                 "Narrow per-entity read surface of `%LRepo`: the only repo members\n" +
                     "generated query terminals call. `%LReadRepo` implements it by\n" +
                     "delegating to the host repo, so LOAD-privacy behavior is identical\n" +
@@ -96,37 +102,31 @@ internal class ReadRuntimeGenerator(
                     "boundary stores it as an operational failure.",
                 input.name, input.name,
             )
-            .addFunction(
-                FunSpec.builder("hasLoadPrivacy")
-                    .addModifiers(KModifier.ABSTRACT)
-                    .returns(Boolean::class)
-                    .build()
-            )
-            .addFunction(
-                FunSpec.builder("loadDenials")
-                    .addModifiers(KModifier.ABSTRACT)
-                    .addParameter("privacy", PRIVACY_CONTEXT)
-                    .addParameter("entities", LIST.parameterizedBy(entityClass))
-                    .returns(LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)))
-                    .build()
-            )
-            .addFunction(
-                FunSpec.builder("loadDenialOrNull")
-                    .addModifiers(KModifier.ABSTRACT)
-                    .addParameter("privacy", PRIVACY_CONTEXT)
-                    .addParameter("entity", entityClass)
-                    .returns(PRIVACY_DENIAL.copy(nullable = true))
-                    .build()
-            )
-            .build()
+            function("hasLoadPrivacy", returnType = BOOLEAN) {
+                addModifiers(KModifier.ABSTRACT)
+            }
+            function(
+                "loadDenials",
+                returnType = LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)),
+            ) {
+                addModifiers(KModifier.ABSTRACT)
+                parameter("privacy", PRIVACY_CONTEXT)
+                parameter("entities", LIST.parameterizedBy(entityClass))
+            }
+            function("loadDenialOrNull", returnType = PRIVACY_DENIAL.copy(nullable = true)) {
+                addModifiers(KModifier.ABSTRACT)
+                parameter("privacy", PRIVACY_CONTEXT)
+                parameter("entity", entityClass)
+            }
+        }
     }
 
     private fun buildReadRuntime(sorted: List<SchemaInput>): TypeSpec {
-        val builder = TypeSpec.interfaceBuilder("EntReadRuntime")
-            .addAnnotation(ENTKT_INTERNAL)
-            .addSuperinterface(PRIVACY_CONTEXT_PROVIDER)
-            .addSuperinterface(LOAD_PRIVACY_EVALUATOR)
-            .addKdoc(
+        return interfaceType("EntReadRuntime") {
+            addAnnotation(ENTKT_INTERNAL)
+            addSuperinterface(PRIVACY_CONTEXT_PROVIDER)
+            addSuperinterface(LOAD_PRIVACY_EVALUATOR)
+            addKdoc(
                 "The read-runtime contract generated queries and index stages depend\n" +
                     "on, instead of the full `EntClient`. Implemented by `EntClient` and\n" +
                     "by `EntReadClientImpl` (the internal delegate behind\n" +
@@ -136,20 +136,14 @@ internal class ReadRuntimeGenerator(
                     "on the read path (privacy context, LOAD privacy, read\n" +
                     "interceptors).",
             )
-            .addFunction(
-                FunSpec.builder("currentPrivacyContext")
-                    .addModifiers(KModifier.ABSTRACT)
-                    .returns(PRIVACY_CONTEXT)
-                    .build()
-            )
-            .addFunction(
-                FunSpec.builder("get")
-                    .addModifiers(KModifier.OVERRIDE)
-                    .returns(PRIVACY_CONTEXT)
-                    .addStatement("return currentPrivacyContext()")
-                    .build(),
-            )
-            .addProperty(
+            function("currentPrivacyContext", returnType = PRIVACY_CONTEXT) {
+                addModifiers(KModifier.ABSTRACT)
+            }
+            function("get", returnType = PRIVACY_CONTEXT) {
+                addModifiers(KModifier.OVERRIDE)
+                statement("return currentPrivacyContext()")
+            }
+            property(
                 // Keeps the concrete property's `@EntktInternal` guard:
                 // interface members can't be `internal`, so the opt-in
                 // marker is what stops application code from reaching the
@@ -157,85 +151,87 @@ internal class ReadRuntimeGenerator(
                 // `addEntity` permits wrong-entity registration via an
                 // unchecked cast). Generated queries read it through
                 // their files' `@file:OptIn`.
-                PropertySpec.builder("entityInterceptors", ENT_INTERCEPTORS_CONFIG)
-                    .addAnnotation(ENTKT_INTERNAL)
-                    .addModifiers(KModifier.ABSTRACT)
-                    .build()
-            )
+                "entityInterceptors",
+                ENT_INTERCEPTORS_CONFIG,
+            ) {
+                addAnnotation(ENTKT_INTERNAL)
+                addModifiers(KModifier.ABSTRACT)
+            }
 
-        builder.addFunction(buildIsLoadPrivacyConfigured(sorted))
-        builder.addFunction(buildEvaluateLoadPrivacy(sorted))
+            addFunction(buildIsLoadPrivacyConfigured(sorted))
+            addFunction(buildEvaluateLoadPrivacy(sorted))
 
-        for (input in sorted) {
-            val propName = input.clientName
-            builder.addProperty(
-                PropertySpec.builder(propName, ClassName(packageName, "${input.name}ReadSurface"))
-                    .addModifiers(KModifier.ABSTRACT)
-                    .build()
-            )
+            for (input in sorted) {
+                property(input.clientName, ClassName(packageName, "${input.name}ReadSurface")) {
+                    addModifiers(KModifier.ABSTRACT)
+                }
+            }
         }
-
-        return builder.build()
     }
 
     private fun buildIsLoadPrivacyConfigured(sorted: List<SchemaInput>): FunSpec {
-        val body = com.squareup.kotlinpoet.CodeBlock.builder().add("return when (entity) {\n")
-        for (input in sorted) {
-            body.add(
-                "  %T.GeneratedEntityMapping -> %L.hasLoadPrivacy()\n",
-                ClassName(packageName, "${input.name}Query"),
-                input.clientName,
+        val body = codeBlock {
+            add("return when (entity) {\n")
+            for (input in sorted) {
+                add(
+                    "  %T.GeneratedEntityMapping -> %L.hasLoadPrivacy()\n",
+                    ClassName(packageName, "${input.name}Query"),
+                    input.clientName,
+                )
+            }
+            add(
+                "  else -> error(%P)\n",
+                "No LOAD-privacy evaluator is registered for entity '${'$'}{entity.entityName}'",
             )
+            add("}\n")
         }
-        body.add(
-            "  else -> error(%P)\n",
-            "No LOAD-privacy evaluator is registered for entity '${'$'}{entity.entityName}'",
-        )
-        body.add("}\n")
-        return FunSpec.builder("isConfigured")
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("entity", ENTITY_MAPPING.parameterizedBy(STAR))
-            .returns(Boolean::class)
-            .addCode(body.build())
-            .build()
+        return function("isConfigured", returnType = BOOLEAN) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("entity", ENTITY_MAPPING.parameterizedBy(STAR))
+            addCode(body)
+        }
     }
 
     private fun buildEvaluateLoadPrivacy(sorted: List<SchemaInput>): FunSpec {
         val entityType = TypeVariableName("Entity", ENT_ENTITY.parameterizedBy(STAR))
-        val body = com.squareup.kotlinpoet.CodeBlock.builder().add("return when (entity) {\n")
-        for (input in sorted) {
-            body.add(
-                "  %T.GeneratedEntityMapping -> %M(\n" +
-                    "    %S,\n" +
-                    "    entities,\n" +
-                    "    %L.loadDenials(privacyContext, entities as %T<%T>),\n" +
-                    "  )\n",
-                ClassName(packageName, "${input.name}Query"),
-                CORRELATE_LOAD_PRIVACY_EVALUATIONS,
-                "${input.name} LOAD privacy",
-                input.clientName,
-                LIST,
-                ClassName(packageName, input.name),
+        val body = codeBlock {
+            add("return when (entity) {\n")
+            for (input in sorted) {
+                add(
+                    "  %T.GeneratedEntityMapping -> %M(\n" +
+                        "    %S,\n" +
+                        "    entities,\n" +
+                        "    %L.loadDenials(privacyContext, entities as %T<%T>),\n" +
+                        "  )\n",
+                    ClassName(packageName, "${input.name}Query"),
+                    CORRELATE_LOAD_PRIVACY_EVALUATIONS,
+                    "${input.name} LOAD privacy",
+                    input.clientName,
+                    LIST,
+                    ClassName(packageName, input.name),
+                )
+            }
+            add(
+                "  else -> error(%P)\n",
+                "No LOAD-privacy evaluator is registered for entity '${'$'}{entity.entityName}'",
             )
+            add("}\n")
         }
-        body.add(
-            "  else -> error(%P)\n",
-            "No LOAD-privacy evaluator is registered for entity '${'$'}{entity.entityName}'",
-        )
-        body.add("}\n")
-        return FunSpec.builder("evaluate")
-            .addAnnotation(
-                AnnotationSpec.builder(Suppress::class)
-                    .addMember("%S", "UNCHECKED_CAST")
-                    .build(),
+        return function(
+            "evaluate",
+            returnType = LIST.parameterizedBy(LOAD_PRIVACY_EVALUATION.parameterizedBy(entityType)),
+        ) {
+            addAnnotation(
+                annotation(ClassName("kotlin", "Suppress")) {
+                    addMember("%S", "UNCHECKED_CAST")
+                },
             )
-            .addModifiers(KModifier.OVERRIDE)
-            .addTypeVariable(entityType)
-            .addParameter("entity", ENTITY_MAPPING.parameterizedBy(entityType))
-            .addParameter("privacyContext", PRIVACY_CONTEXT)
-            .addParameter("entities", LIST.parameterizedBy(entityType))
-            .returns(LIST.parameterizedBy(LOAD_PRIVACY_EVALUATION.parameterizedBy(entityType)))
-            .addCode(body.build())
-            .build()
+            addModifiers(KModifier.OVERRIDE)
+            addTypeVariable(entityType)
+            parameter("entity", ENTITY_MAPPING.parameterizedBy(entityType))
+            parameter("privacyContext", PRIVACY_CONTEXT)
+            parameter("entities", LIST.parameterizedBy(entityType))
+            addCode(body)
+        }
     }
 }

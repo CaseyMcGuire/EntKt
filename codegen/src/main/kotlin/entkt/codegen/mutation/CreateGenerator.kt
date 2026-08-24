@@ -12,9 +12,18 @@ import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.NOTHING
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.classType
+import entkt.codegen.kotlinpoet.codeBlock
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.primaryConstructor
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.setter
+import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.fkPropertyKdoc
@@ -69,11 +78,11 @@ internal val KOTLIN_EXCEPTION = ClassName("kotlin", "Exception")
  * nested block needs re-indenting to line up with its surroundings.
  */
 internal fun CodeBlock.indented(): CodeBlock =
-    CodeBlock.builder()
-        .indent()
-        .add(this)
-        .unindent()
-        .build()
+    codeBlock {
+        indent()
+        add(this@indented)
+        unindent()
+    }
 
 /**
  * The `@file:OptIn(EntktInternal::class)` annotation every generated
@@ -82,10 +91,10 @@ internal fun CodeBlock.indented(): CodeBlock =
  * generated code compiled in the application module.
  */
 internal fun entktInternalFileOptIn(): AnnotationSpec =
-    AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
-        .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
-        .addMember("%T::class", ENTKT_INTERNAL)
-        .build()
+    annotation(ClassName("kotlin", "OptIn")) {
+        useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+        addMember("%T::class", ENTKT_INTERNAL)
+    }
 
 /**
  * Emission fragment: construct a typed [exceptionExpr] as `exception`,
@@ -97,13 +106,13 @@ internal fun entktInternalFileOptIn(): AnnotationSpec =
  * `exception` local is re-declared per site).
  */
 internal fun recordAndReturnFailure(exceptionExpr: CodeBlock): CodeBlock =
-    CodeBlock.builder()
-        .add("val exception = ")
-        .add(exceptionExpr)
-        .add("\n")
-        .add("client.recordTransactionMutationFailure(exception)\n")
-        .add("return %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
-        .build()
+    codeBlock {
+        add("val exception = ")
+        add(exceptionExpr)
+        add("\n")
+        add("client.recordTransactionMutationFailure(exception)\n")
+        add("return %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
+    }
 
 /**
  * Emission fragment: a mutation-privacy denial produced from a
@@ -122,19 +131,19 @@ internal fun privacyDeniedFailure(
     entityKeyExpr: CodeBlock,
     reasonExpr: String,
 ): CodeBlock =
-    CodeBlock.builder()
-        .add(
+    codeBlock {
+        add(
             recordAndReturnFailure(
-                CodeBlock.builder()
-                    .add("%T(", ENT_MUTATION_PRIVACY_DENIED_EXCEPTION)
-                    .add(writeStateExpr)
-                    .add(", %S, %T.%L, ", schemaName, MUTATION_ENT_OPERATION, operationName)
-                    .add(entityKeyExpr)
-                    .add(", %L)", reasonExpr)
-                    .build(),
+                codeBlock {
+                    add("%T(", ENT_MUTATION_PRIVACY_DENIED_EXCEPTION)
+                    add(writeStateExpr)
+                    add(", %S, %T.%L, ", schemaName, MUTATION_ENT_OPERATION, operationName)
+                    add(entityKeyExpr)
+                    add(", %L)", reasonExpr)
+                },
             ),
         )
-        .build()
+    }
 
 /**
  * Emission fragment: the catch tail for a single driver call inside a
@@ -152,20 +161,20 @@ internal fun driverCallFailureTail(
     fallbackStateName: String,
     classifierName: String = "_classifyDriverFailure",
 ): CodeBlock =
-    CodeBlock.builder()
-        .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
-        .add("  throw e\n")
-        .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
-        .add(
+    codeBlock {
+        add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
+        add("  throw e\n")
+        add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
+        add(
             "  val classified = %N(e, %T.%L)\n",
             classifierName,
             MUTATION_WRITE_STATE,
             fallbackStateName,
         )
-        .add("  client.recordTransactionMutationFailure(classified)\n")
-        .add("  return %T.failedForInternalUse(classified)\n", MUTATION_RESULT)
-        .add("}\n")
-        .build()
+        add("  client.recordTransactionMutationFailure(classified)\n")
+        add("  return %T.failedForInternalUse(classified)\n", MUTATION_RESULT)
+        add("}\n")
+    }
 
 /**
  * Build the private driver-classification member named by [helperName]:
@@ -184,21 +193,20 @@ internal fun buildClassifyDriverFailureHelper(
     operationName: String,
     helperName: String = "_classifyDriverFailure",
 ): FunSpec =
-    FunSpec.builder(helperName)
-        .addModifiers(KModifier.PRIVATE)
-        .addParameter("e", KOTLIN_EXCEPTION)
-        .addParameter("fallback", MUTATION_WRITE_STATE)
-        .returns(ENT_MUTATION_EXCEPTION)
-        .addCode(
-            CodeBlock.builder()
-                .add(
+    function(helperName, returnType = ENT_MUTATION_EXCEPTION) {
+        addModifiers(KModifier.PRIVATE)
+        parameter("e", KOTLIN_EXCEPTION)
+        parameter("fallback", MUTATION_WRITE_STATE)
+        addCode(
+            codeBlock {
+                add(
                     "return driver.classifyMutationException(e, %S, %T.%L)\n",
                     schemaName, MUTATION_ENT_OPERATION, operationName,
                 )
-                .add("  ?: %T(fallback, e)\n", ENT_UNEXPECTED_MUTATION_EXCEPTION)
-                .build(),
+                add("  ?: %T(fallback, e)\n", ENT_UNEXPECTED_MUTATION_EXCEPTION)
+            },
         )
-        .build()
+    }
 
 /**
  * Build the private `_validationFailed(violations)` member shared by
@@ -209,17 +217,16 @@ internal fun buildClassifyDriverFailureHelper(
  * so a `return _validationFailed(...)` type-checks in any terminal.
  */
 internal fun buildValidationFailedHelper(schemaName: String, operationName: String): FunSpec =
-    FunSpec.builder("_validationFailed")
-        .addModifiers(KModifier.PRIVATE)
-        .addParameter("violations", List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION))
-        .returns(MUTATION_RESULT.parameterizedBy(NOTHING))
-        .addStatement(
+    function("_validationFailed", returnType = MUTATION_RESULT.parameterizedBy(NOTHING)) {
+        addModifiers(KModifier.PRIVATE)
+        parameter("violations", List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION))
+        statement(
             "val exception = %T(%S, %T.%L, violations)",
             ENT_VALIDATION_EXCEPTION, schemaName, MUTATION_ENT_OPERATION, operationName,
         )
-        .addStatement("client.recordTransactionMutationFailure(exception)")
-        .addStatement("return %T.failedForInternalUse(exception)", MUTATION_RESULT)
-        .build()
+        statement("client.recordTransactionMutationFailure(exception)")
+        statement("return %T.failedForInternalUse(exception)", MUTATION_RESULT)
+    }
 
 internal class CreateGenerator(
     private val packageName: String,
@@ -241,88 +248,72 @@ internal class CreateGenerator(
         val idStrategy = idStrategyName(schema)
         val idType = schema.id().type.toTypeName()
 
-        val constructorBuilder = FunSpec.constructorBuilder()
-            .addAnnotation(ENTKT_INTERNAL)
-        if (idStrategy == "EXPLICIT") {
-            constructorBuilder.addParameter("id", idType)
-        }
-
-        val typeSpec = TypeSpec.classBuilder(className)
-            .addAnnotation(AnnotationSpec.builder(ENTKT_DSL).build())
-            .primaryConstructor(constructorBuilder.build())
-            .addProperty(
-                PropertySpec.builder(
-                    "assignedFields",
-                    ClassName("entkt.runtime.mutation", "AssignedFields").parameterizedBy(entityClass),
-                )
-                    .addModifiers(KModifier.PRIVATE)
-                    .initializer("%T()", ClassName("entkt.runtime.mutation", "AssignedFields"))
-                    .build(),
-            )
-            .also { builder ->
-                if (idStrategy == "EXPLICIT") {
-                    builder.addProperty(
-                        PropertySpec.builder("id", idType)
-                            .addAnnotation(ENTKT_INTERNAL)
-                            .addModifiers(KModifier.INTERNAL)
-                            .initializer("id")
-                            .build()
-                    )
+        val assignedFieldsType = ClassName("entkt.runtime.mutation", "AssignedFields")
+        val typeSpec = classType(className) {
+            addAnnotation(annotation(ENTKT_DSL))
+            primaryConstructor {
+                addAnnotation(ENTKT_INTERNAL)
+                if (idStrategy == "EXPLICIT") parameter("id", idType)
+            }
+            property("assignedFields", assignedFieldsType.parameterizedBy(entityClass)) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("%T()", assignedFieldsType)
+            }
+            if (idStrategy == "EXPLICIT") {
+                property("id", idType) {
+                    addAnnotation(ENTKT_INTERNAL)
+                    addModifiers(KModifier.INTERNAL)
+                    initializer("id")
                 }
             }
-            .addProperties(allFields.map { buildDraftProperty(entityClass, it) })
-            .addProperties(edgeFks.map { buildDraftEdgeFkProperty(entityClass, it) })
-            .addFunction(buildIsSetFunction(entityClass))
-            .build()
+            addProperties(allFields.map { buildDraftProperty(entityClass, it) })
+            addProperties(edgeFks.map { buildDraftEdgeFkProperty(entityClass, it) })
+            addFunction(buildIsSetFunction(entityClass))
+        }
 
-        return FileSpec.builder(packageName, className)
-            .addAnnotation(entktInternalFileOptIn())
-            .addType(typeSpec)
-            .build()
+        return kotlinFile(packageName, className) {
+            addAnnotation(entktInternalFileOptIn())
+            addType(typeSpec)
+        }
     }
 
     private fun buildDraftProperty(entityClass: ClassName, field: Field): PropertySpec {
         val type = field.resolvedTypeName().copy(nullable = true)
-        val property = PropertySpec.builder(field.apiName, type)
-            .mutable(true)
-            .initializer("null")
-            .setter(
-                FunSpec.setterBuilder()
-                    .addParameter("value", type)
-                    .addStatement("field = value")
-                    .addStatement("assignedFields.mark(%T.%L)", entityClass, field.apiName)
-                    .build(),
-            )
-        field.comment?.let { property.addKdoc("%L", it) }
-        return property.build()
+        return property(field.apiName, type) {
+            mutable(true)
+            initializer("null")
+            setter {
+                parameter("value", type)
+                statement("field = value")
+                statement("assignedFields.mark(%T.%L)", entityClass, field.apiName)
+            }
+            field.comment?.let { addKdoc("%L", it) }
+        }
     }
 
     private fun buildDraftEdgeFkProperty(entityClass: ClassName, fk: EdgeFk): PropertySpec {
         val type = fk.idType.toTypeName().copy(nullable = true)
-        return PropertySpec.builder(fk.propertyName, type)
-            .mutable(true)
-            .initializer("null")
-            .addKdoc("%L", fkPropertyKdoc(fk))
-            .setter(
-                FunSpec.setterBuilder()
-                    .addParameter("value", type)
-                    .addStatement("field = value")
-                    .addStatement("assignedFields.mark(%T.%L)", entityClass, fk.propertyName)
-                    .build(),
-            )
-            .build()
+        return property(fk.propertyName, type) {
+            mutable(true)
+            initializer("null")
+            addKdoc("%L", fkPropertyKdoc(fk))
+            setter {
+                parameter("value", type)
+                statement("field = value")
+                statement("assignedFields.mark(%T.%L)", entityClass, fk.propertyName)
+            }
+        }
     }
 
     private fun buildIsSetFunction(entityClass: ClassName): FunSpec =
-        FunSpec.builder("isSet")
-            .addKdoc("Return whether [column] was explicitly assigned, including assignment to null.\n")
-            .addParameter(
+        function("isSet", returnType = BOOLEAN) {
+            addKdoc("Return whether [column] was explicitly assigned, including assignment to null.\n")
+            parameter(
                 "column",
                 ClassName("entkt.query", "ColumnReference").parameterizedBy(entityClass),
             )
-            .returns(BOOLEAN)
-            .addStatement("return column in assignedFields")
-            .build()
+            statement("return column in assignedFields")
+        }
 
     /** Build the repo-owned draft resolver used by scalar and batch create. */
     fun buildResolveFunction(
@@ -334,23 +325,24 @@ internal class CreateGenerator(
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val allFields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
-        val builder = FunSpec.builder("resolve")
-            .addAnnotation(ENTKT_INTERNAL)
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("draft", draftClass)
-            .returns(CREATE_PREPARATION.parameterizedBy(candidateClass))
-            .beginControlFlow("return draft.run")
-
-        emitCreatePreparation(builder, schemaName, schema, allFields, edgeFks)
-        val candidateArgs = buildCandidateArgs(allFields, edgeFks)
-        builder.addStatement(
-            "%T.Ready(%T(values, %T(${candidateArgs.joinToString(", ")})))",
-            CREATE_PREPARATION,
-            PREPARED_CREATE,
-            candidateClass,
-        )
-        builder.endControlFlow()
-        return builder.build()
+        return function(
+            "resolve",
+            returnType = CREATE_PREPARATION.parameterizedBy(candidateClass),
+        ) {
+            addAnnotation(ENTKT_INTERNAL)
+            addModifiers(KModifier.OVERRIDE)
+            parameter("draft", draftClass)
+            beginControlFlow("return draft.run")
+            emitCreatePreparation(this, schemaName, schema, allFields, edgeFks)
+            val candidateArgs = buildCandidateArgs(allFields, edgeFks)
+            statement(
+                "%T.Ready(%T(values, %T(${candidateArgs.joinToString(", ")})))",
+                CREATE_PREPARATION,
+                PREPARED_CREATE,
+                candidateClass,
+            )
+            endControlFlow()
+        }
     }
 
     /**
@@ -508,46 +500,46 @@ internal class CreateGenerator(
         }
 
         // ---- Build the row map. ----
-        val rowBuilder = CodeBlock.builder()
-            .add("val values: Map<String, Any?> = mapOf(\n")
+        val valuesMap = codeBlock {
+            add("val values: Map<String, Any?> = mapOf(\n")
 
-        if (idStrategy == "CLIENT_UUID") {
-            rowBuilder.add("  %S to %T.randomUUID(),\n", "id", UUID_CLASS)
-        } else if (idStrategy == "EXPLICIT") {
-            rowBuilder.add("  %S to id,\n", "id")
-        }
-
-        for (field in allFields) {
-            val prop = field.apiName
-            val preparedProp = preparedValueNames.getValue(field)
-            val col = field.columnName
-            if (field.type == FieldType.ENUM) {
-                val nullable = field.nullable
-                if (nullable) {
-                    rowBuilder.add("  %S to %L?.name,\n", col, preparationLocal(prop))
-                } else {
-                    rowBuilder.add("  %S to %L.name,\n", col, preparationLocal(prop))
-                }
-            } else if (field.type == FieldType.PGVECTOR) {
-                // Validate the vector's dimension at save() build time, with a
-                // field-named error (the driver re-checks defensively at bind).
-                val dims = (field.storage as? entkt.schema.ColumnStorage.Native)?.dimensions
-                    ?: error("pgvector field '${field.apiName}' missing dimensions metadata")
-                val opt = if (field.nullable) "?" else ""
-                rowBuilder.add(
-                    "  %S to %L$opt.also { require(it.dimensions == %L) { %S } },\n",
-                    col, preparationLocal(prop), dims, "$prop expects vector($dims)",
-                )
-            } else {
-                rowBuilder.add("  %S to %L,\n", col, preparedProp)
+            if (idStrategy == "CLIENT_UUID") {
+                add("  %S to %T.randomUUID(),\n", "id", UUID_CLASS)
+            } else if (idStrategy == "EXPLICIT") {
+                add("  %S to id,\n", "id")
             }
-        }
-        for (fk in edgeFks) {
-            rowBuilder.add("  %S to %L,\n", fk.columnName, preparationLocal(fk.propertyName))
-        }
-        rowBuilder.add(")\n")
 
-        builder.addCode(rowBuilder.build())
+            for (field in allFields) {
+                val prop = field.apiName
+                val preparedProp = preparedValueNames.getValue(field)
+                val col = field.columnName
+                if (field.type == FieldType.ENUM) {
+                    if (field.nullable) {
+                        add("  %S to %L?.name,\n", col, preparationLocal(prop))
+                    } else {
+                        add("  %S to %L.name,\n", col, preparationLocal(prop))
+                    }
+                } else if (field.type == FieldType.PGVECTOR) {
+                    // Validate the vector's dimension at save() build time, with a
+                    // field-named error (the driver re-checks defensively at bind).
+                    val dims = (field.storage as? entkt.schema.ColumnStorage.Native)?.dimensions
+                        ?: error("pgvector field '${field.apiName}' missing dimensions metadata")
+                    val opt = if (field.nullable) "?" else ""
+                    add(
+                        "  %S to %L$opt.also { require(it.dimensions == %L) { %S } },\n",
+                        col, preparationLocal(prop), dims, "$prop expects vector($dims)",
+                    )
+                } else {
+                    add("  %S to %L,\n", col, preparedProp)
+                }
+            }
+            for (fk in edgeFks) {
+                add("  %S to %L,\n", fk.columnName, preparationLocal(fk.propertyName))
+            }
+            add(")\n")
+        }
+
+        builder.addCode(valuesMap)
     }
 
     private fun fkDefaultCodeBlock(fk: EdgeFk): CodeBlock {

@@ -1,12 +1,16 @@
 package entkt.codegen.query
 
 import com.squareup.kotlinpoet.ClassName
-import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.kotlinpoet.codeBlock
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
 
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
@@ -43,10 +47,9 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 internal fun buildAll(entityClass: ClassName): FunSpec {
     val listType = List::class.asClassName().parameterizedBy(entityClass)
     val resultType = READ_RESULT.parameterizedBy(listType)
-    return FunSpec.builder("all")
-        .returns(resultType)
-        .addStatement("return readRootQuery(%T.ALL, maximumRows = null)", READ_OPERATION)
-        .build()
+    return function("all", returnType = resultType) {
+        statement("return readRootQuery(%T.ALL, maximumRows = null)", READ_OPERATION)
+    }
 }
 
 /**
@@ -67,9 +70,8 @@ internal fun buildAll(entityClass: ClassName): FunSpec {
  */
 internal fun buildFirstOrNull(entityClass: ClassName): FunSpec {
     val resultType = READ_RESULT.parameterizedBy(entityClass.copy(nullable = true))
-    return FunSpec.builder("firstOrNull")
-        .returns(resultType)
-        .addCode(
+    return function("firstOrNull", returnType = resultType) {
+        addCode(
             "return when (val result = readRootQuery(%T.FIRST, maximumRows = 1)) {\n" +
                 "  is %T.Success -> %T.Success(result.value.firstOrNull())\n" +
                 "  is %T.Failed -> result\n" +
@@ -79,75 +81,77 @@ internal fun buildFirstOrNull(entityClass: ClassName): FunSpec {
             READ_RESULT,
             READ_RESULT,
         )
-        .build()
+    }
 }
 
 /** Capture the recursive query and delegate its terminal intent to the read evaluator. */
 internal fun buildReadRootQuery(entityClass: ClassName): FunSpec {
     val entityList = List::class.asClassName().parameterizedBy(entityClass)
-    return FunSpec.builder("readRootQuery")
-        .addAnnotation(ClassName("entkt.query", "EntktInternal"))
-        .addModifiers(KModifier.INTERNAL)
-        .addParameter("operation", READ_OPERATION)
-        .addParameter("maximumRows", Int::class.asClassName().copy(nullable = true))
-        .addParameter(
-            com.squareup.kotlinpoet.ParameterSpec.builder(
-                "structuralPredicates",
-                List::class.asClassName().parameterizedBy(PREDICATE.parameterizedBy(entityClass)),
-            )
-                .defaultValue("emptyList()")
-                .build(),
-        )
-        .returns(READ_RESULT.parameterizedBy(entityList))
-        .addCode(
+    return function(
+        "readRootQuery",
+        returnType = READ_RESULT.parameterizedBy(entityList),
+    ) {
+        addAnnotation(ClassName("entkt.query", "EntktInternal"))
+        addModifiers(KModifier.INTERNAL)
+        parameter("operation", READ_OPERATION)
+        parameter("maximumRows", Int::class.asClassName().copy(nullable = true))
+        parameter(
+            "structuralPredicates",
+            List::class.asClassName().parameterizedBy(PREDICATE.parameterizedBy(entityClass)),
+        ) {
+            defaultValue("emptyList()")
+        }
+        addCode(
             "return _readQueryEvaluator.readRootQuery(\n" +
                 "  captureQuery = { captureEntityQuery(structuralPredicates) },\n" +
                 "  operation = operation,\n" +
                 "  maximumRows = maximumRows,\n" +
                 ")\n",
         )
-        .build()
+    }
 }
 
 /** Compile a captured query for a framework operation that consumes its storage shape. */
 internal fun buildCompileEntityQuery(entityClass: ClassName): FunSpec =
-    FunSpec.builder("compileEntityQuery")
-        .addAnnotation(ClassName("entkt.query", "EntktInternal"))
-        .addModifiers(KModifier.INTERNAL)
-        .addParameter("operation", READ_OPERATION)
-        .addParameter("privacyContext", PRIVACY_CONTEXT)
-        .returns(STORAGE_QUERY_SPEC.parameterizedBy(entityClass))
-        .addStatement(
+    function(
+        "compileEntityQuery",
+        returnType = STORAGE_QUERY_SPEC.parameterizedBy(entityClass),
+    ) {
+        addAnnotation(ClassName("entkt.query", "EntktInternal"))
+        addModifiers(KModifier.INTERNAL)
+        parameter("operation", READ_OPERATION)
+        parameter("privacyContext", PRIVACY_CONTEXT)
+        statement(
             "return _readQueryEvaluator.compileEntityQuery(captureEntityQuery(), operation, privacyContext)",
         )
-        .build()
+    }
 
 /** Single runtime evaluator used by every generated read path. */
 internal fun buildReadQueryEvaluatorProperty(
     entityClass: ClassName,
 ): PropertySpec =
-    PropertySpec.builder(
+    property(
         "_readQueryEvaluator",
         READ_QUERY_EVALUATOR.parameterizedBy(entityClass),
-    )
-        .addModifiers(KModifier.PRIVATE)
+    ) {
+        addModifiers(KModifier.PRIVATE)
         // Edge-predicate DSLs construct target queries without a client because
         // they only capture relational structure. Defer the client-dependent
         // evaluator until a terminal or framework compilation actually runs.
-        .delegate(
-            CodeBlock.builder()
-                .add("lazy(%T.NONE) {\n", ClassName("kotlin", "LazyThreadSafetyMode"))
-                .indent()
-                .add("%T(\n", READ_QUERY_EVALUATOR)
-                .indent()
-                .add("driver = driver,\n")
-                .add("privacyContextProvider = requireClient(),\n")
-                .add("registeredInterceptorsProvider = { requireClient().entityInterceptors },\n")
-                .add("loadPrivacyEvaluatorProvider = { requireClient() },\n")
-                .unindent()
-                .add(")\n")
-                .unindent()
-                .add("}")
-                .build(),
+        delegate(
+            codeBlock {
+                add("lazy(%T.NONE) {\n", ClassName("kotlin", "LazyThreadSafetyMode"))
+                indent()
+                add("%T(\n", READ_QUERY_EVALUATOR)
+                indent()
+                add("driver = driver,\n")
+                add("privacyContextProvider = requireClient(),\n")
+                add("registeredInterceptorsProvider = { requireClient().entityInterceptors },\n")
+                add("loadPrivacyEvaluatorProvider = { requireClient() },\n")
+                unindent()
+                add(")\n")
+                unindent()
+                add("}")
+            },
         )
-        .build()
+    }

@@ -10,6 +10,13 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.kotlinpoet.body
+import entkt.codegen.kotlinpoet.codeBlock
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.objectType
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.EdgeJoin
 import entkt.codegen.metadata.toTypeName
 import entkt.schema.EdgeKind
@@ -35,91 +42,92 @@ private val MINIMUM_BIND_PARAMETERS =
 
 /** Mutable relational origin retained until the query is captured for execution. */
 internal fun buildEntityQuerySourceProperty(entityClass: ClassName): PropertySpec =
-    PropertySpec.builder(
+    property(
         "entityQuerySource",
         QUERY_SOURCE.parameterizedBy(entityClass),
-    )
-        .addModifiers(KModifier.PRIVATE)
-        .mutable(true)
-        .initializer("%T.Root<%T>()", QUERY_SOURCE, entityClass)
-        .build()
+    ) {
+        addModifiers(KModifier.PRIVATE)
+        mutable(true)
+        initializer("%T.Root<%T>()", QUERY_SOURCE, entityClass)
+    }
 
 /** Replace the root origin when a generated `query{Name}` traversal creates this query. */
 internal fun buildSetEntityQuerySource(entityClass: ClassName): FunSpec =
-    FunSpec.builder("setEntityQuerySource")
-        .addAnnotation(ENTKT_INTERNAL)
-        .addModifiers(KModifier.INTERNAL)
-        .addParameter("source", QUERY_SOURCE.parameterizedBy(entityClass))
-        .addStatement("this.entityQuerySource = source")
-        .build()
+    function("setEntityQuerySource") {
+        addAnnotation(ENTKT_INTERNAL)
+        addModifiers(KModifier.INTERNAL)
+        parameter("source", QUERY_SOURCE.parameterizedBy(entityClass))
+        statement("this.entityQuerySource = source")
+    }
 
 /** Capture caller query state and selected edges as one immutable recursive value. */
 internal fun buildCaptureEntityQuery(resolved: ResolvedQuerySchema): FunSpec {
     val entityClass = resolved.entityClass
     val predicateType = ClassName("entkt.query", "Predicate").parameterizedBy(entityClass)
     val selectedEdgeType = EDGE_SELECTION.parameterizedBy(entityClass, STAR)
-    val body = CodeBlock.builder()
-        .add(
+    val body = codeBlock {
+        add(
             "// This is a conservative lower bound, not the final rendered bind count.\n" +
                 "// Checking it first rejects oversized collection operands from their O(1) size\n" +
                 "// before EntityQuery snapshots can iterate or copy their elements.\n",
         )
-        .add(
+        add(
             "val minimumRequiredBindParameters = %M(predicates) +\n" +
                 "  %M(structuralPredicates)\n",
             MINIMUM_BIND_PARAMETERS,
             MINIMUM_BIND_PARAMETERS,
         )
-        .add(
+        add(
             "driver.requireBindCapacity(minimumRequiredBindParameters, %T.TABLE)\n",
             entityClass,
         )
-        .add("val selectedEdges = buildList<%T> {\n", selectedEdgeType)
+        add("val selectedEdges = buildList<%T> {\n", selectedEdgeType)
 
-    for (edge in resolved.edges) {
-        if (edge.join == null) continue
-        body.add("  %L?.let { selectedQuery ->\n", edge.eagerPropName)
-        body.add("    add(\n")
-        body.add("      %T(\n", EDGE_SELECTION)
-        body.add("        edge = %L,\n", edge.mappingName)
-        body.add("        target = selectedQuery.captureEntityQuery(),\n")
-        body.add(
-            "        visibility = if (%LFilterVisible) %T.FILTER_INVISIBLE else %T.REQUIRE_VISIBLE,\n",
-            edge.eagerPropName,
-            EDGE_VISIBILITY,
-            EDGE_VISIBILITY,
-        )
-        body.add("      ),\n")
-        body.add("    )\n")
-        body.add("  }\n")
+        for (edge in resolved.edges) {
+            if (edge.join == null) continue
+            add("  %L?.let { selectedQuery ->\n", edge.eagerPropName)
+            add("    add(\n")
+            add("      %T(\n", EDGE_SELECTION)
+            add("        edge = %L,\n", edge.mappingName)
+            add("        target = selectedQuery.captureEntityQuery(),\n")
+            add(
+                "        visibility = if (%LFilterVisible) %T.FILTER_INVISIBLE else %T.REQUIRE_VISIBLE,\n",
+                edge.eagerPropName,
+                EDGE_VISIBILITY,
+                EDGE_VISIBILITY,
+            )
+            add("      ),\n")
+            add("    )\n")
+            add("  }\n")
+        }
+
+        add("}\n")
+        add("return %T(\n", ENTITY_QUERY)
+        add("  entity = GeneratedEntityMapping,\n")
+        add("  source = entityQuerySource,\n")
+        add("  predicates = predicates,\n")
+        add("  orderBy = orderFields,\n")
+        add("  limit = queryLimit,\n")
+        add("  offset = queryOffset,\n")
+        add("  edges = selectedEdges,\n")
+        add("  structuralPredicates = structuralPredicates,\n")
+        add(")\n")
     }
 
-    body.add("}\n")
-    body.add("return %T(\n", ENTITY_QUERY)
-    body.add("  entity = GeneratedEntityMapping,\n")
-    body.add("  source = entityQuerySource,\n")
-    body.add("  predicates = predicates,\n")
-    body.add("  orderBy = orderFields,\n")
-    body.add("  limit = queryLimit,\n")
-    body.add("  offset = queryOffset,\n")
-    body.add("  edges = selectedEdges,\n")
-    body.add("  structuralPredicates = structuralPredicates,\n")
-    body.add(")\n")
-
-    return FunSpec.builder("captureEntityQuery")
-        .addAnnotation(ENTKT_INTERNAL)
-        .addModifiers(KModifier.INTERNAL)
-        .addParameter(
-            com.squareup.kotlinpoet.ParameterSpec.builder(
-                "structuralPredicates",
-                List::class.asClassName().parameterizedBy(predicateType),
-            )
-                .defaultValue("emptyList()")
-                .build(),
-        )
-        .returns(ENTITY_QUERY.parameterizedBy(entityClass))
-        .addCode(body.build())
-        .build()
+    return function(
+        "captureEntityQuery",
+        returnType = ENTITY_QUERY.parameterizedBy(entityClass),
+    ) {
+        addAnnotation(ENTKT_INTERNAL)
+        addModifiers(KModifier.INTERNAL)
+        parameter(
+            "structuralPredicates",
+            List::class.asClassName().parameterizedBy(predicateType),
+        ) {
+            defaultValue("emptyList()")
+        }
+        addCode(body)
+    }
 }
 
 /** Generate the typed entity and edge mappings referenced by captured queries. */
@@ -131,65 +139,50 @@ internal fun buildEntityQueryMappings(resolved: ResolvedQuerySchema): List<TypeS
 
 private fun buildEntityMapping(resolved: ResolvedQuerySchema): TypeSpec {
     val entityClass = resolved.entityClass
-    return TypeSpec.objectBuilder("GeneratedEntityMapping")
-        .addAnnotation(ENTKT_INTERNAL)
-        .addModifiers(KModifier.INTERNAL)
-        .addSuperinterface(ENTITY_MAPPING.parameterizedBy(entityClass))
-        .addProperty(
-            PropertySpec.builder("entityName", String::class)
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("%S", resolved.schemaName)
-                .build(),
-        )
-        .addProperty(
-            PropertySpec.builder("clientName", String::class)
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("%S", resolved.schema.clientName)
-                .build(),
-        )
-        .addProperty(
-            PropertySpec.builder(
-                "entityClass",
-                ClassName("kotlin.reflect", "KClass").parameterizedBy(entityClass),
-            )
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("%T::class", entityClass)
-                .build(),
-        )
-        .addProperty(
-            PropertySpec.builder("table", String::class)
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("%T.TABLE", entityClass)
-                .build(),
-        )
-        .addFunction(
-            FunSpec.builder("decode")
-                .addModifiers(KModifier.OVERRIDE)
-                .addParameter("row", DATABASE_ROW)
-                .returns(entityClass)
-                .addStatement("return %T.fromRow(row)", entityClass)
-                .build(),
-        )
-        .addFunction(
-            FunSpec.builder("edgeByStorageName")
-                .addModifiers(KModifier.OVERRIDE)
-                .addParameter("storageName", String::class)
-                .returns(EDGE_MAPPING.parameterizedBy(entityClass, STAR).copy(nullable = true))
-                .addCode(
-                    CodeBlock.builder()
-                        .add("return when (storageName) {\n")
-                        .apply {
-                            for (edge in resolved.edges) {
-                                add("  %S -> %L\n", edge.name, edge.mappingName)
-                            }
-                        }
-                        .add("  else -> null\n")
-                        .add("}\n")
-                        .build(),
-                )
-                .build(),
-        )
-        .build()
+    return objectType("GeneratedEntityMapping") {
+        addAnnotation(ENTKT_INTERNAL)
+        addModifiers(KModifier.INTERNAL)
+        addSuperinterface(ENTITY_MAPPING.parameterizedBy(entityClass))
+        property("entityName", String::class.asClassName()) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer("%S", resolved.schemaName)
+        }
+        property("clientName", String::class.asClassName()) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer("%S", resolved.schema.clientName)
+        }
+        property(
+            "entityClass",
+            ClassName("kotlin.reflect", "KClass").parameterizedBy(entityClass),
+        ) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer("%T::class", entityClass)
+        }
+        property("table", String::class.asClassName()) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer("%T.TABLE", entityClass)
+        }
+        function("decode", returnType = entityClass) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("row", DATABASE_ROW)
+            statement("return %T.fromRow(row)", entityClass)
+        }
+        function(
+            "edgeByStorageName",
+            returnType = EDGE_MAPPING.parameterizedBy(entityClass, STAR).copy(nullable = true),
+        ) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("storageName", String::class.asClassName())
+            body {
+                add("return when (storageName) {\n")
+                for (edge in resolved.edges) {
+                    add("  %S -> %L\n", edge.name, edge.mappingName)
+                }
+                add("  else -> null\n")
+                add("}\n")
+            }
+        }
+    }
 }
 
 private fun buildEdgeMapping(
@@ -206,55 +199,44 @@ private fun buildEdgeMapping(
         else -> TO_MANY_EDGE_MAPPING
     }
 
-    return TypeSpec.objectBuilder(edge.mappingName)
-        .addAnnotation(ENTKT_INTERNAL)
-        .addModifiers(KModifier.INTERNAL)
-        .addSuperinterface(mappingInterface.parameterizedBy(sourceClass, targetClass))
-        .addProperty(
-            PropertySpec.builder("name", String::class)
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("%S", edge.publicName)
-                .build(),
-        )
-        .addProperty(
-            PropertySpec.builder("storageName", String::class)
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("%S", edge.name)
-                .build(),
-        )
-        .addProperty(
-            PropertySpec.builder("source", ENTITY_MAPPING.parameterizedBy(sourceClass))
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("GeneratedEntityMapping")
-                .build(),
-        )
-        .addProperty(
-            PropertySpec.builder("target", ENTITY_MAPPING.parameterizedBy(targetClass))
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer("%T.GeneratedEntityMapping", edge.targetQueryClass)
-                .build(),
-        )
-        .addProperty(
-            PropertySpec.builder(
-                "traversal",
-                EDGE_TRAVERSAL.parameterizedBy(sourceClass).copy(nullable = true),
-            )
-                .addModifiers(KModifier.OVERRIDE)
-                .initializer(edgeTraversalInitializer(edge, join, sourceClass))
-                .build(),
-        )
-        .apply {
-            if (join != null) {
-                addProperty(
-                    PropertySpec.builder("storageStrategy", EDGE_STORAGE.parameterizedBy(sourceClass, targetClass))
-                        .addModifiers(KModifier.OVERRIDE)
-                        .initializer(edgeStorageInitializer(resolved, edge, join))
-                        .build(),
-                )
-                addFunction(buildAttachFunction(edge, sourceClass, targetClass, toOne))
-            }
+    return objectType(edge.mappingName) {
+        addAnnotation(ENTKT_INTERNAL)
+        addModifiers(KModifier.INTERNAL)
+        addSuperinterface(mappingInterface.parameterizedBy(sourceClass, targetClass))
+        property("name", String::class.asClassName()) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer("%S", edge.publicName)
         }
-        .build()
+        property("storageName", String::class.asClassName()) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer("%S", edge.name)
+        }
+        property("source", ENTITY_MAPPING.parameterizedBy(sourceClass)) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer("GeneratedEntityMapping")
+        }
+        property("target", ENTITY_MAPPING.parameterizedBy(targetClass)) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer("%T.GeneratedEntityMapping", edge.targetQueryClass)
+        }
+        property(
+            "traversal",
+            EDGE_TRAVERSAL.parameterizedBy(sourceClass).copy(nullable = true),
+        ) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer(edgeTraversalInitializer(edge, join, sourceClass))
+        }
+        if (join != null) {
+            property(
+                "storageStrategy",
+                EDGE_STORAGE.parameterizedBy(sourceClass, targetClass),
+            ) {
+                addModifiers(KModifier.OVERRIDE)
+                initializer(edgeStorageInitializer(resolved, edge, join))
+            }
+            addFunction(buildAttachFunction(edge, sourceClass, targetClass, toOne))
+        }
+    }
 }
 
 private fun edgeTraversalInitializer(
@@ -357,16 +339,15 @@ private fun buildAttachFunction(
         List::class.asClassName().parameterizedBy(targetClass)
     }
     val parameterName = if (toOne) "target" else "targets"
-    return FunSpec.builder("attach")
-        .addModifiers(KModifier.OVERRIDE)
-        .addParameter("source", sourceClass)
-        .addParameter(parameterName, targetType)
-        .returns(sourceClass)
-        .addStatement(
+    return function("attach", returnType = sourceClass) {
+        addModifiers(KModifier.OVERRIDE)
+        parameter("source", sourceClass)
+        parameter(parameterName, targetType)
+        statement(
             "return source.copy(edges = source.edges.copy(%L = %T.Loaded(%L)))",
             edge.edgePropName,
             EDGE_STATE,
             parameterName,
         )
-        .build()
+    }
 }

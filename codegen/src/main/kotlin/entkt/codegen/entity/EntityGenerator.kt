@@ -1,13 +1,11 @@
 package entkt.codegen.entity
 
 import entkt.codegen.apiName
-import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STRING
@@ -16,6 +14,17 @@ import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
 import entkt.codegen.columnName
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.classType
+import entkt.codegen.kotlinpoet.codeBlock
+import entkt.codegen.kotlinpoet.companionObject
+import entkt.codegen.kotlinpoet.constructor
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.primaryConstructor
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.ENTITY_SCHEMA
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.computeEdgeFks
@@ -71,12 +80,10 @@ internal class EntityGenerator(
         val edgeRefs = schema.edges()
             .mapNotNull { edge -> buildEdgeRef(edge, entityClass, schemaNames) }
         val tableName = schema.tableName
-        val tableProperty = PropertySpec.builder("TABLE", STRING)
-            .initializer("%S", tableName)
-            .build()
-        val schemaProperty = PropertySpec.builder("SCHEMA", ENTITY_SCHEMA)
-            .initializer(entitySchemaCodeBlock(schemaName, schema, schemaNames, jsonMapper))
-            .build()
+        val tableProperty = property("TABLE", STRING) { initializer("%S", tableName) }
+        val schemaProperty = property("SCHEMA", ENTITY_SCHEMA) {
+            initializer(entitySchemaCodeBlock(schemaName, schema, schemaNames, jsonMapper))
+        }
         val fromRowFn = buildFromRowFunction(entityClass, schema, schemaNames)
 
         // Build Edges inner data class for schemas with edges
@@ -88,48 +95,31 @@ internal class EntityGenerator(
         val edgesClass = if (edgeDescriptors.isNotEmpty()) buildEdgesClass(edgeDescriptors) else null
         val edgesClassName = entityClass.nestedClass("Edges")
 
-        val typeSpec = TypeSpec.classBuilder(className)
-            .addModifiers(KModifier.DATA)
-            .addSuperinterface(entEntityIdContract(schema.id().type))
-            .primaryConstructor(buildConstructor(idField, allFields, edgeFks, edgesClass?.let { edgesClassName }))
-            .addProperty(idField)
-            .addProperties(allFields.map { buildProperty(it) })
-            .addProperties(edgeFks.map { buildEdgeProperty(it) })
-            .apply {
-                if (edgesClass != null) {
-                    addProperty(
-                        PropertySpec.builder("edges", edgesClassName)
-                            .initializer("edges")
-                            .build()
-                    )
-                    addType(edgesClass)
-                }
+        val typeSpec = classType(className) {
+            addModifiers(KModifier.DATA)
+            addSuperinterface(entEntityIdContract(schema.id().type))
+            primaryConstructor(buildConstructor(idField, allFields, edgeFks, edgesClass?.let { edgesClassName }))
+            addProperty(idField)
+            addProperties(allFields.map { buildProperty(it) })
+            addProperties(edgeFks.map { buildEdgeProperty(it) })
+            if (edgesClass != null) {
+                property("edges", edgesClassName) { initializer("edges") }
+                addType(edgesClass)
             }
-            .apply {
-                val toStringFn = buildToString(className, schema, edgeFks, edgesClass != null)
-                if (toStringFn != null) addFunction(toStringFn)
+            buildToString(className, schema, edgeFks, edgesClass != null)?.let(::addFunction)
+            // Kotlin's data-class equals/hashCode compare ByteArray properties by reference.
+            if (allFields.any { it.type == FieldType.BYTES }) {
+                addFunction(buildEquals(entityClass, allFields, edgeFks, edgesClass != null))
+                addFunction(buildHashCode(allFields, edgeFks, edgesClass != null))
             }
-            .apply {
-                // Kotlin's data-class equals/hashCode compare ByteArray
-                // properties by reference, so two separately loaded
-                // entities with identical bytes would compare unequal.
-                // Override with content comparison when a BYTES field
-                // exists; other schemas keep the data-class defaults.
-                if (allFields.any { it.type == FieldType.BYTES }) {
-                    addFunction(buildEquals(entityClass, allFields, edgeFks, edgesClass != null))
-                    addFunction(buildHashCode(allFields, edgeFks, edgesClass != null))
-                }
+            companionObject {
+                addProperty(tableProperty)
+                addProperty(schemaProperty)
+                addProperties(columnRefs)
+                addProperties(edgeRefs)
+                addFunction(fromRowFn)
             }
-            .addType(
-                TypeSpec.companionObjectBuilder()
-                    .addProperty(tableProperty)
-                    .addProperty(schemaProperty)
-                    .addProperties(columnRefs)
-                    .addProperties(edgeRefs)
-                    .addFunction(fromRowFn)
-                    .build()
-            )
-            .build()
+        }
 
         // Every generated entity file constructs `EdgeRef(...)` and
         // therefore needs `@file:OptIn(EntktInternal::class)` — the
@@ -137,23 +127,24 @@ internal class EntityGenerator(
         // fabricated from application code.
         // Emitting the file-level OptIn lets the per-edge initializers
         // compile without per-call annotation.
-        val fileOptIn = AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
-            .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
-            .addMember("%T::class", ENTKT_INTERNAL)
-        if (jsonMapper == JsonMapperIds.KOTLINX) {
+        val serializerOptIns = if (jsonMapper == JsonMapperIds.KOTLINX) {
             allFields.asSequence()
                 .filter { it.type == FieldType.JSON }
                 .mapNotNull { it.jsonType }
                 .flatMap { kotlinxJsonSerializerOptIns(it).asSequence() }
                 .distinct()
                 .sortedBy { it.canonicalName }
-                .forEach { fileOptIn.addMember("%T::class", it) }
-        }
+                .toList()
+        } else emptyList()
 
-        return FileSpec.builder(packageName, className)
-            .addAnnotation(fileOptIn.build())
-            .addType(typeSpec)
-            .build()
+        return kotlinFile(packageName, className) {
+            addAnnotation(annotation(ClassName("kotlin", "OptIn")) {
+                useSiteTarget(com.squareup.kotlinpoet.AnnotationSpec.UseSiteTarget.FILE)
+                addMember("%T::class", ENTKT_INTERNAL)
+                serializerOptIns.forEach { addMember("%T::class", it) }
+            })
+            addType(typeSpec)
+        }
     }
 
     /**
@@ -173,60 +164,52 @@ internal class EntityGenerator(
         val edgeFks = computeEdgeFks(schema, schemaNames)
         val idType = schema.id().type.toTypeName()
 
-        val body = CodeBlock.builder()
-            .add("return %T(\n", entityClass)
-            .add("  id = row[%S] as %T,\n", "id", idType)
+        val body = codeBlock {
+            add("return %T(\n", entityClass)
+            add("  id = row[%S] as %T,\n", "id", idType)
 
-        for (field in allFields) {
-            val prop = field.apiName
-            val col = field.columnName
-            val nullable = field.nullable
-            if (field.type == FieldType.ENUM) {
-                val enumType = field.resolvedTypeName()
-                if (nullable) {
-                    body.add(
-                        "  %L = (row[%S] as %T?)?.let { %T.valueOf(it) },\n",
-                        prop, col, String::class, enumType,
-                    )
+            for (field in allFields) {
+                val prop = field.apiName
+                val col = field.columnName
+                val nullable = field.nullable
+                if (field.type == FieldType.ENUM) {
+                    val enumType = field.resolvedTypeName()
+                    if (nullable) {
+                        add(
+                            "  %L = (row[%S] as %T?)?.let { %T.valueOf(it) },\n",
+                            prop, col, String::class, enumType,
+                        )
+                    } else {
+                        add(
+                            "  %L = %T.valueOf(row[%S] as %T),\n",
+                            prop, enumType, col, String::class,
+                        )
+                    }
                 } else {
-                    body.add(
-                        "  %L = %T.valueOf(row[%S] as %T),\n",
-                        prop, enumType, col, String::class,
-                    )
+                    // Driver values are already decoded; materialization is a cast.
+                    val target = field.resolvedTypeName().copy(nullable = nullable)
+                    add("  %L = row[%S] as %T,\n", prop, col, target)
                 }
-            } else {
-                // resolvedTypeName is JSON-aware (returns the @Serializable
-                // class); identical to toTypeName for scalars/pgvector. The
-                // driver returns the decoded Kotlin value, so this is a plain cast.
-                val base = field.resolvedTypeName()
-                val target = base.copy(nullable = nullable)
-                body.add("  %L = row[%S] as %T,\n", prop, col, target)
+            }
+
+            for (fk in edgeFks) {
+                val target = fk.idType.toTypeName().copy(nullable = !fk.required)
+                add("  %L = row[%S] as %T,\n", fk.propertyName, fk.columnName, target)
+            }
+
+            add(")")
+        }
+
+        return function("fromRow", entityClass) {
+            parameter("row", ROW_TYPE)
+            addCode(body)
+            // Parameterized JSON types require an erased cast after driver decoding.
+            if (allFields.any { it.type == FieldType.JSON && it.jsonType?.arguments?.isNotEmpty() == true }) {
+                addAnnotation(annotation(Suppress::class.asClassName()) {
+                    addMember("%S", "UNCHECKED_CAST")
+                })
             }
         }
-
-        for (fk in edgeFks) {
-            val base = fk.idType.toTypeName()
-            val target = base.copy(nullable = !fk.required)
-            body.add("  %L = row[%S] as %T,\n", fk.propertyName, fk.columnName, target)
-        }
-
-        body.add(")")
-
-        val fromRow = FunSpec.builder("fromRow")
-            .addParameter("row", ROW_TYPE)
-            .returns(entityClass)
-            .addCode(body.build())
-        // A parameterized JSON type (List<Rect>) can only be cast unchecked —
-        // the driver decoded it through the column's registered serializer, so
-        // the erased cast is sound. Suppress only when such a field exists.
-        if (allFields.any { it.type == FieldType.JSON && it.jsonType?.arguments?.isNotEmpty() == true }) {
-            fromRow.addAnnotation(
-                AnnotationSpec.builder(Suppress::class)
-                    .addMember("%S", "UNCHECKED_CAST")
-                    .build(),
-            )
-        }
-        return fromRow.build()
     }
 
     private fun buildConstructor(
@@ -235,48 +218,32 @@ internal class EntityGenerator(
         edgeFks: List<EdgeFk>,
         edgesClassName: ClassName? = null,
     ): FunSpec {
-        val builder = FunSpec.constructorBuilder()
-            .addParameter(
-                ParameterSpec.builder(idProperty.name, idProperty.type).build()
-            )
-
-        for (field in fields) {
-            val typeName = field.resolvedTypeName().let {
-                if (field.nullable) it.copy(nullable = true) else it
+        return constructor {
+            parameter(idProperty.name, idProperty.type)
+            for (field in fields) {
+                val typeName = field.resolvedTypeName().copy(nullable = field.nullable)
+                parameter(field.apiName, typeName) {
+                    if (field.nullable) defaultValue("null")
+                }
             }
-            val param = ParameterSpec.builder(field.apiName, typeName)
-            if (field.nullable) {
-                param.defaultValue("null")
+            for (fk in edgeFks) {
+                val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
+                parameter(fk.propertyName, typeName) {
+                    if (!fk.required) defaultValue("null")
+                }
             }
-            builder.addParameter(param.build())
-        }
-
-        for (fk in edgeFks) {
-            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-            val param = ParameterSpec.builder(fk.propertyName, typeName)
-            if (!fk.required) {
-                param.defaultValue("null")
+            if (edgesClassName != null) {
+                parameter("edges", edgesClassName) { defaultValue("%T()", edgesClassName) }
             }
-            builder.addParameter(param.build())
         }
-
-        if (edgesClassName != null) {
-            builder.addParameter(
-                ParameterSpec.builder("edges", edgesClassName)
-                    .defaultValue("%T()", edgesClassName)
-                    .build()
-            )
-        }
-
-        return builder.build()
     }
 
     private fun buildIdProperty(schema: EntSchema): PropertySpec {
         val idType = schema.id().type.toTypeName()
-        return PropertySpec.builder("id", idType)
-            .addModifiers(KModifier.OVERRIDE)
-            .initializer("id")
-            .build()
+        return property("id", idType) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer("id")
+        }
     }
 
     private fun entEntityIdContract(type: FieldType): ClassName = when (type) {
@@ -292,19 +259,18 @@ internal class EntityGenerator(
             if (field.nullable) it.copy(nullable = true) else it
         }
         val propertyName = field.apiName
-        val builder = PropertySpec.builder(propertyName, typeName)
-            .initializer(propertyName)
-        val comment = field.comment
-        if (comment != null) builder.addKdoc("%L", comment)
-        return builder.build()
+        return property(propertyName, typeName) {
+            initializer(propertyName)
+            field.comment?.let { addKdoc("%L", it) }
+        }
     }
 
     private fun buildEdgeProperty(fk: EdgeFk): PropertySpec {
         val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-        return PropertySpec.builder(fk.propertyName, typeName)
-            .initializer(fk.propertyName)
-            .addKdoc("%L", fkPropertyKdoc(fk))
-            .build()
+        return property(fk.propertyName, typeName) {
+            initializer(fk.propertyName)
+            addKdoc("%L", fkPropertyKdoc(fk))
+        }
     }
 
     /**
@@ -338,11 +304,10 @@ internal class EntityGenerator(
         }
 
         val template = "$className(${parts.joinToString(", ")})"
-        return FunSpec.builder("toString")
-            .addModifiers(KModifier.OVERRIDE)
-            .returns(String::class)
-            .addStatement("return %P", template)
-            .build()
+        return function("toString", String::class.asTypeName()) {
+            addModifiers(KModifier.OVERRIDE)
+            statement("return %P", template)
+        }
     }
 
     /**
@@ -357,31 +322,29 @@ internal class EntityGenerator(
         edgeFks: List<EdgeFk>,
         hasEdges: Boolean,
     ): FunSpec {
-        val body = CodeBlock.builder()
-            .addStatement("if (this === other) return true")
-            .addStatement("if (other !is %T) return false", entityClass)
-            .addStatement("if (id != other.id) return false")
-        for (field in fields) {
-            val prop = field.apiName
-            if (field.type == FieldType.BYTES) {
-                body.addStatement("if (!(%L contentEquals other.%L)) return false", prop, prop)
-            } else {
-                body.addStatement("if (%L != other.%L) return false", prop, prop)
+        val body = codeBlock {
+            statement("if (this === other) return true")
+            statement("if (other !is %T) return false", entityClass)
+            statement("if (id != other.id) return false")
+            for (field in fields) {
+                val prop = field.apiName
+                if (field.type == FieldType.BYTES) {
+                    statement("if (!(%L contentEquals other.%L)) return false", prop, prop)
+                } else {
+                    statement("if (%L != other.%L) return false", prop, prop)
+                }
             }
+            for (fk in edgeFks) {
+                statement("if (%L != other.%L) return false", fk.propertyName, fk.propertyName)
+            }
+            if (hasEdges) statement("if (edges != other.edges) return false")
+            statement("return true")
         }
-        for (fk in edgeFks) {
-            body.addStatement("if (%L != other.%L) return false", fk.propertyName, fk.propertyName)
+        return function("equals", Boolean::class.asTypeName()) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("other", ANY_NULLABLE)
+            addCode(body)
         }
-        if (hasEdges) {
-            body.addStatement("if (edges != other.edges) return false")
-        }
-        body.addStatement("return true")
-        return FunSpec.builder("equals")
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("other", ANY_NULLABLE)
-            .returns(Boolean::class)
-            .addCode(body.build())
-            .build()
     }
 
     /** Companion to [buildEquals]: ByteArray properties hash via `contentHashCode`. */
@@ -390,33 +353,33 @@ internal class EntityGenerator(
         edgeFks: List<EdgeFk>,
         hasEdges: Boolean,
     ): FunSpec {
-        val body = CodeBlock.builder()
-            .addStatement("var result = id.hashCode()")
-        for (field in fields) {
-            val prop = field.apiName
-            val expr = when {
-                field.type == FieldType.BYTES && field.nullable -> "($prop?.contentHashCode() ?: 0)"
-                field.type == FieldType.BYTES -> "$prop.contentHashCode()"
-                field.nullable -> "($prop?.hashCode() ?: 0)"
-                else -> "$prop.hashCode()"
+        val body = codeBlock {
+            statement("var result = id.hashCode()")
+            for (field in fields) {
+                val prop = field.apiName
+                val expr = when {
+                    field.type == FieldType.BYTES && field.nullable -> "($prop?.contentHashCode() ?: 0)"
+                    field.type == FieldType.BYTES -> "$prop.contentHashCode()"
+                    field.nullable -> "($prop?.hashCode() ?: 0)"
+                    else -> "$prop.hashCode()"
+                }
+                statement("result = 31 * result + %L", expr)
             }
-            body.addStatement("result = 31 * result + %L", expr)
+            for (fk in edgeFks) {
+                val expr = if (fk.required) {
+                    "${fk.propertyName}.hashCode()"
+                } else {
+                    "(${fk.propertyName}?.hashCode() ?: 0)"
+                }
+                statement("result = 31 * result + %L", expr)
+            }
+            if (hasEdges) statement("result = 31 * result + edges.hashCode()")
+            statement("return result")
         }
-        for (fk in edgeFks) {
-            val expr =
-                if (fk.required) "${fk.propertyName}.hashCode()"
-                else "(${fk.propertyName}?.hashCode() ?: 0)"
-            body.addStatement("result = 31 * result + %L", expr)
+        return function("hashCode", Int::class.asTypeName()) {
+            addModifiers(KModifier.OVERRIDE)
+            addCode(body)
         }
-        if (hasEdges) {
-            body.addStatement("result = 31 * result + edges.hashCode()")
-        }
-        body.addStatement("return result")
-        return FunSpec.builder("hashCode")
-            .addModifiers(KModifier.OVERRIDE)
-            .returns(Int::class)
-            .addCode(body.build())
-            .build()
     }
 
     /**
@@ -430,9 +393,7 @@ internal class EntityGenerator(
     private fun buildIdColumnRef(schema: EntSchema, entityClass: ClassName): PropertySpec {
         val idType = schema.id().type
         val columnType = columnClassFor(idType, nullable = false, entityClass)
-        return PropertySpec.builder("id", columnType)
-            .initializer("%T(%S)", columnType, "id")
-            .build()
+        return property("id", columnType) { initializer("%T(%S)", columnType, "id") }
     }
 
     private fun buildFieldColumnRef(field: Field, entityClass: ClassName): PropertySpec {
@@ -448,9 +409,9 @@ internal class EntityGenerator(
             // Phantom-typed columns: first type arg is the owning entity
             // (`E`), second is the value type (`T`).
             val columnType = cls.parameterizedBy(entityClass, enumTypeName)
-            return PropertySpec.builder(propertyName, columnType)
-                .initializer("%T(%S) { %T.valueOf(it) }", columnType, field.columnName, enumTypeName)
-                .build()
+            return property(propertyName, columnType) {
+                initializer("%T(%S) { %T.valueOf(it) }", columnType, field.columnName, enumTypeName)
+            }
         }
         val columnType = if (field.type == FieldType.JSON) {
             // Narrow JSON column ref: JsonColumn<E, T> (null checks only).
@@ -461,17 +422,17 @@ internal class EntityGenerator(
         } else {
             columnClassFor(field.type, nullable, entityClass)
         }
-        return PropertySpec.builder(propertyName, columnType)
-            .initializer("%T(%S)", columnType, field.columnName)
-            .build()
+        return property(propertyName, columnType) {
+            initializer("%T(%S)", columnType, field.columnName)
+        }
     }
 
     private fun buildEdgeColumnRef(fk: EdgeFk, entityClass: ClassName): PropertySpec {
         val nullable = !fk.required
         val columnType = columnClassFor(fk.idType, nullable, entityClass)
-        return PropertySpec.builder(fk.propertyName, columnType)
-            .initializer("%T(%S)", columnType, fk.columnName)
-            .build()
+        return property(fk.propertyName, columnType) {
+            initializer("%T(%S)", columnType, fk.columnName)
+        }
     }
 
     private fun buildEdgeRef(
@@ -493,9 +454,9 @@ internal class EntityGenerator(
         // The EdgeRef constructor is `@EntktInternal`; the surrounding
         // FileSpec carries `@file:OptIn(EntktInternal::class)` so the
         // call site compiles without a per-call opt-in.
-        return PropertySpec.builder(propertyName, edgeRefType)
-            .initializer("%T(%S) { %T(%T) }", EDGE_REF, edge.name, targetQuery, NOOP_DRIVER)
-            .build()
+        return property(propertyName, edgeRefType) {
+            initializer("%T(%S) { %T(%T) }", EDGE_REF, edge.name, targetQuery, NOOP_DRIVER)
+        }
     }
 }
 
@@ -520,32 +481,28 @@ internal data class EdgeDescriptor(
  * (`EdgeState<List<Target>>`).
  */
 private fun buildEdgesClass(edges: List<EdgeDescriptor>): TypeSpec {
-    val constructor = FunSpec.constructorBuilder()
-    val properties = mutableListOf<PropertySpec>()
-
-    for (edge in edges) {
-        val propName = edge.apiName
-        val propType = if (edge.toOne) {
+    val edgeProperties = edges.map { edge ->
+        val type = if (edge.toOne) {
             EDGE_STATE.parameterizedBy(edge.targetClass.copy(nullable = true))
         } else {
             EDGE_STATE.parameterizedBy(List::class.asClassName().parameterizedBy(edge.targetClass))
         }
-        constructor.addParameter(
-            ParameterSpec.builder(propName, propType)
-                .defaultValue("%T.Unloaded", EDGE_STATE)
-                .build()
-        )
-        val propBuilder = PropertySpec.builder(propName, propType)
-            .initializer(propName)
-        if (edge.comment != null) propBuilder.addKdoc("%L", edge.comment)
-        properties.add(propBuilder.build())
+        edge to type
     }
-
-    return TypeSpec.classBuilder("Edges")
-        .addModifiers(KModifier.DATA)
-        .primaryConstructor(constructor.build())
-        .addProperties(properties)
-        .build()
+    return classType("Edges") {
+        addModifiers(KModifier.DATA)
+        primaryConstructor {
+            for ((edge, type) in edgeProperties) {
+                parameter(edge.apiName, type) { defaultValue("%T.Unloaded", EDGE_STATE) }
+            }
+        }
+        for ((edge, type) in edgeProperties) {
+            property(edge.apiName, type) {
+                initializer(edge.apiName)
+                edge.comment?.let { addKdoc("%L", it) }
+            }
+        }
+    }
 }
 
 internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: ClassName): TypeName {

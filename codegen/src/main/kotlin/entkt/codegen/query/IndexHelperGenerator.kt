@@ -8,7 +8,6 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
-import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
@@ -16,6 +15,15 @@ import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
+import entkt.codegen.kotlinpoet.annotation
+import entkt.codegen.kotlinpoet.classType
+import entkt.codegen.kotlinpoet.constructor
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.primaryConstructor
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.columnMetadataFor
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.resolvedTypeName
@@ -410,54 +418,53 @@ internal class IndexHelperGenerator(
         val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
         val emitter = Emitter(entityClass, queryClass, indexesClass, clientClass)
 
-        val indexesType = TypeSpec.classBuilder(indexesClass)
-            .addKdoc(
+        val indexesType = classType(indexesClass) {
+            addKdoc(
                 "Staged index-helper namespace for `%L`, reached via " +
                     "`client.<repo>.indexes`. Each stage records the bound index " +
                     "prefix and delegates to `%LQuery`, preserving privacy and " +
                     "read interceptors.",
                 schemaName, schemaName,
             )
-            .primaryConstructor(
-                FunSpec.constructorBuilder()
-                    .addModifiers(KModifier.INTERNAL)
-                    .addParameter("driver", DRIVER)
-                    .addParameter(
-                        ParameterSpec.builder("client", clientClass.copy(nullable = true)).build(),
-                    )
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("driver", DRIVER)
-                    .addModifiers(KModifier.PRIVATE).initializer("driver").build(),
-            )
-            .addProperty(
-                PropertySpec.builder("client", clientClass.copy(nullable = true))
-                    .addModifiers(KModifier.PRIVATE).initializer("client").build(),
-            )
+            primaryConstructor {
+                addModifiers(KModifier.INTERNAL)
+                parameter("driver", DRIVER)
+                parameter("client", clientClass.copy(nullable = true))
+            }
+            property("driver", DRIVER) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("driver")
+            }
+            property("client", clientClass.copy(nullable = true)) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("client")
+            }
 
-        // Root (empty-prefix) first-stage methods live directly on the
-        // namespace class; the root has no query()/terminals.
-        for (m in emitter.stageMethods(root)) indexesType.addFunction(m)
+            // Root (empty-prefix) first-stage methods live directly on the
+            // namespace class; the root has no query()/terminals.
+            addFunctions(emitter.stageMethods(root))
 
-        // Every deeper stage class + range terminal is nested flat under
-        // the namespace class.
-        for (child in root.children) emitter.emitStageClass(child.node, indexesType)
-        for (rangeCol in root.rangeColumns) emitter.emitRangeTerminal(root.prefix, rangeCol, indexesType)
+            // Every deeper stage class + range terminal is nested flat under
+            // the namespace class.
+            for (child in root.children) emitter.emitStageClass(child.node, this)
+            for (rangeCol in root.rangeColumns) {
+                emitter.emitRangeTerminal(root.prefix, rangeCol, this)
+            }
+        }
 
         // The stage constructors reference the `@EntktInternal`-guarded
         // EntReadRuntime; the file-level OptIn consumes the requirement at
         // the declaration sites (query files already carry the same header
         // for their own marked-type usages).
-        return FileSpec.builder(packageName, "${schemaName}Indexes")
-            .addAnnotation(
-                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
-                    .useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
-                    .addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
-                    .build()
+        return kotlinFile(packageName, "${schemaName}Indexes") {
+            addAnnotation(
+                annotation(ClassName("kotlin", "OptIn")) {
+                    useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                    addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
+                },
             )
-            .addType(indexesType.build())
-            .build()
+            addType(indexesType)
+        }
     }
 
     /**
@@ -518,11 +525,10 @@ internal class IndexHelperGenerator(
                 if (node.prefix.isEmpty()) CodeBlock.of("listOf(%L)", newPred)
                 else CodeBlock.of("predicates + %L", newPred)
             val target = stageClass(child.node.prefix)
-            return FunSpec.builder(col.propertyName)
-                .addParameter(paramName, col.paramType)
-                .returns(target)
-                .addStatement("return %T(driver, client, %L)", target, listExpr)
-                .build()
+            return function(col.propertyName, returnType = target) {
+                parameter(paramName, col.paramType)
+                statement("return %T(driver, client, %L)", target, listExpr)
+            }
         }
 
         private fun rangeMethod(node: IndexPrefixNode, col: ResolvedIndexColumn): FunSpec {
@@ -532,32 +538,32 @@ internal class IndexHelperGenerator(
             val listExpr =
                 if (node.prefix.isEmpty()) CodeBlock.of("range")
                 else CodeBlock.of("predicates + range")
-            return FunSpec.builder(col.propertyName)
-                .addParameter("block", blockLambda)
-                .returns(target)
-                .addStatement("val range = %T(%T.%N).apply(block).build()", INDEX_RANGE_BUILDER, entityClass, col.propertyName)
-                .addStatement("return %T(driver, client, %L)", target, listExpr)
-                .build()
+            return function(col.propertyName, returnType = target) {
+                parameter("block", blockLambda)
+                statement(
+                    "val range = %T(%T.%N).apply(block).build()",
+                    INDEX_RANGE_BUILDER,
+                    entityClass,
+                    col.propertyName,
+                )
+                statement("return %T(driver, client, %L)", target, listExpr)
+            }
         }
 
         private fun queryMethod(): FunSpec {
             val queryLambda = LambdaTypeName.get(receiver = queryClass, returnType = UNIT)
-            return FunSpec.builder("query")
-                .addParameter(
-                    ParameterSpec.builder("block", queryLambda).defaultValue("{}").build(),
-                )
-                .returns(queryClass)
-                .apply { seedStatements(this) }
-                .addStatement("return q.apply(block)")
-                .build()
+            return function("query", returnType = queryClass) {
+                parameter("block", queryLambda) { defaultValue("{}") }
+                seedStatements(this)
+                statement("return q.apply(block)")
+            }
         }
 
         private fun terminal(name: String, returns: TypeName, call: String): FunSpec =
-            FunSpec.builder(name)
-                .returns(returns)
-                .apply { seedStatements(this) }
-                .addStatement("return q.%L", call)
-                .build()
+            function(name, returnType = returns) {
+                seedStatements(this)
+                statement("return q.%L", call)
+            }
 
         // The completed unique-index helper exposes one canonical
         // terminal: `find(): ReadResult<Entity?>` delegating to the
@@ -570,18 +576,36 @@ internal class IndexHelperGenerator(
         )
 
         private fun stageConstructor(): FunSpec =
-            FunSpec.constructorBuilder()
-                .addModifiers(KModifier.INTERNAL)
-                .addParameter("driver", DRIVER)
-                .addParameter(ParameterSpec.builder("client", clientClass.copy(nullable = true)).build())
-                .addParameter("predicates", predicatesType)
-                .build()
+            constructor {
+                addModifiers(KModifier.INTERNAL)
+                parameter("driver", DRIVER)
+                parameter("client", clientClass.copy(nullable = true))
+                parameter("predicates", predicatesType)
+            }
 
         private fun stageProperties(): List<PropertySpec> = listOf(
-            PropertySpec.builder("driver", DRIVER).addModifiers(KModifier.PRIVATE).initializer("driver").build(),
-            PropertySpec.builder("client", clientClass.copy(nullable = true)).addModifiers(KModifier.PRIVATE).initializer("client").build(),
-            PropertySpec.builder("predicates", predicatesType).addModifiers(KModifier.PRIVATE).initializer("predicates").build(),
+            property("driver", DRIVER) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("driver")
+            },
+            property("client", clientClass.copy(nullable = true)) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("client")
+            },
+            property("predicates", predicatesType) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("predicates")
+            },
         )
+
+        /** Build the state and query entry shared by equality and range stages. */
+        private fun stageType(name: String, configure: TypeSpec.Builder.() -> Unit = {}): TypeSpec =
+            classType(name) {
+                primaryConstructor(stageConstructor())
+                addProperties(stageProperties())
+                addFunction(queryMethod())
+                configure()
+            }
 
         /** Emit the nested stage class for [node] (depth ≥ 1), then recurse into its children + range terminals. */
         fun emitStageClass(node: IndexPrefixNode, container: TypeSpec.Builder) {
@@ -589,13 +613,11 @@ internal class IndexHelperGenerator(
             // checkStageNameCollisions ran in indexHelperTree, so a duplicate
             // here is an internal invariant break, not a user-facing collision.
             check(emittedNames.add(name)) { "internal: duplicate index stage class '$name'" }
-            val stage = TypeSpec.classBuilder(name)
-                .primaryConstructor(stageConstructor())
-                .addProperties(stageProperties())
-                .addFunction(queryMethod())
-            for (m in stageMethods(node)) stage.addFunction(m)
-            if (node.isUniqueTerminal) for (t in uniqueTerminals()) stage.addFunction(t)
-            container.addType(stage.build())
+            val stage = stageType(name) {
+                addFunctions(stageMethods(node))
+                if (node.isUniqueTerminal) addFunctions(uniqueTerminals())
+            }
+            container.addType(stage)
             for (child in node.children) emitStageClass(child.node, container)
             for (rangeCol in node.rangeColumns) emitRangeTerminal(node.prefix, rangeCol, container)
         }
@@ -608,11 +630,7 @@ internal class IndexHelperGenerator(
         ) {
             val name = rangeStageName(prefix, col)
             check(emittedNames.add(name)) { "internal: duplicate index range stage class '$name'" }
-            val stage = TypeSpec.classBuilder(name)
-                .primaryConstructor(stageConstructor())
-                .addProperties(stageProperties())
-                .addFunction(queryMethod())
-            container.addType(stage.build())
+            container.addType(stageType(name))
         }
     }
 }

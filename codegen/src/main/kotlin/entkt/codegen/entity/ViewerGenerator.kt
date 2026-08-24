@@ -10,8 +10,16 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
+import com.squareup.kotlinpoet.asTypeName
 import entkt.codegen.SchemaInput
 import entkt.codegen.columnName
+import entkt.codegen.kotlinpoet.codeBlock
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.objectType
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.property
+import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.ColumnDescriptor
 import entkt.codegen.metadata.FIELD_TYPE
 import entkt.codegen.metadata.columnMetadataFor
@@ -70,54 +78,45 @@ internal class ViewerGenerator(private val packageName: String) {
 
         val columns = columnMetadataFor(schema, schemaNames)
 
-        val type = TypeSpec.objectBuilder(objectName)
-            .addSuperinterface(VIEWER_ENTITY.parameterizedBy(clientClass))
-            .addKdoc(
+        val type = objectType(objectName) {
+            addSuperinterface(VIEWER_ENTITY.parameterizedBy(clientClass))
+            addKdoc(
                 "Generated viewer adapter for [%T]. Reads go through the generated\n" +
                     "typed repo, so privacy, interceptors, and soft-delete filters apply.\n",
                 entityClass,
             )
-            .addProperty(
-                PropertySpec.builder("schema", ClassName("entkt.runtime.driver", "EntitySchema"), KModifier.OVERRIDE)
-                    .initializer("%T.SCHEMA", entityClass)
-                    .build(),
-            )
-            .addProperty(
-                PropertySpec.builder("displayName", String::class, KModifier.OVERRIDE)
-                    .initializer("%S", name)
-                    .build(),
-            )
-            .addProperty(
-                // The viewer's route is the schema's declared client
-                // name, the same identifier application code uses as
-                // `client.<name>` — not an inflection of the class.
-                PropertySpec.builder("routeName", String::class, KModifier.OVERRIDE)
-                    .initializer("%S", schema.clientName)
-                    .build(),
-            )
-            .addProperty(buildColumnsProperty(columns, schema))
-            .addProperty(buildEdgesProperty(schema, schemaNames))
-            .addProperty(
-                PropertySpec.builder(
-                    "columnsByName",
-                    ClassName("kotlin.collections", "Map").parameterizedBy(
-                        ClassName("kotlin", "String"), VIEWER_COLUMN,
-                    ),
-                    KModifier.PRIVATE,
-                )
-                    .initializer("columns.associateBy { it.name }")
-                    .build(),
-            )
-            .addProperty(buildEnumNamesProperty(schema))
-            .addFunction(buildListFunction(input, clientClass, entityClass, repoProp))
-            .addFunction(buildGetFunction(input, clientClass, entityClass, repoProp))
-            .addFunction(buildToRowFunction(input, entityClass, schemaNames))
-            .addFunction(buildPredicateFunction(entityClass))
-            .build()
+            property("schema", ClassName("entkt.runtime.driver", "EntitySchema")) {
+                addModifiers(KModifier.OVERRIDE)
+                initializer("%T.SCHEMA", entityClass)
+            }
+            property("displayName", String::class.asTypeName()) {
+                addModifiers(KModifier.OVERRIDE)
+                initializer("%S", name)
+            }
+            // The viewer route is the schema's declared client name.
+            property("routeName", String::class.asTypeName()) {
+                addModifiers(KModifier.OVERRIDE)
+                initializer("%S", schema.clientName)
+            }
+            addProperty(buildColumnsProperty(columns, schema))
+            addProperty(buildEdgesProperty(schema, schemaNames))
+            property(
+                "columnsByName",
+                ClassName("kotlin.collections", "Map").parameterizedBy(
+                    ClassName("kotlin", "String"), VIEWER_COLUMN,
+                ),
+            ) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("columns.associateBy { it.name }")
+            }
+            addProperty(buildEnumNamesProperty(schema))
+            addFunction(buildListFunction(input, clientClass, entityClass, repoProp))
+            addFunction(buildGetFunction(input, clientClass, entityClass, repoProp))
+            addFunction(buildToRowFunction(input, entityClass, schemaNames))
+            addFunction(buildPredicateFunction(entityClass))
+        }
 
-        return FileSpec.builder(packageName, objectName)
-            .addType(type)
-            .build()
+        return kotlinFile(packageName, objectName) { addType(type) }
     }
 
     private fun buildColumnsProperty(columns: List<ColumnDescriptor>, schema: EntSchema): PropertySpec {
@@ -131,13 +130,13 @@ internal class ViewerGenerator(private val packageName: String) {
                 entTypeDisplay(col, fieldsByColumn[col.name]),
             )
         }
-        return PropertySpec.builder(
+        return property(
             "columns",
             ClassName("kotlin.collections", "List").parameterizedBy(VIEWER_COLUMN),
-            KModifier.OVERRIDE,
-        )
-            .initializer(entries.joinToCodeList())
-            .build()
+        ) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer(entries.joinToCodeList())
+        }
     }
 
     /** Kotlin-facing display type: scalars fixed, enums/JSON from the schema field. */
@@ -194,13 +193,13 @@ internal class ViewerGenerator(private val packageName: String) {
                 targetFilter?.let { CodeBlock.of("%S", it) } ?: CodeBlock.of("null"),
             )
         }
-        return PropertySpec.builder(
+        return property(
             "edges",
             ClassName("kotlin.collections", "List").parameterizedBy(VIEWER_EDGE),
-            KModifier.OVERRIDE,
-        )
-            .initializer(entries.joinToCodeList())
-            .build()
+        ) {
+            addModifiers(KModifier.OVERRIDE)
+            initializer(entries.joinToCodeList())
+        }
     }
 
     private fun buildEnumNamesProperty(schema: EntSchema): PropertySpec {
@@ -212,21 +211,22 @@ internal class ViewerGenerator(private val packageName: String) {
                 val constants = field.enumClass!!.java.enumConstants.joinToString(", ") { "\"${(it as Enum<*>).name}\"" }
                 CodeBlock.of("%S to setOf(%L)", field.columnName, constants)
             }
-            CodeBlock.builder().add("mapOf(\n")
-                .apply { entries.forEach { add("  %L,\n", it) } }
-                .add(")")
-                .build()
+            codeBlock {
+                add("mapOf(\n")
+                entries.forEach { add("  %L,\n", it) }
+                add(")")
+            }
         }
-        return PropertySpec.builder(
+        return property(
             "enumNames",
             ClassName("kotlin.collections", "Map").parameterizedBy(
                 ClassName("kotlin", "String"),
                 ClassName("kotlin.collections", "Set").parameterizedBy(ClassName("kotlin", "String")),
             ),
-            KModifier.PRIVATE,
-        )
-            .initializer(initializer)
-            .build()
+        ) {
+            addModifiers(KModifier.PRIVATE)
+            initializer(initializer)
+        }
     }
 
     private fun buildListFunction(
@@ -244,54 +244,53 @@ internal class ViewerGenerator(private val packageName: String) {
         // partial window. Debug listings that must see every row run
         // the viewer with a privacy-bypass-scoped client, where every
         // page succeeds and pagination is exact.
-        val body = CodeBlock.builder()
-            .addStatement("val fetchLimit = request.pageSize + 1")
-            .beginControlFlow("val result = client.%L.query", repoProp)
-            .addStatement("for (filter in request.filters) `where`(predicateFor(filter))")
-            .addStatement("val order = request.order")
-            .beginControlFlow("if (order != null)")
-            .addStatement(
+        val body = codeBlock {
+            statement("val fetchLimit = request.pageSize + 1")
+            beginControlFlow("val result = client.%L.query", repoProp)
+            statement("for (filter in request.filters) `where`(predicateFor(filter))")
+            statement("val order = request.order")
+            beginControlFlow("if (order != null)")
+            statement(
                 "val column = columnsByName[order.column] ?: throw %T(%P)",
                 VIEWER_BAD_REQUEST, "Unknown order column '\${order.column}'.",
             )
-            .addStatement(
+            statement(
                 "if (!column.orderable) throw %T(%P)",
                 VIEWER_BAD_REQUEST, "Column '\${column.name}' is not orderable.",
             )
-            .addStatement(
+            statement(
                 "orderBy(%T(order.column, if (order.descending) %T.DESC else %T.ASC))",
                 ORDER_FIELD.parameterizedBy(entityClass), ORDER_DIRECTION, ORDER_DIRECTION,
             )
-            .endControlFlow()
-            .addStatement("limit(fetchLimit)")
-            .addStatement("offset(request.offset)")
-            .endControlFlow()
-            .addStatement(".all()")
-            .beginControlFlow("val rows = when (result)")
-            .addStatement("is %T.Success -> result.value", READ_RESULT)
-            .beginControlFlow("is %T.Failed ->", READ_RESULT)
-            .addStatement("val e = result.exception")
-            .beginControlFlow("if (e is %T && e.origin is %T.Root)", ENT_PRIVACY_DENIED, LOAD_DENIAL_ORIGIN)
-            .addStatement(
+            endControlFlow()
+            statement("limit(fetchLimit)")
+            statement("offset(request.offset)")
+            endControlFlow()
+            statement(".all()")
+            beginControlFlow("val rows = when (result)")
+            statement("is %T.Success -> result.value", READ_RESULT)
+            beginControlFlow("is %T.Failed ->", READ_RESULT)
+            statement("val e = result.exception")
+            beginControlFlow("if (e is %T && e.origin is %T.Root)", ENT_PRIVACY_DENIED, LOAD_DENIAL_ORIGIN)
+            statement(
                 "return %T(emptyList(), hasNext = null, privacyFiltered = true)",
                 VIEWER_LIST_RESULT,
             )
-            .endControlFlow()
-            .addStatement("throw e")
-            .endControlFlow()
-            .endControlFlow()
-            .addStatement(
+            endControlFlow()
+            statement("throw e")
+            endControlFlow()
+            endControlFlow()
+            statement(
                 "return %T(rows.take(request.pageSize).map { toRow(it) }, hasNext = rows.size > request.pageSize)",
                 VIEWER_LIST_RESULT,
             )
-            .build()
-        return FunSpec.builder("list")
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("client", clientClass)
-            .addParameter("request", VIEWER_LIST_REQUEST)
-            .returns(VIEWER_LIST_RESULT)
-            .addCode(body)
-            .build()
+        }
+        return function("list", VIEWER_LIST_RESULT) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("client", clientClass)
+            parameter("request", VIEWER_LIST_REQUEST)
+            addCode(body)
+        }
     }
 
     private fun buildGetFunction(
@@ -309,24 +308,20 @@ internal class ViewerGenerator(private val packageName: String) {
             )
             else -> CodeBlock.of("id")
         }
-        return FunSpec.builder("get")
-            .addModifiers(KModifier.OVERRIDE)
-            .addParameter("client", clientClass)
-            .addParameter("id", String::class)
-            .returns(VIEWER_ROW.copy(nullable = true))
-            .addCode(
-                CodeBlock.builder()
-                    // Unparseable id, missing row, and privacy-denied row all
-                    // return null — the viewer's uniform not-found.
-                    .addStatement("val parsed = %L", idParse)
-                    .addStatement(
+        return function("get", VIEWER_ROW.copy(nullable = true)) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("client", clientClass)
+            parameter("id", String::class.asTypeName())
+            addCode(codeBlock {
+                // Unparseable id, missing row, and privacy-denied row all return null.
+                statement("val parsed = %L", idParse)
+                statement(
                         "val entity = client.%L.findById(parsed).%M().getOrThrow() ?: return·null",
                         repoProp, VISIBLE_OR_NULL,
                     )
-                    .addStatement("return toRow(entity)")
-                    .build(),
-            )
-            .build()
+                statement("return toRow(entity)")
+            })
+        }
     }
 
     private fun buildToRowFunction(
@@ -370,80 +365,69 @@ internal class ViewerGenerator(private val packageName: String) {
             CodeBlock.of("%T.of(%S, %L)", VIEWER_VALUE, col.name, expr)
         }
 
-        return FunSpec.builder("toRow")
-            .addModifiers(KModifier.PRIVATE)
-            .addParameter("entity", entityClass)
-            .returns(VIEWER_ROW)
-            .addCode(
-                CodeBlock.builder()
-                    .add("return %T(\n  id = entity.id.toString(),\n  values = ", VIEWER_ROW)
-                    .add(values.joinToCodeList())
-                    .add(",\n)")
-                    .build(),
-            )
-            .build()
+        return function("toRow", VIEWER_ROW) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("entity", entityClass)
+            addCode(codeBlock {
+                add("return %T(\n  id = entity.id.toString(),\n  values = ", VIEWER_ROW)
+                add(values.joinToCodeList())
+                add(",\n)")
+            })
+        }
     }
 
     private fun buildPredicateFunction(entityClass: ClassName): FunSpec =
-        FunSpec.builder("predicateFor")
-            .addModifiers(KModifier.PRIVATE)
-            .addParameter("filter", VIEWER_FILTER)
-            .returns(PREDICATE.parameterizedBy(entityClass))
-            .addCode(
-                CodeBlock.builder()
-                    .addStatement(
+        function("predicateFor", PREDICATE.parameterizedBy(entityClass)) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("filter", VIEWER_FILTER)
+            addCode(codeBlock {
+                statement(
                         "val column = columnsByName[filter.column] ?: throw %T(%P)",
                         VIEWER_BAD_REQUEST, "Unknown filter column '\${filter.column}'.",
                     )
-                    .addStatement("return %T.predicate(column, filter, enumNames[column.name])", VIEWER_FILTERS)
-                    .build(),
-            )
-            .build()
+                statement("return %T.predicate(column, filter, enumNames[column.name])", VIEWER_FILTERS)
+            })
+        }
 
     private fun generateRegistry(schemas: List<SchemaInput>): FileSpec {
         val clientClass = ClassName(packageName, "EntClient")
         val entityList = schemas.joinToString(", ") { "${it.name}ViewerEntity" }
         val t = TypeVariableName("T")
-        val type = TypeSpec.objectBuilder("GeneratedEntViewerRegistry")
-            .addSuperinterface(VIEWER_REGISTRY.parameterizedBy(clientClass))
-            .addKdoc(
+        val type = objectType("GeneratedEntViewerRegistry") {
+            addSuperinterface(VIEWER_REGISTRY.parameterizedBy(clientClass))
+            addKdoc(
                 "Generated viewer registry: every generated entity, in schema order.\n" +
                     "Pass to `EntViewer(client, GeneratedEntViewerRegistry) { ... }`.\n",
             )
-            .addProperty(
-                PropertySpec.builder(
+            property(
                     "entities",
                     ClassName("kotlin.collections", "List")
                         .parameterizedBy(VIEWER_ENTITY.parameterizedBy(clientClass)),
-                    KModifier.OVERRIDE,
-                )
-                    .initializer("listOf(%L)", entityList)
-                    .build(),
-            )
-            .addFunction(
-                FunSpec.builder("withPrivacyContext")
-                    .addModifiers(KModifier.OVERRIDE)
-                    .addTypeVariable(t)
-                    .addParameter("client", clientClass)
-                    .addParameter("context", PRIVACY_CONTEXT)
-                    .addParameter(
+                ) {
+                addModifiers(KModifier.OVERRIDE)
+                initializer("listOf(%L)", entityList)
+            }
+            function("withPrivacyContext", t) {
+                addModifiers(KModifier.OVERRIDE)
+                addTypeVariable(t)
+                parameter("client", clientClass)
+                parameter("context", PRIVACY_CONTEXT)
+                parameter(
                         "block",
                         com.squareup.kotlinpoet.LambdaTypeName.get(parameters = arrayOf(clientClass), returnType = t),
                     )
-                    .returns(t)
-                    .addStatement("return client.withPrivacyContext(context, block)")
-                    .build(),
-            )
-            .build()
-        return FileSpec.builder(packageName, "GeneratedEntViewerRegistry")
-            .addType(type)
-            .build()
+                statement("return client.withPrivacyContext(context, block)")
+            }
+        }
+        return kotlinFile(packageName, "GeneratedEntViewerRegistry") { addType(type) }
     }
 }
 
 private fun List<CodeBlock>.joinToCodeList(): CodeBlock {
     if (isEmpty()) return CodeBlock.of("emptyList()")
-    val builder = CodeBlock.builder().add("listOf(\n")
-    forEach { builder.add("  %L,\n", it) }
-    return builder.add(")").build()
+    return codeBlock {
+        add("listOf(\n")
+        this@joinToCodeList.forEach { add("  %L,\n", it) }
+        add(")")
+    }
 }

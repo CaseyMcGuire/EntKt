@@ -6,6 +6,7 @@ import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
 import entkt.codegen.columnName
+import entkt.codegen.kotlinpoet.codeBlock
 import entkt.runtime.driver.JsonMapperIds
 import entkt.codegen.apiName
 import entkt.schema.Edge
@@ -478,40 +479,39 @@ internal fun entitySchemaCodeBlock(
     // builds ColumnMetadata via buildEntitySchemas, not this literal), and
     // the generated create() applies defaults from Field.default directly.
     // See ColumnMetadata.default's KDoc.
-    val columnsLiteral = CodeBlock.builder()
-        .add("listOf(\n")
-        .also { cb ->
-            for (col in columns) {
-                val colCb = CodeBlock.builder()
-                    .add("  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L",
+    val columnsLiteral = codeBlock {
+        add("listOf(\n")
+        for (col in columns) {
+            add(codeBlock {
+                add("  %T(name = %S, type = %T.%L, nullable = %L, primaryKey = %L, unique = %L",
                         COLUMN_METADATA, col.name, FIELD_TYPE, col.type.name,
                         col.nullable, col.primaryKey, col.unique)
                 if (col.references != null) {
                     val (refTable, refCol) = col.references
                     if (col.onDelete != null) {
-                        colCb.add(", references = %T(table = %S, column = %S, onDelete = %T.%L)",
+                        add(", references = %T(table = %S, column = %S, onDelete = %T.%L)",
                             FOREIGN_KEY_REF, refTable, refCol, ON_DELETE, col.onDelete.name)
                     } else {
-                        colCb.add(", references = %T(table = %S, column = %S)",
+                        add(", references = %T(table = %S, column = %S)",
                             FOREIGN_KEY_REF, refTable, refCol)
                     }
                 }
                 if (col.comment != null) {
-                    colCb.add(", comment = %S", col.comment)
+                    add(", comment = %S", col.comment)
                 }
                 if (col.sensitive) {
-                    colCb.add(", sensitive = true")
+                    add(", sensitive = true")
                 }
                 val storage = col.storage
                 if (storage is entkt.schema.ColumnStorage.Native) {
                     if (storage.requiredExtension != null) {
-                        colCb.add(
+                        add(
                             ", storage = %T(dialect = %S, typeName = %S, sqlType = %S, codec = %S, requiredExtension = %S, dimensions = %L)",
                             COLUMN_STORAGE_NATIVE, storage.dialect, storage.typeName, storage.sqlType,
                             storage.codec, storage.requiredExtension, storage.dimensions,
                         )
                     } else {
-                        colCb.add(
+                        add(
                             ", storage = %T(dialect = %S, typeName = %S, sqlType = %S, codec = %S, requiredExtension = null, dimensions = %L)",
                             COLUMN_STORAGE_NATIVE, storage.dialect, storage.typeName, storage.sqlType,
                             storage.codec, storage.dimensions,
@@ -532,7 +532,7 @@ internal fun entitySchemaCodeBlock(
                     // symbols the serialization plugin would have generated.
                     val raw = jsonType.classifier as? kotlin.reflect.KClass<*>
                         ?: error("JSON column '${col.name}': type '$jsonType' is not a concrete class")
-                    colCb.add(
+                    add(
                         ", json = %T(klass = %T::class, kType = %M<%T>(), typeName = %S, mapper = %L",
                         JSON_COLUMN_METADATA,
                         raw.asClassName(),
@@ -542,18 +542,16 @@ internal fun entitySchemaCodeBlock(
                         jsonMapperExpr(jsonMapper),
                     )
                     if (jsonMapper == JsonMapperIds.KOTLINX) {
-                        colCb.add(", kotlinxSerializer = %L", jsonSerializerCodeBlock(col.name, jsonType))
+                        add(", kotlinxSerializer = %L", jsonSerializerCodeBlock(col.name, jsonType))
                     }
-                    colCb.add(")")
+                    add(")")
                 }
-                colCb.add("),\n")
-                cb.add(colCb.build())
-            }
+                add("),\n")
+            })
         }
-        .add(")")
-        .build()
+        add(")")
+    }
 
-    val edgesLiteral = CodeBlock.builder()
     val edgeEntries = schema.edges()
         .mapNotNull { edge ->
             val join = if (edge.kind is EdgeKind.ManyToMany) {
@@ -570,69 +568,71 @@ internal fun entitySchemaCodeBlock(
         }
     }
 
-    if (edgeEntries.isEmpty()) {
-        edgesLiteral.add("emptyMap()")
-    } else {
-        edgesLiteral.add("mapOf(\n")
-        for (entry in edgeEntries) {
-            val edgeCb = CodeBlock.builder()
-                .add("  %S to %T(targetTable = %S, sourceColumn = %S, targetColumn = %S",
+    val edgesLiteral = codeBlock {
+        if (edgeEntries.isEmpty()) {
+            add("emptyMap()")
+        } else {
+            add("mapOf(\n")
+            for (entry in edgeEntries) {
+                add(codeBlock {
+                    add("  %S to %T(targetTable = %S, sourceColumn = %S, targetColumn = %S",
                     entry.name, EDGE_METADATA, entry.targetTable,
                     entry.join.sourceColumn, entry.join.targetColumn)
-            if (entry.join.junctionTable != null) {
-                edgeCb.add(", junctionTable = %S, junctionSourceColumn = %S, junctionTargetColumn = %S",
-                    entry.join.junctionTable, entry.join.junctionSourceColumn,
-                    entry.join.junctionTargetColumn)
+                    if (entry.join.junctionTable != null) {
+                        add(", junctionTable = %S, junctionSourceColumn = %S, junctionTargetColumn = %S",
+                            entry.join.junctionTable, entry.join.junctionSourceColumn,
+                            entry.join.junctionTargetColumn)
+                    }
+                    if (entry.comment != null) add(", comment = %S", entry.comment)
+                    add("),\n")
+                })
             }
-            if (entry.comment != null) {
-                edgeCb.add(", comment = %S", entry.comment)
-            }
-            edgeCb.add("),\n")
-            edgesLiteral.add(edgeCb.build())
+            add(")")
         }
-        edgesLiteral.add(")")
     }
 
     val schemaIndexes = schema.indexes()
     val idxColMap = indexableColumnMap(schema, schemaNames)
-    val indexesLiteral = CodeBlock.builder()
-    if (schemaIndexes.isEmpty()) {
-        indexesLiteral.add("emptyList()")
-    } else {
-        indexesLiteral.add("listOf(\n")
-        for (idx in schemaIndexes) {
-            val fieldsLiteral = idx.fields.joinToString(", ") {
-                val col = idxColMap[it] ?: error("Index references field '$it' but no field with that name exists on the schema")
-                "\"$col\""
+    val indexesLiteral = codeBlock {
+        if (schemaIndexes.isEmpty()) {
+            add("emptyList()")
+        } else {
+            add("listOf(\n")
+            for (idx in schemaIndexes) {
+                val fieldsLiteral = idx.fields.joinToString(", ") {
+                    val col = idxColMap[it]
+                        ?: error("Index references field '$it' but no field with that name exists on the schema")
+                    "\"$col\""
+                }
+                add(codeBlock {
+                    add("  %T(columns = listOf($fieldsLiteral), unique = %L, name = %S", INDEX_METADATA, idx.unique, idx.name)
+                    if (idx.where != null) add(", where = %S", idx.where)
+                    if (idx.using != null) add(", using = %S", idx.using)
+                    if (idx.opclasses != null) {
+                        val opcs = idx.opclasses!!.joinToString(", ") { "\"$it\"" }
+                        add(", opclasses = listOf($opcs)")
+                    }
+                    if (idx.with != null) {
+                        val entries = idx.with!!.entries.joinToString(", ") { "\"${it.key}\" to \"${it.value}\"" }
+                        add(", with = mapOf($entries)")
+                    }
+                    add("),\n")
+                })
             }
-            val cb = CodeBlock.builder()
-                .add("  %T(columns = listOf($fieldsLiteral), unique = %L, name = %S", INDEX_METADATA, idx.unique, idx.name)
-            if (idx.where != null) cb.add(", where = %S", idx.where)
-            if (idx.using != null) cb.add(", using = %S", idx.using)
-            if (idx.opclasses != null) {
-                val opcs = idx.opclasses!!.joinToString(", ") { "\"$it\"" }
-                cb.add(", opclasses = listOf($opcs)")
-            }
-            if (idx.with != null) {
-                val entries = idx.with!!.entries.joinToString(", ") { "\"${it.key}\" to \"${it.value}\"" }
-                cb.add(", with = mapOf($entries)")
-            }
-            cb.add("),\n")
-            indexesLiteral.add(cb.build())
+            add(")")
         }
-        indexesLiteral.add(")")
     }
 
-    return CodeBlock.builder()
-        .add("%T(\n", ENTITY_SCHEMA)
-        .add("  table = %S,\n", table)
-        .add("  idColumn = %S,\n", "id")
-        .add("  idStrategy = %T.%L,\n", ID_STRATEGY, idStrategyName(schema))
-        .add("  columns = %L,\n", columnsLiteral)
-        .add("  edges = %L,\n", edgesLiteral.build())
-        .add("  indexes = %L,\n", indexesLiteral.build())
-        .add(")")
-        .build()
+    return codeBlock {
+        add("%T(\n", ENTITY_SCHEMA)
+        add("  table = %S,\n", table)
+        add("  idColumn = %S,\n", "id")
+        add("  idStrategy = %T.%L,\n", ID_STRATEGY, idStrategyName(schema))
+        add("  columns = %L,\n", columnsLiteral)
+        add("  edges = %L,\n", edgesLiteral)
+        add("  indexes = %L,\n", indexesLiteral)
+        add(")")
+    }
 }
 
 /**

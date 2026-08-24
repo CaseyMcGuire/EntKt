@@ -4,8 +4,13 @@ import entkt.codegen.apiName
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.TypeName
+import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.interfaceType
+import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.property
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.fkPropertyKdoc
 import entkt.codegen.metadata.resolvedTypeName
@@ -105,23 +110,25 @@ internal class MutationGenerator(
         val mutableEdgeFks = edgeFks.filter { !it.immutable }
         val immutableEdgeFks = edgeFks.filter { it.immutable }
 
-        val mutationInterface = TypeSpec.interfaceBuilder(interfaceName)
-
-        for (field in mutableFields) {
-            val typeName = field.resolvedTypeName().copy(nullable = true)
-            val prop = PropertySpec.builder(field.apiName, typeName)
-                .mutable(true)
-            val comment = field.comment
-            if (comment != null) prop.addKdoc("%L", comment)
-            mutationInterface.addProperty(prop.build())
-        }
-
-        for (fk in mutableEdgeFks) {
-            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-            val prop = PropertySpec.builder(fk.propertyName, typeName)
-                .mutable(true)
-                .addKdoc("%L", fkPropertyKdoc(fk))
-            mutationInterface.addProperty(prop.build())
+        val mutationInterface = interfaceType(interfaceName) {
+            for (field in mutableFields) {
+                addProperty(
+                    mutableMutationProperty(
+                        field.apiName,
+                        field.resolvedTypeName().copy(nullable = true),
+                        field.comment,
+                    ),
+                )
+            }
+            for (fk in mutableEdgeFks) {
+                addProperty(
+                    mutableMutationProperty(
+                        fk.propertyName,
+                        fk.idType.toTypeName().copy(nullable = !fk.required),
+                        fkPropertyKdoc(fk),
+                    ),
+                )
+            }
         }
 
         // The restricted hook-facing view passed to `beforeCreate`.
@@ -130,57 +137,65 @@ internal class MutationGenerator(
         // Hides `save()`, `client`, `driver`, hook lists, the
         // staging/assigned private fields, and any other concrete-builder
         // surface that hooks must not reach.
-        val createView = TypeSpec.interfaceBuilder(createViewName)
-            .addSuperinterface(ClassName(packageName, interfaceName))
-        for (field in immutableFields) {
-            val typeName = field.resolvedTypeName().copy(nullable = true)
-            val prop = PropertySpec.builder(field.apiName, typeName)
-                .mutable(true)
-            val comment = field.comment
-            if (comment != null) prop.addKdoc("%L", comment)
-            createView.addProperty(prop.build())
-        }
-        for (fk in immutableEdgeFks) {
-            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-            val prop = PropertySpec.builder(fk.propertyName, typeName)
-                .mutable(true)
-                .addKdoc("%L", fkPropertyKdoc(fk))
-            createView.addProperty(prop.build())
+        val createView = interfaceType(createViewName) {
+            addSuperinterface(ClassName(packageName, interfaceName))
+            for (field in immutableFields) {
+                addProperty(
+                    mutableMutationProperty(
+                        field.apiName,
+                        field.resolvedTypeName().copy(nullable = true),
+                        field.comment,
+                    ),
+                )
+            }
+            for (fk in immutableEdgeFks) {
+                addProperty(
+                    mutableMutationProperty(
+                        fk.propertyName,
+                        fk.idType.toTypeName().copy(nullable = !fk.required),
+                        fkPropertyKdoc(fk),
+                    ),
+                )
+            }
         }
 
         // The restricted hook-facing view passed to `beforeUpdate`
         // (via `ctx.mutation`). Extends `Mutation` and adds unset
         // semantics only for mutable scalars and mutable FKs — there's
         // no update surface for immutable values.
-        val updateView = TypeSpec.interfaceBuilder(updateViewName)
-            .addSuperinterface(ClassName(packageName, interfaceName))
-        for (field in mutableFields) {
-            updateView.addFunction(unsetSpec(field.apiName))
+        val updateView = interfaceType(updateViewName) {
+            addSuperinterface(ClassName(packageName, interfaceName))
+            for (field in mutableFields) addFunction(unsetSpec(field.apiName))
+            for (fk in mutableEdgeFks) addFunction(unsetSpec(fk.propertyName))
+            // Read-only `pendingEdges` aggregator on the
+            // hook-facing view. Hooks read pending link-table M2M edge ops
+            // through `ctx.mutation.pendingEdges` (or `ctx.pendingEdges`);
+            // they cannot mutate the underlying op log — the view does NOT
+            // expose the per-edge mutator surface (`add`/`remove`/`set`).
+            property("pendingEdges", pendingEdgeOpsClass)
         }
-        for (fk in mutableEdgeFks) {
-            updateView.addFunction(unsetSpec(fk.propertyName))
-        }
-        // Read-only `pendingEdges` aggregator on the
-        // hook-facing view. Hooks read pending link-table M2M edge ops
-        // through `ctx.mutation.pendingEdges` (or `ctx.pendingEdges`);
-        // they cannot mutate the underlying op log — the view does NOT
-        // expose the per-edge mutator surface (`add`/`remove`/`set`).
-        updateView.addProperty(
-            PropertySpec.builder("pendingEdges", pendingEdgeOpsClass)
-                .build(),
-        )
 
-        return FileSpec.builder(packageName, interfaceName)
-            .addType(mutationInterface.build())
-            .addType(createView.build())
-            .addType(updateView.build())
-            .build()
+        return kotlinFile(packageName, interfaceName) {
+            addType(mutationInterface)
+            addType(createView)
+            addType(updateView)
+        }
+    }
+
+    /** Property shape shared by the mutation interfaces' writable fields. */
+    private fun mutableMutationProperty(
+        name: String,
+        type: TypeName,
+        kdoc: String?,
+    ): PropertySpec = property(name, type) {
+        mutable(true)
+        if (kdoc != null) addKdoc("%L", kdoc)
     }
 
     private fun unsetSpec(prop: String): FunSpec {
         val name = "unset${prop.replaceFirstChar { it.uppercaseChar() }}"
-        return FunSpec.builder(name)
-            .addModifiers(com.squareup.kotlinpoet.KModifier.ABSTRACT)
-            .build()
+        return function(name) {
+            addModifiers(KModifier.ABSTRACT)
+        }
     }
 }

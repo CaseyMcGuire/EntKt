@@ -10,6 +10,7 @@ import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
+import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.lifecycleValueSnapshot
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
@@ -277,29 +278,30 @@ internal class UpdateSaveEmitter(
         // Failed(EntTargetAbsentException) — the empty update must
         // still establish whether its target exists — and
         // short-circuits before hooks/privacy/validation run. ----
-        val head = CodeBlock.builder()
-            .add("val row0 = try {\n")
-        if (helperEligibleEdges.isNotEmpty()) {
-            head.add("  if (consistency == %T.Pessimistic) {\n", UPDATE_CONSISTENCY)
-                .add("    driver.readRowForUpdate(%T.TABLE, id)\n", entityClass)
-                .add("  } else if (_hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate) {\n")
-                .add("    driver.readRowForUpdate(%T.TABLE, id)\n", entityClass)
-                .add("  } else if (_hasPendingLinkTableM2MOps()) {\n")
-                .add("    driver.serializeOwnerEdgeAndRead(%T.TABLE, id)\n", entityClass)
-                .add("  } else {\n")
-                .add("    driver.byId(%T.TABLE, id)\n", entityClass)
-                .add("  }\n")
-        } else {
-            // No helper-eligible M2M edges → keep the existing two-way
-            // branch unchanged so non-M2M schemas pay no new branches.
-            head.add("  if (consistency == %T.Pessimistic) {\n", UPDATE_CONSISTENCY)
-                .add("    driver.readRowForUpdate(%T.TABLE, id)\n", entityClass)
-                .add("  } else {\n")
-                .add("    driver.byId(%T.TABLE, id)\n", entityClass)
-                .add("  }\n")
+        val head = codeBlock {
+            add("val row0 = try {\n")
+            if (helperEligibleEdges.isNotEmpty()) {
+                add("  if (consistency == %T.Pessimistic) {\n", UPDATE_CONSISTENCY)
+                add("    driver.readRowForUpdate(%T.TABLE, id)\n", entityClass)
+                add("  } else if (_hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate) {\n")
+                add("    driver.readRowForUpdate(%T.TABLE, id)\n", entityClass)
+                add("  } else if (_hasPendingLinkTableM2MOps()) {\n")
+                add("    driver.serializeOwnerEdgeAndRead(%T.TABLE, id)\n", entityClass)
+                add("  } else {\n")
+                add("    driver.byId(%T.TABLE, id)\n", entityClass)
+                add("  }\n")
+            } else {
+                // No helper-eligible M2M edges → keep the existing two-way
+                // branch unchanged so non-M2M schemas pay no new branches.
+                add("  if (consistency == %T.Pessimistic) {\n", UPDATE_CONSISTENCY)
+                add("    driver.readRowForUpdate(%T.TABLE, id)\n", entityClass)
+                add("  } else {\n")
+                add("    driver.byId(%T.TABLE, id)\n", entityClass)
+                add("  }\n")
+            }
+            add(driverCallFailureTail("NotPersisted"))
         }
-        head.add(driverCallFailureTail("NotPersisted"))
-        builder.addCode(head.build())
+        builder.addCode(head)
         builder.beginControlFlow("if (row0 == null)")
         builder.addCode(
             recordAndReturnFailure(
@@ -386,11 +388,11 @@ internal class UpdateSaveEmitter(
         // NotPersisted fallback. ----
         if (helperEligibleEdges.isNotEmpty()) {
             builder.addCode(
-                CodeBlock.builder()
-                    .add("val edgeChanges = try {\n")
-                    .add("  _buildEdgeChanges(pendingEdges)\n")
-                    .add(driverCallFailureTail("NotPersisted"))
-                    .build(),
+                codeBlock {
+                    add("val edgeChanges = try {\n")
+                    add("  _buildEdgeChanges(pendingEdges)\n")
+                    add(driverCallFailureTail("NotPersisted"))
+                },
             )
         } else {
             builder.addStatement("val edgeChanges = _buildEdgeChanges(pendingEdges)")
@@ -595,11 +597,11 @@ internal class UpdateSaveEmitter(
         if (helperEligibleEdges.isNotEmpty()) {
             builder.beginControlFlow("val updatedEntity = if (values.isNotEmpty())")
             builder.addCode(
-                CodeBlock.builder()
-                    .add("val row = try {\n")
-                    .add("  driver.update(%T.TABLE, id, values)\n", entityClass)
-                    .add(driverCallFailureTail("PersistenceUnknown"))
-                    .build(),
+                codeBlock {
+                    add("val row = try {\n")
+                    add("  driver.update(%T.TABLE, id, values)\n", entityClass)
+                    add(driverCallFailureTail("PersistenceUnknown"))
+                },
             )
             builder.beginControlFlow("if (row == null)")
             builder.addCode(
@@ -623,11 +625,11 @@ internal class UpdateSaveEmitter(
             builder.endControlFlow()
         } else {
             builder.addCode(
-                CodeBlock.builder()
-                    .add("val row = try {\n")
-                    .add("  driver.update(%T.TABLE, id, values)\n", entityClass)
-                    .add(driverCallFailureTail("PersistenceUnknown"))
-                    .build(),
+                codeBlock {
+                    add("val row = try {\n")
+                    add("  driver.update(%T.TABLE, id, values)\n", entityClass)
+                    add(driverCallFailureTail("PersistenceUnknown"))
+                },
             )
             builder.beginControlFlow("if (row == null)")
             builder.addCode(
@@ -734,16 +736,16 @@ internal class UpdateSaveEmitter(
             // the open transaction, so the result promotes to
             // TransactionPending with the typed failure as cause.
             builder.addCode(
-                CodeBlock.builder()
-                    .add(
+                codeBlock {
+                    add(
                         "val reported = if ((writeState != %T.NotPersisted || junctionWrites) && classified.writeState == %T.NotPersisted) {\n",
                         MUTATION_WRITE_STATE, MUTATION_WRITE_STATE,
                     )
-                    .add("  %T(%T.TransactionPending, classified)\n", ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE)
-                    .add("} else {\n")
-                    .add("  classified\n")
-                    .add("}\n")
-                    .build(),
+                    add("  %T(%T.TransactionPending, classified)\n", ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE)
+                    add("} else {\n")
+                    add("  classified\n")
+                    add("}\n")
+                },
             )
             builder.addStatement("client.recordTransactionMutationFailure(reported)")
             builder.addStatement("return %T.failedForInternalUse(reported)", MUTATION_RESULT)
@@ -865,24 +867,25 @@ private fun emitEffectivePatchConstruction(
         builder.addStatement("val effectivePatch = requestedPatch")
         return
     }
-    val code = CodeBlock.builder()
-    code.add("val effectivePatch = %T(\n", patchClass)
-    for (field in mutableFields) {
-        val prop = field.apiName
-        if (field.updateDefault != null) {
-            code.add(
-                "  %L = if (requestedPatch.%L is %T.Set) requestedPatch.%L else %T.Set(%L),\n",
-                prop, prop, FIELD_PATCH, prop, FIELD_PATCH, updateDefaultCodeBlock(field),
-            )
-        } else {
-            code.add("  %L = requestedPatch.%L,\n", prop, prop)
+    val code = codeBlock {
+        add("val effectivePatch = %T(\n", patchClass)
+        for (field in mutableFields) {
+            val prop = field.apiName
+            if (field.updateDefault != null) {
+                add(
+                    "  %L = if (requestedPatch.%L is %T.Set) requestedPatch.%L else %T.Set(%L),\n",
+                    prop, prop, FIELD_PATCH, prop, FIELD_PATCH, updateDefaultCodeBlock(field),
+                )
+            } else {
+                add("  %L = requestedPatch.%L,\n", prop, prop)
+            }
         }
+        for (fk in edgeFks) {
+            add("  %L = requestedPatch.%L,\n", fk.propertyName, fk.propertyName)
+        }
+        add(")\n")
     }
-    for (fk in edgeFks) {
-        code.add("  %L = requestedPatch.%L,\n", fk.propertyName, fk.propertyName)
-    }
-    code.add(")\n")
-    builder.addCode(code.build())
+    builder.addCode(code)
 }
 
 /**
@@ -943,33 +946,34 @@ private fun emitCandidateConstruction(
     allFields: List<Field>,
     edgeFks: List<EdgeFk>,
 ) {
-    val code = CodeBlock.builder()
-    code.add("val candidate = %T(\n", candidateClass)
-    for (field in allFields) {
-        val prop = field.apiName
-        if (field.immutable) {
-            code.add("  %L = entity.%L,\n", prop, prop)
-        } else {
-            code.add(
-                "  %L = effectivePatch.%L.%M(entity.%L),\n",
-                prop, prop, FIELD_PATCH_OR_ELSE, prop,
-            )
+    val code = codeBlock {
+        add("val candidate = %T(\n", candidateClass)
+        for (field in allFields) {
+            val prop = field.apiName
+            if (field.immutable) {
+                add("  %L = entity.%L,\n", prop, prop)
+            } else {
+                add(
+                    "  %L = effectivePatch.%L.%M(entity.%L),\n",
+                    prop, prop, FIELD_PATCH_OR_ELSE, prop,
+                )
+            }
         }
-    }
-    for (fk in edgeFks) {
-        if (fk.immutable) {
-            // Immutable FKs are never in the patch — pull the
-            // unchanged value straight from the loaded `before` row.
-            code.add("  %L = entity.%L,\n", fk.propertyName, fk.propertyName)
-        } else {
-            code.add(
-                "  %L = effectivePatch.%L.%M(entity.%L),\n",
-                fk.propertyName, fk.propertyName, FIELD_PATCH_OR_ELSE, fk.propertyName,
-            )
+        for (fk in edgeFks) {
+            if (fk.immutable) {
+                // Immutable FKs are never in the patch — pull the
+                // unchanged value straight from the loaded `before` row.
+                add("  %L = entity.%L,\n", fk.propertyName, fk.propertyName)
+            } else {
+                add(
+                    "  %L = effectivePatch.%L.%M(entity.%L),\n",
+                    fk.propertyName, fk.propertyName, FIELD_PATCH_OR_ELSE, fk.propertyName,
+                )
+            }
         }
+        add(")\n")
     }
-    code.add(")\n")
-    builder.addCode(code.build())
+    builder.addCode(code)
 }
 
 private fun updateDefaultCodeBlock(field: Field): CodeBlock {
