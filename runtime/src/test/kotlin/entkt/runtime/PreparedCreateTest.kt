@@ -15,12 +15,10 @@ class PreparedCreateTest {
 
         val prepared = PreparedCreate(
             values = values,
-            privacyItem = { candidate },
-            validationItem = { candidate },
+            candidate = candidate,
         )
 
         assertEquals(values, prepared.values)
-        assertSame(candidate, prepared.freshPrivacyItem())
-        assertSame(candidate, prepared.freshValidationItem())
+        assertSame(candidate, prepared.candidate)
     }
 }

@@ -1193,14 +1193,14 @@ class EdgeCodegenTest {
         assert(output.contains("private fun createBeforeCreateContext(viewerContext: ViewerContext, draft: PetCreateDraft): PetCreateHookContext")) {
             "the repo should construct the typed hook context for its create specification\n$output"
         }
-        assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetMutation, PetCreateHookContext,")) {
-            "the repo should pass a distinct immutable specification to MutationExecutor\n$output"
+        assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetWriteCandidate, Pet, ReadOnlyEntClient>")) {
+            "the repo should pass a compact immutable specification to CreateMutationExecutor\n$output"
         }
-        assert(output.contains("resolveDraft = ::resolve, beforeSave = beforeSaveHooks, beforeCreate = beforeCreateHooks, afterCreate = afterCreateHooks, privacyRules = privacyConfig.createRules.toList(), validationRules = validationConfig.createRules.toList(),")) {
-            "the create hook lists and rule snapshots should remain explicit specification inputs\n$output"
+        assert(output.contains("resolveDraft = ::resolve, beforeSave = mutationHookPhaseForInternalUse(beforeSaveHooks) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(beforeCreateHooks, ::createBeforeCreateContext), afterCreate = afterCreateHooks, privacy = mutationPrivacyPhaseForInternalUse(\"Pet CREATE privacy\", privacyConfig.createRules)")) {
+            "phase-local hook and rule types should remain captured by typed adapters\n$output"
         }
-        assert(output.contains("private fun createMutationInput(viewerContext: ViewerContext, draft: PetCreateDraft): CreateMutationInput<PetCreateDraft, PetMutation, PetCreateHookContext>")) {
-            "the repo should keep each draft correlated with its generated hook values\n$output"
+        assert(!output.contains("CreateMutationInput") && !output.contains("createMutationInput(")) {
+            "phase-local hook values should not leak into the create specification\n$output"
         }
         assert(!output.contains("createDenialReasons =") && !output.contains("validationViolations =") && !output.contains("loadDenials =")) {
             "the create specification should not contain already-evaluated rule callbacks\n$output"

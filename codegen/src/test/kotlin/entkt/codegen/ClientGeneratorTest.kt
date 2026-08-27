@@ -156,18 +156,21 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient supplies one stable read-only rule client without entity dispatch`() {
+    fun `EntClient supplies one stable read-only rule client to each mutation executor`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains(": EntReadRuntime, MutationRuntime, EntClientScope"))
         assert(output.contains("internal val readOnlyClient: ReadOnlyEntClient by lazy"))
         assert(output.contains("ReadOnlyEntClientImpl("))
-        assert(output.contains("MutationExecutor<ReadOnlyEntClient>"))
-        assert(output.contains("ruleClient = readOnlyClient"))
+        assert(output.contains("CreateMutationExecutor<ReadOnlyEntClient>"))
+        assert(output.contains("DeleteMutationExecutor<ReadOnlyEntClient>"))
+        assert(output.contains("internal val createMutations:"))
+        assert(output.contains("internal val deleteMutations:"))
+        assert(Regex("ruleClient = readOnlyClient").findAll(output).count() == 2)
         assert(!output.contains("privacyReadClient") && !output.contains("validationReadClient"))
         assert(!output.contains("privacyRuleClient(") && !output.contains("validationRuleClient("))
         assert(!output.contains("evaluateCreatePrivacy") && !output.contains("evaluateCreateValidation")) {
-            "The generic mutation executor should consume typed rules directly\n$output"
+            "The mutation executors should consume typed rule phases directly\n$output"
         }
     }
 

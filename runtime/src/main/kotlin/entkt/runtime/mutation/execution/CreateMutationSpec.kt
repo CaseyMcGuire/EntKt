@@ -5,17 +5,12 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.BatchHook
 import entkt.runtime.mutation.CreatePreparation
-import entkt.runtime.privacy.BatchPrivacyRule
-import entkt.runtime.validation.BatchValidationRule
 
 /** Immutable entity-specific inputs used by the generic create lifecycle. */
 @EntktInternal
 class CreateMutationSpec<
     Draft,
-    BeforeSave,
-    BeforeCreate,
-    PrivacyItem,
-    ValidationItem,
+    Candidate,
     Entity : EntEntity<*>,
     RuleClient,
     >(
@@ -23,20 +18,20 @@ class CreateMutationSpec<
     val entity: EntityMapping<Entity>,
 
     /** Hooks applied to the general mutation view before create-specific processing. */
-    val beforeSave: List<BatchHook<BeforeSave>>,
+    val beforeSave: MutationHookPhase<Draft>,
 
     /** Hooks applied to the create-specific context before values are prepared. */
-    val beforeCreate: List<BatchHook<BeforeCreate>>,
+    val beforeCreate: MutationHookPhase<Draft>,
 
     /** Hooks applied to the entities returned by a successful database write. */
     val afterCreate: List<BatchHook<Entity>>,
 
     /** Resolve the post-hook draft into stable storage values and a write candidate. */
-    val resolveDraft: (Draft) -> CreatePreparation<PrivacyItem, ValidationItem>,
+    val resolveDraft: (Draft) -> CreatePreparation<Candidate>,
 
     /** CREATE-privacy rules evaluated against the resolved write candidates. */
-    val privacyRules: List<BatchPrivacyRule<RuleClient, PrivacyItem>>,
+    val privacy: MutationPrivacyPhase<RuleClient, Candidate>,
 
     /** CREATE-validation rules evaluated against the resolved write candidates. */
-    val validationRules: List<BatchValidationRule<RuleClient, ValidationItem>>,
+    val validation: MutationValidationPhase<RuleClient, Candidate>,
 )

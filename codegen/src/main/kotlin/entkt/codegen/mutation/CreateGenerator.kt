@@ -323,16 +323,11 @@ internal class CreateGenerator(
     ): FunSpec {
         val draftClass = ClassName(packageName, "${schemaName}CreateDraft")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
-        val privacyItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
-        val validationItemClass = ClassName(packageName, "${schemaName}CreateValidationItem")
         val allFields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
         return function(
             "resolve",
-            returnType = CREATE_PREPARATION.parameterizedBy(
-                privacyItemClass,
-                validationItemClass,
-            ),
+            returnType = CREATE_PREPARATION.parameterizedBy(candidateClass),
         ) {
             addModifiers(KModifier.PRIVATE)
             parameter("draft", draftClass)
@@ -344,8 +339,7 @@ internal class CreateGenerator(
                 add("%T.Ready(\n", CREATE_PREPARATION)
                 add("  %T(\n", PREPARED_CREATE)
                 add("    values = values,\n")
-                add("    privacyItem = { %T(snapshotCreateCandidate(candidate)) },\n", privacyItemClass)
-                add("    validationItem = { %T(snapshotCreateCandidate(candidate)) },\n", validationItemClass)
+                add("    candidate = candidate,\n")
                 add("  ),\n")
                 add(")\n")
             })

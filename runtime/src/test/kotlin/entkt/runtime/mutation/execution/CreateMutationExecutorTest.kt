@@ -38,7 +38,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-class MutationExecutorTest {
+class CreateMutationExecutorTest {
     private data class Candidate(val name: String)
 
     private data class Widget(
@@ -123,9 +123,6 @@ class MutationExecutorTest {
 
         val value: CreateMutationSpec<
             RecordingInput,
-            String,
-            String,
-            Candidate,
             Candidate,
             Widget,
             Unit,
@@ -133,12 +130,18 @@ class MutationExecutorTest {
             CreateMutationSpec(
             entity = entity,
             resolveDraft = RecordingInput::resolve,
-            beforeSave = listOf(Hook { value -> events += "before-save:$value" }),
-            beforeCreate = listOf(
-                Hook { value ->
-                    events += "before-create:$value"
-                    beforeCreateAction()
-                },
+            beforeSave = mutationHookPhaseForInternalUse(
+                hooks = listOf(Hook { value: String -> events += "before-save:$value" }),
+                value = { _, input -> input.beforeSaveHookValue() },
+            ),
+            beforeCreate = mutationHookPhaseForInternalUse(
+                hooks = listOf(
+                    Hook { value: String ->
+                        events += "before-create:$value"
+                        beforeCreateAction()
+                    },
+                ),
+                value = { _, input -> input.beforeCreateHookValue() },
             ),
             afterCreate = listOf(
                 Hook { value ->
@@ -146,26 +149,34 @@ class MutationExecutorTest {
                     afterCreateAction(value)
                 },
             ),
-            privacyRules = listOf(
-                batchPrivacyRule<Unit, Candidate> { context, batch ->
-                    events += "create-privacy"
-                    receivedViewerContexts += context.viewerContext
-                    batch.decideEach { createDecision }
-                },
+            privacy = mutationPrivacyPhaseForInternalUse(
+                lifecycle = "Widget CREATE privacy",
+                rules = listOf(
+                    batchPrivacyRule<Unit, Candidate> { context, batch ->
+                        events += "create-privacy"
+                        receivedViewerContexts += context.viewerContext
+                        batch.decideEach { createDecision }
+                    },
+                ),
+                freshItem = { it },
             ),
-            validationRules = listOf(
-                batchValidationRule<Unit, Candidate> { _, batch ->
-                    events += "validate"
-                    batch.decideEach {
-                        validationViolations.firstOrNull()?.let { violation ->
-                            ValidationDecision.Invalid(
-                                message = violation.message,
-                                field = violation.field,
-                                code = violation.code,
-                            )
-                        } ?: ValidationDecision.Valid
-                    }
-                },
+            validation = mutationValidationPhaseForInternalUse(
+                lifecycle = "Widget CREATE validation",
+                rules = listOf(
+                    batchValidationRule<Unit, Candidate> { _, batch ->
+                        events += "validate"
+                        batch.decideEach {
+                            validationViolations.firstOrNull()?.let { violation ->
+                                ValidationDecision.Invalid(
+                                    message = violation.message,
+                                    field = violation.field,
+                                    code = violation.code,
+                                )
+                            } ?: ValidationDecision.Valid
+                        }
+                    },
+                ),
+                freshItem = { it },
             ),
             )
     }
@@ -173,11 +184,10 @@ class MutationExecutorTest {
     private class RecordingInput(
         private val events: MutableList<String>,
     ) {
-        var preparation: CreatePreparation<Candidate, Candidate> = CreatePreparation.Ready(
+        var preparation: CreatePreparation<Candidate> = CreatePreparation.Ready(
             PreparedCreate(
                 values = mapOf("name" to "Ada"),
-                privacyItem = { Candidate("Ada") },
-                validationItem = { Candidate("Ada") },
+                candidate = Candidate("Ada"),
             ),
         )
 
@@ -191,17 +201,10 @@ class MutationExecutorTest {
             return "create"
         }
 
-        fun resolve(): CreatePreparation<Candidate, Candidate> {
+        fun resolve(): CreatePreparation<Candidate> {
             events += "prepare"
             return preparation
         }
-
-        fun mutationInput(): CreateMutationInput<RecordingInput, String, String> =
-            CreateMutationInput(
-                draft = this,
-                beforeSave = beforeSaveHookValue(),
-                beforeCreate = beforeCreateHookValue(),
-            )
     }
 
     @Test
@@ -210,7 +213,7 @@ class MutationExecutorTest {
 
         val result = fixture.executor.create(
             viewerContext = fixture.viewerContext,
-            input = fixture.input.mutationInput(),
+            draft = fixture.input,
             spec = fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -220,11 +223,11 @@ class MutationExecutorTest {
         assertEquals(mapOf("name" to "Ada"), fixture.driver.insertedValues)
         assertEquals(
             listOf(
-                "before-save-value",
-                "before-create-value",
                 "transaction-state",
                 "transaction-preflight:Widget create",
+                "before-save-value",
                 "before-save:save",
+                "before-create-value",
                 "before-create:create",
                 "prepare",
                 "create-privacy",
@@ -252,7 +255,7 @@ class MutationExecutorTest {
 
         val result = fixture.executor.create(
             fixture.viewerContext,
-            fixture.input.mutationInput(),
+            fixture.input,
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -272,7 +275,7 @@ class MutationExecutorTest {
 
         val result = fixture.executor.create(
             fixture.viewerContext,
-            fixture.input.mutationInput(),
+            fixture.input,
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -295,7 +298,7 @@ class MutationExecutorTest {
 
         val result = fixture.executor.create(
             fixture.viewerContext,
-            fixture.input.mutationInput(),
+            fixture.input,
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -316,7 +319,7 @@ class MutationExecutorTest {
 
         val result = fixture.executor.create(
             fixture.viewerContext,
-            fixture.input.mutationInput(),
+            fixture.input,
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -345,7 +348,7 @@ class MutationExecutorTest {
 
         val result = fixture.executor.create(
             fixture.viewerContext,
-            fixture.input.mutationInput(),
+            fixture.input,
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -366,7 +369,7 @@ class MutationExecutorTest {
 
             val result = fixture.executor.create(
                 fixture.viewerContext,
-                fixture.input.mutationInput(),
+                fixture.input,
                 fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
             )
@@ -392,7 +395,7 @@ class MutationExecutorTest {
 
         val result = fixture.executor.create(
             fixture.viewerContext,
-            fixture.input.mutationInput(),
+            fixture.input,
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
         )
@@ -417,7 +420,7 @@ class MutationExecutorTest {
 
         val result = fixture.executor.create(
             fixture.viewerContext,
-            fixture.input.mutationInput(),
+            fixture.input,
             fixture.spec.value,
             checkReturnedEntityPrivacy = false,
         )
@@ -436,15 +439,14 @@ class MutationExecutorTest {
             preparation = CreatePreparation.Ready(
                 PreparedCreate(
                     values = mapOf("name" to "Grace"),
-                    privacyItem = { Candidate("Grace") },
-                    validationItem = { Candidate("Grace") },
+                    candidate = Candidate("Grace"),
                 ),
             )
         }
 
         val result = fixture.executor.createMany(
             viewerContext = fixture.viewerContext,
-            inputs = listOf(fixture.input.mutationInput(), secondInput.mutationInput()),
+            drafts = listOf(fixture.input, secondInput),
             spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
         )
@@ -460,13 +462,13 @@ class MutationExecutorTest {
         )
         assertEquals(
             listOf(
-                "before-save-value",
-                "before-create-value",
-                "before-save-value",
-                "before-create-value",
                 "transaction-state",
+                "before-save-value",
+                "before-save-value",
                 "before-save:save",
                 "before-save:save",
+                "before-create-value",
+                "before-create-value",
                 "before-create:create",
                 "before-create:create",
                 "prepare",
@@ -492,7 +494,7 @@ class MutationExecutorTest {
 
         val result = fixture.executor.createMany(
             viewerContext = fixture.viewerContext,
-            inputs = listOf(fixture.input.mutationInput()),
+            drafts = listOf(fixture.input),
             spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
         )
@@ -516,7 +518,7 @@ class MutationExecutorTest {
         val thrown = assertFailsWith<CancellationException> {
             fixture.executor.create(
                 fixture.viewerContext,
-                fixture.input.mutationInput(),
+                fixture.input,
                 fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
             )
@@ -535,7 +537,7 @@ class MutationExecutorTest {
         val input = RecordingInput(events)
         val viewerContext = ViewerContext(Viewer.User(7L))
         val recordedFailures = mutableListOf<EntMutationException>()
-        val executor = MutationExecutor(
+        val executor = CreateMutationExecutor(
             driver = driver,
             mutationRuntime = object : MutationRuntime {
                 override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
@@ -581,7 +583,7 @@ class MutationExecutorTest {
         val driver: RecordingDriver,
         val spec: RecordingSpec,
         val input: RecordingInput,
-        val executor: MutationExecutor<Unit>,
+        val executor: CreateMutationExecutor<Unit>,
         val viewerContext: ViewerContext,
         val recordedFailures: MutableList<EntMutationException>,
     )
