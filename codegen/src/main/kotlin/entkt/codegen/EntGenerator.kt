@@ -71,10 +71,10 @@ private val FIXED_CLIENT_MEMBERS: Set<String> = setOf(
     "defaultRelationshipLocking", "defaultUpdateConsistency",
     "delegate", "driver", "entityInterceptors", "global", "hookClientScopeForInternalUse",
     "hooks", "hooksConfig", "interceptors", "interceptorsConfig", "mutations", "policies",
-    "policiesConfig", "privacyReadClient", "readClientImpl", "recordTransactionMutationFailure",
+    "policiesConfig", "readOnlyClient", "recordTransactionMutationFailure",
     "transactionCoordinator",
     "transactionExecutionGuard", "transactionExecutionToken", "transactionRequirement",
-    "validationReadClient", "withTransaction",
+    "withTransaction",
 )
 
 /**
@@ -864,7 +864,7 @@ class EntGenerator(
                         "  - more than one artifact generates '$name.kt' — a schema name " +
                             "collides with a derived artifact name (<Schema>Mutation/CreateDraft/" +
                             "Update/Query/Repo/Privacy/Validation/Indexes) or a reserved " +
-                            "client file (EntClient, EntReadClient, EntReadRuntime)"
+                            "client file (EntClient, ReadOnlyEntClient, EntReadRuntime)"
                     },
             )
         }

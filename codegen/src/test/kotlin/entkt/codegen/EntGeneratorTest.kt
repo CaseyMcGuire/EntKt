@@ -99,9 +99,8 @@ class EntGeneratorTest {
 
         // Per schema: entity, mutation, create, update, query, repo, privacy, validation.
         // Plus the schema-set-level files: EntReadRuntime (the read contract
-        // + per-entity read surfaces), EntReadClient (the shared read-only
-        // interface, the EntValidationReadClient / EntPrivacyReadClient
-        // posture wrappers, the internal impl, and the per-entity read
+        // + per-entity read surfaces), ReadOnlyEntClient (the shared read-only
+        // interface, its internal implementation, and the per-entity read
         // repos), and the EntClient that wires every repo together. User
         // also gets a UserIndexes file (it declares eligible indexes); Car
         // has none, so it gets no index-helper file.
@@ -113,7 +112,7 @@ class EntGeneratorTest {
                 "User", "UserMutation", "UserCreateDraft", "UserUpdate", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
                 "UserIndexes",
                 "EntReadRuntime",
-                "EntReadClient",
+                "ReadOnlyEntClient",
                 "EntClient",
             ),
             names,

@@ -5,7 +5,7 @@ import entkt.integrationtest.ent.ArticleLoadPrivacyItem
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.ArticleQuery
 import entkt.integrationtest.ent.EntClient
-import entkt.integrationtest.ent.EntPrivacyReadClient
+import entkt.integrationtest.ent.ReadOnlyEntClient
 import entkt.integrationtest.ent.Group
 import entkt.integrationtest.ent.GroupPolicyScope
 import entkt.integrationtest.ent.User
@@ -297,7 +297,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 users(object : EntityPolicy<User, UserPolicyScope> {
                     override fun configure(scope: UserPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem> { _, batch ->
+                            load(batchPrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem> { _, batch ->
                                 batch.decideEach {
                                     if (it.entity.name == "hidden") {
                                         PrivacyDecision.Deny("member hidden")
@@ -838,7 +838,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 articles(object : EntityPolicy<Article, ArticlePolicyScope> {
                     override fun configure(scope: ArticlePolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<EntPrivacyReadClient, ArticleLoadPrivacyItem> { _, batch ->
+                            load(batchPrivacyRule<ReadOnlyEntClient, ArticleLoadPrivacyItem> { _, batch ->
                                 invocations += batch.map { it.entity.title }
                                 batch.decideEach { PrivacyDecision.Allow }
                             })
@@ -880,7 +880,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 articles(object : EntityPolicy<Article, ArticlePolicyScope> {
                     override fun configure(scope: ArticlePolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<EntPrivacyReadClient, ArticleLoadPrivacyItem> { _, batch ->
+                            load(batchPrivacyRule<ReadOnlyEntClient, ArticleLoadPrivacyItem> { _, batch ->
                                 batch.decideEach {
                                     if (it.entity.title.startsWith("secret")) {
                                         PrivacyDecision.Deny("article hidden")
@@ -943,7 +943,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 users(object : EntityPolicy<User, UserPolicyScope> {
                     override fun configure(scope: UserPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem> { _, batch ->
+                            load(batchPrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem> { _, batch ->
                                 userPrivacyBatches += batch.map { it.entity.name }
                                 batch.decideEach { PrivacyDecision.Allow }
                             })
@@ -953,7 +953,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 articles(object : EntityPolicy<Article, ArticlePolicyScope> {
                     override fun configure(scope: ArticlePolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<EntPrivacyReadClient, ArticleLoadPrivacyItem> { _, batch ->
+                            load(batchPrivacyRule<ReadOnlyEntClient, ArticleLoadPrivacyItem> { _, batch ->
                                 articlePrivacyBatches += batch.map { it.entity.title }
                                 batch.decideEach { PrivacyDecision.Allow }
                             })

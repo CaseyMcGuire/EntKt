@@ -34,7 +34,7 @@ import kotlin.test.assertTrue
  * The snippets compile against the real runtime jar on the inherited
  * classpath — a different module than the snippet, which is exactly the
  * application posture. Diagnostic matching is loose (shared substrings
- * across K1/K2 spellings), following [ReadClientPostureCompileTest].
+ * across K1/K2 spellings), following [ReadOnlyEntClientCompileTest].
  */
 class ResultConstructionAuthorityCompileTest {
 

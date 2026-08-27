@@ -46,8 +46,7 @@ private val CORRELATE_LOAD_PRIVACY_EVALUATIONS = MemberName(
  * registry, and one accessor per entity
  * typed to that entity's read surface (`hasLoadPrivacy()` /
  * `loadDenials(...)`, the only repo members query terminals
- * call). Both `EntClient` and `EntReadClientImpl` (the shared delegate
- * behind the posture read clients) implement it, so generated query and
+ * call). Both `EntClient` and `ReadOnlyEntClientImpl` implement it, so generated query and
  * index-stage constructors can accept the contract instead of the full
  * client.
  *
@@ -126,9 +125,8 @@ internal class ReadRuntimeGenerator(
             addKdoc(
                 "The read-runtime contract generated queries and index stages depend\n" +
                     "on, instead of the full `EntClient`. Implemented by `EntClient` and\n" +
-                    "by `EntReadClientImpl` (the internal delegate behind\n" +
-                    "`EntValidationReadClient` / `EntPrivacyReadClient` — the public\n" +
-                    "`EntReadClient` interface deliberately does not extend this\n" +
+                    "by `ReadOnlyEntClientImpl` — the public\n" +
+                    "`ReadOnlyEntClient` interface deliberately does not extend this\n" +
                     "contract); a query constructed with either host behaves identically\n" +
                     "on the read path (operation-supplied viewer context, LOAD privacy, read\n" +
                     "interceptors).",

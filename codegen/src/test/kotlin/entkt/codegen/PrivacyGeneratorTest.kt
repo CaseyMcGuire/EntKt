@@ -22,28 +22,28 @@ class PrivacyGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("typealias UserLoadPrivacyRule = PrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem>")) {
+        assert(output.contains("typealias UserLoadPrivacyRule = PrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem>")) {
             "Should generate load rule typealias\n$output"
         }
-        assert(output.contains("typealias UserCreatePrivacyRule = PrivacyRule<EntPrivacyReadClient, UserCreatePrivacyItem>")) {
+        assert(output.contains("typealias UserCreatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserCreatePrivacyItem>")) {
             "Should generate create rule typealias\n$output"
         }
-        assert(output.contains("typealias UserUpdatePrivacyRule = PrivacyRule<EntPrivacyReadClient, UserUpdatePrivacyItem>")) {
+        assert(output.contains("typealias UserUpdatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserUpdatePrivacyItem>")) {
             "Should generate update rule typealias\n$output"
         }
-        assert(output.contains("typealias UserDeletePrivacyRule = PrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem>")) {
+        assert(output.contains("typealias UserDeletePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserDeletePrivacyItem>")) {
             "Should generate delete rule typealias\n$output"
         }
-        assert(output.contains("typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem>")) {
+        assert(output.contains("typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem>")) {
             "Should generate load batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<EntPrivacyReadClient, UserCreatePrivacyItem>")) {
+        assert(output.contains("typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserCreatePrivacyItem>")) {
             "Should generate create batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<EntPrivacyReadClient, UserUpdatePrivacyItem>")) {
+        assert(output.contains("typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserUpdatePrivacyItem>")) {
             "Should generate update batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserDeleteBatchPrivacyRule = BatchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem>")) {
+        assert(output.contains("typealias UserDeleteBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserDeletePrivacyItem>")) {
             "Should generate delete batch rule typealias\n$output"
         }
     }

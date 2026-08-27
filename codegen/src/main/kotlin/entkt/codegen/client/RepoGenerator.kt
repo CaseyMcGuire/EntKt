@@ -950,7 +950,7 @@ internal class RepoGenerator(
                     LIST,
                 )
                 .addStatement("val rules = privacyConfig.loadRules")
-                .addStatement("val ruleContext = %T(viewerContext, client.privacyReadClient)", PRIVACY_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(viewerContext, client.readOnlyClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
                     "val decisions = %M(%S, entitySnapshot, rules, ruleContext) { item ->\n" +
                         "  %T(%L)\n" +
@@ -1045,7 +1045,7 @@ internal class RepoGenerator(
             addCode(codeBlock {
                 addStatement("if (viewerContext.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
-                .addStatement("val ruleContext = %T(viewerContext, client.privacyReadClient)", PRIVACY_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(viewerContext, client.readOnlyClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
                     "var decision = %M(%S, listOf(candidate), rules, ruleContext) { item ->\n" +
                     "  %T(%L, %L, %L, %L, %L)\n" +
@@ -1110,7 +1110,7 @@ internal class RepoGenerator(
                 )
                 .addStatement("val indexes = entitySnapshot.indices.toList()")
                 .addStatement("val rules = privacyConfig.deleteRules")
-                .addStatement("val ruleContext = %T(viewerContext, client.privacyReadClient)", PRIVACY_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(viewerContext, client.readOnlyClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
                     "val decisions = %M(%S, indexes, rules, ruleContext) { index ->\n" +
                         "  %T(%L, %L)\n" +
@@ -1219,8 +1219,8 @@ internal class RepoGenerator(
             privacyItemClass,
             validationItemClass,
             entityClass,
-            ClassName(packageName, "EntPrivacyReadClient"),
-            ClassName(packageName, "EntValidationReadClient"),
+            ClassName(packageName, "ReadOnlyEntClient"),
+            ClassName(packageName, "ReadOnlyEntClient"),
         )
         return property("createSpec", specType) {
             addModifiers(KModifier.PRIVATE)
@@ -1676,7 +1676,7 @@ internal class RepoGenerator(
             addCode(codeBlock {
                 addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return emptyList()")
-                .addStatement("val ruleContext = %T(client.validationReadClient)", VALIDATION_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(client.readOnlyClient)", VALIDATION_RULE_CONTEXT)
                 .addStatement(
                     "val invalids = %M(%S, listOf(candidate), rules, ruleContext) { item ->\n" +
                     "  %T(%L, %L, %L, %L, %L)\n" +
@@ -1725,7 +1725,7 @@ internal class RepoGenerator(
                 .addStatement("val candidateSnapshot = candidates.toList()")
                 .addStatement("val rules = validationConfig.deleteRules")
                 .addStatement("if (rules.isEmpty()) return %T(entitySnapshot.size) { emptyList() }", LIST)
-                .addStatement("val ruleContext = %T(client.validationReadClient)", VALIDATION_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(client.readOnlyClient)", VALIDATION_RULE_CONTEXT)
                 .addStatement(
                     "val invalidsByCandidate = %M(%S, entitySnapshot.indices.toList(), rules, ruleContext) { index ->\n" +
                         "  %T(%L, %L)\n" +

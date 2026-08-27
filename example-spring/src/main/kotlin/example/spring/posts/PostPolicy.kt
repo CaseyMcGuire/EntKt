@@ -4,7 +4,7 @@ import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
-import example.ent.EntPrivacyReadClient
+import example.ent.ReadOnlyEntClient
 import example.ent.PostCreatePrivacyItem
 import example.ent.PostCreatePrivacyRule
 import example.ent.PostDeletePrivacyItem
@@ -30,7 +30,7 @@ object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
 /** Published posts are visible to everyone. */
 class AllowPublishedPosts : PostLoadPrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        context: PrivacyRuleContext<ReadOnlyEntClient>,
         item: PostLoadPrivacyItem,
     ): PrivacyDecision =
         if (item.entity.published) PrivacyDecision.Allow
@@ -40,7 +40,7 @@ class AllowPublishedPosts : PostLoadPrivacyRule {
 /** Unpublished posts are visible to their author. */
 class AllowAuthorLoad : PostLoadPrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        context: PrivacyRuleContext<ReadOnlyEntClient>,
         item: PostLoadPrivacyItem,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User ?: return PrivacyDecision.Continue
@@ -52,7 +52,7 @@ class AllowAuthorLoad : PostLoadPrivacyRule {
 /** Any authenticated user can create posts; anonymous callers are denied. */
 class RequireAuthToCreate : PostCreatePrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        context: PrivacyRuleContext<ReadOnlyEntClient>,
         item: PostCreatePrivacyItem,
     ): PrivacyDecision =
         if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
@@ -62,7 +62,7 @@ class RequireAuthToCreate : PostCreatePrivacyRule {
 /** Only the author can update their post. */
 class AllowAuthorUpdate : PostUpdatePrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        context: PrivacyRuleContext<ReadOnlyEntClient>,
         item: PostUpdatePrivacyItem,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User
@@ -75,7 +75,7 @@ class AllowAuthorUpdate : PostUpdatePrivacyRule {
 /** Only the author can delete their post. */
 class AllowAuthorDelete : PostDeletePrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        context: PrivacyRuleContext<ReadOnlyEntClient>,
         item: PostDeletePrivacyItem,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User

@@ -45,8 +45,7 @@ package entkt.query
  *   `${Entity}ReadSurface`): the seam between generated queries and
  *   their host clients — implementing or invoking it directly is
  *   framework wiring, not application API.
- * - **Read-client construction** (`EntValidationReadClient` /
- *   `EntPrivacyReadClient` / `EntReadClientImpl` / `${Entity}ReadRepo`
+ * - **Read-client construction** (`ReadOnlyEntClientImpl` / `${Entity}ReadRepo`
  *   constructors): mints the stable contextless readers owned by a generated
  *   client; generated client initialization is the supported construction
  *   path.

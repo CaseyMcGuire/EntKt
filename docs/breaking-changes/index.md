@@ -56,6 +56,15 @@ above it.
   _Migration:_ pass the generated value unchanged at positional call sites; for
   custom registries, pass their `entities` list directly to `EntViewer`.
 
+- **Use one `ReadOnlyEntClient` in all rule contexts** (`codegen`)
+  `EntPrivacyReadClient`, `EntValidationReadClient`, and `EntReadClient` have
+  been replaced by one stable, contextless `ReadOnlyEntClient`. The client type
+  no longer implies a privacy posture; each terminal's explicit `ViewerContext`
+  determines the read behavior.
+  _Migration:_ change rule and helper signatures to `ReadOnlyEntClient`, pass
+  `context.viewerContext` for viewer-scoped rule reads, and pass
+  `context.readViewerContext` for validation bypass reads.
+
 - **Construct generated repositories with complete client configuration** (`codegen`, `runtime`)
   Generated repository constructors are now internal and receive their client,
   hooks, privacy rules, and validation rules up front. Repositories no longer

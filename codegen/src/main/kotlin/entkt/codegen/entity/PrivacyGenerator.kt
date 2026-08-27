@@ -62,12 +62,12 @@ internal class PrivacyGenerator(
         val entityClass = ClassName(packageName, schemaName)
         // Hook contexts keep a write-capable repository scope but omit
         // transaction entry and configuration APIs. Privacy rule contexts get
-        // the stable privacy-posture read client plus the caller's explicit
+        // the stable read-only client plus the caller's explicit
         // viewerContext — rule writes are compile errors, and nested rule reads
         // pass that context to their terminals. The concrete type makes the
         // viewer-scoped read posture visible in helper signatures.
         val hookClientScopeClass = ClassName(packageName, "EntClientScope")
-        val readClientClass = ClassName(packageName, "EntPrivacyReadClient")
+        val readClientClass = ClassName(packageName, "ReadOnlyEntClient")
         val configClass = ClassName(packageName, "${schemaName}PrivacyConfig")
         val privacyScopeClass = ClassName(packageName, "${schemaName}PrivacyScope")
         val policyScopeClass = ClassName(packageName, "${schemaName}PolicyScope")

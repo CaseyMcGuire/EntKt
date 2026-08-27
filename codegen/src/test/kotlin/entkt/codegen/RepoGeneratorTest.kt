@@ -59,13 +59,13 @@ class RepoGeneratorTest {
             "mutable create candidates should be detached by one generated mapping helper\n$output"
         }
         val viewerContexts = Regex(
-            Regex.escape("val ruleContext = PrivacyRuleContext(viewerContext, client.privacyReadClient)"),
+            Regex.escape("val ruleContext = PrivacyRuleContext(viewerContext, client.readOnlyClient)"),
         ).findAll(output).count()
         assert(viewerContexts == 3) {
             "Each privacy lifecycle helper should construct shared state exactly once; found $viewerContexts\n$output"
         }
         val validationContexts = Regex(
-            Regex.escape("val ruleContext = ValidationRuleContext(client.validationReadClient)"),
+            Regex.escape("val ruleContext = ValidationRuleContext(client.readOnlyClient)"),
         ).findAll(output).count()
         assert(validationContexts == 2) {
             "Each validation lifecycle helper should construct shared state exactly once; found $validationContexts\n$output"
@@ -1136,13 +1136,13 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `validation evaluators reuse the stable validation-posture read client`() {
+    fun `validation evaluators reuse the stable read-only client`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
         val uses = Regex(
-            Regex.escape("ValidationRuleContext(client.validationReadClient)")
+            Regex.escape("ValidationRuleContext(client.readOnlyClient)")
         ).findAll(output).count()
         assert(uses == 2) {
             "Update and delete validation evaluators should reuse the stable validation client; found $uses\n$output"
@@ -1157,13 +1157,13 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `privacy evaluators reuse the stable privacy-posture read client with the caller context`() {
+    fun `privacy evaluators reuse the stable read-only client with the caller context`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
         val uses = Regex(
-            Regex.escape("PrivacyRuleContext(viewerContext, client.privacyReadClient)")
+            Regex.escape("PrivacyRuleContext(viewerContext, client.readOnlyClient)")
         ).findAll(output).count()
         assert(uses == 3) {
             "LOAD, update, and delete privacy evaluators should reuse the stable privacy client; found $uses\n$output"

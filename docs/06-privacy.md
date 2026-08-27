@@ -386,7 +386,8 @@ returns `MutationResult.Failed(EntMutationPrivacyDeniedException)` with
 
 Every privacy rule receives one shared `PrivacyRuleContext` parameter in
 addition to its item or item batch. Its `client` is an
-`EntPrivacyReadClient`: a stable read-only client. Rules normally pass the
+`ReadOnlyEntClient`: a stable read-only client shared with validation rules.
+Rules normally pass the
 **caller's** `context.viewerContext` when querying the graph to decide (ownership
 walks, parent-visibility checks). Every row those reads **materialize** then
 passes that viewer's LOAD privacy. The read client is stable and contextless:
@@ -411,16 +412,12 @@ row its viewer cannot see gets the denial
 (`findById(context.viewerContext, id)` returns
 `Failed(EntPrivacyDeniedException)`; chaining
 `.visibleOrNull()` collapses that root denial to `Success(null)`),
-never the row. Validation rules normally pass their framework-provided
+never the row. Validation rules receive the same client and normally pass their framework-provided
 `readViewerContext`, which is privacy-bypassing, so invariant checks can
-materialize every row. Both
-concrete types implement the shared `EntReadClient` interface, so a
-helper that works correctly under either posture can accept
-`EntReadClient`; a helper that is
-specifically part of an authorization decision should accept
-`EntPrivacyReadClient` so it cannot be handed an
-`EntValidationReadClient` by mistake. The concrete client type does not
-constrain the `ViewerContext` passed to its terminals.
+materialize every row. The client type deliberately carries no privacy
+posture: the `ViewerContext` supplied to each terminal determines that read's
+behavior. Helpers accept `ReadOnlyEntClient` and should also take or document
+the context they expect.
 
 The raw terminals (`rawCount` / `rawExists` and the raw aggregates) are
 available on every read client and have one explicit meaning: they query
@@ -852,5 +849,4 @@ For each schema with a policy, entkt provides:
 | `{Entity}PolicyScope` | Outer scope for `EntityPolicy.configure` (exposes `privacy {}` and `validation {}`) |
 | `{Entity}{Op}PrivacyRule` | Typealiases for rule types |
 | `{Entity}{Op}BatchPrivacyRule` | Typealiases for explicit batch-rule types |
-| `EntPrivacyReadClient` | Read client in `PrivacyRuleContext` — viewer-scoped reads (schema-set-level) |
-| `EntReadClient` | Shared read-only interface both posture clients implement (schema-set-level) |
+| `ReadOnlyEntClient` | Stable read-only client shared by privacy and validation rule contexts; each terminal requires an explicit `ViewerContext` (schema-set-level) |

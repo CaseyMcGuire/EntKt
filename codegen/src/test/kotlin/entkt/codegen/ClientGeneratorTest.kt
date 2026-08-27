@@ -156,15 +156,16 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient supplies stable rule clients without entity dispatch`() {
+    fun `EntClient supplies one stable read-only rule client without entity dispatch`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains(": EntReadRuntime, MutationRuntime, EntClientScope"))
-        assert(output.contains("private val readClientImpl: EntReadClientImpl by lazy"))
-        assert(output.contains("internal val privacyReadClient: EntPrivacyReadClient by lazy"))
-        assert(output.contains("internal val validationReadClient: EntValidationReadClient by lazy"))
-        assert(output.contains("privacyClient = privacyReadClient"))
-        assert(output.contains("validationClient = validationReadClient"))
+        assert(output.contains("internal val readOnlyClient: ReadOnlyEntClient by lazy"))
+        assert(output.contains("ReadOnlyEntClientImpl("))
+        assert(output.contains("MutationExecutor<ReadOnlyEntClient, ReadOnlyEntClient>"))
+        assert(output.contains("privacyClient = readOnlyClient"))
+        assert(output.contains("validationClient = readOnlyClient"))
+        assert(!output.contains("privacyReadClient") && !output.contains("validationReadClient"))
         assert(!output.contains("privacyRuleClient(") && !output.contains("validationRuleClient("))
         assert(!output.contains("evaluateCreatePrivacy") && !output.contains("evaluateCreateValidation")) {
             "The generic mutation executor should consume typed rules directly\n$output"
@@ -450,14 +451,14 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient has stable posture wrappers around one contextless read client`() {
+    fun `EntClient has one stable contextless read-only client`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("private val readClientImpl: EntReadClientImpl by lazy"))
-        assert(output.contains("EntPrivacyReadClient(readClientImpl)"))
-        assert(output.contains("EntValidationReadClient(readClientImpl)"))
-        assert(!output.contains("readClientImpl(context:"))
+        assert(output.contains("internal val readOnlyClient: ReadOnlyEntClient by lazy"))
+        assert(output.contains("lazy { ReadOnlyEntClientImpl("))
+        assert(!output.contains("EntPrivacyReadClient"))
+        assert(!output.contains("EntValidationReadClient"))
         assert(!output.contains("asValidationReadClientForInternalUse"))
         assert(!output.contains("asPrivacyReadClientForInternalUse"))
         assert(!output.contains("asReadClientForInternalUse")) {

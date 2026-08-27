@@ -5,7 +5,7 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
-import example.ent.EntPrivacyReadClient
+import example.ent.ReadOnlyEntClient
 import example.ent.User
 import example.ent.UserDeletePrivacyItem
 import example.ent.UserDeletePrivacyRule
@@ -29,7 +29,7 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
 /** Only the user themselves can update their profile. */
 class AllowSelfUpdate : UserUpdatePrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        context: PrivacyRuleContext<ReadOnlyEntClient>,
         item: UserUpdatePrivacyItem,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User
@@ -42,7 +42,7 @@ class AllowSelfUpdate : UserUpdatePrivacyRule {
 /** Only the user themselves can delete their account. */
 class AllowSelfDelete : UserDeletePrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<EntPrivacyReadClient>,
+        context: PrivacyRuleContext<ReadOnlyEntClient>,
         item: UserDeletePrivacyItem,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User

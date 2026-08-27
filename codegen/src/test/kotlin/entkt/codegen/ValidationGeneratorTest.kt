@@ -21,22 +21,22 @@ class ValidationGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("typealias UserCreateValidationRule = ValidationRule<EntValidationReadClient, UserCreateValidationItem>")) {
+        assert(output.contains("typealias UserCreateValidationRule = ValidationRule<ReadOnlyEntClient, UserCreateValidationItem>")) {
             "Should generate create rule typealias\n$output"
         }
-        assert(output.contains("typealias UserUpdateValidationRule = ValidationRule<EntValidationReadClient, UserUpdateValidationItem>")) {
+        assert(output.contains("typealias UserUpdateValidationRule = ValidationRule<ReadOnlyEntClient, UserUpdateValidationItem>")) {
             "Should generate update rule typealias\n$output"
         }
-        assert(output.contains("typealias UserDeleteValidationRule = ValidationRule<EntValidationReadClient, UserDeleteValidationItem>")) {
+        assert(output.contains("typealias UserDeleteValidationRule = ValidationRule<ReadOnlyEntClient, UserDeleteValidationItem>")) {
             "Should generate delete rule typealias\n$output"
         }
-        assert(output.contains("typealias UserCreateBatchValidationRule = BatchValidationRule<EntValidationReadClient, UserCreateValidationItem>")) {
+        assert(output.contains("typealias UserCreateBatchValidationRule = BatchValidationRule<ReadOnlyEntClient, UserCreateValidationItem>")) {
             "Should generate create batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserUpdateBatchValidationRule = BatchValidationRule<EntValidationReadClient, UserUpdateValidationItem>")) {
+        assert(output.contains("typealias UserUpdateBatchValidationRule = BatchValidationRule<ReadOnlyEntClient, UserUpdateValidationItem>")) {
             "Should generate update batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserDeleteBatchValidationRule = BatchValidationRule<EntValidationReadClient, UserDeleteValidationItem>")) {
+        assert(output.contains("typealias UserDeleteBatchValidationRule = BatchValidationRule<ReadOnlyEntClient, UserDeleteValidationItem>")) {
             "Should generate delete batch rule typealias\n$output"
         }
     }

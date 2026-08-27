@@ -7,8 +7,9 @@ import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.EntClientConfig
-import entkt.integrationtest.ent.EntValidationReadClient
+import entkt.integrationtest.ent.ReadOnlyEntClient
 import entkt.integrationtest.ent.User
+import entkt.integrationtest.ent.UserCreatePrivacyRule
 import entkt.integrationtest.ent.UserCreateValidationRule
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
@@ -29,21 +30,20 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 // ---- Validation rules exercising the read-only validation client ----
 
 /**
  * The canonical read-validator: uniqueness via the query DSL. The
- * explicit `EntValidationReadClient` type pins the context's client
+ * explicit `ReadOnlyEntClient` type pins the context's client
  * property — this file stops compiling if contexts regress to the full
- * `EntClient`, the shared `EntReadClient` interface, or the privacy
- * posture. The raw terminal stays available under the validation
- * client's bypass posture and answers as `ReadResult` like every read
- * terminal.
+ * `EntClient` or another capability surface. The raw terminal answers as
+ * `ReadResult` like every read terminal.
  */
 private val UniqueEmailViaQuery = UserCreateValidationRule { context, item ->
-    val client: EntValidationReadClient = context.client
+    val client: ReadOnlyEntClient = context.client
     val taken = client.users.query { where(User.email.eq(item.candidate.email)) }.rawExists(context.readViewerContext).getOrThrow()
     if (taken) ValidationDecision.Invalid("email already taken", field = "email")
     else ValidationDecision.Valid
@@ -69,8 +69,8 @@ private val AuthorMustExist = ArticleCreateValidationRule { context, item ->
 
 /**
  * Invariant check across edges: the `loadAuthor()` eager load and the
- * `queryAuthor()` traversal both run under the validation client's
- * fixed bypass context, so author rows LOAD privacy hides from the
+ * `queryAuthor()` traversal both run under `context.readViewerContext`,
+ * so author rows LOAD privacy hides from the
  * caller are still visible to the invariant check.
  */
 private val AuthorReachableViaEdges = ArticleCreateValidationRule { context, item ->
@@ -138,13 +138,11 @@ private object EdgeCheckedArticlePolicy : EntityPolicy<Article, ArticlePolicySco
 }
 
 /**
- * End-to-end semantics of the stable `EntValidationReadClient`, used with
+ * End-to-end semantics of the stable `ReadOnlyEntClient`, used with
  * `context.readViewerContext` (`PrivacyBypass("validation read")`): validator
  * reads work across the whole
- * read surface — including raw terminals, which the bypass posture
- * keeps available (they return `ReadResult` like every read terminal,
- * unlike viewer-scoped privacy readers where the gate captures them as
- * `Failed(IllegalStateException)`) — run bypass-scoped, use the
+ * read surface — including raw terminals, which skip LOAD privacy under every
+ * context — run bypass-scoped for materialized reads, use the
  * transaction-scoped driver, and still pass through read interceptors.
  * A failed validator becomes
  * `MutationResult.Failed(EntValidationException)` at the mutation
@@ -158,6 +156,37 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
         EntClient(resetAndDriver(), config)
 
     // ---- Reads through the validation client ----
+
+    @Test
+    fun `privacy and validation rules receive the same stable read-only client`() {
+        var privacyClient: ReadOnlyEntClient? = null
+        var validationClient: ReadOnlyEntClient? = null
+        val policy = object : EntityPolicy<User, UserPolicyScope> {
+            override fun configure(scope: UserPolicyScope) = scope.run {
+                privacy {
+                    create(UserCreatePrivacyRule { context, _ ->
+                        privacyClient = context.client
+                        PrivacyDecision.Allow
+                    })
+                }
+                validation {
+                    create(UserCreateValidationRule { context, _ ->
+                        validationClient = context.client
+                        ValidationDecision.Valid
+                    })
+                }
+            }
+        }
+        val client = freshClient { policies { users(policy) } }
+        val operationContext = ViewerContext(Viewer.User("shared-read-client-test"))
+
+        client.users.create { name = "Alice"; email = "alice@test.com" }
+            .save(operationContext)
+            .getOrThrow()
+
+        assertNotNull(privacyClient)
+        assertSame(privacyClient, validationClient)
+    }
 
     @Test
     fun `uniqueness validator via the query DSL rejects duplicates and allows fresh emails`() {
@@ -300,7 +329,7 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
         client.users.create { name = "Alice"; email = "alice@test.com" }.save(testViewerContext).getOrThrow()
 
         // The validator's uniqueness query passed through the interceptor
-        // chain with the validation client's fixed bypass context.
+        // chain with the validator's explicit readViewerContext.
         assertTrue(
             seenViewers.any { it is Viewer.PrivacyBypass && it.reason == "validation read" },
             "Expected the validation read to run through the users interceptor " +

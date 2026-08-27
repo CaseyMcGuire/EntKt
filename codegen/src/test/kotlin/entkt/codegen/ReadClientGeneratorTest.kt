@@ -5,15 +5,13 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * Pins the generated shape of the read-client file: `EntReadClient` is
- * an interface carrying every read repository, the two posture wrappers
- * are real distinct classes (not type aliases) with guarded internal
- * constructors delegating to one shared internal `EntReadClientImpl`,
+ * Pins the generated shape of the read-client file: `ReadOnlyEntClient` is
+ * an interface carrying every read repository, one guarded internal
+ * `ReadOnlyEntClientImpl` owns the runtime wiring,
  * and no public generated signature exposes the implementation type.
  *
- * The type-level consequences (cross-posture rejection, shared-interface
- * acceptance, the no-writes surface) are proved by the compile tests in
- * [ReadClientPostureCompileTest], [ValidationReadClientCompileTest], and
+ * The shared-context acceptance and no-writes surface are proved by the compile tests in
+ * [ReadOnlyEntClientCompileTest], [ValidationReadClientCompileTest], and
  * [PrivacyReadClientCompileTest]; this test pins the emitted text so a
  * shape regression fails fast without a compiler invocation.
  */
@@ -33,7 +31,7 @@ class ReadClientGeneratorTest {
     }
 
     private fun readClientOutput(): String =
-        generateFiles().first { it.name == "EntReadClient" }.toString()
+        generateFiles().first { it.name == "ReadOnlyEntClient" }.toString()
 
     private fun readRuntimeOutput(): String =
         generateFiles().first { it.name == "EntReadRuntime" }.toString()
@@ -49,14 +47,14 @@ class ReadClientGeneratorTest {
     }
 
     @Test
-    fun `EntReadClient is an interface exposing every read repository`() {
+    fun `ReadOnlyEntClient is an interface exposing every read repository`() {
         val output = readClientOutput()
 
-        assert(output.contains("public interface EntReadClient {")) {
-            "EntReadClient should be an interface\n$output"
+        assert(output.contains("public interface ReadOnlyEntClient {")) {
+            "ReadOnlyEntClient should be an interface\n$output"
         }
-        assert(!Regex("\\bclass EntReadClient\\b").containsMatchIn(output)) {
-            "EntReadClient must no longer be a class\n$output"
+        assert(!Regex("\\bclass ReadOnlyEntClient\\b").containsMatchIn(output)) {
+            "ReadOnlyEntClient must no longer be a class\n$output"
         }
         // Interface accessors carry no initializer — the newline-anchored
         // match excludes the impl's `override val ... = ...` lines.
@@ -69,49 +67,24 @@ class ReadClientGeneratorTest {
     }
 
     @Test
-    fun `posture wrappers are distinct guarded classes delegating to the shared impl`() {
+    fun `posture-specific wrappers are absent`() {
         val output = readClientOutput()
 
-        // Pin each wrapper's complete declaration, terminating newline
-        // included: guarded internal constructor, private impl-typed
-        // delegate, and EntReadClient as the ONLY supertype — a wrapper
-        // that grew a second supertype (e.g. `, EntReadRuntime`) or any
-        // body would no longer match.
-        val wrapperDecl = { name: String ->
-            "public class $name @EntktInternal internal constructor(\n" +
-                "  private val `delegate`: EntReadClientImpl,\n" +
-                ") : EntReadClient by delegate\n"
-        }
-        assert(output.contains(wrapperDecl("EntValidationReadClient"))) {
-            "EntValidationReadClient should be exactly the guarded delegating wrapper\n$output"
-        }
-        assert(output.contains(wrapperDecl("EntPrivacyReadClient"))) {
-            "EntPrivacyReadClient should be exactly the guarded delegating wrapper\n$output"
-        }
-        // Real types, not aliases — aliases would not reject cross-posture
-        // helper calls.
-        assert(!output.contains("typealias EntValidationReadClient")) {
-            "EntValidationReadClient must not be a typealias\n$output"
-        }
-        assert(!output.contains("typealias EntPrivacyReadClient")) {
-            "EntPrivacyReadClient must not be a typealias\n$output"
-        }
-        // The framework-internal runtime contract stays on the delegate —
-        // no wrapper may delegate or implement it.
-        assert(!output.contains("EntReadRuntime by")) {
-            "No wrapper may delegate EntReadRuntime\n$output"
-        }
+        assert(!output.contains("EntPrivacyReadClient"))
+        assert(!output.contains("EntValidationReadClient"))
+        assert(!Regex("\\bEntReadClient\\b").containsMatchIn(output))
+        assert(!output.contains(" by delegate"))
     }
 
     @Test
     fun `one internal impl owns repository construction and the runtime contract`() {
         val output = readClientOutput()
 
-        assert(output.contains("@EntktInternal\ninternal class EntReadClientImpl(")) {
-            "EntReadClientImpl should be internal and marked @EntktInternal\n$output"
+        assert(output.contains("@EntktInternal\ninternal class ReadOnlyEntClientImpl(")) {
+            "ReadOnlyEntClientImpl should be internal and marked @EntktInternal\n$output"
         }
-        assert(output.contains(") : EntReadClient,\n    EntReadRuntime {")) {
-            "The impl should implement both EntReadClient and EntReadRuntime\n$output"
+        assert(output.contains(") : ReadOnlyEntClient,\n    EntReadRuntime {")) {
+            "The impl should implement both ReadOnlyEntClient and EntReadRuntime\n$output"
         }
         assert(output.contains("override val cars: CarReadRepo = CarReadRepo(driver, carsHost)")) {
             "The impl should own repository construction\n$output"
@@ -192,7 +165,7 @@ class ReadClientGeneratorTest {
         // between the two read surfaces (privacy, interceptors, capture
         // boundary diverging by construction site).
         val files = generateFiles()
-        val readClient = files.first { it.name == "EntReadClient" }.toString()
+        val readClient = files.first { it.name == "ReadOnlyEntClient" }.toString()
         val carRepo = files.first { it.name == "CarRepo" }.toString()
         val carReadRepoStart = readClient.indexOf("public class CarReadRepo")
         assert(carReadRepoStart >= 0) { "CarReadRepo not found in\n$readClient" }
@@ -233,15 +206,11 @@ class ReadClientGeneratorTest {
     fun `no public signature exposes the impl type`() {
         val output = readClientOutput()
 
-        // Every mention of EntReadClientImpl in the file is either its own
-        // internal declaration or a wrapper's private constructor property
-        // — three total. A fourth appearance means some public signature
-        // started leaking the impl.
-        val mentions = Regex("EntReadClientImpl").findAll(output).count()
-        val privateDelegates = Regex(Regex.escape("private val `delegate`: EntReadClientImpl")).findAll(output).count()
-        assert(mentions == 3 && privateDelegates == 2) {
-            "EntReadClientImpl should appear only in its declaration and the two private " +
-                "delegate properties; found $mentions mentions, $privateDelegates private delegates\n$output"
+        // The implementation type appears only in its own internal declaration.
+        // Any additional occurrence means a generated signature started leaking it.
+        val mentions = Regex("ReadOnlyEntClientImpl").findAll(output).count()
+        assert(mentions == 1) {
+            "ReadOnlyEntClientImpl should appear only in its declaration; found $mentions mentions\n$output"
         }
     }
 }

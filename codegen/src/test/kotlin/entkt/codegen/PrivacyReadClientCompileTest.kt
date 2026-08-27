@@ -17,17 +17,15 @@ import kotlin.test.assertTrue
  * configuration**, and the client exposes no ambient re-scoping or
  * client-level bypass helpers. Each read terminal still accepts an explicit
  * `ViewerContext`, including a deliberately selected bypass context. Privacy
- * contexts expose `EntPrivacyReadClient` (implementing the shared
- * `EntReadClient` interface), so every such member is an unresolved reference.
+ * contexts expose `ReadOnlyEntClient`, so every such member is an unresolved reference.
  *
  * Also pins removal of the former rule-client factories: they remain
  * unresolved even from same-module code carrying `@OptIn(EntktInternal)`.
  *
  * The validation-context twin lives in [ValidationReadClientCompileTest];
- * both wrappers delegate to the same shared implementation, so the
- * exhaustive member probes live here and the validation test keeps its
- * original write-surface coverage. Cross-posture rejection lives in
- * [ReadClientPostureCompileTest].
+ * both contexts expose the same client type, so the exhaustive member probes
+ * live here and the validation test keeps its original write-surface coverage.
+ * Shared-type coverage lives in [ReadOnlyEntClientCompileTest].
  */
 class PrivacyReadClientCompileTest {
 
@@ -51,8 +49,7 @@ class PrivacyReadClientCompileTest {
         package com.example.app
 
         import com.example.ent.$ruleType
-        import com.example.ent.EntPrivacyReadClient
-        import com.example.ent.EntReadClient
+        import com.example.ent.ReadOnlyEntClient
         import entkt.runtime.privacy.PrivacyDecision
         import entkt.runtime.privacy.ViewerContext
         import entkt.runtime.result.visibleOrNull
@@ -98,8 +95,7 @@ class PrivacyReadClientCompileTest {
         val result = compile(
             generatedSources() + ruleSnippet(
                 """
-                val concrete: EntPrivacyReadClient = ctx.client
-                val typed: EntReadClient = ctx.client
+                val concrete: ReadOnlyEntClient = ctx.client
                 ctx.client.cars.query { }.firstOrNull(ctx.viewerContext)
                 ctx.client.cars.query { }.all(ctx.viewerContext).getOrThrow()
                 ctx.client.cars.query { }.rawExists(ctx.viewerContext)
@@ -135,12 +131,9 @@ class PrivacyReadClientCompileTest {
     }
 
     @Test
-    fun `all four privacy contexts expose the privacy-posture read client`() {
-        // Concrete type pins for every operation context — a regression
-        // returning EntClient, the shared interface, or the validation
-        // posture to any of them breaks the corresponding assignment. The
-        // load rule additionally pins assignability to the shared
-        // EntReadClient interface.
+    fun `all four privacy contexts expose the read-only client`() {
+        // Type pins for every operation context — a regression returning
+        // EntClient or another capability surface breaks the assignment.
         val result = compile(
             generatedSources() + SourceFile.kotlin(
                 "AllContextsSnippet.kt",
@@ -151,25 +144,23 @@ class PrivacyReadClientCompileTest {
                 import com.example.ent.CarCreatePrivacyRule
                 import com.example.ent.CarUpdatePrivacyRule
                 import com.example.ent.CarDeletePrivacyRule
-                import com.example.ent.EntPrivacyReadClient
-                import com.example.ent.EntReadClient
+                import com.example.ent.ReadOnlyEntClient
                 import entkt.runtime.privacy.PrivacyDecision
 
                 val load = CarLoadPrivacyRule { ctx, _ ->
-                    val t: EntPrivacyReadClient = ctx.client
-                    val iface: EntReadClient = ctx.client
+                    val t: ReadOnlyEntClient = ctx.client
                     PrivacyDecision.Continue
                 }
                 val create = CarCreatePrivacyRule { ctx, _ ->
-                    val t: EntPrivacyReadClient = ctx.client
+                    val t: ReadOnlyEntClient = ctx.client
                     PrivacyDecision.Continue
                 }
                 val update = CarUpdatePrivacyRule { ctx, _ ->
-                    val t: EntPrivacyReadClient = ctx.client
+                    val t: ReadOnlyEntClient = ctx.client
                     PrivacyDecision.Continue
                 }
                 val delete = CarDeletePrivacyRule { ctx, _ ->
-                    val t: EntPrivacyReadClient = ctx.client
+                    val t: ReadOnlyEntClient = ctx.client
                     PrivacyDecision.Continue
                 }
                 """.trimIndent(),
@@ -178,7 +169,7 @@ class PrivacyReadClientCompileTest {
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "Expected all four privacy contexts to expose EntPrivacyReadClient, got:\n${result.messages}",
+            "Expected all four privacy contexts to expose ReadOnlyEntClient, got:\n${result.messages}",
         )
     }
 

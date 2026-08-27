@@ -305,20 +305,12 @@ internal class ClientGenerator(
                 initializer("%T(this)", hookClientScopeFacadeClass)
             }
             addProperties(sorted.map { buildRepoProperty(it) })
-            addProperty(buildReadClientImplProperty(sorted))
-            property("privacyReadClient", ClassName(packageName, "EntPrivacyReadClient")) {
-                addModifiers(KModifier.INTERNAL)
-                delegate("lazy { %T(readClientImpl) }", ClassName(packageName, "EntPrivacyReadClient"))
-            }
-            property("validationReadClient", ClassName(packageName, "EntValidationReadClient")) {
-                addModifiers(KModifier.INTERNAL)
-                delegate("lazy { %T(readClientImpl) }", ClassName(packageName, "EntValidationReadClient"))
-            }
+            addProperty(buildReadOnlyClientProperty(sorted))
             property(
                 "mutations",
                 MUTATION_EXECUTOR.parameterizedBy(
-                    ClassName(packageName, "EntPrivacyReadClient"),
-                    ClassName(packageName, "EntValidationReadClient"),
+                    ClassName(packageName, "ReadOnlyEntClient"),
+                    ClassName(packageName, "ReadOnlyEntClient"),
                 ),
             ) {
                 addKdoc("Mutation lifecycles shared by this client's generated repositories.")
@@ -328,8 +320,8 @@ internal class ClientGenerator(
                     "lazy { %T(\n" +
                         "  driver = driver,\n" +
                         "  mutationRuntime = this,\n" +
-                        "  privacyClient = privacyReadClient,\n" +
-                        "  validationClient = validationReadClient,\n" +
+                        "  privacyClient = readOnlyClient,\n" +
+                        "  validationClient = readOnlyClient,\n" +
                         ") }",
                     MUTATION_EXECUTOR,
                 )
@@ -907,9 +899,10 @@ internal class ClientGenerator(
         }
     }
 
-    /** One stable, contextless read implementation shared by both rule-client wrappers. */
-    private fun buildReadClientImplProperty(schemas: List<SchemaInput>): PropertySpec {
-        val implClass = ClassName(packageName, "EntReadClientImpl")
+    /** One stable, contextless read-only client shared by every rule context. */
+    private fun buildReadOnlyClientProperty(schemas: List<SchemaInput>): PropertySpec {
+        val clientClass = ClassName(packageName, "ReadOnlyEntClient")
+        val implClass = ClassName(packageName, "ReadOnlyEntClientImpl")
         val body = codeBlock {
             add("lazy { %T(\n", implClass)
             add("  driver,\n")
@@ -919,8 +912,8 @@ internal class ClientGenerator(
             for (input in schemas) add("  %L,\n", input.clientName)
             add(") }\n")
         }
-        return property("readClientImpl", implClass) {
-            addModifiers(KModifier.PRIVATE)
+        return property("readOnlyClient", clientClass) {
+            addModifiers(KModifier.INTERNAL)
             delegate(body)
         }
     }
@@ -933,9 +926,9 @@ internal class ClientGenerator(
  *
  * Shared by [ClientGenerator], [ReadRuntimeGenerator], and
  * [ReadClientGenerator] so the per-entity accessor order is identical
- * across `EntClient`, `EntReadRuntime`, and `EntReadClient` — and so
- * `readClientImpl()`'s positional host arguments line up with
- * `EntReadClientImpl`'s constructor parameters.
+ * across `EntClient`, `EntReadRuntime`, and `ReadOnlyEntClient` — and so
+ * `buildReadOnlyClientProperty()`'s positional host arguments line up with
+ * `ReadOnlyEntClientImpl`'s constructor parameters.
  */
 internal fun topologicalSort(schemas: List<SchemaInput>): List<SchemaInput> {
     val bySchema = schemas.associateBy { it.schema }

@@ -24,7 +24,7 @@ object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
 
 class RequireBodyForPublished : PostCreateValidationRule {
     override fun validate(
-        context: ValidationRuleContext<EntValidationReadClient>,
+        context: ValidationRuleContext<ReadOnlyEntClient>,
         item: PostCreateValidationItem,
     ): ValidationDecision =
         if (item.candidate.published && item.candidate.body.isNullOrBlank()) {
@@ -36,7 +36,7 @@ class RequireBodyForPublished : PostCreateValidationRule {
 
 class CannotDeletePublishedPost : PostDeleteValidationRule {
     override fun validate(
-        context: ValidationRuleContext<EntValidationReadClient>,
+        context: ValidationRuleContext<ReadOnlyEntClient>,
         item: PostDeleteValidationItem,
     ): ValidationDecision =
         if (item.entity.published) {
@@ -251,7 +251,7 @@ writes, not reads.
 ## Operation Items
 
 Every validator receives a shared `ValidationRuleContext` containing the
-read-only `EntValidationReadClient`. Generated items contain only values that
+read-only `ReadOnlyEntClient`. Generated items contain only values that
 differ per candidate. The write surface does not exist on the shared client,
 so a validator that tries to create, update, or delete does not compile. One
 phase constructs one rule context and passes that exact instance to every
@@ -314,21 +314,21 @@ viewer-agnostic. If a rule cares about who is performing the operation, it
 belongs in privacy, not validation. They instead expose
 `readViewerContext`, initialized by the framework as
 `ViewerContext.privacyBypass_DANGEROUS("validation read")`, solely for
-explicit reads through the validation client.
+explicit reads through the shared read-only client.
 
-The `EntValidationReadClient` in `ValidationRuleContext` is read-only and its
-reads bypass LOAD privacy, allowing invariant checks such as uniqueness and
-referential integrity to inspect all relevant rows. Read interceptors still
-apply, and validation performed inside `withTransaction` sees earlier writes
-from the same transaction.
+The `ReadOnlyEntClient` in `ValidationRuleContext` is read-only and its
+materializing reads bypass LOAD privacy when passed `context.readViewerContext`,
+allowing invariant checks such as uniqueness and referential integrity to
+inspect all relevant rows. Read interceptors still apply, and validation
+performed inside `withTransaction` sees earlier writes from the same transaction.
 
-`PrivacyRuleContext` exposes `EntPrivacyReadClient` and `viewerContext`
-instead; nested terminals pass that caller context explicitly. Both concrete types implement the shared
-`EntReadClient` interface: helpers that work correctly under either posture
-can accept `EntReadClient`. Raw terminals have the same storage-level behavior
-under both postures: they skip LOAD privacy and entity materialization. Helpers
-that rely on privacy-bypassed *materialization* should accept
-`EntValidationReadClient` so they cannot be handed a viewer-scoped reader.
+`PrivacyRuleContext` exposes `ReadOnlyEntClient` and `viewerContext`
+instead; nested terminals normally pass that caller context explicitly. Both
+rule contexts expose the same stable client type. The context passed to a
+terminal—not the client type—determines LOAD privacy. Raw terminals always skip
+LOAD privacy and entity materialization. Helpers that require bypassed
+materialization should take an explicit `ViewerContext` and callers should pass
+`context.readViewerContext`.
 See [Privacy → Operation Items](06-privacy.md#operation-items).
 
 ### WriteCandidate
@@ -427,11 +427,11 @@ prevent domain and data-existence leaks through validation errors
 
 ## Validators That Query
 
-Since validation contexts receive a System-scoped client, validators
-can query the database without being blocked by LOAD privacy.
+Validators can query without being blocked by LOAD privacy by explicitly
+passing `context.readViewerContext`.
 
 **Validators are read-only — by type, not by convention.** The context
-exposes `EntValidationReadClient`, whose per-entity repos carry
+exposes `ReadOnlyEntClient`, whose per-entity repos carry
 `findById`, the full `query { }` DSL with every terminal
 (`all` / `firstOrNull`, `rawCount` / `rawExists`, and the raw aggregates),
 and the generated index helpers — and nothing else.
@@ -453,7 +453,7 @@ of truth; the validator improves the error message.
 ```kotlin
 class UniqueSlug : PostCreateValidationRule {
     override fun validate(
-        context: ValidationRuleContext<EntValidationReadClient>,
+        context: ValidationRuleContext<ReadOnlyEntClient>,
         item: PostCreateValidationItem,
     ): ValidationDecision {
         val exists = context.client.posts.query {
@@ -466,7 +466,7 @@ class UniqueSlug : PostCreateValidationRule {
 
 class AuthorExists : PostCreateValidationRule {
     override fun validate(
-        context: ValidationRuleContext<EntValidationReadClient>,
+        context: ValidationRuleContext<ReadOnlyEntClient>,
         item: PostCreateValidationItem,
     ): ValidationDecision {
         val author = context.client.users
@@ -487,7 +487,7 @@ Index helpers work too — they are query sugar and equally read-only:
 ```kotlin
 class UniqueEmail : UserCreateValidationRule {
     override fun validate(
-        context: ValidationRuleContext<EntValidationReadClient>,
+        context: ValidationRuleContext<ReadOnlyEntClient>,
         item: UserCreateValidationItem,
     ): ValidationDecision =
         if (context.client.users.indexes.email(item.candidate.email)
@@ -564,14 +564,13 @@ For each schema, entkt provides:
 | `{Entity}DeleteValidationItem` | Per-entity input for delete validators |
 | `{Entity}ValidationScope` | DSL scope inside `validation { }` |
 | `{Entity}ReadRepo` | Read-only repo exposed to validators (`findById`, `query { }`, index helpers) |
-| `EntValidationReadClient` | Read client in `ValidationRuleContext` — privacy-bypassing reads (schema-set-level) |
-| `EntReadClient` | Shared read-only interface both posture clients implement (schema-set-level) |
+| `ReadOnlyEntClient` | Stable read-only client shared by validation and privacy rule contexts; each terminal requires an explicit `ViewerContext` (schema-set-level) |
 
 The `{Entity}PolicyScope` gains a `validation { }` method alongside
 the existing `privacy { }` method. The `{Entity}WriteCandidate` is
 shared between privacy and validation items.
 
-`ValidationRuleContext` exposes the read-only `EntValidationReadClient`.
+`ValidationRuleContext` exposes the read-only `ReadOnlyEntClient`.
 Validators can use its `findById`, `query { ... }`, and indexed
 query helpers, but cannot create, update, or delete entities.
 
@@ -591,7 +590,7 @@ query helpers, but cannot create, update, or delete entities.
 ```kotlin
 class StartBeforeEnd : EventCreateValidationRule {
     override fun validate(
-        context: ValidationRuleContext<EntValidationReadClient>,
+        context: ValidationRuleContext<ReadOnlyEntClient>,
         item: EventCreateValidationItem,
     ): ValidationDecision =
         if (item.candidate.startTime >= item.candidate.endTime) {
@@ -613,7 +612,7 @@ class ValidStatusTransition : OrderUpdateValidationRule {
     )
 
     override fun validate(
-        context: ValidationRuleContext<EntValidationReadClient>,
+        context: ValidationRuleContext<ReadOnlyEntClient>,
         item: OrderUpdateValidationItem,
     ): ValidationDecision {
         val from = item.before.status
@@ -631,7 +630,7 @@ class ValidStatusTransition : OrderUpdateValidationRule {
 ```kotlin
 class CannotDeleteWithOpenInvoices : UserDeleteValidationRule {
     override fun validate(
-        context: ValidationRuleContext<EntValidationReadClient>,
+        context: ValidationRuleContext<ReadOnlyEntClient>,
         item: UserDeleteValidationItem,
     ): ValidationDecision {
         val openCount = context.client.invoices.query {

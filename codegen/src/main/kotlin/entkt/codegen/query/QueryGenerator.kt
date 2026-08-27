@@ -27,8 +27,8 @@ private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 // Generated queries depend on the read-runtime contract, not the full
 // EntClient: every internal use (requireClient, interceptor lookup,
 // LOAD-privacy delegation, sibling-query construction) stays within
-// EntReadRuntime's surface, so the read-only EntReadClientImpl behind
-// the posture wrappers can host queries identically.
+// EntReadRuntime's surface, so ReadOnlyEntClientImpl can host queries
+// identically.
 private val ENT_READ_RUNTIME_NAME = "EntReadRuntime"
 
 internal class QueryGenerator(

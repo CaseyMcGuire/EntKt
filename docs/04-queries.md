@@ -315,7 +315,7 @@ with selected edge loads is rejected, not silently ignored — see
 [Terminals That Cannot Load Edges](#terminals-that-cannot-load-edges).
 
 The raw family has the same storage-level contract on every read client,
-including `EntPrivacyReadClient`: it runs read interceptors but does not
+including `ReadOnlyEntClient`: it runs read interceptors but does not
 materialize entities or evaluate LOAD privacy. Privacy rules may deliberately
 use raw facts for ACL membership, existence, or other control-plane decisions,
 including to avoid recursive LOAD-policy evaluation. Use `findById`,

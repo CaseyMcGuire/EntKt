@@ -4,7 +4,7 @@ import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.EntClient
-import entkt.integrationtest.ent.EntPrivacyReadClient
+import entkt.integrationtest.ent.ReadOnlyEntClient
 import entkt.integrationtest.ent.Group
 import entkt.integrationtest.ent.GroupLoadPrivacyRule
 import entkt.integrationtest.ent.GroupPolicyScope
@@ -171,7 +171,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<EntPrivacyReadClient, TagLoadPrivacyItem> { _, batch ->
+                            load(batchPrivacyRule<ReadOnlyEntClient, TagLoadPrivacyItem> { _, batch ->
                                 invocations += batch.map { it.entity.name }
                                 batch.decideEach {
                                     PrivacyDecision.Deny("tag ${it.entity.name} hidden")

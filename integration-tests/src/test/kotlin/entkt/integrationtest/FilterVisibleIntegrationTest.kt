@@ -1,7 +1,7 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
-import entkt.integrationtest.ent.EntPrivacyReadClient
+import entkt.integrationtest.ent.ReadOnlyEntClient
 import entkt.integrationtest.ent.Note
 import entkt.integrationtest.ent.NoteLoadPrivacyRule
 import entkt.integrationtest.ent.NotePolicyScope
@@ -111,7 +111,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<EntPrivacyReadClient, TagLoadPrivacyItem> { _, batch ->
+                            load(batchPrivacyRule<ReadOnlyEntClient, TagLoadPrivacyItem> { _, batch ->
                                 invocations += batch.map { it.entity.name }
                                 batch.decideEach {
                                     if (it.entity.name == "a-denied-shared") {
