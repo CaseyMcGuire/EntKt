@@ -9,7 +9,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
@@ -39,6 +39,7 @@ import kotlin.test.assertTrue
  * visibility filtering is no longer a read-terminal concern.
  */
 class QueryResultVariantsIntegrationTest : PostgresTestBase() {
+    private var viewerContext = testViewerContext
 
     /** Allow exactly one specific article — denies all others. */
     private fun pinPolicy(allowedTitle: String) = object : EntityPolicy<Article, ArticlePolicyScope> {
@@ -74,9 +75,10 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         viewer: Viewer = Viewer.PrivacyBypass("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
     ): EntClient {
+        viewerContext = ViewerContext(viewer)
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies {
                 articles(articlePolicy)
                 users(OpenUser)
@@ -86,15 +88,17 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     /** Seed three articles under a bypass viewer, in insertion order. */
     private fun seedThree(client: EntClient): Triple<Article, Article, Article> {
-        return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        return run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "A"; email = "a@example.com" }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
             val first = sys.articles.create { title = "First"; published = true; authorId = author.id }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
             val second = sys.articles.create { title = "Second"; published = true; authorId = author.id }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
             val third = sys.articles.create { title = "Third"; published = true; authorId = author.id }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
             Triple(first, second, third)
         }
     }
@@ -106,7 +110,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         seedThree(client)
 
-        val result = client.articles.query().all()
+        val result = client.articles.query().all(viewerContext)
         val success = assertIs<ReadResult.Success<List<Article>>>(result)
         assertEquals(3, success.value.size)
     }
@@ -115,7 +119,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
     fun `all returns Success(emptyList()) for no rows`() {
         val client = freshClient()
 
-        assertEquals(emptyList(), client.articles.query().all().getOrThrow())
+        assertEquals(emptyList(), client.articles.query().all(viewerContext).getOrThrow())
     }
 
     @Test
@@ -123,7 +127,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         seedThree(client)
 
-        assertEquals(emptyList(), client.articles.query { limit(0) }.all().getOrThrow())
+        assertEquals(emptyList(), client.articles.query { limit(0) }.all(viewerContext).getOrThrow())
     }
 
     // ---- all(): strict full-window denial aggregation ----
@@ -133,7 +137,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
         val (first, _, third) = seedThree(client)
 
-        val result = client.articles.query { orderBy(Article.id.asc()) }.all()
+        val result = client.articles.query { orderBy(Article.id.asc()) }.all(viewerContext)
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         assertIs<LoadDenialOrigin.Root>(ex.origin)
@@ -154,7 +158,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
         // Strictness: the one visible row is NOT returned — the terminal
         // is Failed, not a filtered Success.
-        assertIs<ReadResult.Failed>(client.articles.query().all())
+        assertIs<ReadResult.Failed>(client.articles.query().all(viewerContext))
     }
 
     @Test
@@ -164,7 +168,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
         // Window = first row only (by id); the denied Second/Third rows
         // are outside the window, so the read succeeds.
-        val result = client.articles.query { orderBy(Article.id.asc()); limit(1) }.all()
+        val result = client.articles.query { orderBy(Article.id.asc()); limit(1) }.all(viewerContext)
         val success = assertIs<ReadResult.Success<List<Article>>>(result)
         assertEquals(listOf("First"), success.value.map { it.title })
     }
@@ -190,7 +194,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         // First is denied, Second's rule throws: the ordinary exception is
         // the stored failure — never a partial EntPrivacyDeniedException.
         val failed = assertIs<ReadResult.Failed>(
-            client.articles.query { orderBy(Article.id.asc()) }.all(),
+            client.articles.query { orderBy(Article.id.asc()) }.all(viewerContext),
         )
         assertSame(boom, failed.exception)
     }
@@ -203,9 +207,9 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         seedThree(client)
 
         assertNull(
-            client.articles.query { where(Article.title eq "Missing") }.firstOrNull().getOrThrow(),
+            client.articles.query { where(Article.title eq "Missing") }.firstOrNull(viewerContext).getOrThrow(),
         )
-        assertNotNull(client.articles.query().firstOrNull().getOrThrow())
+        assertNotNull(client.articles.query().firstOrNull(viewerContext).getOrThrow())
     }
 
     @Test
@@ -215,7 +219,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
         // Explicit orderBy so the test pins "first by id" rather than
         // relying on Postgres's unspecified default row order.
-        val loaded = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull().getOrThrow()
+        val loaded = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull(viewerContext).getOrThrow()
         assertEquals(first.id, loaded?.id)
     }
 
@@ -224,7 +228,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         seedThree(client)
 
-        val result = client.articles.query { limit(0) }.firstOrNull()
+        val result = client.articles.query { limit(0) }.firstOrNull(viewerContext)
         val success = assertIs<ReadResult.Success<Article?>>(result)
         assertNull(success.value)
     }
@@ -245,7 +249,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = recordingDenyPolicy)
         val (first, _, _) = seedThree(client)
 
-        val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull()
+        val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull(viewerContext)
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         assertIs<LoadDenialOrigin.Root>(ex.origin)
@@ -261,7 +265,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
         seedThree(client)
 
-        val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull()
+        val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull(viewerContext)
         val failed = assertIs<ReadResult.Failed>(result)
         try {
             result.getOrThrow()

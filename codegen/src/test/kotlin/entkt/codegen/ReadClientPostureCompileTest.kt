@@ -140,17 +140,18 @@ class ReadClientPostureCompileTest {
                 import com.example.ent.CarLoadPrivacyRule
                 import com.example.ent.EntReadClient
                 import entkt.runtime.privacy.PrivacyDecision
+                import entkt.runtime.privacy.ViewerContext
                 import entkt.runtime.validation.ValidationDecision
 
-                fun anyCarExists(client: EntReadClient): Boolean =
-                    client.cars.query { }.rawExists().getOrThrow()
+                fun anyCarExists(client: EntReadClient, viewerContext: ViewerContext): Boolean =
+                    client.cars.query { }.rawExists(viewerContext).getOrThrow()
 
                 val validation = CarCreateValidationRule { ctx, _ ->
-                    anyCarExists(ctx.client)
+                    anyCarExists(ctx.client, ctx.readViewerContext)
                     ValidationDecision.Valid
                 }
                 val privacy = CarLoadPrivacyRule { ctx, _ ->
-                    anyCarExists(ctx.client)
+                    anyCarExists(ctx.client, ctx.viewerContext)
                     PrivacyDecision.Continue
                 }
                 """.trimIndent(),

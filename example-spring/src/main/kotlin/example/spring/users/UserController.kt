@@ -3,6 +3,8 @@ package example.spring.users
 import example.ent.EntClient
 import example.ent.Post
 import example.ent.User
+import example.spring.auth.AuthContext
+import example.spring.auth.viewerContext
 import example.spring.posts.PostResponse
 import example.spring.posts.toResponse
 import org.springframework.http.HttpStatus
@@ -20,53 +22,62 @@ import java.util.UUID
 
 @RestController
 @RequestMapping("/users")
-class UserController(private val client: EntClient) {
+class UserController(
+    private val client: EntClient,
+    private val auth: AuthContext,
+) {
 
     @GetMapping
     fun list(
         @RequestParam active: Boolean?,
         @RequestParam(defaultValue = "false") includePosts: Boolean,
     ): List<UserResponse> {
+        val viewerContext = auth.viewerContext()
         val users = client.users.query {
             if (active != null) where(User.active eq active)
             orderBy(User.name.asc())
             if (includePosts) {
                 loadPosts { orderBy(Post.createdAt.desc()) }
             }
-        }.all().getOrThrow()
+        }.all(viewerContext).getOrThrow()
         return users.map { it.toResponse(includePosts) }
     }
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: UUID): UserResponse {
-        val user = client.users.findById(id).getOrThrow()
+        val viewerContext = auth.viewerContext()
+        val user = client.users.findById(viewerContext, id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return user.toResponse()
     }
 
     @GetMapping("/{id}/posts")
     fun posts(@PathVariable id: UUID): List<PostResponse> {
-        client.users.findById(id).getOrThrow() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        val viewerContext = auth.viewerContext()
+        client.users.findById(viewerContext, id).getOrThrow()
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val posts = client.posts.query {
             where(Post.authorId eq id)
             orderBy(Post.createdAt.desc())
-        }.all().getOrThrow()
+        }.all(viewerContext).getOrThrow()
         return posts.map { it.toResponse() }
     }
 
     @PostMapping
     fun create(@RequestBody req: CreateUserRequest): UserResponse {
+        val viewerContext = auth.viewerContext()
         val user = client.users.create {
             name = req.name
             email = req.email
             age = req.age
             active = req.active
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
         return user.toResponse()
     }
 
     @PutMapping("/{id}")
     fun update(@PathVariable id: UUID, @RequestBody req: UpdateUserRequest): UserResponse {
+        val viewerContext = auth.viewerContext()
         // No pre-load: `update(id)` does its own internal byId before
         // hooks/privacy/validation. A missing row surfaces as
         // Failed(EntTargetAbsentException), mapped to 404 by ErrorHandler.
@@ -75,13 +86,14 @@ class UserController(private val client: EntClient) {
             req.email?.let { email = it }
             req.age?.let { age = it }
             req.active?.let { active = it }
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
         return updated.toResponse()
     }
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: UUID) {
-        if (!client.users.deleteById(id).getOrThrow()) {
+        val viewerContext = auth.viewerContext()
+        if (!client.users.deleteById(viewerContext, id).getOrThrow()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
     }

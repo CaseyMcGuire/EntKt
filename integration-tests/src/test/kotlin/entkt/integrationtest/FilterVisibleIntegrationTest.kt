@@ -17,7 +17,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
@@ -44,6 +44,7 @@ import kotlin.test.assertSame
  *  - a rule-thrown ordinary exception still fails the terminal
  */
 class FilterVisibleIntegrationTest : PostgresTestBase() {
+    private val viewerContext = ViewerContext(Viewer.User(1L))
 
     private fun openNotes() = object : EntityPolicy<Note, NotePolicyScope> {
         override fun configure(scope: NotePolicyScope) = scope.run { privacy { load(allowAll) } }
@@ -59,7 +60,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
     fun `a denied to-one target becomes EdgeState Loaded(null)`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 notes(openNotes())
                 users(object : EntityPolicy<User, UserPolicyScope> {
@@ -69,13 +70,15 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "H"; email = "h@example.com" }
-                .saveAndLoad().getOrThrow()
-            sys.notes.create { body = "note"; writer = author.id }.save().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
+            sys.notes.create { body = "note"; writer = author.id }.save(viewerContext).getOrThrow()
         }
 
-        val notes = client.notes.query { loadAuthor().filterVisible() }.all().getOrThrow()
+        val notes = client.notes.query { loadAuthor().filterVisible() }.all(viewerContext).getOrThrow()
 
         assertEquals(1, notes.size)
         assertEquals(EdgeState.Loaded(null), notes.single().edges.author)
@@ -91,7 +94,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
         val loaded = client.posts.query {
             where(Post.id eq post.id)
             loadTags { orderBy(Tag.name.asc()) }.filterVisible()
-        }.all().getOrThrow()
+        }.all(viewerContext).getOrThrow()
 
         val tags = assertIs<EdgeState.Loaded<List<Tag>>>(loaded.single().edges.tags)
         assertEquals(listOf("b-second"), tags.value.map { it.name })
@@ -102,7 +105,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
         val invocations = mutableListOf<List<String>>()
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 posts(openPosts())
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
@@ -123,21 +126,23 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val postA = sys.posts.create { title = "a-parent" }.saveAndLoad().getOrThrow()
-            val postB = sys.posts.create { title = "b-parent" }.saveAndLoad().getOrThrow()
-            val visible = sys.tags.create { name = "b-visible-shared" }.saveAndLoad().getOrThrow()
-            val denied = sys.tags.create { name = "a-denied-shared" }.saveAndLoad().getOrThrow()
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            val postA = sys.posts.create { title = "a-parent" }.saveAndLoad(viewerContext).getOrThrow()
+            val postB = sys.posts.create { title = "b-parent" }.saveAndLoad(viewerContext).getOrThrow()
+            val visible = sys.tags.create { name = "b-visible-shared" }.saveAndLoad(viewerContext).getOrThrow()
+            val denied = sys.tags.create { name = "a-denied-shared" }.saveAndLoad(viewerContext).getOrThrow()
             for (post in listOf(postA, postB)) {
-                sys.postTags.create { postId = post.id; tagId = denied.id }.save().getOrThrow()
-                sys.postTags.create { postId = post.id; tagId = visible.id }.save().getOrThrow()
+                sys.postTags.create { postId = post.id; tagId = denied.id }.save(viewerContext).getOrThrow()
+                sys.postTags.create { postId = post.id; tagId = visible.id }.save(viewerContext).getOrThrow()
             }
         }
 
         val loaded = client.posts.query {
             orderBy(Post.title.asc())
             loadTags { orderBy(Tag.name.asc()) }.filterVisible()
-        }.all().getOrThrow()
+        }.all(viewerContext).getOrThrow()
 
         assertEquals(listOf(listOf("a-denied-shared", "b-visible-shared")), invocations)
         assertEquals(
@@ -158,7 +163,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
         val loaded = client.posts.query {
             where(Post.id eq post.id)
             loadTags { orderBy(Tag.name.asc()); limit(1) }.filterVisible()
-        }.all().getOrThrow()
+        }.all(viewerContext).getOrThrow()
 
         val tags = assertIs<EdgeState.Loaded<List<Tag>>>(loaded.single().edges.tags)
         assertEquals(emptyList(), tags.value)
@@ -172,7 +177,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
     fun `filterVisible is not inherited by nested eager loads`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run { privacy { load(allowAll) } }
@@ -189,12 +194,14 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val p1 = sys.posts.create { title = "P1" }.saveAndLoad().getOrThrow()
-            val p2 = sys.posts.create { title = "P2-hidden" }.saveAndLoad().getOrThrow()
-            val tag = sys.tags.create { name = "shared" }.saveAndLoad().getOrThrow()
-            sys.postTags.create { postId = p1.id; tagId = tag.id }.save().getOrThrow()
-            sys.postTags.create { postId = p2.id; tagId = tag.id }.save().getOrThrow()
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            val p1 = sys.posts.create { title = "P1" }.saveAndLoad(viewerContext).getOrThrow()
+            val p2 = sys.posts.create { title = "P2-hidden" }.saveAndLoad(viewerContext).getOrThrow()
+            val tag = sys.tags.create { name = "shared" }.saveAndLoad(viewerContext).getOrThrow()
+            sys.postTags.create { postId = p1.id; tagId = tag.id }.save(viewerContext).getOrThrow()
+            sys.postTags.create { postId = p2.id; tagId = tag.id }.save(viewerContext).getOrThrow()
         }
 
         // filterVisible() applies to the TAGS edge only; the nested
@@ -203,7 +210,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
         val result = client.posts.query {
             where(Post.title eq "P1")
             loadTags { loadPosts() }.filterVisible()
-        }.all()
+        }.all(viewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -217,7 +224,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
     fun `filterVisible never changes root LOAD-denial behavior`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 notes(object : EntityPolicy<Note, NotePolicyScope> {
                     override fun configure(scope: NotePolicyScope) = scope.run {
@@ -229,13 +236,15 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "A"; email = "a@example.com" }
-                .saveAndLoad().getOrThrow()
-            sys.notes.create { body = "note"; writer = author.id }.save().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
+            sys.notes.create { body = "note"; writer = author.id }.save(viewerContext).getOrThrow()
         }
 
-        val result = client.notes.query { loadAuthor().filterVisible() }.all()
+        val result = client.notes.query { loadAuthor().filterVisible() }.all(viewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -249,7 +258,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
         val boom = IllegalStateException("tag rule blew up")
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 posts(openPosts())
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
@@ -264,7 +273,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
         val result = client.posts.query {
             where(Post.id eq post.id)
             loadTags().filterVisible()
-        }.all()
+        }.all(viewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         assertSame(boom, failed.exception)
@@ -278,7 +287,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
     ): EntClient {
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 posts(openPosts())
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
@@ -297,12 +306,14 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
     }
 
     private fun seedPostWithTwoTags(client: EntClient): Post =
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val post = sys.posts.create { title = "P" }.saveAndLoad().getOrThrow()
-            val tagA = sys.tags.create { name = "a-first" }.saveAndLoad().getOrThrow()
-            val tagB = sys.tags.create { name = "b-second" }.saveAndLoad().getOrThrow()
-            sys.postTags.create { postId = post.id; tagId = tagA.id }.save().getOrThrow()
-            sys.postTags.create { postId = post.id; tagId = tagB.id }.save().getOrThrow()
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            val post = sys.posts.create { title = "P" }.saveAndLoad(viewerContext).getOrThrow()
+            val tagA = sys.tags.create { name = "a-first" }.saveAndLoad(viewerContext).getOrThrow()
+            val tagB = sys.tags.create { name = "b-second" }.saveAndLoad(viewerContext).getOrThrow()
+            sys.postTags.create { postId = post.id; tagId = tagA.id }.save(viewerContext).getOrThrow()
+            sys.postTags.create { postId = post.id; tagId = tagB.id }.save(viewerContext).getOrThrow()
             post
         }
 }

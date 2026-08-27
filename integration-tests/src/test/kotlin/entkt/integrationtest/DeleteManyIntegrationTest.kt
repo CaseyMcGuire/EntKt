@@ -16,7 +16,7 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.hook.batchHook
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.batchPrivacyRule
@@ -51,6 +51,7 @@ import kotlin.test.assertSame
  * for rows the statement actually removed.
  */
 class DeleteManyIntegrationTest : PostgresTestBase() {
+    private val viewerContext = ViewerContext(Viewer.User(7L))
 
     private data class SeededUser(
         val name: String,
@@ -235,12 +236,12 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
             hooks { users { afterDelete { afterDeleteCalls++ } } }
         }
 
-        val result = client.users.deleteMany()
+        val result = client.users.deleteMany(viewerContext, )
 
         val failed = assertIs<MutationResult.Failed>(result)
         val rolledBack = assertIs<EntUnexpectedMutationException>(failed.exception)
@@ -259,14 +260,13 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         driver.probe.orderReturnedIdsByAscendingId = true
         val callerPredicate = User.name neq "caller-filtered"
         val interceptorPredicate = User.email neq "interceptor-filtered@example.com"
-        val capturedPrivacy = PrivacyContext(Viewer.User(7L))
-        var privacyCaptures = 0
+        val capturedPrivacy = ViewerContext(Viewer.User(7L))
         var interceptorCalls = 0
         val configuredPolicy = policy {
             privacy {
                 delete(batchPrivacyRule<EntPrivacyReadClient, UserDeletePrivacyItem> { context, batch ->
                     assertEquals(0, driver.probe.deleteManyByIdsCalls)
-                    assertSame(capturedPrivacy, context.privacy)
+                    assertSame(capturedPrivacy, context.viewerContext)
                     driver.probe.events +=
                         "privacy:${batch.joinToString { it.entity.name }}"
                     batch.decideEach { PrivacyDecision.Allow }
@@ -282,11 +282,6 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext {
-                privacyCaptures++
-                driver.probe.events += "capturePrivacy"
-                capturedPrivacy
-            }
             policies { users(configuredPolicy) }
             interceptors {
                 users(
@@ -315,12 +310,11 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val result = client.users.deleteMany(callerPredicate)
+        val result = client.users.deleteMany(capturedPrivacy, callerPredicate)
 
         assertEquals(MutationResult.Success(3), result)
         assertEquals(
             listOf(
-                "capturePrivacy",
                 "interceptor",
                 "query:C, B, A",
                 "privacy:C, B, A",
@@ -333,7 +327,6 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             ),
             driver.probe.events,
         )
-        assertEquals(1, privacyCaptures)
         assertEquals(1, interceptorCalls)
         assertEquals(1, driver.probe.withTransactionCalls)
         assertEquals(1, driver.probe.candidateQueryCalls)
@@ -353,7 +346,6 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
     fun `empty candidate query skips every lifecycle callback and delete statement`() {
         val storage = resetAndDriver()
         val driver = DeleteProbeDriver(storage)
-        var privacyCaptures = 0
         var interceptorCalls = 0
         var privacyCalls = 0
         var validationCalls = 0
@@ -373,10 +365,6 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext {
-                privacyCaptures++
-                PrivacyContext(Viewer.User(7L))
-            }
             policies { users(configuredPolicy) }
             interceptors {
                 users(
@@ -395,9 +383,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
 
-        assertEquals(MutationResult.Success(0), client.users.deleteMany())
+        assertEquals(MutationResult.Success(0), client.users.deleteMany(viewerContext, ))
         assertEquals(1, driver.probe.withTransactionCalls)
-        assertEquals(1, privacyCaptures)
         assertEquals(1, interceptorCalls)
         assertEquals(1, driver.probe.candidateQueryCalls)
         assertEquals(0, privacyCalls)
@@ -436,12 +423,12 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
             hooks { users { beforeDelete { beforeDeleteCalls++ } } }
         }
 
-        val result = client.users.deleteMany()
+        val result = client.users.deleteMany(viewerContext, )
 
         val failed = assertIs<MutationResult.Failed>(result)
         val denial = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -486,11 +473,11 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
         }
 
-        val result = client.users.deleteMany()
+        val result = client.users.deleteMany(viewerContext, )
 
         val failed = assertIs<MutationResult.Failed>(result)
         val denial = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -529,12 +516,12 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
             hooks { users { beforeDelete { beforeDeleteCalls++ } } }
         }
 
-        val result = client.users.deleteMany()
+        val result = client.users.deleteMany(viewerContext, )
 
         val failed = assertIs<MutationResult.Failed>(result)
         val validation = assertIs<EntValidationException>(failed.exception)
@@ -566,7 +553,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
             hooks {
                 users {
@@ -580,7 +567,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
 
         var inner: MutationResult<Int>? = null
         val transaction = client.withTransaction { tx ->
-            inner = tx.users.deleteMany()
+            inner = tx.users.deleteMany(viewerContext, )
             "ignored failure"
         }
 
@@ -610,13 +597,13 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
         }
 
         var inner: MutationResult<Int>? = null
         val transaction = client.withTransaction { tx ->
-            inner = tx.users.deleteMany()
+            inner = tx.users.deleteMany(viewerContext, )
             "ignored failure"
         }
 
@@ -646,11 +633,11 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
         }
 
-        val failed = assertIs<MutationResult.Failed>(client.users.deleteMany())
+        val failed = assertIs<MutationResult.Failed>(client.users.deleteMany(viewerContext, ))
         val constraint = assertIs<EntConstraintViolationException>(failed.exception)
         assertEquals(MutationWriteState.NotPersisted, constraint.writeState)
         assertSame(failure, constraint.cause)
@@ -671,7 +658,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
             hooks {
                 users {
@@ -680,7 +667,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val result = client.users.deleteMany()
+        val result = client.users.deleteMany(viewerContext, )
 
         val failed = assertIs<MutationResult.Failed>(result)
         val rolledBack = assertIs<EntUnexpectedMutationException>(failed.exception)
@@ -722,7 +709,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
             hooks {
                 users {
@@ -732,7 +719,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val result = client.users.deleteMany()
+        val result = client.users.deleteMany(viewerContext, )
 
         assertEquals(MutationResult.Success(2), result)
         assertEquals(listOf(listOf("C", "B", "A")), beforeBatches)
@@ -759,7 +746,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
             hooks {
                 users {
@@ -769,7 +756,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         }
         val predicate = User.name neq "escaped"
 
-        val result = client.users.deleteMany(predicate)
+        val result = client.users.deleteMany(viewerContext, predicate)
 
         assertEquals(MutationResult.Success(2), result)
         assertEquals(listOf(listOf("C", "A")), afterBatches)
@@ -796,7 +783,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies { users(configuredPolicy) }
             hooks {
                 users {
@@ -805,7 +792,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val result = client.users.deleteMany(Predicate.Leaf("id", Op.GTE, threshold))
+        val result = client.users.deleteMany(viewerContext, Predicate.Leaf("id", Op.GTE, threshold))
 
         assertEquals(MutationResult.Success(2), result)
         val candidateValue = (driver.probe.candidatePredicates.single().single() as Predicate.Leaf).value

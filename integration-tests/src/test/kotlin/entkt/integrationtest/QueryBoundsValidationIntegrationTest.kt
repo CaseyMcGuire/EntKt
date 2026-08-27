@@ -13,7 +13,7 @@ import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
@@ -59,7 +59,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     private fun freshClient(): EntClient {
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
@@ -101,17 +101,19 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     // ---- limit(0) is honored by every terminal family ----
     //
     // The first-row terminals used to send a hardwired `limit = 1` and
-    // discard the caller's bound, so `query { limit(0) }.firstOrNull()`
-    // returned a row while `query { limit(0) }.rawExists()` — same
+    // discard the caller's bound, so `query { limit(0) }.firstOrNull(testViewerContext)`
+    // returned a row while `query { limit(0) }.rawExists(testViewerContext)` — same
     // query, same rows — answered false. Interceptor limit mutators are
     // silent no-ops at FIRST (see limitOpsApply), so the
     // discarded value was always the caller's own.
 
     private fun seededClient(): EntClient = freshClient().also { client ->
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveAndLoad().getOrThrow()
-            sys.articles.create { title = "Second"; published = true; authorId = author.id }.saveAndLoad().getOrThrow()
+        run {
+            val sys = client
+            val testViewerContext = testBypassContext("test")
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.articles.create { title = "Second"; published = true; authorId = author.id }.saveAndLoad(testViewerContext).getOrThrow()
         }
     }
 
@@ -121,9 +123,9 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         // "No rows within the caller's bound" is authoritative
         // absence — Success(null), same as "no rows matched".
-        assertNull(client.articles.query { limit(0) }.firstOrNull().getOrThrow())
+        assertNull(client.articles.query { limit(0) }.firstOrNull(testViewerContext).getOrThrow())
         // Sanity: the rows are really there without the bound.
-        assertNotNull(client.articles.query().firstOrNull().getOrThrow())
+        assertNotNull(client.articles.query().firstOrNull(testViewerContext).getOrThrow())
     }
 
     @Test
@@ -132,9 +134,9 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         // The consistency the fix is really about: one bound, one
         // answer, from every terminal that actually reads rows.
-        assertNull(client.articles.query { limit(0) }.firstOrNull().getOrThrow())
-        assertEquals(false, client.articles.query { limit(0) }.rawExists().getOrThrow())
-        assertEquals(emptyList(), client.articles.query { limit(0) }.all().getOrThrow())
+        assertNull(client.articles.query { limit(0) }.firstOrNull(testViewerContext).getOrThrow())
+        assertEquals(false, client.articles.query { limit(0) }.rawExists(testViewerContext).getOrThrow())
+        assertEquals(emptyList(), client.articles.query { limit(0) }.all(testViewerContext).getOrThrow())
     }
 
     // ---- eager-load bounds apply per parent, whatever the cardinality ----
@@ -148,7 +150,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // that "limit is meaningless for a to-one". Positive limits are
         // indeed already satisfied by one target per parent — but zero
         // is a bound, not a no-op.
-        val articles = client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { limit(0) } }.all(testViewerContext).getOrThrow()
 
         assertTrue(articles.isNotEmpty(), "the root rows still load")
         assertTrue(
@@ -161,7 +163,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `offset on a to-one eager load steps past the only candidate`() {
         val client = seededClient()
 
-        val articles = client.articles.query { loadAuthor { offset(1) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { offset(1) } }.all(testViewerContext).getOrThrow()
 
         assertTrue(
             articles.all { it.edges.author.requireLoaded() == null },
@@ -175,7 +177,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         // Guard against over-correcting: with no bounds set, the window
         // is wide open and behavior is unchanged.
-        val articles = client.articles.query { loadAuthor() }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor() }.all(testViewerContext).getOrThrow()
 
         assertTrue(articles.isNotEmpty())
         assertTrue(
@@ -184,7 +186,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         )
         // A positive limit is already satisfied by the single target.
         assertTrue(
-            client.articles.query { loadAuthor { limit(1) } }.all().getOrThrow()
+            client.articles.query { loadAuthor { limit(1) } }.all(testViewerContext).getOrThrow()
                 .all { it.edges.author.requireLoaded() != null },
         )
     }
@@ -196,13 +198,13 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // The inconsistency this fixes: to-many already sliced per
         // parent, so the two cardinalities answered `limit(0)`
         // differently for no reason the caller could see.
-        val users = client.users.query { loadArticles { limit(0) } }.all().getOrThrow()
+        val users = client.users.query { loadArticles { limit(0) } }.all(testViewerContext).getOrThrow()
         assertTrue(users.isNotEmpty())
         // `requireLoaded()` throws if the edge were Unloaded, so this
         // pins "eagerly loaded and empty", not "never loaded".
         assertTrue(users.all { it.edges.articles.requireLoaded().isEmpty() }, "to-many honors limit(0)")
 
-        val articles = client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { limit(0) } }.all(testViewerContext).getOrThrow()
         assertTrue(articles.all { it.edges.author.requireLoaded() == null }, "to-one now honors it too")
     }
 
@@ -218,21 +220,24 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     private fun clientWithDeniedAuthors(): EntClient {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User("reader")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(DeniedUsers)
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveAndLoad().getOrThrow()
+        run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveAndLoad(testViewerContext).getOrThrow()
         }
         return client
     }
 
     @Test
     fun `limit(0) on a to-one eager load does not evaluate the excluded target`() {
+        val viewerContext = ViewerContext(Viewer.User("reader"))
         val client = clientWithDeniedAuthors()
 
         // Eager-target denial is strict — it fails the read rather than
@@ -241,7 +246,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // row nobody asked to load. Gating only the final assignment
         // left the fetch, the privacy check, and nested eager loading
         // all still running.
-        val articles = client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { limit(0) } }.all(viewerContext).getOrThrow()
 
         assertTrue(articles.isNotEmpty())
         assertTrue(articles.all { it.edges.author.requireLoaded() == null })
@@ -249,15 +254,17 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `offset past a to-one eager target does not evaluate it`() {
+        val viewerContext = ViewerContext(Viewer.User("reader"))
         val client = clientWithDeniedAuthors()
 
-        val articles = client.articles.query { loadAuthor { offset(1) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { offset(1) } }.all(viewerContext).getOrThrow()
 
         assertTrue(articles.all { it.edges.author.requireLoaded() == null })
     }
 
     @Test
     fun `an in-window denied eager target still fails the read`() {
+        val viewerContext = ViewerContext(Viewer.User("reader"))
         val client = clientWithDeniedAuthors()
 
         // The other half of the contract: skipping privacy for an empty
@@ -265,10 +272,10 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // ask for the target. The denial is stored in the result;
         // getOrThrow surfaces it.
         assertFailsWith<EntPrivacyDeniedException> {
-            client.articles.query { loadAuthor() }.all().getOrThrow()
+            client.articles.query { loadAuthor() }.all(viewerContext).getOrThrow()
         }
         assertFailsWith<EntPrivacyDeniedException> {
-            client.articles.query { loadAuthor { limit(1) } }.all().getOrThrow()
+            client.articles.query { loadAuthor { limit(1) } }.all(viewerContext).getOrThrow()
         }
     }
 
@@ -277,7 +284,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val driver = resetAndDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
@@ -286,13 +293,15 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
                 users(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "user-observer")
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveAndLoad().getOrThrow()
+        run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveAndLoad(testViewerContext).getOrThrow()
         }
         ops.clear()
 
-        client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
+        client.articles.query { loadAuthor { limit(0) } }.all(testViewerContext).getOrThrow()
 
         // The bound decides which rows survive, not whether the eager
         // subquery exists. Interceptors fire on every eager subquery, and
@@ -324,15 +333,17 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     private fun countingClient(): Pair<EntClient, QueryCountingDriver> {
         val counting = QueryCountingDriver(resetAndDriver())
         val client = EntClient(counting) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveAndLoad().getOrThrow()
+        run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.articles.create { title = "First"; published = true; authorId = author.id }.saveAndLoad(testViewerContext).getOrThrow()
         }
         counting.queriedTables.clear()
         return client to counting
@@ -342,7 +353,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `an empty to-one eager window issues no query for the target`() {
         val (client, counting) = countingClient()
 
-        client.articles.query { loadAuthor { limit(0) } }.all().getOrThrow()
+        client.articles.query { loadAuthor { limit(0) } }.all(testViewerContext).getOrThrow()
 
         assertTrue(counting.queriedTables.contains("articles"), "the root query still runs")
         assertFalse(
@@ -355,7 +366,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `an empty to-many eager window issues no query for the target`() {
         val (client, counting) = countingClient()
 
-        client.users.query { loadArticles { limit(0) } }.all().getOrThrow()
+        client.users.query { loadArticles { limit(0) } }.all(testViewerContext).getOrThrow()
 
         assertTrue(counting.queriedTables.contains("users"), "the root query still runs")
         assertFalse(
@@ -367,20 +378,18 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     @Test
     fun `an empty many-to-many eager window issues no query for the target`() {
         val counting = QueryCountingDriver(resetAndDriver())
-        val client = EntClient(counting) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        val client = EntClient(counting)
         // A real link matters: with no junction rows the eager block
         // short-circuits before the target fetch, so the test would pass
         // without exercising the window at all.
-        val post = client.posts.create { title = "p" }.saveAndLoad().getOrThrow()
-        val tag = client.tags.create { name = "t" }.saveAndLoad().getOrThrow()
+        val post = client.posts.create { title = "p" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tag = client.tags.create { name = "t" }.saveAndLoad(testViewerContext).getOrThrow()
         client.withTransaction { tx ->
-            tx.posts.update(post.id) { tags.add(tag.id) }.save().orRollback()
+            tx.posts.update(post.id) { tags.add(tag.id) }.save(testViewerContext).orRollback()
         }.getOrThrow()
         counting.queriedTables.clear()
 
-        val posts = client.posts.query { loadTags { limit(0) } }.all().getOrThrow()
+        val posts = client.posts.query { loadTags { limit(0) } }.all(testViewerContext).getOrThrow()
 
         assertTrue(posts.all { it.edges.tags.requireLoaded().isEmpty() })
         assertFalse(
@@ -399,20 +408,18 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     @Test
     fun `a non-empty many-to-many window still issues the target query`() {
         val counting = QueryCountingDriver(resetAndDriver())
-        val client = EntClient(counting) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        val client = EntClient(counting)
         // A real link matters: with no junction rows the eager block
         // short-circuits before the target fetch, so the test would pass
         // without exercising the window at all.
-        val post = client.posts.create { title = "p" }.saveAndLoad().getOrThrow()
-        val tag = client.tags.create { name = "t" }.saveAndLoad().getOrThrow()
+        val post = client.posts.create { title = "p" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tag = client.tags.create { name = "t" }.saveAndLoad(testViewerContext).getOrThrow()
         client.withTransaction { tx ->
-            tx.posts.update(post.id) { tags.add(tag.id) }.save().orRollback()
+            tx.posts.update(post.id) { tags.add(tag.id) }.save(testViewerContext).orRollback()
         }.getOrThrow()
         counting.queriedTables.clear()
 
-        client.posts.query { loadTags { limit(5) } }.all().getOrThrow()
+        client.posts.query { loadTags { limit(5) } }.all(testViewerContext).getOrThrow()
 
         assertTrue(counting.queriedTables.contains("tags"), "queried: ${counting.queriedTables}")
     }
@@ -422,7 +429,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val (client, counting) = countingClient()
 
         // Guard against over-correcting the skip into always-skip.
-        val articles = client.articles.query { loadAuthor { limit(1) } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { limit(1) } }.all(testViewerContext).getOrThrow()
 
         assertTrue(articles.all { it.edges.author.requireLoaded() != null })
         assertTrue(counting.queriedTables.contains("users"), "queried: ${counting.queriedTables}")
@@ -433,7 +440,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val driver = resetAndDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
@@ -449,18 +456,18 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // rows happen to carry relationships.
         // Reminder.assignee is the nullable-belongsTo fixture; Article's
         // author is required, so it can't model "every FK is null".
-        client.reminders.create { body = "unassigned" }.saveAndLoad().getOrThrow()
-        client.posts.create { title = "untagged" }.saveAndLoad().getOrThrow()
+        client.reminders.create { body = "unassigned" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.posts.create { title = "untagged" }.saveAndLoad(testViewerContext).getOrThrow()
         ops.clear()
 
-        client.reminders.query { loadAssignee() }.all().getOrThrow()
+        client.reminders.query { loadAssignee() }.all(testViewerContext).getOrThrow()
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
             "belongs-to with every FK null should still fire target interceptors; observed: $ops",
         )
 
         ops.clear()
-        client.posts.query { loadTags() }.all().getOrThrow()
+        client.posts.query { loadTags() }.all(testViewerContext).getOrThrow()
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
             "many-to-many with an empty junction should still fire target interceptors; observed: $ops",
@@ -472,7 +479,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val driver = resetAndDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
@@ -485,7 +492,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val articles = client.articles.query {
             where(Article.title eq "no-such-title")
             loadAuthor()
-        }.all().getOrThrow()
+        }.all(testViewerContext).getOrThrow()
 
         // The root result decides what gets loaded, not whether the
         // eager subquery exists. An empty root must fire the same
@@ -501,7 +508,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `a rejecting eager interceptor rejects even when the root matches nothing`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
@@ -517,7 +524,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         }
         val query = { client.articles.query { where(Article.title eq "no-such-title"); loadAuthor() } }
 
-        val result = query().all()
+        val result = query().all(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
@@ -529,7 +536,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val driver = resetAndDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
@@ -541,7 +548,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         assertNull(
             client.articles.query { where(Article.title eq "no-such-title"); loadAuthor() }
-                .firstOrNull().getOrThrow(),
+                .firstOrNull(testViewerContext).getOrThrow(),
         )
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
@@ -554,13 +561,13 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val counting = QueryCountingDriver(resetAndDriver())
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(counting) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 tags(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "tag-observer")
             }
         }
 
-        val posts = client.posts.query { where(Post.title eq "no-such"); loadTags() }.all().getOrThrow()
+        val posts = client.posts.query { where(Post.title eq "no-such"); loadTags() }.all(testViewerContext).getOrThrow()
 
         assertTrue(posts.isEmpty())
         assertTrue(
@@ -582,7 +589,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         val driver = resetAndDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
@@ -591,8 +598,10 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
                 users(QueryInterceptor { _, ctx -> ops.add(ctx.operation) }, name = "user-observer")
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         }
         ops.clear()
 
@@ -600,7 +609,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // zero parent groups. The only User-targeted EAGER_LOAD in
         // this query is that nested pass — the root runs with ALL —
         // so the assertion isolates nested firing.
-        client.users.query { loadArticles { loadAuthor() } }.all().getOrThrow()
+        client.users.query { loadArticles { loadAuthor() } }.all(testViewerContext).getOrThrow()
 
         assertTrue(
             ops.contains(ReadOperation.EAGER_LOAD),
@@ -612,16 +621,16 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
     fun `no relationship data still means no target query`() {
         val counting = QueryCountingDriver(resetAndDriver())
         val client = EntClient(counting) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
             }
         }
-        client.reminders.create { body = "unassigned" }.saveAndLoad().getOrThrow()
+        client.reminders.create { body = "unassigned" }.saveAndLoad(testViewerContext).getOrThrow()
         counting.queriedTables.clear()
 
-        val reminders = client.reminders.query { loadAssignee() }.all().getOrThrow()
+        val reminders = client.reminders.query { loadAssignee() }.all(testViewerContext).getOrThrow()
 
         // Firing the interceptor is not a reason to issue a query whose
         // IN list is empty.
@@ -640,7 +649,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // aggregate function and never receive a limit, which is the
         // documented contract — pin the boundary so "limit(0) means no
         // rows" isn't mistaken for a universal rule.
-        assertEquals(2L, client.articles.query { limit(0) }.rawCount().getOrThrow())
+        assertEquals(2L, client.articles.query { limit(0) }.rawCount(testViewerContext).getOrThrow())
     }
 
     @Test
@@ -649,7 +658,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         // The clamp is min(limit, 1) — anything above zero is already
         // satisfied by the single-row fetch.
-        assertNotNull(client.articles.query { limit(1) }.firstOrNull().getOrThrow())
-        assertNotNull(client.articles.query { limit(5) }.firstOrNull().getOrThrow())
+        assertNotNull(client.articles.query { limit(1) }.firstOrNull(testViewerContext).getOrThrow())
+        assertNotNull(client.articles.query { limit(5) }.firstOrNull(testViewerContext).getOrThrow())
     }
 }

@@ -330,10 +330,9 @@ target table already exists; a cyclic or otherwise unresolved target
 fails with an error naming the constraint, the missing table, and
 `registerAll` as the fix. Nothing is ever skipped silently.
 
-Re-registering an unchanged set is free — no connection, no catalog
-lookup, no DDL. That matters because `withTransaction` builds a client
-*inside* the open transaction and `withPrivacyContext` builds one per
-call, so registration re-runs constantly.
+Re-registering an unchanged set is free — no connection, no catalog lookup,
+no DDL. That matters because `withTransaction` builds a client *inside* the
+open transaction and registers the same schemas there.
 
 Registering a *different* schema for a table already registered is an
 error rather than a silent no-op.
@@ -467,11 +466,12 @@ stores.
 ### Transactions
 
 ```kotlin
+val viewerContext = ViewerContext(Viewer.User(currentUserId()))
 client.withTransaction { tx ->
     val alice = tx.users.create { name = "Alice"; email = "a@b.com" }
-        .saveAndLoad()
+        .saveAndLoad(viewerContext)
         .orRollback()
-    tx.posts.create { title = "Hello"; authorId = alice.id }.save().orRollback()
+    tx.posts.create { title = "Hello"; authorId = alice.id }.save(viewerContext).orRollback()
     // Commits if the block completes without a recorded mutation failure;
     // rolls back on orRollback() or an exception
 }

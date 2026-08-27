@@ -16,8 +16,6 @@ import entkt.runtime.driver.DirectToManyWindowCapability
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.RelatedRows
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EagerWindowStrategy
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
@@ -107,9 +105,7 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
     }
 
     private fun bypassClient(driver: DatabaseDriver): EntClient =
-        EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        EntClient(driver)
 
     /**
      * Seed [perAuthor] articles for each of three users plus one user
@@ -119,11 +115,11 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
     private fun seed(client: EntClient, perAuthor: Int): List<User> {
         val users = ('a'..'d').map { name ->
             client.users.create { this.name = "$name"; email = "$name@example.com" }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(testViewerContext).getOrThrow()
         }
         for (user in users.take(3)) {
             for (i in 1..perAuthor) {
-                client.articles.create { title = "t$i"; authorId = user.id }.save().getOrThrow()
+                client.articles.create { title = "t$i"; authorId = user.id }.save(testViewerContext).getOrThrow()
             }
         }
         return users
@@ -148,8 +144,8 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
                 limit(2)
             }
         }
-        val native = nativeClient.users.query(block).all().getOrThrow()
-        val emulated = emulatedClient.users.query(block).all().getOrThrow()
+        val native = nativeClient.users.query(block).all(testViewerContext).getOrThrow()
+        val emulated = emulatedClient.users.query(block).all(testViewerContext).getOrThrow()
 
         // Same parents, same per-parent rows, same order — including
         // the empty fourth group and the tie-breaking primary-key
@@ -173,8 +169,8 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
         val block: entkt.integrationtest.ent.UserQuery.() -> Unit = {
             loadArticles { offset(2) }
         }
-        val native = nativeClient.users.query(block).all().getOrThrow()
-        val emulated = emulatedClient.users.query(block).all().getOrThrow()
+        val native = nativeClient.users.query(block).all(testViewerContext).getOrThrow()
+        val emulated = emulatedClient.users.query(block).all(testViewerContext).getOrThrow()
 
         assertEquals(loadedTitlesByUser(emulated), loadedTitlesByUser(native))
         for (rows in loadedTitlesByUser(native).values.filter { it.isNotEmpty() }) {
@@ -196,8 +192,8 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
         val block: entkt.integrationtest.ent.UserQuery.() -> Unit = {
             loadArticles { limit(2) }
         }
-        nativeClient.users.query(block).all().getOrThrow()
-        emulatedClient.users.query(block).all().getOrThrow()
+        nativeClient.users.query(block).all(testViewerContext).getOrThrow()
+        emulatedClient.users.query(block).all(testViewerContext).getOrThrow()
 
         // 3 populated parents × limit 2: the native statement returns
         // 6 rows; the emulated fetch transfers all 30 and discards 24
@@ -212,7 +208,7 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
         val observer = RowObservingDriver(real)
         val structuralValues = mutableListOf<List<Any?>>()
         val client = EntClient(observer) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { scope, ctx ->
@@ -233,7 +229,7 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
         val users = seed(client, perAuthor = 3)
         observer.nativeQueries.clear()
 
-        client.users.query { loadArticles { limit(1) } }.all().getOrThrow()
+        client.users.query { loadArticles { limit(1) } }.all(testViewerContext).getOrThrow()
 
         // One EAGER_LOAD pass saw the full logical constraint —
         // author_id IN (every current parent id).
@@ -275,8 +271,8 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
                 loadAuthor()
             }
         }
-        val native = nativeClient.users.query(block).all().getOrThrow()
-        val emulated = emulatedClient.users.query(block).all().getOrThrow()
+        val native = nativeClient.users.query(block).all(testViewerContext).getOrThrow()
+        val emulated = emulatedClient.users.query(block).all(testViewerContext).getOrThrow()
 
         for ((nativeUser, emulatedUser) in native.zip(emulated)) {
             val nativeArticles = nativeUser.edges.articles.requireLoaded()
@@ -296,12 +292,12 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
         seed(client, perAuthor = 2)
         observer.nativeQueries.clear()
 
-        val users = client.users.query { loadArticles { limit(0) } }.all().getOrThrow()
+        val users = client.users.query { loadArticles { limit(0) } }.all(testViewerContext).getOrThrow()
         assertTrue(observer.nativeQueries.isEmpty(), "limit(0) must not reach the driver")
         assertTrue(users.all { it.edges.articles.requireLoaded().isEmpty() })
 
         val none = client.users.query { where(User.name.eq("nobody")); loadArticles() }
-            .all().getOrThrow()
+            .all(testViewerContext).getOrThrow()
         assertTrue(none.isEmpty())
         assertTrue(observer.nativeQueries.isEmpty(), "an empty parent set must not reach the driver")
     }

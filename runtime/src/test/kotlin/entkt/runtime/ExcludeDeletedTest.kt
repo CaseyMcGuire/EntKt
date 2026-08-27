@@ -6,8 +6,7 @@ import entkt.runtime.query.RegisteredInterceptor
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.ExcludeDeleted
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.privacy.Viewer
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QuerySpecBuilder
 import entkt.runtime.query.EntInterceptorsConfig
@@ -47,7 +46,7 @@ class ExcludeDeletedTest {
     )
 
     private fun rootContext(): QueryContext = QueryContext(
-        privacy = PrivacyContext(Viewer.PrivacyBypass("test")),
+        viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         operation = ReadOperation.ALL,
         rootEntity = Post::class,
         currentEntity = Post::class,

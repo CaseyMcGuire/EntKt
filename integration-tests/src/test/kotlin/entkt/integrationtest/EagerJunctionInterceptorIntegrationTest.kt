@@ -8,8 +8,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QueryInterceptor
@@ -46,18 +44,18 @@ import kotlin.test.assertTrue
 class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
 
     private fun seedGroupWithMembers(client: EntClient): Triple<Group, User, User> {
-        val g1 = client.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-        val member = client.users.create { name = "member"; email = "m@example.com" }.saveAndLoad().getOrThrow()
-        val banned = client.users.create { name = "banned"; email = "b@example.com" }.saveAndLoad().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = member.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = banned.id; role = "banned" }.save().getOrThrow()
+        val g1 = client.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+        val member = client.users.create { name = "member"; email = "m@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val banned = client.users.create { name = "banned"; email = "b@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = member.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = banned.id; role = "banned" }.save(testViewerContext).getOrThrow()
         return Triple(g1, member, banned)
     }
 
     @Test
     fun `a junction interceptor narrows eager discovery exactly as it narrows direct junction reads`() {
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 memberships(
                     QueryInterceptor { scope, _ ->
@@ -69,7 +67,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
         }
         val (_, member, _) = seedGroupWithMembers(client)
 
-        val groups = client.groups.query { loadUsers() }.all().getOrThrow()
+        val groups = client.groups.query { loadUsers() }.all(testViewerContext).getOrThrow()
 
         // The banned membership row never contributes a relationship —
         // the same rows a direct junction read returns drive discovery.
@@ -77,7 +75,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
             listOf(member.id),
             groups.single().edges.users.requireLoaded().map { it.id },
         )
-        assertEquals(1, client.memberships.query().all().getOrThrow().size)
+        assertEquals(1, client.memberships.query().all(testViewerContext).getOrThrow().size)
     }
 
     @Test
@@ -85,7 +83,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
         val contexts = mutableListOf<QueryContext>()
         val inValues = mutableListOf<List<Any?>>()
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 memberships(
                     QueryInterceptor { scope, ctx ->
@@ -107,7 +105,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
         }
         val (g1, _, _) = seedGroupWithMembers(client)
 
-        client.groups.query { loadUsers() }.all().getOrThrow()
+        client.groups.query { loadUsers() }.all(testViewerContext).getOrThrow()
 
         // currentEntity is the JUNCTION; source/edge/path describe the
         // eager M2M step being discovered.
@@ -126,7 +124,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
     fun `a nested M2M step's junction pass carries the full path from the root`() {
         val contexts = mutableListOf<QueryContext>()
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 postTags(
                     QueryInterceptor { _, ctx ->
@@ -136,14 +134,14 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val post = client.posts.create { title = "p" }.saveAndLoad().getOrThrow()
-        val tag = client.tags.create { name = "t" }.saveAndLoad().getOrThrow()
-        client.postTags.create { postId = post.id; tagId = tag.id }.save().getOrThrow()
+        val post = client.posts.create { title = "p" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tag = client.tags.create { name = "t" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.postTags.create { postId = post.id; tagId = tag.id }.save(testViewerContext).getOrThrow()
 
         // Post → tags (M2M) → posts (M2M): the SAME junction entity
         // serves both steps, so one interceptor observes both
         // discovery passes and their distinct contexts.
-        client.posts.query { loadTags { loadPosts() } }.all().getOrThrow()
+        client.posts.query { loadTags { loadPosts() } }.all(testViewerContext).getOrThrow()
 
         val tagsStep = EdgeStep(entkt.integrationtest.ent.Post::class, "tags", entkt.integrationtest.ent.Tag::class)
         val nestedStep = EdgeStep(entkt.integrationtest.ent.Tag::class, "posts", entkt.integrationtest.ent.Post::class)
@@ -165,7 +163,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         var targetPassFires = 0
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 memberships(
                     QueryInterceptor { scope, ctx ->
@@ -186,7 +184,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
         seedGroupWithMembers(client)
         recording.reset()
 
-        val result = client.groups.query { loadUsers() }.all()
+        val result = client.groups.query { loadUsers() }.all(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
@@ -201,7 +199,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         val inValues = mutableListOf<List<Any?>>()
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 memberships(
                     QueryInterceptor { scope, ctx ->
@@ -220,13 +218,13 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.groups.create { name = "g1" }.save().getOrThrow()
+        client.groups.create { name = "g1" }.save(testViewerContext).getOrThrow()
         recording.reset()
 
         client.groups.query {
             where(Group.name eq "nobody")
             loadUsers()
-        }.all().getOrThrow()
+        }.all(testViewerContext).getOrThrow()
 
         // Whether the pass runs must not depend on the parent data;
         // whether the driver is consulted must.
@@ -236,18 +234,16 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a throughLink junction's interceptors apply the same way`() {
-        val seeder = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
-        val post = seeder.posts.create { title = "p" }.saveAndLoad().getOrThrow()
-        val keep = seeder.tags.create { name = "keep" }.saveAndLoad().getOrThrow()
-        val drop = seeder.tags.create { name = "drop" }.saveAndLoad().getOrThrow()
-        seeder.postTags.create { postId = post.id; tagId = keep.id }.save().getOrThrow()
-        seeder.postTags.create { postId = post.id; tagId = drop.id }.save().getOrThrow()
+        val seeder = EntClient(resetAndDriver())
+        val post = seeder.posts.create { title = "p" }.saveAndLoad(testViewerContext).getOrThrow()
+        val keep = seeder.tags.create { name = "keep" }.saveAndLoad(testViewerContext).getOrThrow()
+        val drop = seeder.tags.create { name = "drop" }.saveAndLoad(testViewerContext).getOrThrow()
+        seeder.postTags.create { postId = post.id; tagId = keep.id }.save(testViewerContext).getOrThrow()
+        seeder.postTags.create { postId = post.id; tagId = drop.id }.save(testViewerContext).getOrThrow()
         // A link junction is payload-free, but its interceptor slot is
         // just as real: predicates registered on it narrow discovery.
         val narrowing = EntClient(newDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 postTags(
                     QueryInterceptor { scope, _ ->
@@ -258,7 +254,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val posts = narrowing.posts.query { loadTags() }.all().getOrThrow()
+        val posts = narrowing.posts.query { loadTags() }.all(testViewerContext).getOrThrow()
 
         assertEquals(
             listOf("keep"),

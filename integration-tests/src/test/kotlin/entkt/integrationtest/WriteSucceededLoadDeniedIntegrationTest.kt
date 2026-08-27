@@ -9,7 +9,7 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
@@ -44,6 +44,7 @@ import kotlin.test.assertTrue
  * distinguishable from the exception alone.
  */
 class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
+    private var viewerContext = testViewerContext
 
     /** Article LOAD denies for the active viewer; CREATE/UPDATE explicitly allow. */
     private object DenyLoadAllowWrite : EntityPolicy<Article, ArticlePolicyScope> {
@@ -63,9 +64,10 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(viewer: Viewer = Viewer.User(1L)): EntClient {
+        viewerContext = ViewerContext(viewer)
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies {
                 articles(DenyLoadAllowWrite)
                 users(OpenUser)
@@ -74,8 +76,10 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
     }
 
     private fun seedAuthor(client: EntClient): User {
-        return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        return run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(viewerContext).getOrThrow()
         }
     }
 
@@ -90,7 +94,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
             title = "secret"
             published = true
             authorId = author.id
-        }.saveAndLoad()
+        }.saveAndLoad(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -111,13 +115,15 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
             title = "ghost"
             published = true
             authorId = author.id
-        }.saveAndLoad()
+        }.saveAndLoad(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
 
-        val stillExists = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.articles.findById(ex.entityKey!!.value as Long).getOrThrow()
+        val stillExists = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.articles.findById(viewerContext, ex.entityKey!!.value as Long).getOrThrow()
         }
         assertNotNull(stillExists, "row should be persisted even though saveAndLoad returned Failed")
         assertEquals("ghost", stillExists.title)
@@ -132,7 +138,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
             title = "boom"
             published = true
             authorId = author.id
-        }.saveAndLoad()
+        }.saveAndLoad(viewerContext)
         val failed = assertIs<MutationResult.Failed>(result)
         try {
             result.getOrThrow()
@@ -150,17 +156,19 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
     fun `update saveAndLoad disclosure denial is Failed(Committed, LOAD) and the write sticks`() {
         val client = freshClient()
         val author = seedAuthor(client)
-        val articleId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        val articleId = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             sys.articles.create {
                 title = "original"
                 published = true
                 authorId = author.id
-            }.saveAndLoad().getOrThrow().id
+            }.saveAndLoad(viewerContext).getOrThrow().id
         }
 
         val result = client.articles.update(articleId) {
             title = "renamed"
-        }.saveAndLoad()
+        }.saveAndLoad(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -169,8 +177,10 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         assertEquals(articleId, ex.entityKey?.value)
 
         // The write actually committed despite Failed.
-        val reread = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.articles.findById(articleId).getOrThrow()
+        val reread = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.articles.findById(viewerContext, articleId).getOrThrow()
         }
         assertEquals("renamed", reread?.title)
     }
@@ -181,19 +191,21 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
     fun `a no-op update whose LOAD check denies reports NotPersisted`() {
         val client = freshClient()
         val author = seedAuthor(client)
-        val articleId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        val articleId = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             sys.articles.create {
                 title = "untouched"
                 published = true
                 authorId = author.id
-            }.saveAndLoad().getOrThrow().id
+            }.saveAndLoad(viewerContext).getOrThrow().id
         }
 
         // Assignment-free update: the UPDATE rule allows, nothing is
         // written, then the disclosure check denies. LOAD + NotPersisted
         // is distinguishable from UPDATE + NotPersisted (pre-write
         // rejection) and from LOAD + Committed (real write).
-        val result = client.articles.update(articleId) { }.saveAndLoad()
+        val result = client.articles.update(articleId) { }.saveAndLoad(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -215,7 +227,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
                 title = "pending"
                 published = true
                 authorId = author.id
-            }.saveAndLoad()
+            }.saveAndLoad(viewerContext)
             // Ignore the failure: the fail-closed backstop still rolls back.
             "completed"
         }
@@ -231,8 +243,10 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         assertEquals(TransactionFailureState.NotCommitted, txFailed.transactionState)
 
         // Nothing committed.
-        val count = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.articles.query().rawCount().getOrThrow()
+        val count = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.articles.query().rawCount(viewerContext).getOrThrow()
         }
         assertEquals(0L, count)
     }
@@ -241,6 +255,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `pre-write CREATE denial carries operation CREATE and NotPersisted, and writes nothing`() {
+        val viewerContext = ViewerContext(Viewer.User(1L))
         val denyCreate = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
@@ -251,21 +266,23 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         }
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 articles(denyCreate)
                 users(OpenUser)
             }
         }
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        val author = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(viewerContext).getOrThrow()
         }
 
         val result = client.articles.create {
             title = "x"
             published = true
             authorId = author.id
-        }.saveAndLoad()
+        }.saveAndLoad(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -273,8 +290,10 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
 
         // No row was written — unlike the post-write LOAD path.
-        val count = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.articles.query().rawCount().getOrThrow()
+        val count = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.articles.query().rawCount(viewerContext).getOrThrow()
         }
         assertEquals(0L, count)
         assertTrue(ex.entityKey == null, "pre-write create denial has no usable key; got ${ex.entityKey}")

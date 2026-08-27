@@ -1,6 +1,6 @@
 package entkt.viewer
 
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 
 /**
@@ -9,8 +9,7 @@ import entkt.runtime.privacy.Viewer
  *  - [authorize] defaults to deny-all — installing the viewer without an
  *    authorization callback yields 403 for every request, never a public
  *    route;
- *  - [privacyContext] defaults to [Viewer.Anonymous], the same fail-closed
- *    default as the generated client;
+ *  - [viewerContext] defaults to [Viewer.Anonymous];
  *  - all generated entities are included; hiding one is the explicit action
  *    ([EntityVisibility.exclude]) — there is deliberately no `include(...)`
  *    allow-list in V1;
@@ -23,14 +22,14 @@ class EntViewerConfig internal constructor() {
     var path: String = "/_ent"
 
     internal var authorize: (EntViewerRequest) -> Boolean = { false }
-    internal var privacyContext: (EntViewerRequest) -> PrivacyContext =
-        { PrivacyContext(Viewer.Anonymous) }
+    internal var viewerContext: (EntViewerRequest) -> ViewerContext =
+        { ViewerContext(Viewer.Anonymous) }
     internal val visibility = EntityVisibility()
     internal val redaction = Redaction()
 
     /**
      * Gate access to the viewer endpoint. This controls access to the
-     * *viewer*, not to rows — row visibility is [privacyContext]'s job.
+     * *viewer*, not to rows — row visibility is [viewerContext]'s job.
      * Defaults to deny-all; the application must supply it.
      */
     fun authorize(check: (EntViewerRequest) -> Boolean) {
@@ -38,12 +37,12 @@ class EntViewerConfig internal constructor() {
     }
 
     /**
-     * Privacy context every viewer read runs under, resolved per request.
+     * Viewer context every viewer read runs under, resolved per request.
      * The data displayed is the data this context is allowed to read —
      * the viewer adds no privileges.
      */
-    fun privacyContext(provider: (EntViewerRequest) -> PrivacyContext) {
-        privacyContext = provider
+    fun viewerContext(provider: (EntViewerRequest) -> ViewerContext) {
+        viewerContext = provider
     }
 
     fun entities(block: EntityVisibility.() -> Unit) {

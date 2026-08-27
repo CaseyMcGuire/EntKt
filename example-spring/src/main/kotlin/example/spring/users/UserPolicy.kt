@@ -32,7 +32,7 @@ class AllowSelfUpdate : UserUpdatePrivacyRule {
         context: PrivacyRuleContext<EntPrivacyReadClient>,
         item: UserUpdatePrivacyItem,
     ): PrivacyDecision {
-        val viewer = context.privacy.viewer as? Viewer.User
+        val viewer = context.viewerContext.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
         return if (viewer.id == item.before.id) PrivacyDecision.Allow
         else PrivacyDecision.Deny("can only update your own profile")
@@ -45,7 +45,7 @@ class AllowSelfDelete : UserDeletePrivacyRule {
         context: PrivacyRuleContext<EntPrivacyReadClient>,
         item: UserDeletePrivacyItem,
     ): PrivacyDecision {
-        val viewer = context.privacy.viewer as? Viewer.User
+        val viewer = context.viewerContext.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
         return if (viewer.id == item.entity.id) PrivacyDecision.Allow
         else PrivacyDecision.Deny("can only delete your own account")

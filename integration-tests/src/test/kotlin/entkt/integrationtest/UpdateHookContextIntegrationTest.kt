@@ -44,7 +44,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
 
     private fun newClient(
         beforeUpdate: ((ArticleUpdateHookContext) -> Unit)? = null,
-    ): EntClient = sysClient(driver) {
+    ): EntClient = EntClient(driver) {
         if (beforeUpdate != null) {
             hooks {
                 articles {
@@ -58,12 +58,12 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         val author = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
         val article = client.articles.create {
             title = "Original"
             published = false
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
         return author to article
     }
 
@@ -76,7 +76,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         client.articles.update(article.id) {
             title = "Updated"
             notes = "a draft note"
-        }.save().getOrThrow()
+        }.save(testViewerContext).getOrThrow()
 
         val ctx = captured ?: error("hook did not run")
         assertEquals(FieldPatch.Set("Updated"), ctx.patch.title)
@@ -96,11 +96,11 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         // Seed with a non-null notes value so the clear is observable.
         val seeded = client.articles.update(article.id) {
             notes = "initial"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         client.articles.update(seeded.id) {
             notes = null
-        }.save().getOrThrow()
+        }.save(testViewerContext).getOrThrow()
 
         val ctx = captured ?: error("hook did not run")
         // FieldPatch<String?> for the nullable scalar carries Set(null)
@@ -118,7 +118,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
 
         val updated = client.articles.update(article.id) {
             title = "Hook touched too"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals("Hook touched too", updated.title)
         assertEquals(true, updated.published)  // hook's contribution
@@ -135,7 +135,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         val updated = client.articles.update(article.id) {
             title = "Title sticks"
             published = true   // unset by the hook
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals("Title sticks", updated.title)
         // Hook unset overrode the caller's published assignment.
@@ -156,11 +156,11 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         // EntNoChangesException failure.)
         val current = client.articles.update(article.id) {
             title = "About to be unset"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals("Original", current.title, "no write happened; the current row is returned")
         // The database row is untouched.
-        assertEquals("Original", client.articles.findById(article.id).getOrThrow()!!.title)
+        assertEquals("Original", client.articles.findById(testViewerContext, article.id).getOrThrow()!!.title)
     }
 
     @Test
@@ -184,7 +184,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
         @Suppress("CAST_NEVER_SUCCEEDS")
         val current = client.articles.update(article.id) {
             title = null as String?  // explicitly assign null to a required field
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals("Original", current.title, "the bad assignment was repaired away; the row is unchanged")
     }
@@ -197,7 +197,7 @@ class UpdateHookContextIntegrationTest : PostgresTestBase() {
 
         client.articles.update(article.id) {
             title = "set by caller"
-        }.save().getOrThrow()
+        }.save(testViewerContext).getOrThrow()
 
         val ctx = captured ?: error("hook did not run")
         // title was assigned → mutation getter returns the staged value.

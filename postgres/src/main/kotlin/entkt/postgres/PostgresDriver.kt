@@ -184,9 +184,8 @@ class PostgresDriver(
      *  6. cache the new schemas only once all of that succeeded
      *
      * Step 2 is load-bearing, not an optimization. `withTransaction`
-     * constructs a generated client *inside* the open transaction and
-     * `withPrivacyContext` constructs one per call, so this method runs
-     * constantly on a fully-registered driver; touching the database
+     * constructs a generated client *inside* the open transaction, so
+     * this method also runs on a fully-registered driver; touching the database
      * there would put DDL inside every user transaction. It is also the
      * only part that runs unsynchronized — steps 3 through 6 hold
      * [registrationLock], since the DDL precedes the cache write and

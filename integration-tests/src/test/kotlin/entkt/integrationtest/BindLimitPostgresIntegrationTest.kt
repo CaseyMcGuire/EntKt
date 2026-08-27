@@ -8,8 +8,6 @@ import entkt.runtime.query.QueryInterceptor
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.integrationtest.ent.User
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.ReadResult
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -112,9 +110,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `the public query path rejects an oversized IN before any snapshot copies`() {
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        val client = EntClient(resetAndDriver())
         val virtual = VirtualIds()
 
         // The terminal-entry capacity check consults the driver's
@@ -124,7 +120,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         // several times on the way to the render-time rejection.
         val result = client.users.query {
             where(Predicate.Leaf<User>("id", Op.IN, virtual))
-        }.all()
+        }.all(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<PostgresBindLimitException>(failed.exception)
@@ -136,15 +132,13 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
     @Test
     fun `rawCount captures an oversized IN failure without copying its operand`() {
         val recording = RecordingDriver(resetAndDriver())
-        val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        val client = EntClient(recording)
         val virtual = VirtualIds()
         recording.reset()
 
         val result = client.users.query {
             where(Predicate.Leaf<User>("id", Op.IN, virtual))
-        }.rawCount()
+        }.rawCount(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         assertIs<PostgresBindLimitException>(failed.exception)
@@ -157,7 +151,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         val virtual = VirtualIds()
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { scope, _ ->
@@ -173,7 +167,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         // itself — before the operand snapshot — so a tenant/ACL
         // interceptor contributing a huge IN never materializes it
         // and nothing reaches the driver.
-        val result = client.users.query().all()
+        val result = client.users.query().all(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<PostgresBindLimitException>(failed.exception)
@@ -185,9 +179,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
     @Test
     fun `the typed DSL's in operator does not materialize an oversized collection`() {
         val recording = RecordingDriver(resetAndDriver())
-        val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        val client = EntClient(recording)
         val virtual = VirtualIds()
         recording.reset()
 
@@ -197,7 +189,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         // Predicate.Leaf construction.
         val result = client.users.query {
             where(User.id `in` virtual)
-        }.all()
+        }.all(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         assertIs<PostgresBindLimitException>(failed.exception)
@@ -208,9 +200,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
     @Test
     fun `the enum DSL's in operator does not materialize its mapped operand either`() {
         val recording = RecordingDriver(resetAndDriver())
-        val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        val client = EntClient(recording)
         // The collection LENGTH is caller-controlled even though the
         // distinct constants are bounded: a huge list of repeated
         // enum values must not be mapped to storage names before the
@@ -227,7 +217,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
 
         val result = client.orders.query {
             where(entkt.integrationtest.ent.Order.status `in` virtual)
-        }.all()
+        }.all(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         assertIs<PostgresBindLimitException>(failed.exception)
@@ -237,15 +227,13 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `the capacity check also guards reads inside a transaction`() {
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        val client = EntClient(resetAndDriver())
         val virtual = VirtualIds()
 
         val outcome = client.withTransaction { tx ->
             val result = tx.users.query {
                 where(Predicate.Leaf<User>("id", Op.IN, virtual))
-            }.all()
+            }.all(testViewerContext)
             val failed = assertIs<ReadResult.Failed>(result)
             assertIs<PostgresBindLimitException>(failed.exception)
             "checked"
@@ -278,13 +266,11 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `the rejection surfaces as a Failed read result through a terminal`() {
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        val client = EntClient(resetAndDriver())
 
         val result = client.users.query {
             where(Predicate.Leaf<User>("id", Op.IN, idsOfSize(limit + 1)))
-        }.all()
+        }.all(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<PostgresBindLimitException>(failed.exception)

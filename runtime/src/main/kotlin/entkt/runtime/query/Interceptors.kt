@@ -1,6 +1,6 @@
 package entkt.runtime.query
 import entkt.runtime.result.EntQueryRejectedException
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 
 import entkt.query.OrderField
 import entkt.query.Predicate
@@ -228,7 +228,7 @@ data class UntypedQueryShape(
  * corrupting what later interceptors observe.
  */
 data class QueryContext(
-    val privacy: PrivacyContext,
+    val viewerContext: ViewerContext,
     val operation: ReadOperation,
     val rootEntity: KClass<*>,
     val currentEntity: KClass<*>,

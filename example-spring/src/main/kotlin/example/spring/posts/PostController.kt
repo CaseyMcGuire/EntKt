@@ -4,6 +4,8 @@ import entkt.runtime.query.requireLoaded
 import example.ent.EntClient
 import example.ent.Post
 import example.ent.PostTag
+import example.spring.auth.AuthContext
+import example.spring.auth.viewerContext
 import example.spring.tags.TagResponse
 import example.spring.tags.toResponse
 import org.springframework.http.HttpStatus
@@ -20,28 +22,34 @@ import org.springframework.web.server.ResponseStatusException
 
 @RestController
 @RequestMapping("/posts")
-class PostController(private val client: EntClient) {
+class PostController(
+    private val client: EntClient,
+    private val auth: AuthContext,
+) {
 
     @GetMapping
     fun list(@RequestParam published: Boolean?): List<PostResponse> {
+        val viewerContext = auth.viewerContext()
         val posts = client.posts.query {
             if (published != null) where(Post.published eq published)
             orderBy(Post.createdAt.desc())
-        }.all().getOrThrow()
+        }.all(viewerContext).getOrThrow()
         return posts.map { it.toResponse() }
     }
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: Long): PostResponse {
-        val post = client.posts.findById(id).getOrThrow()
+        val viewerContext = auth.viewerContext()
+        val post = client.posts.findById(viewerContext, id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return post.toResponse()
     }
 
     @PostMapping
     fun create(@RequestBody req: CreatePostRequest): PostResponse {
+        val viewerContext = auth.viewerContext()
         // Verify author exists
-        val author = client.users.findById(req.authorId).getOrThrow()
+        val author = client.users.findById(viewerContext, req.authorId).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Author not found")
 
         val post = client.posts.create {
@@ -49,25 +57,27 @@ class PostController(private val client: EntClient) {
             body = req.body
             published = req.published
             this.authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
         return post.toResponse()
     }
 
     @PutMapping("/{id}")
     fun update(@PathVariable id: Long, @RequestBody req: UpdatePostRequest): PostResponse {
+        val viewerContext = auth.viewerContext()
         // No pre-load: `update(id)` does its own internal byId.
         // Missing-row → Failed(EntTargetAbsentException) → 404 via ErrorHandler.
         val updated = client.posts.update(id) {
             req.title?.let { title = it }
             req.body?.let { body = it }
             req.published?.let { published = it }
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
         return updated.toResponse()
     }
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: Long) {
-        if (!client.posts.deleteById(id).getOrThrow()) {
+        val viewerContext = auth.viewerContext()
+        if (!client.posts.deleteById(viewerContext, id).getOrThrow()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
     }
@@ -89,28 +99,31 @@ class PostController(private val client: EntClient) {
      */
     @GetMapping("/{id}/tags")
     fun tags(@PathVariable id: Long): List<TagResponse> {
+        val viewerContext = auth.viewerContext()
         val post = client.posts.query {
             where(Post.id eq id)
             loadTags()
-        }.firstOrNull().getOrThrow() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        }.firstOrNull(viewerContext).getOrThrow()
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return post.edges.tags.requireLoaded().map { it.toResponse() }
     }
 
     /** Add a tag to a post. Idempotent — re-tagging is a no-op. */
     @PostMapping("/{id}/tags")
     fun addTag(@PathVariable id: Long, @RequestBody req: AddTagRequest): TagResponse {
-        val post = client.posts.findById(id).getOrThrow()
+        val viewerContext = auth.viewerContext()
+        val post = client.posts.findById(viewerContext, id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
-        val tag = client.tags.findById(req.tagId).getOrThrow()
+        val tag = client.tags.findById(viewerContext, req.tagId).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Tag not found")
         val alreadyLinked = client.postTags.query {
             where((PostTag.postId eq id) and (PostTag.tagId eq req.tagId))
-        }.rawExists().getOrThrow()
+        }.rawExists(viewerContext).getOrThrow()
         if (!alreadyLinked) {
             client.postTags.create {
                 this.postId = post.id
                 this.tagId = tag.id
-            }.save().getOrThrow()
+            }.save(viewerContext).getOrThrow()
         }
         return tag.toResponse()
     }
@@ -118,9 +131,11 @@ class PostController(private val client: EntClient) {
     /** Remove a tag from a post. */
     @DeleteMapping("/{postId}/tags/{tagId}")
     fun removeTag(@PathVariable postId: Long, @PathVariable tagId: Int) {
-        client.posts.findById(postId).getOrThrow()
+        val viewerContext = auth.viewerContext()
+        client.posts.findById(viewerContext, postId).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val deleted = client.postTags.deleteMany(
+            viewerContext,
             (PostTag.postId eq postId) and (PostTag.tagId eq tagId),
         ).getOrThrow()
         if (deleted == 0) {

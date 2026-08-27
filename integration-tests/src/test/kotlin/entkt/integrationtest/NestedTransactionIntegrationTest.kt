@@ -3,8 +3,6 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.driver.DriverTransactionResult
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
@@ -25,7 +23,7 @@ import kotlin.test.assertIs
  */
 class NestedTransactionIntegrationTest : PostgresTestBase() {
     private fun emails(client: EntClient): List<String> =
-        client.users.query { }.all().getOrThrow().map { it.email }.sorted()
+        client.users.query { }.all(testViewerContext).getOrThrow().map { it.email }.sorted()
 
     @Test
     fun `nested driver withTransaction throws before any nested transaction IO`() {
@@ -60,19 +58,12 @@ class NestedTransactionIntegrationTest : PostgresTestBase() {
     @Test
     fun `captured root client reads and transactions fail before application callbacks`() {
         val driver = resetAndDriver()
-        var privacyContextCalls = 0
-        val client = EntClient(driver) {
-            privacyContext {
-                privacyContextCalls++
-                PrivacyContext(Viewer.PrivacyBypass("test"))
-            }
-        }
+        val client = EntClient(driver)
         var nestedRan = false
 
         val result = client.withTransaction {
-            val read = assertIs<ReadResult.Failed>(client.users.query().all())
+            val read = assertIs<ReadResult.Failed>(client.users.query().all(testViewerContext))
             assertIs<RootOperationInsideTransactionException>(read.exception)
-            assertEquals(0, privacyContextCalls)
 
             assertFailsWith<NestedTransactionUnsupportedException> {
                 client.withTransaction {
@@ -85,8 +76,7 @@ class NestedTransactionIntegrationTest : PostgresTestBase() {
         assertEquals(TransactionResult.Success("ok"), result)
         assertFalse(nestedRan)
         // The finally path cleared the guard; ordinary root work is usable again.
-        assertEquals(emptyList(), client.users.query().all().getOrThrow())
-        assertEquals(1, privacyContextCalls)
+        assertEquals(emptyList(), client.users.query().all(testViewerContext).getOrThrow())
     }
 
     @Test
@@ -103,7 +93,7 @@ class NestedTransactionIntegrationTest : PostgresTestBase() {
                 capturedRoot.users.create {
                     name = "escaped"
                     email = "escaped@x"
-                }.save(),
+                }.save(testViewerContext),
             )
             val exception = assertIs<EntUnexpectedMutationException>(failure.exception)
             assertEquals(MutationWriteState.NotPersisted, exception.writeState)
@@ -120,7 +110,5 @@ class NestedTransactionIntegrationTest : PostgresTestBase() {
      * A verification client on a fresh connection, without resetting
      * the tables — reads what the transactions actually persisted.
      */
-    private fun freshChecker(): EntClient = EntClient(newDriver()) {
-        privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-    }
+    private fun freshChecker(): EntClient = EntClient(newDriver())
 }

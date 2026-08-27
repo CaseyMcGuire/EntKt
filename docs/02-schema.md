@@ -329,7 +329,7 @@ write to. Pick the write model with one of two markers:
 
 | Marker | When to use |
 |---|---|
-| `.throughEntity<Junction>(sourceEdge, targetEdge)` | Junction carries payload, hooks, privacy, or validation. Callers mutate it through the generated junction repo (e.g. `client.userGroups.create { ... }.save()`). |
+| `.throughEntity<Junction>(sourceEdge, targetEdge)` | Junction carries payload, hooks, privacy, or validation. Callers mutate it through the generated junction repo (e.g. `client.userGroups.create { ... }.save(viewerContext)`). |
 | `.throughLink<Junction>(sourceEdge, targetEdge)` | Junction is pure relationship storage (id + the two FK columns; no payload, no hooks, no privacy). Generated update builders get direct id-only edge helpers: `tags.add(tagId)` / `tags.remove(tagId)` / `tags.set(listOf(...))`. See [Edges → Many-to-Many](03-edges.md#many-to-many) for the full mutator API and the transaction/capability requirements. |
 
 The two refs always name the junction's `belongsTo` edges in the
@@ -693,7 +693,7 @@ field directly. The index name is the first argument and is required.
 
 Declared indexes also generate type-safe, index-friendly read helpers under
 the repo's `indexes` namespace
-(`client.users.indexes.email(...).find()`) -- see
+(`client.users.indexes.email(...).find(viewerContext)`) -- see
 [Queries -> Indexed Query Helpers](04-queries.md#indexed-query-helpers).
 
 ### Partial indexes

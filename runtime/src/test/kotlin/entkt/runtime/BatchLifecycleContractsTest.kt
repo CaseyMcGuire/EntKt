@@ -4,7 +4,7 @@ import entkt.runtime.hook.BatchHook
 import entkt.runtime.hook.Hook
 import entkt.runtime.hook.batchHook
 import entkt.runtime.privacy.BatchPrivacyRule
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRule
 import entkt.runtime.privacy.PrivacyRuleContext
@@ -29,8 +29,8 @@ import kotlin.test.assertSame
 
 class BatchLifecycleContractsTest {
 
-    private val privacyContext = PrivacyRuleContext(
-        privacy = PrivacyContext(Viewer.Anonymous),
+    private val viewerContext = PrivacyRuleContext(
+        viewerContext = ViewerContext(Viewer.Anonymous),
         client = "privacy-client",
     )
     private val validationContext = ValidationRuleContext(client = "validation-client")
@@ -80,7 +80,7 @@ class BatchLifecycleContractsTest {
                 PrivacyDecision.Allow,
                 PrivacyDecision.Continue,
             ),
-            decisionsFor(listOf(1, 2, 3)) { batch.runBatch(privacyContext, it) },
+            decisionsFor(listOf(1, 2, 3)) { batch.runBatch(viewerContext, it) },
         )
         assertEquals(listOf(1, 2, 3), visited)
     }
@@ -94,7 +94,7 @@ class BatchLifecycleContractsTest {
             batch.decideEach { PrivacyDecision.Deny("denied $it") }
         }
 
-        val decisions = decisionsFor(listOf(3, 1, 2)) { rule.runBatch(privacyContext, it) }
+        val decisions = decisionsFor(listOf(3, 1, 2)) { rule.runBatch(viewerContext, it) }
 
         assertEquals(1, calls)
         assertEquals(
@@ -114,7 +114,7 @@ class BatchLifecycleContractsTest {
 
         assertEquals(
             listOf(PrivacyDecision.Deny("1, 2")),
-            decisionsFor(listOf(listOf(1, 2))) { privacy.runBatch(privacyContext, it) },
+            decisionsFor(listOf(listOf(1, 2))) { privacy.runBatch(viewerContext, it) },
         )
         assertEquals(
             listOf(ValidationDecision.Valid),
@@ -141,7 +141,7 @@ class BatchLifecycleContractsTest {
 
         assertEquals(
             listOf(PrivacyDecision.Allow),
-            decisionsFor(listOf("value")) { privacyForStrings.runBatch(privacyContext, it) },
+            decisionsFor(listOf("value")) { privacyForStrings.runBatch(viewerContext, it) },
         )
         assertEquals(
             listOf(ValidationDecision.Valid),
@@ -184,9 +184,9 @@ class BatchLifecycleContractsTest {
 
     @Test
     fun `batch rules can be tested directly with an empty item batch`() {
-        var seenPrivacyContext: PrivacyRuleContext<String>? = null
+        var seenViewerContext: PrivacyRuleContext<String>? = null
         val privacy = batchPrivacyRule<String, Int> { context, batch ->
-            seenPrivacyContext = context
+            seenViewerContext = context
             batch.decideEach { PrivacyDecision.Allow }
         }
         var seenValidationContext: ValidationRuleContext<String>? = null
@@ -197,13 +197,13 @@ class BatchLifecycleContractsTest {
 
         assertEquals(
             emptyList(),
-            decisionsFor(emptyList<Int>()) { privacy.runBatch(privacyContext, it) },
+            decisionsFor(emptyList<Int>()) { privacy.runBatch(viewerContext, it) },
         )
         assertEquals(
             emptyList(),
             decisionsFor(emptyList<Int>()) { validation.validateBatch(validationContext, it) },
         )
-        assertSame(privacyContext, seenPrivacyContext)
+        assertSame(viewerContext, seenViewerContext)
         assertSame(validationContext, seenValidationContext)
     }
 
@@ -214,7 +214,7 @@ class BatchLifecycleContractsTest {
         contexts.clear()
 
         val decisions = BatchLifecycleJavaCompatibility.PRIVACY_BATCH_CLASS.runBatch(
-            BatchLifecycleJavaCompatibility.PRIVACY_CONTEXT,
+            BatchLifecycleJavaCompatibility.VIEWER_CONTEXT,
             batch,
         )
         val decorated = decisions.mapDecisions { decision ->
@@ -243,7 +243,7 @@ class BatchLifecycleContractsTest {
         assertEquals(
             listOf<PrivacyDecision>(PrivacyDecision.Allow),
             BatchLifecycleJavaCompatibility.PRIVACY_BATCH_CLASS.runBatch(
-                BatchLifecycleJavaCompatibility.PRIVACY_CONTEXT,
+                BatchLifecycleJavaCompatibility.VIEWER_CONTEXT,
                 RuleBatch.from(listOf("value")),
             ),
         )

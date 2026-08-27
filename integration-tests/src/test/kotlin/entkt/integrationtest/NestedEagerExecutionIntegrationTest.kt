@@ -18,7 +18,7 @@ import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
@@ -76,9 +76,7 @@ import kotlin.test.assertTrue
 class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     private fun bypassClient(recording: RecordingDriver): EntClient =
-        EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        EntClient(recording)
 
     /** The structural `field IN (...)` values of an eager subquery's shape. */
     private fun structuralInValues(predicates: List<Predicate<*>>, field: String): List<Any?> =
@@ -110,17 +108,17 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `nested eager queries under a has-many run once per configured path, not once per parent group`() {
         val recording = RecordingDriver(resetAndDriver())
         val client = bypassClient(recording)
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        val b = client.users.create { name = "B"; email = "b@example.com" }.saveAndLoad().getOrThrow()
-        val c = client.users.create { name = "C"; email = "c@example.com" }.saveAndLoad().getOrThrow()
-        client.users.create { name = "D"; email = "d@example.com" }.save().getOrThrow()
-        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
-        client.articles.create { title = "a2"; authorId = a.id }.save().getOrThrow()
-        client.articles.create { title = "b1"; authorId = b.id }.save().getOrThrow()
-        client.articles.create { title = "c1"; authorId = c.id }.save().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val b = client.users.create { name = "B"; email = "b@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val c = client.users.create { name = "C"; email = "c@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.users.create { name = "D"; email = "d@example.com" }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "a2"; authorId = a.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "b1"; authorId = b.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "c1"; authorId = c.id }.save(testViewerContext).getOrThrow()
         recording.reset()
 
-        client.users.query { loadArticles { loadAuthor() } }.all().getOrThrow()
+        client.users.query { loadArticles { loadAuthor() } }.all(testViewerContext).getOrThrow()
 
         // One root query, one batched articles query, and ONE nested
         // author query for the union of all three populated parent
@@ -140,10 +138,10 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `the nested pass sees the ordered distinct union of every parent group's structural values`() {
         val driver = resetAndDriver()
         val nestedPasses = mutableListOf<Pair<List<EdgeStep>, List<Any?>>>()
-        val nestedContexts = mutableListOf<PrivacyContext>()
-        val rootContext = PrivacyContext(Viewer.PrivacyBypass("test"))
+        val nestedContexts = mutableListOf<ViewerContext>()
+        val rootContext = testBypassContext("test")
         val client = EntClient(driver) {
-            privacyContext { rootContext }
+
             interceptors {
                 users(
                     QueryInterceptor { scope, ctx ->
@@ -151,25 +149,25 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                             nestedPasses.add(
                                 ctx.path to structuralInValues(scope.shape.predicates, "id"),
                             )
-                            nestedContexts.add(ctx.privacy)
+                            nestedContexts.add(ctx.viewerContext)
                         }
                     },
                     name = "nested-author-observer",
                 )
             }
         }
-        val alice = client.users.create { name = "alice"; email = "alice@example.com" }.saveAndLoad().getOrThrow()
-        val bob = client.users.create { name = "bob"; email = "bob@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "a1"; authorId = alice.id }.save().getOrThrow()
-        client.articles.create { title = "a2"; authorId = alice.id }.save().getOrThrow()
-        client.articles.create { title = "a0"; authorId = bob.id }.save().getOrThrow()
+        val alice = client.users.create { name = "alice"; email = "alice@example.com" }.saveAndLoad(rootContext).getOrThrow()
+        val bob = client.users.create { name = "bob"; email = "bob@example.com" }.saveAndLoad(rootContext).getOrThrow()
+        client.articles.create { title = "a1"; authorId = alice.id }.save(rootContext).getOrThrow()
+        client.articles.create { title = "a2"; authorId = alice.id }.save(rootContext).getOrThrow()
+        client.articles.create { title = "a0"; authorId = bob.id }.save(rootContext).getOrThrow()
 
         client.users.query {
             loadArticles {
                 orderBy(Article.title.asc())
                 loadAuthor()
             }
-        }.all().getOrThrow()
+        }.all(rootContext).getOrThrow()
 
         // Exactly one nested pass for the step, carrying the union of
         // both groups' author FK values in effective target order
@@ -183,7 +181,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         )
         assertEquals(listOf(nestedPath), nestedPasses.map { it.first })
         assertEquals(listOf(listOf<Any?>(bob.id, alice.id)), nestedPasses.map { it.second })
-        // The terminal-captured PrivacyContext instance reaches the
+        // The terminal-captured ViewerContext instance reaches the
         // nested pass unchanged — never a copy or a re-sampled
         // provider value.
         assertSame(rootContext, nestedContexts.single())
@@ -193,18 +191,18 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `nested eager queries under a many-to-many run once per configured path`() {
         val recording = RecordingDriver(resetAndDriver())
         val client = bypassClient(recording)
-        val g1 = client.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-        val g2 = client.groups.create { name = "g2" }.saveAndLoad().getOrThrow()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
-        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.saveAndLoad().getOrThrow()
-        val shared = client.users.create { name = "S"; email = "s@example.com" }.saveAndLoad().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = shared.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g2.id; userId = u2.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g2.id; userId = shared.id; role = "member" }.save().getOrThrow()
+        val g1 = client.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+        val g2 = client.groups.create { name = "g2" }.saveAndLoad(testViewerContext).getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val shared = client.users.create { name = "S"; email = "s@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = shared.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = u2.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = shared.id; role = "member" }.save(testViewerContext).getOrThrow()
         recording.reset()
 
-        client.groups.query { loadUsers { loadArticles() } }.all().getOrThrow()
+        client.groups.query { loadUsers { loadArticles() } }.all(testViewerContext).getOrThrow()
 
         // One junction query, one target query, and ONE nested
         // articles query for the union of both source groups — the
@@ -225,7 +223,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val driver = resetAndDriver()
         val nestedPasses = mutableListOf<List<Any?>>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { scope, ctx ->
@@ -237,22 +235,22 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val g1 = client.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-        val g2 = client.groups.create { name = "g2" }.saveAndLoad().getOrThrow()
-        val a = client.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad().getOrThrow()
-        val b = client.users.create { name = "b-member"; email = "bm@example.com" }.saveAndLoad().getOrThrow()
-        val z = client.users.create { name = "z-shared"; email = "zs@example.com" }.saveAndLoad().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g2.id; userId = b.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = z.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g2.id; userId = z.id; role = "member" }.save().getOrThrow()
+        val g1 = client.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+        val g2 = client.groups.create { name = "g2" }.saveAndLoad(testViewerContext).getOrThrow()
+        val a = client.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val b = client.users.create { name = "b-member"; email = "bm@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val z = client.users.create { name = "z-shared"; email = "zs@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = b.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = z.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = z.id; role = "member" }.save(testViewerContext).getOrThrow()
 
         client.groups.query {
             loadUsers {
                 orderBy(User.name.asc())
                 loadArticles()
             }
-        }.all().getOrThrow()
+        }.all(testViewerContext).getOrThrow()
 
         // One nested pass whose structural IN holds every member of
         // every source group, in effective target order, with the
@@ -264,15 +262,15 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `a shared many-to-many target is nested-loaded once and every source receives the same canonical copy`() {
         val recording = RecordingDriver(resetAndDriver())
         val client = bypassClient(recording)
-        val g1 = client.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-        val g2 = client.groups.create { name = "g2" }.saveAndLoad().getOrThrow()
-        val shared = client.users.create { name = "S"; email = "s@example.com" }.saveAndLoad().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = shared.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g2.id; userId = shared.id; role = "member" }.save().getOrThrow()
-        client.articles.create { title = "s1"; authorId = shared.id }.save().getOrThrow()
+        val g1 = client.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+        val g2 = client.groups.create { name = "g2" }.saveAndLoad(testViewerContext).getOrThrow()
+        val shared = client.users.create { name = "S"; email = "s@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = shared.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = shared.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "s1"; authorId = shared.id }.save(testViewerContext).getOrThrow()
         recording.reset()
 
-        val groups = client.groups.query { loadUsers { loadArticles() } }.all().getOrThrow()
+        val groups = client.groups.query { loadUsers { loadArticles() } }.all(testViewerContext).getOrThrow()
 
         // The shared member was decoded and nested-loaded once —
         // exactly one nested articles query — and both groups hold
@@ -289,9 +287,10 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a filterVisible-denied target does not reach the nested pass`() {
+        val viewerContext = ViewerContext(Viewer.User(999L))
         val nestedPasses = mutableListOf<List<Any?>>()
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.User(999L)) }
+
             policies {
                 groups(openGroups())
                 articles(openArticles())
@@ -322,20 +321,22 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val visibleId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val g1 = sys.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-            val visible = sys.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad().getOrThrow()
-            val hidden = sys.users.create { name = "hidden"; email = "h@example.com" }.saveAndLoad().getOrThrow()
-            sys.memberships.create { groupId = g1.id; userId = visible.id; role = "member" }.save().getOrThrow()
-            sys.memberships.create { groupId = g1.id; userId = hidden.id; role = "member" }.save().getOrThrow()
-            sys.articles.create { title = "a1"; authorId = visible.id }.save().getOrThrow()
-            sys.articles.create { title = "h1"; authorId = hidden.id }.save().getOrThrow()
+        val visibleId = run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            val g1 = sys.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+            val visible = sys.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            val hidden = sys.users.create { name = "hidden"; email = "h@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.memberships.create { groupId = g1.id; userId = visible.id; role = "member" }.save(testViewerContext).getOrThrow()
+            sys.memberships.create { groupId = g1.id; userId = hidden.id; role = "member" }.save(testViewerContext).getOrThrow()
+            sys.articles.create { title = "a1"; authorId = visible.id }.save(testViewerContext).getOrThrow()
+            sys.articles.create { title = "h1"; authorId = hidden.id }.save(testViewerContext).getOrThrow()
             visible.id
         }
 
         val groups = client.groups.query {
             loadUsers { loadArticles() }.filterVisible()
-        }.all().getOrThrow()
+        }.all(viewerContext).getOrThrow()
 
         // The denied member never triggers a nested read: its id is
         // absent from the nested structural IN, and its articles are
@@ -350,7 +351,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `a target outside the per-parent window does not reach the nested pass`() {
         val nestedPasses = mutableListOf<List<Any?>>()
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { scope, ctx ->
@@ -362,13 +363,13 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val g1 = client.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-        val a = client.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad().getOrThrow()
-        val b = client.users.create { name = "b-member"; email = "bm@example.com" }.saveAndLoad().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = b.id; role = "member" }.save().getOrThrow()
-        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
-        client.articles.create { title = "b1"; authorId = b.id }.save().getOrThrow()
+        val g1 = client.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+        val a = client.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val b = client.users.create { name = "b-member"; email = "bm@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = b.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "b1"; authorId = b.id }.save(testViewerContext).getOrThrow()
 
         val groups = client.groups.query {
             loadUsers {
@@ -376,7 +377,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 limit(1)
                 loadArticles()
             }
-        }.all().getOrThrow()
+        }.all(testViewerContext).getOrThrow()
 
         // The member the window excludes never triggers a nested
         // read: only the retained member's id reaches the nested
@@ -394,7 +395,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         val nestedInValues = mutableListOf<List<Any?>>()
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { scope, ctx ->
@@ -406,14 +407,14 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val alice = client.users.create { name = "alice"; email = "alice@example.com" }.saveAndLoad().getOrThrow()
-        val bob = client.users.create { name = "bob"; email = "bob@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "a1"; authorId = alice.id }.save().getOrThrow()
-        client.articles.create { title = "a2"; authorId = alice.id }.save().getOrThrow()
-        client.articles.create { title = "b1"; authorId = bob.id }.save().getOrThrow()
+        val alice = client.users.create { name = "alice"; email = "alice@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val bob = client.users.create { name = "bob"; email = "bob@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "a1"; authorId = alice.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "a2"; authorId = alice.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "b1"; authorId = bob.id }.save(testViewerContext).getOrThrow()
         recording.reset()
 
-        val articles = client.articles.query { loadAuthor { loadArticles() } }.all().getOrThrow()
+        val articles = client.articles.query { loadAuthor { loadArticles() } }.all(testViewerContext).getOrThrow()
 
         assertEquals(
             listOf(
@@ -442,14 +443,14 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `a has-one eager load batches, nests once, and attaches a single nullable target`() {
         val recording = RecordingDriver(resetAndDriver())
         val client = bypassClient(recording)
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        val b = client.users.create { name = "B"; email = "b@example.com" }.saveAndLoad().getOrThrow()
-        client.users.create { name = "C"; email = "c@example.com" }.save().getOrThrow()
-        client.profiles.create { bio = "a-bio"; ownerId = a.id }.save().getOrThrow()
-        client.profiles.create { bio = "b-bio"; ownerId = b.id }.save().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val b = client.users.create { name = "B"; email = "b@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.users.create { name = "C"; email = "c@example.com" }.save(testViewerContext).getOrThrow()
+        client.profiles.create { bio = "a-bio"; ownerId = a.id }.save(testViewerContext).getOrThrow()
+        client.profiles.create { bio = "b-bio"; ownerId = b.id }.save(testViewerContext).getOrThrow()
         recording.reset()
 
-        val users = client.users.query { loadProfile { loadOwner() } }.all().getOrThrow()
+        val users = client.users.query { loadProfile { loadOwner() } }.all(testViewerContext).getOrThrow()
 
         // Grouped like has-many — one batched profiles query, ONE
         // nested owner query for both groups' union — but attached
@@ -475,7 +476,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         var profileEagerPasses = 0
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 profiles(
                     QueryInterceptor { _, ctx ->
@@ -485,11 +486,11 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.profiles.create { bio = "a-bio"; ownerId = a.id }.save().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.profiles.create { bio = "a-bio"; ownerId = a.id }.save(testViewerContext).getOrThrow()
         recording.reset()
 
-        val users = client.users.query { loadProfile { offset(1) } }.all().getOrThrow()
+        val users = client.users.query { loadProfile { offset(1) } }.all(testViewerContext).getOrThrow()
 
         // The unique inverse guarantees at most one row per source,
         // so offset(1) steps past the only candidate: no target
@@ -506,10 +507,10 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `a nested pass completes before any later sibling edge starts`() {
         val recording = RecordingDriver(resetAndDriver())
         val client = bypassClient(recording)
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        val b = client.users.create { name = "B"; email = "b@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
-        client.articles.create { title = "b1"; authorId = b.id }.save().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val b = client.users.create { name = "B"; email = "b@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "b1"; authorId = b.id }.save(testViewerContext).getOrThrow()
         recording.reset()
 
         // Selected in reverse declaration order: User declares
@@ -518,7 +519,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
             loadGroups()
             loadDirectories()
             loadArticles { loadAuthor() }
-        }.all().getOrThrow()
+        }.all(testViewerContext).getOrThrow()
 
         // Execution is depth-first in schema-declaration order, not
         // call order: articles and its single set-batched nested
@@ -544,7 +545,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         var directoryInterceptorFires = 0
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { scope, ctx ->
@@ -560,14 +561,14 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
         recording.reset()
 
         val result = client.users.query {
             loadArticles { loadAuthor() }
             loadDirectories()
-        }.all()
+        }.all(testViewerContext)
 
         // The descendant rejection under articles fails the terminal
         // before the directories sibling runs any callback or query.
@@ -585,7 +586,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         var directoryInterceptorFires = 0
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { scope, ctx ->
@@ -601,12 +602,12 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val g1 = client.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-        val g2 = client.groups.create { name = "g2" }.saveAndLoad().getOrThrow()
-        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad().getOrThrow()
-        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.saveAndLoad().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = u1.id; role = "member" }.save().getOrThrow()
-        client.memberships.create { groupId = g2.id; userId = u2.id; role = "member" }.save().getOrThrow()
+        val g1 = client.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+        val g2 = client.groups.create { name = "g2" }.saveAndLoad(testViewerContext).getOrThrow()
+        val u1 = client.users.create { name = "U1"; email = "u1@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val u2 = client.users.create { name = "U2"; email = "u2@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = u1.id; role = "member" }.save(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g2.id; userId = u2.id; role = "member" }.save(testViewerContext).getOrThrow()
         recording.reset()
 
         // Under the M2M, User declares articles before directories, so
@@ -617,7 +618,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 loadArticles()
                 loadDirectories()
             }
-        }.all()
+        }.all(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
@@ -644,7 +645,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         }
         var userInterceptorFires = 0
         val client = EntClient(failingJunction) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { scope, ctx ->
@@ -657,9 +658,9 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.groups.create { name = "g1" }.save().getOrThrow()
+        client.groups.create { name = "g1" }.save(testViewerContext).getOrThrow()
 
-        val result = client.groups.query { loadUsers() }.all()
+        val result = client.groups.query { loadUsers() }.all(testViewerContext)
 
         // Association discovery completes before the target
         // interceptor pass, so the junction I/O failure is the
@@ -673,7 +674,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `a malformed null junction target stays visible to the interceptor but never becomes an association`() {
         val passes = mutableListOf<List<Any?>>()
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { scope, ctx ->
@@ -685,13 +686,13 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val g1 = client.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-        val a = client.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad().getOrThrow()
-        client.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save().getOrThrow()
+        val g1 = client.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+        val a = client.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save(testViewerContext).getOrThrow()
         // Malformed row: a junction membership with no target user.
-        client.memberships.create { groupId = g1.id; role = "dangling" }.save().getOrThrow()
+        client.memberships.create { groupId = g1.id; role = "dangling" }.save(testViewerContext).getOrThrow()
 
-        val groups = client.groups.query { loadUsers() }.all().getOrThrow()
+        val groups = client.groups.query { loadUsers() }.all(testViewerContext).getOrThrow()
 
         // The interceptor's structural predicate exposes the complete
         // discovered target-value list — the malformed null included —
@@ -710,7 +711,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val observedPaths = mutableListOf<List<EdgeStep>>()
         val nestedPaths = mutableListOf<List<EdgeStep>>()
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { _, ctx ->
@@ -737,10 +738,10 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
 
-        client.users.query { loadArticles { loadAuthor() } }.all().getOrThrow()
+        client.users.query { loadArticles { loadAuthor() } }.all(testViewerContext).getOrThrow()
 
         val articlesStep = listOf(EdgeStep(User::class, "articles", Article::class))
         val nestedStep = articlesStep + EdgeStep(Article::class, "author", User::class)
@@ -753,7 +754,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         var captured: ArticleQuery? = null
         val contexts = mutableListOf<entkt.runtime.query.QueryContext>()
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { _, ctx -> contexts.add(ctx) },
@@ -761,20 +762,20 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
         val query = client.users.query()
         query.loadArticles { captured = this }
 
         // Run the parent's terminal, which seeds the child's traversal
         // context for its eager step.
-        query.all().getOrThrow()
+        query.all(testViewerContext).getOrThrow()
         contexts.clear()
 
         // Executed on its own, the captured child is what it was
         // constructed as: a root ArticleQuery — no stale eager
         // attribution from the parent's earlier runs.
-        assertNotNull(captured).all().getOrThrow()
+        assertNotNull(captured).all(testViewerContext).getOrThrow()
         val ctx = contexts.single()
         assertEquals(ReadOperation.ALL, ctx.operation)
         assertEquals(emptyList(), ctx.path)
@@ -790,7 +791,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         var captured: ArticleQuery? = null
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { _, ctx ->
@@ -800,10 +801,10 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
-        client.articles.create { title = "a2"; authorId = a.id }.save().getOrThrow()
-        client.articles.create { title = "a3"; authorId = a.id }.save().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "a2"; authorId = a.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "a3"; authorId = a.id }.save(testViewerContext).getOrThrow()
         val query = client.users.query()
         var target: ArticleQuery? = null
         query.loadArticles { target = this }
@@ -812,13 +813,13 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         // The step's window comes from the spec frozen before the
         // interceptor chain ran, so the mid-flight limit(1) cannot
         // shift what this execution loads.
-        val first = query.all().getOrThrow().single()
+        val first = query.all(testViewerContext).getOrThrow().single()
         assertEquals(3, first.edges.articles.requireLoaded().size)
 
         // The mutation persisted on the captured query, so — like any
         // other post-terminal mutation — it governs later executions.
         captured = null
-        val second = query.all().getOrThrow().single()
+        val second = query.all(testViewerContext).getOrThrow().single()
         assertEquals(1, second.edges.articles.requireLoaded().size)
     }
 
@@ -826,10 +827,11 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `nested privacy rules receive one ordered distinct union batch per logical edge step`() {
+        val viewerContext = ViewerContext(Viewer.User(999L))
         val invocations = mutableListOf<List<String>>()
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(999L)) }
+
             policies {
                 groups(openGroups())
                 users(openUsers())
@@ -845,18 +847,20 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val g1 = sys.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-            val g2 = sys.groups.create { name = "g2" }.saveAndLoad().getOrThrow()
-            val a = sys.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad().getOrThrow()
-            val b = sys.users.create { name = "b-member"; email = "bm@example.com" }.saveAndLoad().getOrThrow()
-            sys.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save().getOrThrow()
-            sys.memberships.create { groupId = g2.id; userId = b.id; role = "member" }.save().getOrThrow()
-            sys.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
-            sys.articles.create { title = "b1"; authorId = b.id }.save().getOrThrow()
+        run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            val g1 = sys.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+            val g2 = sys.groups.create { name = "g2" }.saveAndLoad(testViewerContext).getOrThrow()
+            val a = sys.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            val b = sys.users.create { name = "b-member"; email = "bm@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save(testViewerContext).getOrThrow()
+            sys.memberships.create { groupId = g2.id; userId = b.id; role = "member" }.save(testViewerContext).getOrThrow()
+            sys.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
+            sys.articles.create { title = "b1"; authorId = b.id }.save(testViewerContext).getOrThrow()
         }
 
-        client.groups.query { loadUsers { loadArticles() } }.all().getOrThrow()
+        client.groups.query { loadUsers { loadArticles() } }.all(viewerContext).getOrThrow()
 
         // Both source groups' members feed ONE nested articles pass,
         // so the LOAD-privacy rule sees one batch holding the union
@@ -866,9 +870,10 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a strict nested denial projects the first denial from the union batch with the full path`() {
+        val viewerContext = ViewerContext(Viewer.User(999L))
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(999L)) }
+
             policies {
                 groups(openGroups())
                 users(openUsers())
@@ -889,23 +894,25 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        val deniedId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val g1 = sys.groups.create { name = "g1" }.saveAndLoad().getOrThrow()
-            val g2 = sys.groups.create { name = "g2" }.saveAndLoad().getOrThrow()
-            val a = sys.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad().getOrThrow()
-            val b = sys.users.create { name = "b-member"; email = "bm@example.com" }.saveAndLoad().getOrThrow()
-            sys.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save().getOrThrow()
-            sys.memberships.create { groupId = g2.id; userId = b.id; role = "member" }.save().getOrThrow()
+        val deniedId = run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            val g1 = sys.groups.create { name = "g1" }.saveAndLoad(testViewerContext).getOrThrow()
+            val g2 = sys.groups.create { name = "g2" }.saveAndLoad(testViewerContext).getOrThrow()
+            val a = sys.users.create { name = "a-member"; email = "am@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            val b = sys.users.create { name = "b-member"; email = "bm@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.memberships.create { groupId = g1.id; userId = a.id; role = "member" }.save(testViewerContext).getOrThrow()
+            sys.memberships.create { groupId = g2.id; userId = b.id; role = "member" }.save(testViewerContext).getOrThrow()
             // The denied article belongs to the SECOND group's member
             // but is created first, so it leads the union's effective
             // order — under per-group recursion the first group's
             // clean article would have been evaluated first.
-            val denied = sys.articles.create { title = "secret-b"; authorId = b.id }.saveAndLoad().getOrThrow()
-            sys.articles.create { title = "a1"; authorId = a.id }.save().getOrThrow()
+            val denied = sys.articles.create { title = "secret-b"; authorId = b.id }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
             denied.id
         }
 
-        val result = client.groups.query { loadUsers { loadArticles() } }.all()
+        val result = client.groups.query { loadUsers { loadArticles() } }.all(viewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -931,7 +938,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val articlePrivacyBatches = mutableListOf<List<String>>()
         val userPrivacyBatches = mutableListOf<List<String>>()
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.User(999L)) }
+
             policies {
                 users(object : EntityPolicy<User, UserPolicyScope> {
                     override fun configure(scope: UserPolicyScope) = scope.run {
@@ -973,16 +980,18 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-            sys.articles.create { title = "a1"; authorId = author.id }.save().getOrThrow()
+        run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            val author = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.articles.create { title = "a1"; authorId = author.id }.save(testViewerContext).getOrThrow()
         }
         recording.reset()
 
         client.users.query {
             where(User.name eq "nobody")
             loadArticles { loadAuthor() }
-        }.all().getOrThrow()
+        }.all(testViewerContext).getOrThrow()
 
         // The root matched nothing, so both configured eager paths run
         // exactly one interceptor pass with an EMPTY structural IN,
@@ -1001,7 +1010,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val articlePasses = mutableListOf<List<Any?>>()
         val nestedAuthorPasses = mutableListOf<List<Any?>>()
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { scope, ctx ->
@@ -1021,11 +1030,11 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        val b = client.users.create { name = "B"; email = "b@example.com" }.saveAndLoad().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val b = client.users.create { name = "B"; email = "b@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         recording.reset()
 
-        client.users.query { loadArticles { loadAuthor() } }.all().getOrThrow()
+        client.users.query { loadArticles { loadAuthor() } }.all(testViewerContext).getOrThrow()
 
         // Both parents exist, so the articles fetch runs — it matches
         // nothing, leaving zero parent groups. The nested author edge
@@ -1043,7 +1052,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         val userPasses = mutableListOf<List<Any?>>()
         val nestedArticlePasses = mutableListOf<List<Any?>>()
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { scope, ctx ->
@@ -1063,11 +1072,11 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.groups.create { name = "g1" }.save().getOrThrow()
-        client.groups.create { name = "g2" }.save().getOrThrow()
+        client.groups.create { name = "g1" }.save(testViewerContext).getOrThrow()
+        client.groups.create { name = "g2" }.save(testViewerContext).getOrThrow()
         recording.reset()
 
-        client.groups.query { loadUsers { loadArticles() } }.all().getOrThrow()
+        client.groups.query { loadUsers { loadArticles() } }.all(testViewerContext).getOrThrow()
 
         // Parents exist, so the junction query runs — it discovers no
         // target IDs, so the M2M target edge and its nested child each

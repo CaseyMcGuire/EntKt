@@ -30,7 +30,7 @@ repositories {
 
 dependencies {
     // EntitySchema/ColumnMetadata (schema pages, redaction flags) and
-    // PrivacyContext (the per-request context contract) are runtime types.
+    // ViewerContext (the per-request context contract) are runtime types.
     api(project(":runtime"))
     // Server-side HTML + CSS rendering; internal to the renderer.
     implementation(libs.kotlinx.html)

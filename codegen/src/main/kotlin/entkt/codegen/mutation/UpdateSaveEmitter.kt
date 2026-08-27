@@ -14,6 +14,7 @@ import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.lifecycleValueSnapshot
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.schema.Field
 import entkt.schema.FieldType
 import entkt.schema.UpdateDefault
@@ -69,6 +70,7 @@ internal class UpdateSaveEmitter(
 
     private val builder = FunSpec.builder("executeSave")
         .addModifiers(KModifier.PRIVATE)
+        .addParameter("viewerContext", VIEWER_CONTEXT)
         .addParameter("applyLoadPrivacy", BOOLEAN)
         .returns(MUTATION_RESULT.parameterizedBy(entityClass))
 
@@ -348,7 +350,7 @@ internal class UpdateSaveEmitter(
             lifecycleValueSnapshot("entity", allFields, entityClass),
         )
         builder.addStatement(
-            "val ctx = %T(client.hookClientScopeForInternalUse, beforeSnapshot, snapshot, pendingEdges, _mutationView)",
+            "val ctx = %T(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, _mutationView)",
             updateHookCtxClass,
         )
         // Rebuild the update context before every hook so later hooks see
@@ -430,7 +432,6 @@ internal class UpdateSaveEmitter(
         }
         builder.beginControlFlow(emptyBranchCondition)
         builder.addStatement("val effectivePatch = requestedPatch")
-        builder.addStatement("val privacy = client.currentPrivacyContext()")
         emitCandidateConstruction(
             builder,
             candidateClass = candidateClass,
@@ -438,7 +439,7 @@ internal class UpdateSaveEmitter(
             edgeFks = allEdgeFks,
         )
         builder.addStatement(
-            "val denialReason = client.%L.updateDenialReasonOrNull(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            "val denialReason = client.%L.updateDenialReasonOrNull(viewerContext, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
             repoPropName,
         )
         builder.beginControlFlow("if (denialReason != null)")
@@ -458,7 +459,7 @@ internal class UpdateSaveEmitter(
         )
         builder.addStatement("if (violations.isNotEmpty()) return·_validationFailed(violations)")
         builder.beginControlFlow("if (applyLoadPrivacy)")
-        builder.addStatement("val denial = client.%L.loadDenialOrNull(privacy, entity)", repoPropName)
+        builder.addStatement("val denial = client.%L.loadDenialOrNull(viewerContext, entity)", repoPropName)
         builder.beginControlFlow("if (denial != null)")
         builder.addCode(
             privacyDeniedFailure(
@@ -544,7 +545,6 @@ internal class UpdateSaveEmitter(
         // returned Deny / non-empty violation list becomes the typed
         // exception here, while a rule-THROWN exception escapes to the
         // terminal boundary as a foreign failure.
-        builder.addStatement("val privacy = client.currentPrivacyContext()")
         emitCandidateConstruction(
             builder,
             candidateClass = candidateClass,
@@ -552,7 +552,7 @@ internal class UpdateSaveEmitter(
             edgeFks = allEdgeFks,
         )
         builder.addStatement(
-            "val denialReason = client.%L.updateDenialReasonOrNull(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            "val denialReason = client.%L.updateDenialReasonOrNull(viewerContext, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
             repoPropName,
         )
         builder.beginControlFlow("if (denialReason != null)")
@@ -778,7 +778,7 @@ internal class UpdateSaveEmitter(
         // operation = LOAD, so "write happened but you can't see it"
         // is distinguishable from a pre-write UPDATE rejection.
         builder.beginControlFlow("if (applyLoadPrivacy)")
-        builder.addStatement("val denial = client.%L.loadDenialOrNull(privacy, updatedEntity)", repoPropName)
+        builder.addStatement("val denial = client.%L.loadDenialOrNull(viewerContext, updatedEntity)", repoPropName)
         builder.beginControlFlow("if (denial != null)")
         builder.addCode(
             privacyDeniedFailure(

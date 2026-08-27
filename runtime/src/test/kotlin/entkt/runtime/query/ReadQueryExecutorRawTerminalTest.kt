@@ -10,14 +10,12 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.PrivacyContextProvider
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntQueryConfigurationException
-import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ReadResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -105,14 +103,14 @@ class ReadQueryExecutorRawTerminalTest {
 
     }
 
-    private val privacyContext = PrivacyContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext(Viewer.User(7L))
 
     private object NoLoadPrivacy : LoadPrivacyEvaluator {
         override fun isConfigured(entity: EntityMapping<*>): Boolean = false
 
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
-            privacyContext: PrivacyContext,
+            viewerContext: ViewerContext,
             entities: List<Entity>,
         ): List<LoadPrivacyEvaluation<Entity>> = error("LOAD privacy is not configured")
     }
@@ -135,13 +133,10 @@ class ReadQueryExecutorRawTerminalTest {
 
     private fun executor(
         driver: RecordingDriver,
-        privacyCaptures: () -> Unit = {},
+        executionGuard: () -> Unit = {},
     ): ReadQueryExecutor<Item> = ReadQueryExecutor(
         driver = driver,
-        privacyContextProvider = PrivacyContextProvider {
-            privacyCaptures()
-            privacyContext
-        },
+        readExecutionGuard = executionGuard,
         registeredInterceptorsProvider = { EntInterceptorsConfig() },
         loadPrivacyEvaluatorProvider = { NoLoadPrivacy },
     )
@@ -153,11 +148,16 @@ class ReadQueryExecutorRawTerminalTest {
         val driver = RecordingDriver()
         val executor = executor(driver)
 
-        assertEquals(4L, assertIs<ReadResult.Success<Long>>(executor.rawCount { query(mapping) }).value)
+        assertEquals(
+            4L,
+            assertIs<ReadResult.Success<Long>>(
+                executor.rawCount(viewerContext) { query(mapping) },
+            ).value,
+        )
         assertEquals(
             true,
             assertIs<ReadResult.Success<Boolean>>(
-                executor.rawExists { query(mapping, offset = 3) },
+                executor.rawExists(viewerContext) { query(mapping, offset = 3) },
             ).value,
         )
         assertEquals(emptyList(), driver.queryOrder)
@@ -165,6 +165,7 @@ class ReadQueryExecutorRawTerminalTest {
         assertEquals(3, driver.queryOffset)
 
         val aggregate = executor.rawAggregate(
+            viewerContext = viewerContext,
             captureQuery = { query(mapping) },
             terminal = "rawSum",
             function = AggregateFunction.SUM,
@@ -178,7 +179,7 @@ class ReadQueryExecutorRawTerminalTest {
     }
 
     @Test
-    fun `selected edges fail before privacy capture or storage work`() {
+    fun `selected edges fail before the execution guard or storage work`() {
         val mapping = ItemMapping()
         val edge = ChildEdge(mapping).also { mapping.childEdge = it }
         val selectedTarget = query(mapping)
@@ -187,13 +188,13 @@ class ReadQueryExecutorRawTerminalTest {
             edges = listOf(EdgeSelection(edge, selectedTarget, EdgeVisibility.REQUIRE_VISIBLE)),
         )
         val driver = RecordingDriver()
-        var privacyCaptures = 0
-        val result = executor(driver) { privacyCaptures++ }.rawCount { selected }
+        var guardCalls = 0
+        val result = executor(driver) { guardCalls++ }.rawCount(viewerContext) { selected }
 
         val failure = assertIs<ReadResult.Failed>(result)
         assertIs<EntQueryConfigurationException>(failure.exception)
         assertTrue(failure.exception.message.orEmpty().contains("Item.children"))
-        assertEquals(0, privacyCaptures)
+        assertEquals(0, guardCalls)
         assertEquals(0, driver.countCalls)
     }
 
@@ -202,6 +203,7 @@ class ReadQueryExecutorRawTerminalTest {
         val mapping = ItemMapping()
         mapping.childEdge = ChildEdge(mapping)
         val result = executor(RecordingDriver()).rawAggregate(
+            viewerContext = viewerContext,
             captureQuery = { query(mapping) },
             terminal = "rawSum",
             function = AggregateFunction.SUM,
@@ -225,7 +227,10 @@ class ReadQueryExecutorRawTerminalTest {
             orderBy = listOf(OrderField("id", OrderDirection.DESC)),
         )
 
-        assertEquals(false, assertIs<ReadResult.Success<Boolean>>(executor.rawExists { query }).value)
+        assertEquals(
+            false,
+            assertIs<ReadResult.Success<Boolean>>(executor.rawExists(viewerContext) { query }).value,
+        )
         assertEquals(emptyList(), driver.queryOrder)
         assertEquals(0, driver.queryLimit)
         assertEquals(6, driver.queryOffset)
@@ -236,15 +241,15 @@ class ReadQueryExecutorRawTerminalTest {
     fun `query capture failures remain inside the read result boundary`() {
         val mapping = ItemMapping().also { it.childEdge = ChildEdge(it) }
         val driver = RecordingDriver()
-        var privacyCaptures = 0
+        var guardCalls = 0
         val failure = IllegalStateException("capture failed")
 
-        val result = executor(driver) { privacyCaptures++ }.rawCount {
+        val result = executor(driver) { guardCalls++ }.rawCount(viewerContext) {
             throw failure
         }
 
         assertSame(failure, assertIs<ReadResult.Failed>(result).exception)
-        assertEquals(0, privacyCaptures)
+        assertEquals(0, guardCalls)
         assertEquals(0, driver.countCalls)
     }
 }

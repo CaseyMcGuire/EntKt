@@ -3,8 +3,6 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.Note
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -31,15 +29,13 @@ class FieldBackedFkDeclarationNameIntegrationTest : PostgresTestBase() {
 
     private fun freshClient(): EntClient {
         val driver = resetAndDriver()
-        return EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        return EntClient(driver)
     }
 
     @Test
     fun `generated entity exposes FK as 'writer', not 'authorId'`() {
         val client = freshClient()
-        val user = client.users.create { name = "Alice"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        val user = client.users.create { name = "Alice"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
 
         // Compile-time: the FK property on Note is `writer`. If the
         // declaration-name capture capture regressed and the property reverted to
@@ -47,7 +43,7 @@ class FieldBackedFkDeclarationNameIntegrationTest : PostgresTestBase() {
         val note: Note = client.notes.create {
             body = "first"
             writer = user.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals(user.id, note.writer)
         assertEquals("first", note.body)
@@ -56,11 +52,11 @@ class FieldBackedFkDeclarationNameIntegrationTest : PostgresTestBase() {
     @Test
     fun `storage column remains 'author_id' even though the Kotlin API says 'writer'`() {
         val client = freshClient()
-        val user = client.users.create { name = "Bob"; email = "b@example.com" }.saveAndLoad().getOrThrow()
+        val user = client.users.create { name = "Bob"; email = "b@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         val note = client.notes.create {
             body = "raw-check"
             writer = user.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         // Read the row back via the column name. If declaration-name capture
         // accidentally renamed the storage column too, this query
@@ -82,19 +78,19 @@ class FieldBackedFkDeclarationNameIntegrationTest : PostgresTestBase() {
     @Test
     fun `update through 'writer' setter writes to the author_id column`() {
         val client = freshClient()
-        val alice = client.users.create { name = "Alice"; email = "alice@example.com" }.saveAndLoad().getOrThrow()
-        val bob = client.users.create { name = "Bob"; email = "bob@example.com" }.saveAndLoad().getOrThrow()
+        val alice = client.users.create { name = "Alice"; email = "alice@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val bob = client.users.create { name = "Bob"; email = "bob@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         val note = client.notes.create {
             body = "x"
             writer = alice.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         client.notes.update(note.id) {
             writer = bob.id
-        }.save().getOrThrow()
+        }.save(testViewerContext).getOrThrow()
 
         // Read back via the Kotlin API.
-        val reread = client.notes.findById(note.id).getOrThrow()
+        val reread = client.notes.findById(testViewerContext, note.id).getOrThrow()
         assertNotNull(reread)
         assertEquals(bob.id, reread.writer, "update through `writer` setter should change the FK")
 

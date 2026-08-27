@@ -2,6 +2,8 @@ package example.spring.tags
 
 import example.ent.EntClient
 import example.ent.Tag
+import example.spring.auth.AuthContext
+import example.spring.auth.viewerContext
 import example.spring.posts.PostResponse
 import example.spring.posts.toResponse
 import org.springframework.http.HttpStatus
@@ -16,35 +18,42 @@ import org.springframework.web.server.ResponseStatusException
 
 @RestController
 @RequestMapping("/tags")
-class TagController(private val client: EntClient) {
+class TagController(
+    private val client: EntClient,
+    private val auth: AuthContext,
+) {
 
     @GetMapping
     fun list(): List<TagResponse> {
+        val viewerContext = auth.viewerContext()
         val tags = client.tags.query {
             orderBy(Tag.name.asc())
-        }.all().getOrThrow()
+        }.all(viewerContext).getOrThrow()
         return tags.map { it.toResponse() }
     }
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: Int): TagResponse {
-        val tag = client.tags.findById(id).getOrThrow()
+        val viewerContext = auth.viewerContext()
+        val tag = client.tags.findById(viewerContext, id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         return tag.toResponse()
     }
 
     @PostMapping
     fun create(@RequestBody req: CreateTagRequest): TagResponse {
+        val viewerContext = auth.viewerContext()
         val tag = client.tags.create {
             name = req.name
             category = req.category
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
         return tag.toResponse()
     }
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: Int) {
-        if (!client.tags.deleteById(id).getOrThrow()) {
+        val viewerContext = auth.viewerContext()
+        if (!client.tags.deleteById(viewerContext, id).getOrThrow()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
     }
@@ -65,11 +74,12 @@ class TagController(private val client: EntClient) {
      */
     @GetMapping("/{id}/posts")
     fun posts(@PathVariable id: Int): List<PostResponse> {
-        client.tags.findById(id).getOrThrow()
+        val viewerContext = auth.viewerContext()
+        client.tags.findById(viewerContext, id).getOrThrow()
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
         val posts = client.tags.query { where(Tag.id eq id) }
             .queryPosts()
-            .all().getOrThrow()
+            .all(viewerContext).getOrThrow()
         return posts.map { it.toResponse() }
     }
 }

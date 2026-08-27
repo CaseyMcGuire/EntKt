@@ -6,6 +6,7 @@ import entkt.runtime.rule.RuleDecisions
 import entkt.runtime.rule.decisionsForInternalUse
 import entkt.runtime.rule.ruleBatchForInternalUse
 import entkt.runtime.result.EntBatchRuleContractException
+import entkt.runtime.privacy.ViewerContext
 
 /**
  * State shared by every item and rule in one validation evaluation phase.
@@ -17,7 +18,16 @@ import entkt.runtime.result.EntBatchRuleContractException
  */
 class ValidationRuleContext<out Client>(
     val client: Client,
-)
+) {
+    /** Explicit privileged context for reads performed while validating invariants. */
+    val readViewerContext: ViewerContext
+        get() = VALIDATION_READ_VIEWER_CONTEXT
+
+    private companion object {
+        val VALIDATION_READ_VIEWER_CONTEXT: ViewerContext =
+            ViewerContext.privacyBypass_DANGEROUS("validation read")
+    }
+}
 
 /**
  * The result of evaluating a single validation rule.

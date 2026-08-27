@@ -10,7 +10,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -41,6 +41,7 @@ import kotlin.test.assertTrue
  *       committed subset.
  */
 class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
+    private var viewerContext = testViewerContext
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -68,9 +69,10 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
         config: entkt.integrationtest.ent.EntClientConfig.() -> Unit = {},
     ): EntClient {
+        viewerContext = ViewerContext(viewer)
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies {
                 articles(articlePolicy)
                 users(OpenUser)
@@ -84,15 +86,17 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         title: String = "Hello",
         payload: ByteArray? = null,
     ): Article {
-        return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val author = sys.users.query().firstOrNull().getOrThrow()
-                ?: sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        return run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            val author = sys.users.query().firstOrNull(viewerContext).getOrThrow()
+                ?: sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(viewerContext).getOrThrow()
             sys.articles.create {
                 this.title = title
                 published = true
                 authorId = author.id
                 this.payload = payload
-            }.saveAndLoad().getOrThrow()
+            }.saveAndLoad(viewerContext).getOrThrow()
         }
     }
 
@@ -103,10 +107,10 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         val article = seedArticle(client)
 
-        val result = client.articles.delete(article)
+        val result = client.articles.delete(viewerContext, article)
 
         assertEquals(MutationResult.Success(Unit), result)
-        assertEquals(0L, client.articles.query().rawCount().getOrThrow())
+        assertEquals(0L, client.articles.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
@@ -115,7 +119,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         var afterDeletes = 0
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { articles(AllowAllArticles); users(OpenUser) }
             hooks {
                 articles {
@@ -126,13 +130,13 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         }
         val article = seedArticle(client)
 
-        assertEquals(MutationResult.Success(Unit), client.articles.delete(article))
+        assertEquals(MutationResult.Success(Unit), client.articles.delete(viewerContext, article))
         assertEquals(1, beforeDeletes)
         assertEquals(1, afterDeletes)
 
         // Second delete: the row is absent at reload — Success(Unit),
         // and neither before- nor after-delete callbacks run.
-        assertEquals(MutationResult.Success(Unit), client.articles.delete(article))
+        assertEquals(MutationResult.Success(Unit), client.articles.delete(viewerContext, article))
         assertEquals(1, beforeDeletes)
         assertEquals(1, afterDeletes)
     }
@@ -142,7 +146,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
-        val result = client.articles.delete(article)
+        val result = client.articles.delete(viewerContext, article)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -154,7 +158,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         assertEquals(article.id, ex.entityKey?.value)
 
         // Row still present.
-        assertEquals(1L, client.articles.query().rawCount().getOrThrow())
+        assertEquals(1L, client.articles.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
@@ -162,7 +166,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
-        val result = client.articles.delete(article)
+        val result = client.articles.delete(viewerContext, article)
         val failed = assertIs<MutationResult.Failed>(result)
         try {
             result.getOrThrow()
@@ -179,17 +183,17 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         val article = seedArticle(client)
 
-        val result = client.articles.deleteById(article.id)
+        val result = client.articles.deleteById(viewerContext, article.id)
         val success = assertIs<MutationResult.Success<Boolean>>(result)
         assertTrue(success.value)
-        assertEquals(0L, client.articles.query().rawCount().getOrThrow())
+        assertEquals(0L, client.articles.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
     fun `deleteById returns Success(false) when no row existed`() {
         val client = freshClient()
 
-        val result = client.articles.deleteById(999_999L)
+        val result = client.articles.deleteById(viewerContext, 999_999L)
         val success = assertIs<MutationResult.Success<Boolean>>(result)
         assertFalse(success.value)
     }
@@ -199,12 +203,12 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
-        val result = client.articles.deleteById(article.id)
+        val result = client.articles.deleteById(viewerContext, article.id)
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
         assertEquals(EntOperation.DELETE, ex.operation)
         // Row still there.
-        assertEquals(1L, client.articles.query().rawCount().getOrThrow())
+        assertEquals(1L, client.articles.query().rawCount(viewerContext).getOrThrow())
     }
 
     // ---- deleteMany atomicity ----
@@ -216,10 +220,10 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         seedArticle(client, "Two")
         seedArticle(client, "Keep")
 
-        val result = client.articles.deleteMany(Article.published.eq(true))
+        val result = client.articles.deleteMany(viewerContext, Article.published.eq(true))
         // All three match published = true.
         assertEquals(MutationResult.Success(3), result)
-        assertEquals(0L, client.articles.query().rawCount().getOrThrow())
+        assertEquals(0L, client.articles.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
@@ -238,11 +242,11 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         }
         seedArticle(client, title = "Frozen", payload = byteArrayOf(1))
 
-        val result = client.articles.deleteMany(Article.payload eq operand)
+        val result = client.articles.deleteMany(viewerContext, Article.payload eq operand)
 
         assertEquals(MutationResult.Success(1), result)
         assertEquals(1, beforeDeletes)
-        assertEquals(0L, client.articles.query().rawCount().getOrThrow())
+        assertEquals(0L, client.articles.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
@@ -255,7 +259,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         seedArticle(client, "Two")
         seedArticle(client, "Three")
 
-        val result = client.articles.deleteMany(Article.published.eq(true))
+        val result = client.articles.deleteMany(viewerContext, Article.published.eq(true))
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -264,7 +268,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         assertEquals("delete denied", ex.reason)
 
         // No committed subset, no silent skipping.
-        assertEquals(3L, client.articles.query().rawCount().getOrThrow())
+        assertEquals(3L, client.articles.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
@@ -290,7 +294,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         seedArticle(client, "Two")
         seedArticle(client, "Three")
 
-        val result = client.articles.deleteMany(Article.published.eq(true))
+        val result = client.articles.deleteMany(viewerContext, Article.published.eq(true))
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -299,6 +303,6 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         assertEquals("second candidate blocked", ex.reason)
 
         // Every candidate remains because the denial preceded persistence.
-        assertEquals(3L, client.articles.query().rawCount().getOrThrow())
+        assertEquals(3L, client.articles.query().rawCount(viewerContext).getOrThrow())
     }
 }

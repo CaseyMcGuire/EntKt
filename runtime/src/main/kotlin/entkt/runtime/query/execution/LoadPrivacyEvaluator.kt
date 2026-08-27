@@ -3,7 +3,7 @@ package entkt.runtime.query.execution
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntBatchRuleContractException
 import entkt.runtime.result.PrivacyDenial
 
@@ -46,7 +46,7 @@ interface LoadPrivacyEvaluator {
     /** Evaluate LOAD privacy while preserving each entity's correlation with its denial. */
     fun <Entity : EntEntity<*>> evaluate(
         entity: EntityMapping<Entity>,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
         entities: List<Entity>,
     ): List<LoadPrivacyEvaluation<Entity>>
 }

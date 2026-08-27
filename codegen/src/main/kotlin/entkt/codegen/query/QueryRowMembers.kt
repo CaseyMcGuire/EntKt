@@ -11,12 +11,12 @@ import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
+import entkt.codegen.metadata.VIEWER_CONTEXT
 
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
 private val READ_QUERY_EXECUTOR =
     ClassName("entkt.runtime.query.execution", "ReadQueryExecutor")
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val STORAGE_QUERY_SPEC = ClassName("entkt.runtime.query", "StorageQuerySpec")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 
@@ -48,7 +48,8 @@ internal fun buildAll(entityClass: ClassName): FunSpec {
     val listType = List::class.asClassName().parameterizedBy(entityClass)
     val resultType = READ_RESULT.parameterizedBy(listType)
     return function("all", returnType = resultType) {
-        statement("return readRootQuery(%T.ALL, maximumRows = null)", READ_OPERATION)
+        parameter("viewerContext", VIEWER_CONTEXT)
+        statement("return readRootQuery(viewerContext, %T.ALL, maximumRows = null)", READ_OPERATION)
     }
 }
 
@@ -71,8 +72,9 @@ internal fun buildAll(entityClass: ClassName): FunSpec {
 internal fun buildFirstOrNull(entityClass: ClassName): FunSpec {
     val resultType = READ_RESULT.parameterizedBy(entityClass.copy(nullable = true))
     return function("firstOrNull", returnType = resultType) {
+        parameter("viewerContext", VIEWER_CONTEXT)
         addCode(
-            "return when (val result = readRootQuery(%T.FIRST, maximumRows = 1)) {\n" +
+            "return when (val result = readRootQuery(viewerContext, %T.FIRST, maximumRows = 1)) {\n" +
                 "  is %T.Success -> %T.Success(result.value.firstOrNull())\n" +
                 "  is %T.Failed -> result\n" +
                 "}\n",
@@ -93,6 +95,7 @@ internal fun buildReadRootQuery(entityClass: ClassName): FunSpec {
     ) {
         addAnnotation(ClassName("entkt.query", "EntktInternal"))
         addModifiers(KModifier.INTERNAL)
+        parameter("viewerContext", VIEWER_CONTEXT)
         parameter("operation", READ_OPERATION)
         parameter("maximumRows", Int::class.asClassName().copy(nullable = true))
         parameter(
@@ -103,6 +106,7 @@ internal fun buildReadRootQuery(entityClass: ClassName): FunSpec {
         }
         addCode(
             "return _readQueryExecutor.readRootQuery(\n" +
+                "  viewerContext = viewerContext,\n" +
                 "  captureQuery = { captureEntityQuery(structuralPredicates) },\n" +
                 "  operation = operation,\n" +
                 "  maximumRows = maximumRows,\n" +
@@ -119,10 +123,10 @@ internal fun buildCompileEntityQuery(entityClass: ClassName): FunSpec =
     ) {
         addAnnotation(ClassName("entkt.query", "EntktInternal"))
         addModifiers(KModifier.INTERNAL)
+        parameter("viewerContext", VIEWER_CONTEXT)
         parameter("operation", READ_OPERATION)
-        parameter("privacyContext", PRIVACY_CONTEXT)
         statement(
-            "return _readQueryExecutor.compileEntityQuery(captureEntityQuery(), operation, privacyContext)",
+            "return _readQueryExecutor.compileEntityQuery(viewerContext, captureEntityQuery(), operation)",
         )
     }
 
@@ -145,7 +149,7 @@ internal fun buildReadQueryExecutorProperty(
                 add("%T(\n", READ_QUERY_EXECUTOR)
                 indent()
                 add("driver = driver,\n")
-                add("privacyContextProvider = requireClient(),\n")
+                add("readExecutionGuard = { requireClient().checkReadExecution() },\n")
                 add("registeredInterceptorsProvider = { requireClient().entityInterceptors },\n")
                 add("loadPrivacyEvaluatorProvider = { requireClient() },\n")
                 unindent()

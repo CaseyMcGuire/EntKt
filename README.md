@@ -27,22 +27,23 @@ class User : EntSchema("users", clientName = "users") {
 ```kotlin
 // 2. Use the generated code
 val client = EntClient(PostgresDriver(dataSource))
+val viewerContext = ViewerContext(Viewer.User(currentUserId()))
 
 val alice = client.users.create {
     name = "Alice"
     email = "alice@example.com"
     age = 30
     active = true
-}.saveAndLoad().getOrThrow()   // save(): MutationResult<Unit> when the entity isn't needed
+}.saveAndLoad(viewerContext).getOrThrow()   // save(viewerContext): MutationResult<Unit> when the entity isn't needed
 
 val adults = client.users.query {
     where(User.active eq true and (User.age gte 18))
     orderBy(User.age.desc())
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 
 val authorsWithPublishedPosts = client.users.query {
     where(User.posts.has { where(Post.published eq true) })
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 
 // Eager loading
 val usersWithPosts = client.users.query {
@@ -50,23 +51,23 @@ val usersWithPosts = client.users.query {
     loadPosts {                        // batch-load posts for each user
         where(Post.published eq true)  // optional: filter the loaded edge
     }
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 usersWithPosts[0].edges.posts.requireLoaded()  // → List<Post> (throws EdgeNotLoadedException if loadPosts wasn't called)
 
 // Every data operation returns an exhaustive result you can match on
 // instead of projecting with getOrThrow():
-when (val result = client.users.findById(alice.id)) {
+when (val result = client.users.findById(viewerContext, alice.id)) {
     is ReadResult.Success -> result.value      // User? — null is authoritative absence
     is ReadResult.Failed -> result.exception   // typed: privacy denial, rejection, driver failure
 }
 
 // Delete (idempotent: success means the row is absent afterward)
-client.users.delete(alice).getOrThrow()  // or client.users.deleteById(alice.id).getOrThrow()
+client.users.delete(viewerContext, alice).getOrThrow()  // or client.users.deleteById(viewerContext, alice.id).getOrThrow()
 
 // Transactions
 client.withTransaction { tx ->
-    val bob = tx.users.create { name = "Bob"; email = "bob@example.com" }.saveAndLoad().orRollback()
-    tx.posts.create { title = "Hello"; authorId = bob.id }.save().orRollback()
+    val bob = tx.users.create { name = "Bob"; email = "bob@example.com" }.saveAndLoad(viewerContext).orRollback()
+    tx.posts.create { title = "Hello"; authorId = bob.id }.save(viewerContext).orRollback()
 }.getOrThrow()
 ```
 

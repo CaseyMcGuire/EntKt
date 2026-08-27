@@ -10,7 +10,7 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EdgeSelection
@@ -139,10 +139,10 @@ class JunctionRelationshipReaderTest {
         }
     }
 
-    private val privacyContext = PrivacyContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext(Viewer.User(7L))
     private val targetPath = listOf(EdgeStep(Source::class, "targets", Target::class))
     private val relationshipContext = RelationshipReadContext(
-        privacyContext = privacyContext,
+        viewerContext = viewerContext,
         rootEntity = Source::class,
         interceptorPath = targetPath,
     )

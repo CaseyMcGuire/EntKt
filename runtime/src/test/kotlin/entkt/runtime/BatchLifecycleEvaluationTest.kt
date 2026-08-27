@@ -5,7 +5,7 @@ package entkt.runtime
 import entkt.runtime.hook.Hook
 import entkt.runtime.hook.batchHook
 import entkt.runtime.hook.runBatchHooksForInternalUse
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
@@ -23,8 +23,8 @@ import kotlin.test.assertSame
 
 class BatchLifecycleEvaluationTest {
 
-    private val privacyContext = PrivacyRuleContext(
-        privacy = PrivacyContext(Viewer.User(7)),
+    private val viewerContext = PrivacyRuleContext(
+        viewerContext = ViewerContext(Viewer.User(7)),
         client = "privacy-client",
     )
     private val validationContext = ValidationRuleContext(client = "validation-client")
@@ -53,7 +53,7 @@ class BatchLifecycleEvaluationTest {
             lifecycle = "Widget LOAD privacy",
             items = listOf(1, 2, 3, 4),
             rules = rules,
-            context = privacyContext,
+            context = viewerContext,
             freshItem = { it },
         )
 
@@ -91,12 +91,12 @@ class BatchLifecycleEvaluationTest {
             "Widget LOAD privacy",
             listOf(Unit),
             rules,
-            privacyContext,
+            viewerContext,
         ) { ++nextSnapshot }
 
         assertEquals(listOf(listOf(1), listOf(2)), seen)
-        assertSame(privacyContext, seenContexts[0])
-        assertSame(privacyContext, seenContexts[1])
+        assertSame(viewerContext, seenContexts[0])
+        assertSame(viewerContext, seenContexts[1])
     }
 
     @Test
@@ -116,7 +116,7 @@ class BatchLifecycleEvaluationTest {
                     batch.decideEach { PrivacyDecision.Allow }
                 },
             ),
-            context = privacyContext,
+            context = viewerContext,
             freshItem = { it },
         )
 
@@ -141,7 +141,7 @@ class BatchLifecycleEvaluationTest {
                     batch.decideEachIndexed { index, _ -> PrivacyDecision.Deny("active-$index") }
                 },
             ),
-            context = privacyContext,
+            context = viewerContext,
             freshItem = { it },
         )
 
@@ -223,7 +223,7 @@ class BatchLifecycleEvaluationTest {
                 "Widget LOAD privacy",
                 listOf(1, 2),
                 emptyList(),
-                privacyContext,
+                viewerContext,
             ) { it },
         )
         assertEquals(
@@ -259,7 +259,7 @@ class BatchLifecycleEvaluationTest {
                 "privacy",
                 emptyList<Int>(),
                 listOf(privacy),
-                privacyContext,
+                viewerContext,
             ) { it },
         )
         assertEquals(
@@ -293,14 +293,14 @@ class BatchLifecycleEvaluationTest {
             "Widget LOAD privacy",
             listOf(1),
             listOf(privacy),
-            privacyContext,
+            viewerContext,
         ) { it }
         val privacyException = assertFailsWith<EntBatchRuleContractException> {
             evaluateBatchPrivacyRulesForInternalUse(
                 "Widget LOAD privacy",
                 listOf(2),
                 listOf(privacy),
-                privacyContext,
+                viewerContext,
             ) { it }
         }
         assertEquals(true, privacyException.foreignBatchResult)
@@ -335,7 +335,7 @@ class BatchLifecycleEvaluationTest {
                 "Widget LOAD privacy",
                 listOf("widget"),
                 listOf(BatchLifecycleJavaCompatibility.NULL_PRIVACY_DECISION_BATCH),
-                BatchLifecycleJavaCompatibility.PRIVACY_CONTEXT,
+                BatchLifecycleJavaCompatibility.VIEWER_CONTEXT,
             ) { it }
         }
         assertEquals(0, privacyException.invalidDecisionIndex)
@@ -362,7 +362,7 @@ class BatchLifecycleEvaluationTest {
                 "Widget LOAD privacy",
                 listOf("widget"),
                 listOf(BatchLifecycleJavaCompatibility.NULL_PRIVACY_RESULT_BATCH),
-                BatchLifecycleJavaCompatibility.PRIVACY_CONTEXT,
+                BatchLifecycleJavaCompatibility.VIEWER_CONTEXT,
             ) { it }
         }
         assertEquals(null, privacyException.actualSize)
@@ -403,7 +403,7 @@ class BatchLifecycleEvaluationTest {
                         batch.decideEach { PrivacyDecision.Allow }
                     },
                 ),
-                context = privacyContext,
+                context = viewerContext,
                 freshItem = { it },
             )
         }
@@ -439,7 +439,7 @@ class BatchLifecycleEvaluationTest {
             "privacy",
             listOf(1),
             listOf(privacy),
-            privacyContext,
+            viewerContext,
         ) { it }
         evaluateBatchValidationRulesForInternalUse(
             "validation",

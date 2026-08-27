@@ -19,6 +19,7 @@ import entkt.codegen.columnName
 import entkt.codegen.lifecyclePatchSnapshot
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.fkPropertyKdoc
 import entkt.codegen.metadata.helperEligibleM2MEdges
@@ -1111,6 +1112,10 @@ internal class UpdateGenerator(
      */
     private fun buildSaveWrapperFunction(): FunSpec {
         return function("save", MUTATION_RESULT.parameterizedBy(UNIT)) {
+            parameter(
+                "viewerContext",
+                VIEWER_CONTEXT,
+            )
             addKdoc(
                 "Persist this builder's changes. `Success(Unit)` means the update\n" +
                     "completed — staged when executed through a transaction-scoped\n" +
@@ -1127,7 +1132,7 @@ internal class UpdateGenerator(
                     "`getOrThrow()` or match on the result.",
             )
             addCode(codeBlock {
-                add("return when (val result = executeSave(applyLoadPrivacy = false)) {\n")
+                add("return when (val result = executeSave(viewerContext, applyLoadPrivacy = false)) {\n")
                 add("  is %T.Success -> %T.Success(Unit)\n", MUTATION_RESULT, MUTATION_RESULT)
                 add("  is %T.Failed -> result\n", MUTATION_RESULT)
                 add("}\n")
@@ -1144,6 +1149,10 @@ internal class UpdateGenerator(
     private fun buildSaveAndLoadWrapperFunction(schemaName: String): FunSpec {
         val entityClass = ClassName(packageName, schemaName)
         return function("saveAndLoad", MUTATION_RESULT.parameterizedBy(entityClass)) {
+            parameter(
+                "viewerContext",
+                VIEWER_CONTEXT,
+            )
             addKdoc(
                 "Persist this builder's changes and return the refreshed entity\n" +
                     "under the ordinary LOAD contract (for an assignment-free no-op\n" +
@@ -1162,7 +1171,7 @@ internal class UpdateGenerator(
                     "`exception.writeState`), and there is no `orNull()` projection;\n" +
                     "project with `getOrThrow()` or match on the result.",
             )
-            statement("return executeSave(applyLoadPrivacy = true)")
+            statement("return executeSave(viewerContext, applyLoadPrivacy = true)")
         }
     }
 }

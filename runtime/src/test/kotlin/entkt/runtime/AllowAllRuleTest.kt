@@ -1,7 +1,7 @@
 package entkt.runtime
 
 import entkt.runtime.privacy.BatchPrivacyRule
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRule
 import entkt.runtime.privacy.PrivacyRuleContext
@@ -16,7 +16,7 @@ class AllowAllRuleTest {
     private data class FakeLoadCtx(val id: Int)
     private data class FakeCreateCtx(val name: String)
     private val context = PrivacyRuleContext(
-        privacy = PrivacyContext(Viewer.Anonymous),
+        viewerContext = ViewerContext(Viewer.Anonymous),
         client = "client",
     )
 

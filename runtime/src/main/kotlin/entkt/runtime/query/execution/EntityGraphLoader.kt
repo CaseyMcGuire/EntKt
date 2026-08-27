@@ -4,7 +4,7 @@ package entkt.runtime.query.execution
 
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EdgeSelection
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EdgeVisibility
@@ -44,19 +44,19 @@ internal class EntityGraphLoader(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
     ): List<Entity> {
         val rootEntities = storage.loadRoot(
             query = query,
             operation = operation,
             maximumRows = maximumRows,
-            privacyContext = privacyContext,
+            viewerContext = viewerContext,
         )
         return evaluateEntityBatch(
             query = query,
             entities = rootEntities,
             denialPolicy = LoadDenialPolicy.FailRoot,
-            context = rootContext(query, privacyContext),
+            context = rootContext(query, viewerContext),
         )
     }
 
@@ -71,7 +71,7 @@ internal class EntityGraphLoader(
             entity = query.entity,
             entities = entities,
             denialPolicy = denialPolicy,
-            privacyContext = context.read.privacyContext,
+            viewerContext = context.read.viewerContext,
         )
         return evaluateSelectedRelationships(
             query = query,
@@ -140,7 +140,7 @@ internal class EntityGraphLoader(
         entity: EntityMapping<Node>,
         entities: List<Node>,
         denialPolicy: LoadDenialPolicy,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
     ): List<Node> {
         // An empty root completes the read; selected edges still evaluate so their lifecycle does
         // not depend on whether storage happened to return any targets.
@@ -152,7 +152,7 @@ internal class EntityGraphLoader(
         if (!evaluator.isConfigured(entity)) {
             return entities
         }
-        val evaluations = evaluator.evaluate(entity, privacyContext, entities)
+        val evaluations = evaluator.evaluate(entity, viewerContext, entities)
 
         return when (denialPolicy) {
             LoadDenialPolicy.FailRoot -> {
@@ -230,10 +230,10 @@ private fun traversalPath(query: EntityQuery<*>): List<EdgeStep> = when (val sou
 
 private fun rootContext(
     query: EntityQuery<*>,
-    privacyContext: PrivacyContext,
+    viewerContext: ViewerContext,
 ): NodeEvaluationContext = NodeEvaluationContext(
     read = RelationshipReadContext(
-        privacyContext = privacyContext,
+        viewerContext = viewerContext,
         rootEntity = rootEntity(query),
         interceptorPath = traversalPath(query),
     ),

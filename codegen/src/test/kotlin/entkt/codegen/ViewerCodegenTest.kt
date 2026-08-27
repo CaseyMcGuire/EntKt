@@ -97,7 +97,7 @@ class ViewerCodegenTest {
         val adapter = gen(viewer = true).getValue("ViewerUserViewerEntity")
         assertTrue("client.viewerUsers.query" in adapter, adapter)
         // list: the strict all() terminal over an overfetch-by-one page.
-        assertTrue(".all()" in adapter, adapter)
+        assertTrue(".all(viewerContext)" in adapter, adapter)
         assertTrue("val fetchLimit = request.pageSize + 1" in adapter, adapter)
         assertTrue("is ReadResult.Success -> result.value" in adapter, adapter)
         // A Root LOAD denial renders as an empty privacy-filtered page
@@ -111,7 +111,7 @@ class ViewerCodegenTest {
         // get: findById + visibleOrNull — an individually denied row
         // reads as absent (null), not as an error.
         assertTrue(
-            "client.viewerUsers.findById(parsed).visibleOrNull().getOrThrow() ?: return null" in adapter,
+            "client.viewerUsers.findById(viewerContext, parsed).visibleOrNull().getOrThrow() ?: return null" in adapter,
             adapter,
         )
         // Removed legacy surface: no visible* scanning terminals, no
@@ -151,9 +151,12 @@ class ViewerCodegenTest {
     }
 
     @Test
-    fun `registry lists every adapter and bridges withPrivacyContext`() {
+    fun `generated entity list contains every adapter without a registry wrapper`() {
         val registry = gen(viewer = true).getValue("GeneratedEntViewerRegistry")
+        assertTrue("val GeneratedEntViewerRegistry: List<EntViewerEntity<EntClient>>" in registry, registry)
         assertTrue("listOf(ViewerUserViewerEntity, ViewerPostViewerEntity)" in registry, registry)
-        assertTrue("client.withPrivacyContext(context, block)" in registry, registry)
+        assertFalse("object GeneratedEntViewerRegistry" in registry, registry)
+        assertFalse("withViewerContext" in registry, registry)
+        assertFalse("ViewerContext" in registry, registry)
     }
 }

@@ -1,5 +1,6 @@
 package entkt.integrationtest
 
+import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
@@ -60,15 +61,15 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
     @Test
     fun `default consistency is ReadCurrent and update succeeds outside a transaction`() {
         val driver = freshDriver()
-        val client = sysClient(driver)
+        val client = EntClient(driver)
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         val updated = client.users.update(user.id) {
             name = "Renamed"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals("Renamed", updated.name)
     }
@@ -76,16 +77,16 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
     @Test
     fun `Pessimistic update outside a transaction fails with TransactionRequiredException as cause`() {
         val driver = freshDriver()
-        val client = sysClient(driver)
+        val client = EntClient(driver)
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         val cause = assertPreflightFailure<TransactionRequiredException>(
             client.users.update(user.id, consistency = UpdateConsistency.Pessimistic) {
                 name = "Renamed"
-            }.save(),
+            }.save(testViewerContext),
         )
         assertTrue(cause.message!!.contains("Pessimistic"))
     }
@@ -95,16 +96,16 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         // PostgresDriver natively advertises `supportsReadRowForUpdate
         // = true`, so the capability gate accepts the save and the
         // SELECT ... FOR UPDATE actually runs against the row.
-        val client = sysClient(lockingDriver())
+        val client = EntClient(lockingDriver())
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         val result = client.withTransaction { tx ->
             tx.users.update(user.id, consistency = UpdateConsistency.Pessimistic) {
                 name = "Renamed Pessimistic"
-            }.saveAndLoad().orRollback()
+            }.saveAndLoad(testViewerContext).orRollback()
         }
         val success = assertIs<TransactionResult.Success<User>>(result)
         assertEquals("Renamed Pessimistic", success.value.name)
@@ -112,12 +113,12 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `Pessimistic update of a missing owner row is Failed(EntTargetAbsentException)`() {
-        val client = sysClient(lockingDriver())
+        val client = EntClient(lockingDriver())
 
         val result = client.withTransaction { tx ->
             tx.users.update(9999L, consistency = UpdateConsistency.Pessimistic) {
                 name = "Ghost"
-            }.save()
+            }.save(testViewerContext)
         }
         // `readRowForUpdate(...)` on a missing id returns null →
         // Failed(EntTargetAbsentException) recorded through the tx
@@ -136,7 +137,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         // reaches the hook stage.
         val driver = freshDriver()
         var hookFired = false
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks {
                 users {
                     beforeUpdate { hookFired = true }
@@ -146,36 +147,36 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertPreflightFailure<TransactionRequiredException>(
             client.users.update(user.id, consistency = UpdateConsistency.Pessimistic) {
                 name = "Renamed"
-            }.save(),
+            }.save(testViewerContext),
         )
         assertFalse(hookFired, "before-hooks must not fire when the Pessimistic preflight rejects the save")
     }
 
     @Test
     fun `defaultUpdateConsistency on the client is honored when no per-save override is passed`() {
-        val client = sysClient(lockingDriver()) {
+        val client = EntClient(lockingDriver()) {
             defaultUpdateConsistency = UpdateConsistency.Pessimistic
         }
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         // Outside a transaction → the no-arg `update(id) { ... }` call
         // inherits Pessimistic and fails the requirement preflight.
         assertPreflightFailure<TransactionRequiredException>(
-            client.users.update(user.id) { name = "Renamed" }.save(),
+            client.users.update(user.id) { name = "Renamed" }.save(testViewerContext),
         )
 
         // Inside a transaction → the inherited default works.
         val result = client.withTransaction { tx ->
             tx.users.update(user.id) { name = "Renamed Pessimistic Default" }
-                .saveAndLoad().orRollback()
+                .saveAndLoad(testViewerContext).orRollback()
         }
         val success = assertIs<TransactionResult.Success<User>>(result)
         assertEquals("Renamed Pessimistic Default", success.value.name)
@@ -188,16 +189,16 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         // fires. Other driver methods delegate to the wrapped instance.
         val real = freshDriver()
         val noLockDriver = NoLockSupportDriver(real)
-        val client = sysClient(noLockDriver)
+        val client = EntClient(noLockDriver)
         val user = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         val txResult = client.withTransaction { tx ->
             tx.users.update(user.id, consistency = UpdateConsistency.Pessimistic) {
                 name = "Renamed"
-            }.save()
+            }.save(testViewerContext)
         }
         // The mutation failure was recorded through the tx client →
         // rollback-only → the boundary reports it.

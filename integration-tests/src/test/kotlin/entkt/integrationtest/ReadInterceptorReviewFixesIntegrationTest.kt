@@ -15,10 +15,8 @@ import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.query.GlobalQueryInterceptor
-import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.privacy.Viewer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -50,7 +48,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     fun `rejectIfLimitGreaterThan is a silent no-op for rawCount`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 global(
                     GlobalQueryInterceptor { scope, _ ->
@@ -60,17 +58,17 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
+        client.posts.create { title = "x" }.saveAndLoad(testViewerContext).getOrThrow()
         // rawCount has no row limit semantics; the gate should
         // NOT trigger even though effective limit is null.
-        assertEquals(1L, client.posts.query().rawCount().getOrThrow())
+        assertEquals(1L, client.posts.query().rawCount(testViewerContext).getOrThrow())
     }
 
     @Test
     fun `rejectIfLimitGreaterThan is a silent no-op for findById`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 global(
                     GlobalQueryInterceptor { scope, _ ->
@@ -80,16 +78,16 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val p = client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
+        val p = client.posts.create { title = "x" }.saveAndLoad(testViewerContext).getOrThrow()
         // by-id is intrinsic single-row; the gate should not fire.
-        assertNotNull(client.posts.findById(p.id).getOrThrow())
+        assertNotNull(client.posts.findById(testViewerContext, p.id).getOrThrow())
     }
 
     @Test
     fun `setDefaultLimitIfAbsent(0) is a silent no-op for firstOrNull`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 // Without the P1 fix this would set spec.limit = 0
                 // and firstOrNull's driver fetch would be
@@ -103,17 +101,17 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
+        client.posts.create { title = "x" }.saveAndLoad(testViewerContext).getOrThrow()
         // FIRST is a no-limit-ops shape: only the caller's own bound
         // may shrink the single-row fetch.
-        assertNotNull(client.posts.query().firstOrNull().getOrThrow())
+        assertNotNull(client.posts.query().firstOrNull(testViewerContext).getOrThrow())
     }
 
     @Test
     fun `requireLimitAtMost(0) is a silent no-op for rawExists`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 // Without the P1 fix this would clamp spec.limit to 0,
                 // and rawExists' driver call would fetch 0 rows
@@ -124,15 +122,15 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "x" }.saveAndLoad().getOrThrow()
-        assertTrue(client.posts.query().rawExists().getOrThrow())
+        client.posts.create { title = "x" }.saveAndLoad(testViewerContext).getOrThrow()
+        assertTrue(client.posts.query().rawExists(testViewerContext).getOrThrow())
     }
 
     @Test
     fun `requireLimitAtMost applies normally for all`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 global(
                     GlobalQueryInterceptor { scope, _ -> scope.requireLimitAtMost(2) },
@@ -140,10 +138,10 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        repeat(5) { i -> client.posts.create { title = "p$i" }.saveAndLoad().getOrThrow() }
+        repeat(5) { i -> client.posts.create { title = "p$i" }.saveAndLoad(testViewerContext).getOrThrow() }
         // ALL is the operation where limit ops apply normally —
         // here the clamp DOES take effect.
-        assertEquals(2, client.posts.query().all().getOrThrow().size)
+        assertEquals(2, client.posts.query().all(testViewerContext).getOrThrow().size)
     }
 
     @Test
@@ -151,7 +149,7 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
         val driver = freshDriver()
         val ops = mutableListOf<ReadOperation>()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 // A by-id User interceptor adds an Edge predicate.
                 // The walker should fire Article's EDGE_PREDICATE
@@ -173,10 +171,10 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val u = client.users.create { name = "A"; email = "a@x" }.saveAndLoad().getOrThrow()
+        val u = client.users.create { name = "A"; email = "a@x" }.saveAndLoad(testViewerContext).getOrThrow()
         // The user has no published article, so the narrowed by-id read
         // returns Success(null); the walker still ran.
-        assertNull(client.users.findById(u.id).getOrThrow())
+        assertNull(client.users.findById(testViewerContext, u.id).getOrThrow())
 
         // Article observer must have fired with EDGE_PREDICATE
         // (the walker ran on the by-id User's inner predicate).

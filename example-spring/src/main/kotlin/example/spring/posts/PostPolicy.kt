@@ -43,7 +43,7 @@ class AllowAuthorLoad : PostLoadPrivacyRule {
         context: PrivacyRuleContext<EntPrivacyReadClient>,
         item: PostLoadPrivacyItem,
     ): PrivacyDecision {
-        val viewer = context.privacy.viewer as? Viewer.User ?: return PrivacyDecision.Continue
+        val viewer = context.viewerContext.viewer as? Viewer.User ?: return PrivacyDecision.Continue
         return if (viewer.id == item.entity.authorId) PrivacyDecision.Allow
         else PrivacyDecision.Continue
     }
@@ -55,7 +55,7 @@ class RequireAuthToCreate : PostCreatePrivacyRule {
         context: PrivacyRuleContext<EntPrivacyReadClient>,
         item: PostCreatePrivacyItem,
     ): PrivacyDecision =
-        if (context.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
+        if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
         else PrivacyDecision.Allow
 }
 
@@ -65,7 +65,7 @@ class AllowAuthorUpdate : PostUpdatePrivacyRule {
         context: PrivacyRuleContext<EntPrivacyReadClient>,
         item: PostUpdatePrivacyItem,
     ): PrivacyDecision {
-        val viewer = context.privacy.viewer as? Viewer.User
+        val viewer = context.viewerContext.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
         return if (viewer.id == item.before.authorId) PrivacyDecision.Allow
         else PrivacyDecision.Deny("only the author can update this post")
@@ -78,7 +78,7 @@ class AllowAuthorDelete : PostDeletePrivacyRule {
         context: PrivacyRuleContext<EntPrivacyReadClient>,
         item: PostDeletePrivacyItem,
     ): PrivacyDecision {
-        val viewer = context.privacy.viewer as? Viewer.User
+        val viewer = context.viewerContext.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
         return if (viewer.id == item.entity.authorId) PrivacyDecision.Allow
         else PrivacyDecision.Deny("only the author can delete this post")

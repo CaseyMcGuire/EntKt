@@ -9,8 +9,7 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.PrivacyContextProvider
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.LoadPrivacyEvaluator
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
@@ -56,7 +55,7 @@ class ReadQueryExecutorTest {
         }
     }
 
-    private val privacyContext = PrivacyContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext(Viewer.User(7L))
 
     private fun query(): EntityQuery<Item> = EntityQuery(
         entity = ItemMapping,
@@ -77,7 +76,7 @@ class ReadQueryExecutorTest {
         }
         val executor = ReadQueryExecutor<Item>(
             driver = driver,
-            privacyContextProvider = PrivacyContextProvider { privacyContext },
+            readExecutionGuard = {},
             registeredInterceptorsProvider = { interceptors },
             loadPrivacyEvaluatorProvider = {
                 object : LoadPrivacyEvaluator {
@@ -85,7 +84,7 @@ class ReadQueryExecutorTest {
 
                     override fun <Entity : EntEntity<*>> evaluate(
                         entity: EntityMapping<Entity>,
-                        privacyContext: PrivacyContext,
+                        viewerContext: ViewerContext,
                         entities: List<Entity>,
                     ): List<LoadPrivacyEvaluation<Entity>> = error("LOAD privacy is not configured")
                 }
@@ -94,12 +93,13 @@ class ReadQueryExecutorTest {
 
         val entities = assertIs<ReadResult.Success<List<Item>>>(
             executor.readRootQuery(
+                viewerContext = viewerContext,
                 captureQuery = ::query,
                 operation = ReadOperation.ALL,
                 maximumRows = null,
             ),
         )
-        val count = assertIs<ReadResult.Success<Long>>(executor.rawCount(::query))
+        val count = assertIs<ReadResult.Success<Long>>(executor.rawCount(viewerContext, ::query))
 
         assertEquals(listOf(Item(1L)), entities.value)
         assertEquals(3L, count.value)

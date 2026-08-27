@@ -8,7 +8,7 @@ package entkt.viewer
  * val viewer = EntViewer(client, GeneratedEntViewerRegistry) {
  *     path = "/_ent"
  *     authorize { request -> request.principal.isAdminOfSomeKind() }
- *     privacyContext { request -> PrivacyContext(Viewer.User(...)) }
+ *     viewerContext { request -> ViewerContext(Viewer.User(...)) }
  *     entities { exclude("session") }
  * }
  *
@@ -29,14 +29,14 @@ package entkt.viewer
  * request is a cloaked 404, indistinguishable from an unmapped route (the
  * viewer's existence is never disclosed to unauthorized callers);
  * read-only (non-GET → 405, checked after authorization); every read runs
- * under the per-request privacy context through
- * the generated client's normal read path; `.sensitive()` values are
+ * under the per-request viewer context through the generated client's normal
+ * read path; `.sensitive()` values are
  * redacted; excluded and unknown entities are the same 404; unknown,
  * unparseable, and privacy-denied ids are the same 404.
  */
 class EntViewer<C : Any>(
     private val client: C,
-    private val registry: EntViewerRegistry<C>,
+    private val entities: List<EntViewerEntity<C>>,
     configure: EntViewerConfig.() -> Unit = {},
 ) {
     private val config = EntViewerConfig().apply(configure)
@@ -54,13 +54,13 @@ class EntViewer<C : Any>(
     init {
         // Fail fast on redaction typos: a mistyped table/column would
         // otherwise be silently fail-open.
-        val known = registry.entities.flatMapTo(mutableSetOf()) { entity ->
+        val known = entities.flatMapTo(mutableSetOf()) { entity ->
             entity.columns.map { entity.schema.table to it.name }
         }
         for (extra in config.redaction.extra) {
             require(extra in known) {
                 "redaction.extra(${extra.first}, ${extra.second}) does not match any registered " +
-                    "entity column — known tables: ${registry.entities.map { it.schema.table }.sorted()}"
+                    "entity column — known tables: ${entities.map { it.schema.table }.sorted()}"
             }
         }
     }
@@ -117,7 +117,7 @@ class EntViewer<C : Any>(
     }
 
     private fun visibleEntities(): List<EntViewerEntity<C>> =
-        registry.entities.filterNot { it.routeName in config.visibility.excludedRoutes }
+        entities.filterNot { it.routeName in config.visibility.excludedRoutes }
 
     private fun route(request: EntViewerRequest, segments: List<String>): EntViewerResponse {
         val entities = visibleEntities()
@@ -211,10 +211,8 @@ class EntViewer<C : Any>(
             pageSize = size,
             offset = offset.toInt(),
         )
-        val context = config.privacyContext(request)
-        val result = registry.withPrivacyContext(client, context) { scoped ->
-            entity.list(scoped, listRequest)
-        }
+        val context = config.viewerContext(request)
+        val result = entity.list(client, context, listRequest)
         val rows = result.rows.take(size).map { applyExtraRedaction(entity, it) }
 
         return html.listPage(
@@ -235,10 +233,9 @@ class EntViewer<C : Any>(
         entity: EntViewerEntity<C>,
         id: String,
     ): EntViewerResponse {
-        val context = config.privacyContext(request)
-        val row = registry.withPrivacyContext(client, context) { scoped ->
-            entity.get(scoped, id)
-        } ?: return html.error(404, "Not found.")
+        val context = config.viewerContext(request)
+        val row = entity.get(client, context, id)
+            ?: return html.error(404, "Not found.")
 
         val visible = visibleEntities()
         val visibleRoutes = visible.mapTo(mutableSetOf()) { it.routeName }

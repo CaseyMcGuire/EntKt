@@ -1,6 +1,6 @@
 package entkt.runtime
 
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.intIdOrNull
 import entkt.runtime.privacy.longIdOrNull
@@ -54,11 +54,11 @@ class ViewerTest {
 
     @Test
     fun `privacy context id helpers delegate to viewer`() {
-        val context = PrivacyContext(Viewer.User(42L))
+        val context = ViewerContext(Viewer.User(42L))
 
         assertEquals(42L, context.longIdOrNull())
         assertEquals(42L, context.userIdOrNull())
         assertSame(context.viewer.userOrNull(), context.userOrNull())
-        assertNull(PrivacyContext(Viewer.Anonymous).longIdOrNull())
+        assertNull(ViewerContext(Viewer.Anonymous).longIdOrNull())
     }
 }

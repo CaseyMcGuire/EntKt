@@ -2,7 +2,7 @@ package entkt.runtime;
 
 import entkt.runtime.hook.Hook;
 import entkt.runtime.privacy.BatchPrivacyRule;
-import entkt.runtime.privacy.PrivacyContext;
+import entkt.runtime.privacy.ViewerContext;
 import entkt.runtime.privacy.PrivacyDecision;
 import entkt.runtime.privacy.PrivacyRule;
 import entkt.runtime.privacy.PrivacyRuleContext;
@@ -23,9 +23,9 @@ import java.util.List;
 final class BatchLifecycleJavaCompatibility {
     private BatchLifecycleJavaCompatibility() {}
 
-    static final PrivacyRuleContext<Object> PRIVACY_CONTEXT =
+    static final PrivacyRuleContext<Object> VIEWER_CONTEXT =
             new PrivacyRuleContext<>(
-                    new PrivacyContext(Viewer.Anonymous.INSTANCE),
+                    new ViewerContext(Viewer.Anonymous.INSTANCE),
                     new Object());
 
     static final ValidationRuleContext<Object> VALIDATION_CONTEXT =
@@ -88,7 +88,7 @@ final class BatchLifecycleJavaCompatibility {
     };
 
     static RuleDecisions<PrivacyDecision> runPrivacyBatch(RuleBatch<String> batch) {
-        return PRIVACY_CLASS.runBatch(PRIVACY_CONTEXT, batch);
+        return PRIVACY_CLASS.runBatch(VIEWER_CONTEXT, batch);
     }
 
     static RuleDecisions<ValidationDecision> runValidationBatch(RuleBatch<String> batch) {

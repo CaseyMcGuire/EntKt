@@ -9,7 +9,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntPrivacyDeniedException
@@ -35,6 +35,7 @@ import kotlin.test.assertSame
  *  - `visibleOrNull()` maps only the Root denial to `Success(null)`.
  */
 class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
+    private var viewerContext = testViewerContext
 
     private val denyAllArticles = ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("article hidden") }
 
@@ -60,9 +61,10 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
         viewer: Viewer = Viewer.PrivacyBypass("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
     ): EntClient {
+        viewerContext = ViewerContext(viewer)
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies {
                 articles(articlePolicy)
                 users(OpenUser)
@@ -71,14 +73,16 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun seedArticle(client: EntClient): Article {
-        return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        return run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "A"; email = "a@example.com" }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
             sys.articles.create {
                 title = "Hello"
                 published = true
                 authorId = author.id
-            }.saveAndLoad().getOrThrow()
+            }.saveAndLoad(viewerContext).getOrThrow()
         }
     }
 
@@ -89,7 +93,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         val article = seedArticle(client)
 
-        val result = client.articles.findById(article.id)
+        val result = client.articles.findById(viewerContext, article.id)
         val success = assertIs<ReadResult.Success<Article?>>(result)
         assertEquals(article.id, success.value?.id)
     }
@@ -100,7 +104,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
     fun `findById returns Success(null) for missing rows`() {
         val client = freshClient()
 
-        val result = client.articles.findById(999_999L)
+        val result = client.articles.findById(viewerContext, 999_999L)
         val success = assertIs<ReadResult.Success<Article?>>(result)
         assertNull(success.value)
     }
@@ -109,7 +113,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
     fun `getOrThrow preserves successful absence as null`() {
         val client = freshClient()
 
-        assertNull(client.articles.findById(999_999L).getOrThrow())
+        assertNull(client.articles.findById(viewerContext, 999_999L).getOrThrow())
     }
 
     // ---- findById: Failed(EntPrivacyDeniedException(Root, ...)) ----
@@ -119,7 +123,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
-        val result = client.articles.findById(article.id)
+        val result = client.articles.findById(viewerContext, article.id)
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         assertIs<LoadDenialOrigin.Root>(ex.origin)
@@ -136,7 +140,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
-        val result = client.articles.findById(article.id)
+        val result = client.articles.findById(viewerContext, article.id)
         val failed = assertIs<ReadResult.Failed>(result)
         val thrown = assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }
         assertSame(failed.exception, thrown)
@@ -153,7 +157,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         val article = seedArticle(client)
 
-        val loaded = client.articles.findById(article.id).visibleOrNull().getOrThrow()
+        val loaded = client.articles.findById(viewerContext, article.id).visibleOrNull().getOrThrow()
         assertEquals(article.id, loaded?.id)
     }
 
@@ -161,7 +165,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
     fun `visibleOrNull preserves absence`() {
         val client = freshClient()
 
-        assertNull(client.articles.findById(999_999L).visibleOrNull().getOrThrow())
+        assertNull(client.articles.findById(viewerContext, 999_999L).visibleOrNull().getOrThrow())
     }
 
     @Test
@@ -171,7 +175,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
         // Invisibility and absence both collapse to null; a caller that
         // needs to distinguish them inspects the raw ReadResult.Failed.
-        val result = client.articles.findById(article.id).visibleOrNull()
+        val result = client.articles.findById(viewerContext, article.id).visibleOrNull()
         val success = assertIs<ReadResult.Success<Article?>>(result)
         assertNull(success.value)
     }
@@ -181,7 +185,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
-        val failed = assertIs<ReadResult.Failed>(client.articles.findById(article.id))
+        val failed = assertIs<ReadResult.Failed>(client.articles.findById(viewerContext, article.id))
         // Sanity: only the Root privacy denial maps to absence — the
         // projection returns the identical Failed for anything else.
         // (Non-privacy Failed states are pinned in the projection-purity

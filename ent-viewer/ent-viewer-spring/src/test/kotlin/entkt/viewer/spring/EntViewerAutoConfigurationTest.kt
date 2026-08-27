@@ -1,9 +1,7 @@
 package entkt.viewer.spring
 
-import entkt.runtime.privacy.PrivacyContext
 import entkt.viewer.EntViewer
 import entkt.viewer.EntViewerEntity
-import entkt.viewer.EntViewerRegistry
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner
 import org.springframework.context.annotation.Bean
@@ -16,7 +14,7 @@ import kotlin.test.assertTrue
 /**
  * The auto-configuration's safety contract: nothing happens from the
  * classpath alone — routes exist only when the application declares an
- * [EntViewer] bean (which is where authorize/privacyContext live).
+ * [EntViewer] bean (which is where authorize/viewerContext live).
  * Behavioral coverage over HTTP runs in example-spring, which consumes this
  * module for its `/_ent` endpoint.
  */
@@ -24,20 +22,11 @@ class EntViewerAutoConfigurationTest {
 
     private class FakeClient
 
-    private object EmptyRegistry : EntViewerRegistry<FakeClient> {
-        override val entities: List<EntViewerEntity<FakeClient>> = emptyList()
-        override fun <T> withPrivacyContext(
-            client: FakeClient,
-            context: PrivacyContext,
-            block: (FakeClient) -> T,
-        ): T = block(client)
-    }
-
     @Configuration(proxyBeanMethods = false)
     private class ViewerDeclaringApp {
         @Bean
         fun entViewer(): EntViewer<FakeClient> =
-            EntViewer(FakeClient(), EmptyRegistry) { authorize { true } }
+            EntViewer(FakeClient(), NO_ENTITIES) { authorize { true } }
     }
 
     private val runner = WebApplicationContextRunner()
@@ -64,7 +53,7 @@ class EntViewerAutoConfigurationTest {
     private class WithResolverApp {
         @Bean
         fun entViewer(): EntViewer<FakeClient> =
-            EntViewer(FakeClient(), EmptyRegistry) { authorize { true } }
+            EntViewer(FakeClient(), NO_ENTITIES) { authorize { true } }
 
         @Bean
         fun myResolver(): EntViewerPrincipalResolver = CUSTOM_RESOLVER
@@ -78,6 +67,7 @@ class EntViewerAutoConfigurationTest {
     }
 
     companion object {
+        private val NO_ENTITIES: List<EntViewerEntity<FakeClient>> = emptyList()
         private val CUSTOM_RESOLVER = EntViewerPrincipalResolver { "custom" }
     }
 }

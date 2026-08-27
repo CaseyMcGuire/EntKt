@@ -10,8 +10,7 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.PrivacyContextProvider
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.EntityQuery
@@ -86,7 +85,7 @@ class ReadQueryExecutorRootTest {
             annotations = emptyMap(),
         ),
     ) : EntityMapping<Item> {
-        val privacy = PrivacyContext(Viewer.User(7L))
+        val viewerContext = ViewerContext(Viewer.User(7L))
         var privacyEnabled = true
         var denials: List<PrivacyDenial?> = emptyList()
         var preparationFailure: Throwable? = null
@@ -151,6 +150,7 @@ class ReadQueryExecutorRootTest {
         query: EntityQuery<Item>,
         operation: ReadOperation = ReadOperation.ALL,
     ): ReadResult<List<Item>> = queryExecutor(adapter).readRootQuery(
+        viewerContext = adapter.viewerContext,
         captureQuery = { query },
         operation = operation,
         maximumRows = null,
@@ -158,10 +158,7 @@ class ReadQueryExecutorRootTest {
 
     private fun queryExecutor(adapter: Adapter): ReadQueryExecutor<Item> = ReadQueryExecutor(
         driver = adapter.driver,
-        privacyContextProvider = PrivacyContextProvider {
-            adapter.events += "privacy-context"
-            adapter.privacy
-        },
+        readExecutionGuard = { adapter.events += "read-guard" },
         registeredInterceptorsProvider = { adapter.interceptors },
         loadPrivacyEvaluatorProvider = { object : LoadPrivacyEvaluator {
             override fun isConfigured(entity: EntityMapping<*>): Boolean {
@@ -172,11 +169,11 @@ class ReadQueryExecutorRootTest {
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
-                privacyContext: PrivacyContext,
+                viewerContext: ViewerContext,
                 entities: List<Entity>,
             ): List<LoadPrivacyEvaluation<Entity>> {
                 assertSame(adapter as Any, entity as Any)
-                assertSame(adapter.privacy, privacyContext)
+                assertSame(adapter.viewerContext, viewerContext)
                 adapter.events += "load-privacy:${entities.joinToString { it.id.toString() }}"
                 val denials = adapter.denials.ifEmpty { List(entities.size) { null } }
                 return entities.mapIndexed { index, entityValue ->
@@ -193,6 +190,7 @@ class ReadQueryExecutorRootTest {
 
     private fun readAll(adapter: Adapter): ReadResult<List<Item>> =
         queryExecutor(adapter).readRootQuery(
+            viewerContext = adapter.viewerContext,
             captureQuery = { rootQuery(adapter) },
             operation = ReadOperation.ALL,
             maximumRows = null,
@@ -201,6 +199,7 @@ class ReadQueryExecutorRootTest {
     private fun readFirstOrNull(adapter: Adapter): ReadResult<Item?> =
         when (
             val result = queryExecutor(adapter).readRootQuery(
+                viewerContext = adapter.viewerContext,
                 captureQuery = { rootQuery(adapter) },
                 operation = ReadOperation.FIRST,
                 maximumRows = 1,
@@ -216,6 +215,7 @@ class ReadQueryExecutorRootTest {
 
         assertFailsWith<IllegalArgumentException> {
             queryExecutor(adapter).readRootQuery(
+                viewerContext = adapter.viewerContext,
                 captureQuery = { rootQuery(adapter) },
                 operation = ReadOperation.ALL,
                 maximumRows = -1,
@@ -230,6 +230,7 @@ class ReadQueryExecutorRootTest {
         val failure = IllegalStateException("capture failed")
 
         val result = queryExecutor(adapter).readRootQuery(
+            viewerContext = adapter.viewerContext,
             captureQuery = { throw failure },
             operation = ReadOperation.ALL,
             maximumRows = null,
@@ -265,7 +266,7 @@ class ReadQueryExecutorRootTest {
         assertEquals(2, driver.offset)
         assertEquals(
             listOf(
-                "privacy-context",
+                "read-guard",
                 "root-interceptors",
                 "driver",
                 "decode:2",
@@ -438,7 +439,7 @@ class ReadQueryExecutorRootTest {
         assertEquals(0, zeroDriver.limit)
         assertEquals(
             listOf(
-                "privacy-context",
+                "read-guard",
                 "root-interceptors",
                 "driver",
             ),
@@ -487,7 +488,7 @@ class ReadQueryExecutorRootTest {
             readAll(cancellationAdapter)
         }
         assertSame(cancellation, thrownCancellation)
-        assertEquals("privacy-context", cancellationEvents.last())
+        assertEquals("read-guard", cancellationEvents.last())
 
         val errorEvents = mutableListOf<String>()
         val error = AssertionError("fatal")

@@ -16,6 +16,7 @@ import entkt.schema.FieldType
 import entkt.schema.OnDelete
 
 internal val ENTITY_SCHEMA = ClassName("entkt.runtime.driver", "EntitySchema")
+internal val VIEWER_CONTEXT = ClassName("entkt.runtime.privacy", "ViewerContext")
 internal val COLUMN_METADATA = ClassName("entkt.runtime.driver", "ColumnMetadata")
 internal val EDGE_METADATA = ClassName("entkt.runtime.driver", "EdgeMetadata")
 internal val INDEX_METADATA = ClassName("entkt.runtime.driver", "IndexMetadata")

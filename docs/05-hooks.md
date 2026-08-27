@@ -105,25 +105,32 @@ This is the generated repository surface shared by `EntClient` and
 `EntTransactionClient`, so helpers accepting it work in either context:
 
 ```kotlin
-fun emailIsTaken(client: EntClientScope, email: String): Boolean =
-    client.users.indexes.email(email).find().getOrThrow() != null
+fun emailIsTaken(
+    client: EntClientScope,
+    viewerContext: ViewerContext,
+    email: String,
+): Boolean = client.users.indexes.email(email).find(viewerContext).getOrThrow() != null
 ```
 
-The scope exposes every generated repository and
-`currentPrivacyContext()`. It deliberately does not expose
-`withTransaction()`, privacy re-scoping or bypass, or client configuration.
+The scope exposes every generated repository. The hook context separately
+exposes `viewerContext`, so a nested read uses
+`emailIsTaken(ctx.client, ctx.viewerContext, email)`. The scope deliberately
+does not expose `withTransaction()` or client configuration.
 Consequently, a hook cannot start a transaction that would be independent
 outside a transaction and nested inside one. Repository operations issued
 through `ctx.client` still use the same driver and transaction as the save.
 
-`beforeCreate` also receives `mutation`, the restricted writable create view.
+`beforeCreate` also receives `viewerContext` and `mutation`, the restricted
+writable create view.
 
 ## The Update Hook Context
 
 The `beforeUpdate` hook receives a `${Entity}UpdateHookContext` with
-five fields:
+six fields:
 
 - **`client`** — the transaction-safe `EntClientScope` described above.
+- **`viewerContext`** — the exact context supplied to the update terminal; pass
+  it to nested reads or mutations issued through `client`.
 - **`before`** — the current stored entity, loaded before any update hooks run.
   This load is not blocked by LOAD privacy. The default
   `UpdateConsistency.ReadCurrent` provides a current snapshot.
@@ -211,7 +218,7 @@ required field:
 ```kotlin
 client.users.update(id) {
     name = null         // required field, would fail if left like this
-}.save()
+}.save(viewerContext)
 ```
 
 A `beforeUpdate` hook can repair it before the post-hook required-not-null
@@ -298,6 +305,7 @@ not for authorization or invariant enforcement. Use
 Hooks are automatically inherited by transaction-scoped clients:
 
 ```kotlin
+val viewerContext = ViewerContext(Viewer.User(currentUserId()))
 val client = EntClient(driver) {
     hooks {
         users {
@@ -308,7 +316,7 @@ val client = EntClient(driver) {
 
 client.withTransaction { tx ->
     // The beforeSave hook fires here too -- no re-registration needed
-    tx.users.create { name = "Alice"; email = "a@b.com" }.save().orRollback()
+    tx.users.create { name = "Alice"; email = "a@b.com" }.save(viewerContext).orRollback()
 }
 ```
 
@@ -339,10 +347,10 @@ phase-major batches and run their database work in one transaction (the
 caller's, or an EntKt-owned one when the caller has none).
 
 ```kotlin
-client.users.createMany({ name = "Alice" }, { name = "Bob" })
+client.users.createMany(viewerContext, { name = "Alice" }, { name = "Bob" })
 // beforeSave(all), beforeCreate(all), insertMany, afterCreate(all)
 
-client.users.deleteMany(User.active eq false)
+client.users.deleteMany(viewerContext, User.active eq false)
 // select candidates, beforeDelete(all), ID-scoped delete, afterDelete(actual removals)
 ```
 

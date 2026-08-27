@@ -20,7 +20,7 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.hook.batchHook
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.batchPrivacyRule
@@ -61,6 +61,7 @@ import kotlin.test.assertSame
  * and marks the scope rollback-only.
  */
 class CreateManyIntegrationTest : PostgresTestBase() {
+    private var viewerContext = testViewerContext
 
     private class WrongCardinalityDriver(
         private val delegate: DatabaseDriver,
@@ -146,16 +147,19 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         viewer: Viewer = Viewer.PrivacyBypass("test"),
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUser,
     ): EntClient {
+        viewerContext = ViewerContext(viewer)
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies { users(userPolicy) }
         }
     }
 
     private fun bypassCount(client: EntClient): Long =
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.query().rawCount().getOrThrow()
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.query().rawCount(viewerContext).getOrThrow()
         }
 
     // ---- Success ----
@@ -163,13 +167,8 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     @Test
     fun `zero-block call returns Success(emptyList()) without a transaction`() {
         val recording = RecordingDriver(resetAndDriver())
-        var privacyCaptures = 0
         var hookCalls = 0
         val client = EntClient(recording) {
-            privacyContext {
-                privacyCaptures++
-                PrivacyContext(Viewer.PrivacyBypass("test"))
-            }
             policies { users(OpenUser) }
             hooks {
                 users {
@@ -180,11 +179,10 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             }
         }
 
-        assertEquals(MutationResult.Success(emptyList<User>()), client.users.createMany())
+        assertEquals(MutationResult.Success(emptyList<User>()), client.users.createMany(viewerContext, ))
         assertEquals(0, recording.callCount("withTransaction"))
         assertEquals(0, recording.callCount("insert:users"))
         assertEquals(0, recording.callCount("insertMany:users"))
-        assertEquals(0, privacyCaptures)
         assertEquals(0, hookCalls)
     }
 
@@ -192,7 +190,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     fun `createMany outside a caller transaction succeeds and returns entities in input order`() {
         val client = freshClient()
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
             { name = "C"; email = "c@example.com" },
@@ -200,7 +198,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
         val success = assertIs<MutationResult.Success<List<User>>>(result)
         assertEquals(listOf("A", "B", "C"), success.value.map { it.name })
-        assertEquals(3L, client.users.query().rawCount().getOrThrow())
+        assertEquals(3L, client.users.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
@@ -208,7 +206,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val client = freshClient()
 
         val txResult = client.withTransaction { tx ->
-            tx.users.createMany(
+            tx.users.createMany(viewerContext,
                 { name = "A"; email = "a@example.com" },
                 { name = "B"; email = "b@example.com" },
             ).orRollback()
@@ -216,28 +214,27 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
         val success = assertIs<TransactionResult.Success<List<User>>>(txResult)
         assertEquals(listOf("A", "B"), success.value.map { it.name })
-        assertEquals(2L, client.users.query().rawCount().getOrThrow())
+        assertEquals(2L, client.users.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
     fun `createMany runs lifecycle phases once over the full ordered batch and inserts once`() {
         val events = mutableListOf<String>()
         val recording = RecordingDriver(resetAndDriver())
-        var privacyCaptures = 0
-        val capturedPrivacy = PrivacyContext(Viewer.User(42L))
-        var createPrivacy: PrivacyContext? = null
-        var loadPrivacy: PrivacyContext? = null
+        val capturedPrivacy = ViewerContext(Viewer.User(42L))
+        var createPrivacy: ViewerContext? = null
+        var loadPrivacy: ViewerContext? = null
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
                     create(batchPrivacyRule<EntPrivacyReadClient, UserCreatePrivacyItem> { context, batch ->
                         assertEquals(0, recording.callCount("insertMany:users"))
-                        createPrivacy = context.privacy
+                        createPrivacy = context.viewerContext
                         events += "createPrivacy:${batch.joinToString { it.candidate.name }}"
                         batch.decideEach { PrivacyDecision.Allow }
                     })
                     load(batchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem> { context, batch ->
-                        loadPrivacy = context.privacy
+                        loadPrivacy = context.viewerContext
                         events += "loadPrivacy:${batch.joinToString { it.entity.name }}"
                         batch.decideEach { PrivacyDecision.Allow }
                     })
@@ -252,11 +249,6 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(recording) {
-            privacyContext {
-                privacyCaptures++
-                events += "capturePrivacy"
-                capturedPrivacy
-            }
             policies { users(policy) }
             hooks {
                 users {
@@ -264,6 +256,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                         events += "beforeSave:${mutations.joinToString { it.name!! }}"
                     })
                     beforeCreate(batchHook<UserCreateHookContext> { contexts ->
+                        contexts.forEach { assertSame(capturedPrivacy, it.viewerContext) }
                         events += "beforeCreate:${contexts.joinToString { it.mutation.name!! }}"
                     })
                     afterCreate(batchHook<User> { entities ->
@@ -275,7 +268,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(capturedPrivacy,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
             { name = "C"; email = "c@example.com" },
@@ -287,7 +280,6 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             listOf(
                 "beforeSave:A, B, C",
                 "beforeCreate:A, B, C",
-                "capturePrivacy",
                 "createPrivacy:A, B, C",
                 "validation:A, B, C",
                 "afterCreate:A, B, C",
@@ -295,7 +287,6 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             ),
             events,
         )
-        assertEquals(1, privacyCaptures)
         assertSame(capturedPrivacy, createPrivacy)
         assertSame(capturedPrivacy, loadPrivacy)
         assertEquals(1, recording.callCount("withTransaction"))
@@ -312,7 +303,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         // Preparation fails before the set-based write, so the typed
         // exception passes through unchanged (NotPersisted is the whole
         // batch's honest state).
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A" }, // email is required → validation failure
             { name = "B"; email = "b@example.com" },
         )
@@ -324,14 +315,14 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         assertEquals("email", ex.violations.single().field)
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
 
-        assertEquals(0L, client.users.query().rawCount().getOrThrow())
+        assertEquals(0L, client.users.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
     fun `later required-field failure keeps typed identity before batch persistence`() {
         val client = freshClient()
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B" }, // email is required → validation failure
             { name = "C"; email = "c@example.com" },
@@ -348,7 +339,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
 
         // No row reached the set-based insert.
-        assertEquals(0L, client.users.query().rawCount().getOrThrow())
+        assertEquals(0L, client.users.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
@@ -356,15 +347,15 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         var creates = 0
         val recording = RecordingDriver(resetAndDriver())
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser) }
             hooks { users { beforeCreate { creates++ } } }
         }
-        client.users.create { name = "Existing"; email = "dup@example.com" }.save().getOrThrow()
+        client.users.create { name = "Existing"; email = "dup@example.com" }.save(viewerContext).getOrThrow()
         creates = 0
         recording.reset()
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "dup@example.com" }, // unique violation
             { name = "C"; email = "c@example.com" },
@@ -380,7 +371,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         assertEquals(1, recording.callCount("insertMany:users"))
         assertEquals(0, recording.callCount("insert:users"))
         // Atomicity: only the pre-existing row survives.
-        assertEquals(1L, client.users.query().rawCount().getOrThrow())
+        assertEquals(1L, client.users.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
@@ -389,13 +380,13 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val client = EntClient(
             ChunkThenFailDriver(resetAndDriver(), driverFailure, classifyAsConstraint = true),
         ) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser) }
         }
 
         var inner: MutationResult<List<User>>? = null
         val txResult = client.withTransaction { tx ->
-            inner = tx.users.createMany(
+            inner = tx.users.createMany(viewerContext,
                 { name = "A"; email = "a@example.com" },
                 { name = "B"; email = "b@example.com" },
             )
@@ -421,13 +412,13 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val client = EntClient(
             ChunkThenFailDriver(resetAndDriver(), driverFailure, classifyAsConstraint = true),
         ) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser) }
         }
 
         var inner: MutationResult<List<User>>? = null
         val txResult = client.withTransaction { tx ->
-            inner = tx.users.createMany(
+            inner = tx.users.createMany(viewerContext,
                 { name = "A"; email = "a@example.com" },
             )
             "ignored failure"
@@ -449,11 +440,11 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val client = EntClient(
             ChunkThenFailDriver(resetAndDriver(), driverFailure, classifyAsConstraint = true),
         ) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser) }
         }
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
         )
@@ -471,13 +462,13 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val client = EntClient(
             ChunkThenFailDriver(resetAndDriver(), driverFailure, classifyAsConstraint = false),
         ) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser) }
         }
 
         var inner: MutationResult<List<User>>? = null
         val txResult = client.withTransaction { tx ->
-            inner = tx.users.createMany(
+            inner = tx.users.createMany(viewerContext,
                 { name = "A"; email = "a@example.com" },
                 { name = "B"; email = "b@example.com" },
             )
@@ -500,12 +491,12 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val client = EntClient(
             ChunkThenFailDriver(resetAndDriver(), cancellation, classifyAsConstraint = false),
         ) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser) }
         }
 
         val thrown = assertFailsWith<CancellationException> {
-            client.users.createMany(
+            client.users.createMany(viewerContext,
                 { name = "A"; email = "a@example.com" },
                 { name = "B"; email = "b@example.com" },
             )
@@ -519,12 +510,12 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     fun `wrong insertMany cardinality fails before hydration and afterCreate then rolls back`() {
         var afterCreateCalls = 0
         val client = EntClient(WrongCardinalityDriver(resetAndDriver())) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser) }
             hooks { users { afterCreate { afterCreateCalls++ } } }
         }
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
         )
@@ -542,14 +533,14 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     fun `wrong insertMany cardinality is TransactionPending in a caller transaction`() {
         var afterCreateCalls = 0
         val client = EntClient(WrongCardinalityDriver(resetAndDriver())) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser) }
             hooks { users { afterCreate { afterCreateCalls++ } } }
         }
 
         var inner: MutationResult<List<User>>? = null
         val txResult = client.withTransaction { tx ->
-            inner = tx.users.createMany(
+            inner = tx.users.createMany(viewerContext,
                 { name = "A"; email = "a@example.com" },
                 { name = "B"; email = "b@example.com" },
             )
@@ -574,7 +565,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             violations = listOf(ValidationViolation("hook failed")),
         )
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser) }
             hooks {
                 users {
@@ -583,7 +574,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
         )
@@ -617,13 +608,13 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(policy) }
         }
 
         var inner: MutationResult<List<User>>? = null
         val txResult = client.withTransaction { tx ->
-            inner = tx.users.createMany(
+            inner = tx.users.createMany(viewerContext,
                 { name = "A"; email = "a@example.com" },
                 { name = "B"; email = "b@example.com" },
                 { name = "C"; email = "c@example.com" },
@@ -648,6 +639,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a later CREATE privacy denial evaluates the full batch before validation or insert`() {
+        val viewerContext = ViewerContext(Viewer.User(42L))
         val privacyBatches = mutableListOf<List<String>>()
         var validationCalls = 0
         val recording = RecordingDriver(resetAndDriver())
@@ -674,11 +666,11 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             }
         }
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.User(42L)) }
+
             policies { users(policy) }
         }
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
             { name = "C"; email = "c@example.com" },
@@ -702,7 +694,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     fun `EntKt-owned batch COMMITS when only return disclosure is denied`() {
         val client = freshClient(viewer = Viewer.User(1L), userPolicy = createButNoLoad("B"))
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
             { name = "C"; email = "c@example.com" },
@@ -719,8 +711,10 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         assertEquals(3L, bypassCount(client))
         // The one denied entity is identified by key (input order,
         // fail-fast on the first denial).
-        val bId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.query { where(User.name eq "B") }.firstOrNull().getOrThrow()!!.id
+        val bId = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.query { where(User.name eq "B") }.firstOrNull(viewerContext).getOrThrow()!!.id
         }
         assertEquals("id", ex.entityKey?.field)
         assertEquals(bId, ex.entityKey?.value)
@@ -739,7 +733,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         }
         val client = freshClient(viewer = Viewer.User(1L), userPolicy = policy)
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
         )
@@ -760,7 +754,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                     load(batchPrivacyRule<EntPrivacyReadClient, UserLoadPrivacyItem> { context, batch ->
                         context.client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
-                        }.rawExists().getOrThrow()
+                        }.rawExists(context.viewerContext).getOrThrow()
                         batch.decideEach { PrivacyDecision.Allow }
                     })
                 }
@@ -768,7 +762,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         }
         val client = freshClient(viewer = Viewer.User(1L), userPolicy = policy)
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
         )
@@ -794,7 +788,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                         // aborted, so the owned boundary confirms rollback.
                         context.client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
-                        }.rawExists()
+                        }.rawExists(context.viewerContext)
                         batch.decideEach { PrivacyDecision.Deny("LOAD dependency unavailable") }
                     })
                 }
@@ -802,7 +796,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         }
         val client = freshClient(viewer = Viewer.User(1L), userPolicy = policy)
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
         )
@@ -819,17 +813,18 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `owned batch keeps an earlier ignored hook mutation failure primary over returned LOAD denial`() {
+        val viewerContext = ViewerContext(Viewer.User(1L))
         var launchedNestedMutation = false
         var nestedFailure: EntMutationException? = null
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies { users(createButNoLoad("B")) }
             hooks {
                 users {
                     beforeCreate { context ->
                         if (!launchedNestedMutation) {
                             launchedNestedMutation = true
-                            val nested = context.client.users.create { }.save()
+                            val nested = context.client.users.create { }.save(context.viewerContext)
                             nestedFailure = assertIs<MutationResult.Failed>(nested).exception
                         }
                     }
@@ -837,7 +832,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             }
         }
 
-        val result = client.users.createMany(
+        val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
             { name = "B"; email = "b@example.com" },
         )
@@ -859,7 +854,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
         var inner: MutationResult<List<User>>? = null
         val txResult = client.withTransaction { tx ->
-            inner = tx.users.createMany(
+            inner = tx.users.createMany(viewerContext,
                 { name = "A"; email = "a@example.com" },
                 { name = "B"; email = "b@example.com" },
             )

@@ -134,7 +134,7 @@ and interceptors, and [Privacy](06-privacy.md) for LOAD-denial handling.
 
 ## Create
 
-`create { ... }.save()` and `saveAndLoad()` use this order:
+`create { ... }.save(viewerContext)` and `saveAndLoad()` use this order:
 
 ```mermaid
 flowchart TD
@@ -162,7 +162,7 @@ Important behavior:
 
 ## Update
 
-`update(id) { ... }.save()` and `saveAndLoad()` use this order:
+`update(id) { ... }.save(viewerContext)` and `saveAndLoad()` use this order:
 
 ```mermaid
 flowchart TD

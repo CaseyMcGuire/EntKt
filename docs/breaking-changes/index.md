@@ -30,6 +30,32 @@ above it.
 
 ## Unreleased
 
+- **Pass `ViewerContext` explicitly to every entity operation** (`runtime`, `codegen`, `ent-viewer`)
+  Ambient `PrivacyContext` lookup and generated client-scoping APIs have been
+  removed. Generated clients, transaction clients, executors, and rule-read
+  clients are now long-lived and contextless; every read, raw read, aggregate,
+  create/update save, delete, and bulk terminal takes a context-first
+  `ViewerContext`. The exact supplied instance flows through interceptors,
+  privacy rules, hooks, eager loads, transactions, and returned-entity LOAD
+  checks. Validation rules expose a separate privacy-bypassing
+  `readViewerContext`, and Ent Viewer configuration is now `viewerContext`.
+  _Migration:_ replace `PrivacyContext` with
+  `entkt.runtime.privacy.ViewerContext`; remove client `privacyContext { ... }`,
+  `currentPrivacyContext()`, `withPrivacyContext`, and block-scoped bypass
+  calls; construct a context at the request/job boundary and pass it as the
+  first argument to every executing terminal. In privacy rules and create/update
+  hooks, pass `context.viewerContext` to nested operations; in validation rules,
+  pass `context.readViewerContext`. Replace bypass blocks with
+  `ViewerContext.privacyBypass_DANGEROUS(reason)` and pass that value directly.
+  Rename Ent Viewer configuration from `privacyContext { request -> ... }` to
+  `viewerContext { request -> ... }`.
+
+- **Pass Ent Viewer entity lists directly** (`ent-viewer`, `codegen`)
+  `EntViewerRegistry` has been removed, and `GeneratedEntViewerRegistry` is now
+  the generated `List<EntViewerEntity<EntClient>>` itself.
+  _Migration:_ pass the generated value unchanged at positional call sites; for
+  custom registries, pass their `entities` list directly to `EntViewer`.
+
 - **Construct generated repositories with complete client configuration** (`codegen`, `runtime`)
   Generated repository constructors are now internal and receive their client,
   hooks, privacy rules, and validation rules up front. Repositories no longer

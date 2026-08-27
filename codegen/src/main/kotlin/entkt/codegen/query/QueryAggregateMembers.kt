@@ -17,6 +17,7 @@ import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.statement
+import entkt.codegen.metadata.VIEWER_CONTEXT
 
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
 private val AGG_FUNCTION = ClassName("entkt.runtime.query", "AggregateFunction")
@@ -35,7 +36,8 @@ internal fun buildRawCount(): FunSpec = function(
     returnType = READ_RESULT.parameterizedBy(LONG),
 ) {
     addKdoc("Count matching rows without materializing entities or evaluating LOAD privacy.\n")
-    statement("return _readQueryExecutor.rawCount { captureEntityQuery() }")
+    parameter("viewerContext", VIEWER_CONTEXT)
+    statement("return _readQueryExecutor.rawCount(viewerContext) { captureEntityQuery() }")
 }
 
 /** Generate the raw existence terminal as a thin runtime delegation. */
@@ -44,7 +46,8 @@ internal fun buildRawExists(): FunSpec = function(
     returnType = READ_RESULT.parameterizedBy(BOOLEAN),
 ) {
     addKdoc("Test whether the configured storage window contains a row without evaluating LOAD privacy.\n")
-    statement("return _readQueryExecutor.rawExists { captureEntityQuery() }")
+    parameter("viewerContext", VIEWER_CONTEXT)
+    statement("return _readQueryExecutor.rawExists(viewerContext) { captureEntityQuery() }")
 }
 
 /** Generate typed raw aggregate terminals over the shared runtime aggregate execution. */
@@ -68,6 +71,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
     ): CodeBlock = codeBlock {
         add("return _readQueryExecutor.rawAggregate(\n")
         indent()
+        add("viewerContext = viewerContext,\n")
         add("captureQuery = { captureEntityQuery() },\n")
         add("terminal = %S,\n", terminal)
         add("function = %T.%L,\n", AGG_FUNCTION, function)
@@ -91,6 +95,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
         specs += function(name, returnType = READ_RESULT.parameterizedBy(returnType)) {
             addAnnotation(suppress)
             addTypeVariables(typeVariables)
+            addParameter("viewerContext", VIEWER_CONTEXT)
             addParameter(column)
             addCode(
                 aggregateCall(
@@ -172,6 +177,7 @@ internal fun buildAggregateTerminals(entityClass: ClassName): List<FunSpec> {
             specs += function(name, returnType = READ_RESULT.parameterizedBy(buckets)) {
                 addAnnotation(suppress)
                 addTypeVariables(listOf(key) + valueTypeVariables)
+                addParameter("viewerContext", VIEWER_CONTEXT)
                 addParameters(parameters)
                 addCode(
                     aggregateCall(

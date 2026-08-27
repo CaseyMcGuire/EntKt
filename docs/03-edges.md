@@ -75,7 +75,7 @@ data class Post(
 client.posts.create {
     title = "Hello"
     authorId = alice.id
-}.save().getOrThrow()
+}.save(viewerContext).getOrThrow()
 ```
 
 The `hasMany(...)` side generates a query traversal method and an
@@ -87,14 +87,14 @@ delegated declaration (`posts` → `queryPosts` / `loadPosts`):
 // result root to posts
 val posts = client.users.query { where(User.id eq alice.id) }
     .queryPosts()
-    .all()
+    .all(viewerContext)
     .getOrThrow()
 
 // Edge loading: keep the users as the result and batch-load each
 // user's posts edge
 val users = client.users.query {
     loadPosts { orderBy(Post.createdAt.desc()) }
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 users[0].edges.posts.requireLoaded()  // → List<Post>
 ```
 
@@ -108,7 +108,7 @@ comparison):
 
 - `.throughEntity<Junction>(sourceEdge, targetEdge)` — junction is a
   domain entity, mutated through its generated repo
-  (e.g. `client.userGroups.create { ... }.save()`).
+  (e.g. `client.userGroups.create { ... }.save(viewerContext)`).
 - `.throughLink<Junction>(sourceEdge, targetEdge)` — junction is pure
   relationship storage. The generated update builder gets direct
   id-only mutators on the M2M edge (see
@@ -174,7 +174,7 @@ client.withTransaction { tx ->
     tx.posts.update(post.id) {
         tags.add(tagA.id)        // stage a single new link
         tags.remove(oldTag.id)   // stage a delete
-    }.save().orRollback()
+    }.save(viewerContext).orRollback()
 }
 ```
 
@@ -220,7 +220,7 @@ tx.posts.update(
     relationshipLocking = RelationshipLocking.Canonical,
 ) {
     tags.add(tag.id)
-}.save().orRollback()
+}.save(viewerContext).orRollback()
 ```
 
 `Canonical` makes both orientations contend on the same relationship lock. It

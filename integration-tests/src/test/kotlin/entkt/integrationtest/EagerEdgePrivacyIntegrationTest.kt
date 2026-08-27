@@ -23,7 +23,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
@@ -50,6 +50,7 @@ import kotlin.test.assertTrue
  * maps an eager denial to root absence.
  */
 class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
+    private val viewerContext = ViewerContext(Viewer.User(1L))
 
     // ---- fixture policies ----
 
@@ -75,7 +76,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
     fun `a denied to-one eager target fails with a SelectedEdgePath origin`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 notes(openNotes())
                 users(object : EntityPolicy<User, UserPolicyScope> {
@@ -85,14 +86,16 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        val authorId = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        val authorId = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "H"; email = "h@example.com" }
-                .saveAndLoad().getOrThrow()
-            sys.notes.create { body = "note"; writer = author.id }.save().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
+            sys.notes.create { body = "note"; writer = author.id }.save(viewerContext).getOrThrow()
             author.id
         }
 
-        val result = client.notes.query { loadAuthor() }.all()
+        val result = client.notes.query { loadAuthor() }.all(viewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -114,7 +117,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         val evaluated = mutableListOf<String>()
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 posts(openPosts())
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
@@ -129,19 +132,21 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        val (post, tagA) = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val post = sys.posts.create { title = "P1" }.saveAndLoad().getOrThrow()
-            val tagA = sys.tags.create { name = "a-first" }.saveAndLoad().getOrThrow()
-            val tagB = sys.tags.create { name = "b-second" }.saveAndLoad().getOrThrow()
-            sys.postTags.create { postId = post.id; tagId = tagA.id }.save().getOrThrow()
-            sys.postTags.create { postId = post.id; tagId = tagB.id }.save().getOrThrow()
+        val (post, tagA) = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            val post = sys.posts.create { title = "P1" }.saveAndLoad(viewerContext).getOrThrow()
+            val tagA = sys.tags.create { name = "a-first" }.saveAndLoad(viewerContext).getOrThrow()
+            val tagB = sys.tags.create { name = "b-second" }.saveAndLoad(viewerContext).getOrThrow()
+            sys.postTags.create { postId = post.id; tagId = tagA.id }.save(viewerContext).getOrThrow()
+            sys.postTags.create { postId = post.id; tagId = tagB.id }.save(viewerContext).getOrThrow()
             Pair(post, tagA)
         }
 
         val result = client.posts.query {
             where(Post.id eq post.id)
             loadTags { orderBy(Tag.name.asc()) }
-        }.all()
+        }.all(viewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -160,7 +165,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         val invocations = mutableListOf<List<String>>()
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 posts(openPosts())
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
@@ -177,20 +182,20 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        val firstDeniedId = client.withPrivacyContext(
-            PrivacyContext(Viewer.PrivacyBypass("test")),
-        ) { sys ->
-            val postA = sys.posts.create { title = "a-parent" }.saveAndLoad().getOrThrow()
-            val postB = sys.posts.create { title = "b-parent" }.saveAndLoad().getOrThrow()
-            val outside = sys.tags.create { name = "z-outside-shared" }.saveAndLoad().getOrThrow()
-            val right = sys.tags.create { name = "c-right" }.saveAndLoad().getOrThrow()
-            val left = sys.tags.create { name = "b-left" }.saveAndLoad().getOrThrow()
-            val first = sys.tags.create { name = "a-first-shared" }.saveAndLoad().getOrThrow()
+        val firstDeniedId = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            val postA = sys.posts.create { title = "a-parent" }.saveAndLoad(viewerContext).getOrThrow()
+            val postB = sys.posts.create { title = "b-parent" }.saveAndLoad(viewerContext).getOrThrow()
+            val outside = sys.tags.create { name = "z-outside-shared" }.saveAndLoad(viewerContext).getOrThrow()
+            val right = sys.tags.create { name = "c-right" }.saveAndLoad(viewerContext).getOrThrow()
+            val left = sys.tags.create { name = "b-left" }.saveAndLoad(viewerContext).getOrThrow()
+            val first = sys.tags.create { name = "a-first-shared" }.saveAndLoad(viewerContext).getOrThrow()
             for (tag in listOf(first, left, outside)) {
-                sys.postTags.create { postId = postA.id; tagId = tag.id }.save().getOrThrow()
+                sys.postTags.create { postId = postA.id; tagId = tag.id }.save(viewerContext).getOrThrow()
             }
             for (tag in listOf(first, right, outside)) {
-                sys.postTags.create { postId = postB.id; tagId = tag.id }.save().getOrThrow()
+                sys.postTags.create { postId = postB.id; tagId = tag.id }.save(viewerContext).getOrThrow()
             }
             first.id
         }
@@ -198,7 +203,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         val result = client.posts.query {
             orderBy(Post.title.asc())
             loadTags { orderBy(Tag.name.asc()); limit(2) }
-        }.all()
+        }.all(viewerContext)
 
         assertEquals(
             listOf(listOf("a-first-shared", "b-left", "c-right")),
@@ -217,7 +222,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
     fun `a nested eager denial lists every hop from the root`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 tags(openTags())
                 posts(object : EntityPolicy<Post, PostPolicyScope> {
@@ -232,12 +237,14 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        val hidden = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            val p1 = sys.posts.create { title = "P1" }.saveAndLoad().getOrThrow()
-            val p2 = sys.posts.create { title = "P2-hidden" }.saveAndLoad().getOrThrow()
-            val tag = sys.tags.create { name = "shared" }.saveAndLoad().getOrThrow()
-            sys.postTags.create { postId = p1.id; tagId = tag.id }.save().getOrThrow()
-            sys.postTags.create { postId = p2.id; tagId = tag.id }.save().getOrThrow()
+        val hidden = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            val p1 = sys.posts.create { title = "P1" }.saveAndLoad(viewerContext).getOrThrow()
+            val p2 = sys.posts.create { title = "P2-hidden" }.saveAndLoad(viewerContext).getOrThrow()
+            val tag = sys.tags.create { name = "shared" }.saveAndLoad(viewerContext).getOrThrow()
+            sys.postTags.create { postId = p1.id; tagId = tag.id }.save(viewerContext).getOrThrow()
+            sys.postTags.create { postId = p2.id; tagId = tag.id }.save(viewerContext).getOrThrow()
             p2
         }
 
@@ -246,7 +253,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         val result = client.posts.query {
             where(Post.title eq "P1")
             loadTags { loadPosts() }
-        }.all()
+        }.all(viewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -269,7 +276,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         var groupRuleEvaluations = 0
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 users(openUsers())
                 articles(object : EntityPolicy<Article, ArticlePolicyScope> {
@@ -289,14 +296,16 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val user = sys.users.create { name = "U"; email = "u@example.com" }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
             sys.articles.create { title = "A"; published = true; authorId = user.id }
-                .save().getOrThrow()
-            val group = sys.groups.create { name = "G" }.saveAndLoad().getOrThrow()
+                .save(viewerContext).getOrThrow()
+            val group = sys.groups.create { name = "G" }.saveAndLoad(viewerContext).getOrThrow()
             sys.memberships.create { userId = user.id; groupId = group.id; role = "member" }
-                .save().getOrThrow()
+                .save(viewerContext).getOrThrow()
         }
 
         // Both eager targets are denied; the articles edge is declared
@@ -305,7 +314,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         val result = client.users.query {
             loadArticles()
             loadGroups()
-        }.all()
+        }.all(viewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -321,7 +330,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
     fun `a denied root wins over a denied eager target — origins never mix`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 notes(object : EntityPolicy<Note, NotePolicyScope> {
                     override fun configure(scope: NotePolicyScope) = scope.run {
@@ -335,13 +344,15 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "H"; email = "h@example.com" }
-                .saveAndLoad().getOrThrow()
-            sys.notes.create { body = "note"; writer = author.id }.save().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
+            sys.notes.create { body = "note"; writer = author.id }.save(viewerContext).getOrThrow()
         }
 
-        val result = client.notes.query { loadAuthor() }.all()
+        val result = client.notes.query { loadAuthor() }.all(viewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
@@ -355,7 +366,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
     fun `visibleOrNull propagates a SelectedEdgePath denial unchanged`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies {
                 notes(openNotes())
                 users(object : EntityPolicy<User, UserPolicyScope> {
@@ -365,16 +376,18 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "H"; email = "h@example.com" }
-                .saveAndLoad().getOrThrow()
-            sys.notes.create { body = "note"; writer = author.id }.save().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
+            sys.notes.create { body = "note"; writer = author.id }.save(viewerContext).getOrThrow()
         }
 
         // The root note is visible; only the eager author is denied.
         // Adding an eager load must never convert a visible root into
         // apparent absence.
-        val result = client.notes.query { loadAuthor() }.firstOrNull()
+        val result = client.notes.query { loadAuthor() }.firstOrNull(viewerContext)
         val failed = assertIs<ReadResult.Failed>(result)
         assertIs<LoadDenialOrigin.SelectedEdgePath>(
             assertIs<EntPrivacyDeniedException>(failed.exception).origin,

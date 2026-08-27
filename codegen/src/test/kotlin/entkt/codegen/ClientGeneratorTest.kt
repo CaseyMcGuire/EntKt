@@ -48,8 +48,8 @@ class ClientGeneratorTest {
         val scopeEnd = output.indexOf("private class _EntHookClientScope", scopeStart)
         val scope = output.substring(scopeStart, scopeEnd)
         assert(scope.contains("val cars: CarRepo") && scope.contains("val users: UserRepo") &&
-            scope.contains("fun currentPrivacyContext(): PrivacyContext")) {
-            "EntClientScope should expose repositories and the current privacy context only\n$output"
+            !scope.contains("ViewerContext")) {
+            "EntClientScope should expose repositories without ambient viewer state\n$output"
         }
         assert(output.contains("class EntTransactionClient") && output.contains(": EntClientScope")) {
             "EntTransactionClient should implement EntClientScope\n$output"
@@ -115,17 +115,11 @@ class ClientGeneratorTest {
         ) {
             "The client must initialize the resolved default from configuration\n$output"
         }
-        // Clone-propagation sites thread runtime overrides through.
-        // (The former fixed-context clone is gone — read-side evaluators
-        // use asValidationReadClientForInternalUse /
-        // asPrivacyReadClientForInternalUse, which carry no write-side
-        // defaults by design.)
+        // Transaction clients thread runtime overrides through.
         assert(output.contains("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")) {
             "withTransaction must propagate defaultRelationshipLocking\n$output"
         }
-        assert(output.contains("scoped.defaultRelationshipLocking = this.defaultRelationshipLocking")) {
-            "withPrivacyContext must propagate defaultRelationshipLocking\n$output"
-        }
+        assert(!output.contains("scoped.defaultRelationshipLocking"))
     }
 
     @Test
@@ -162,12 +156,16 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient supplies rule clients without entity dispatch`() {
+    fun `EntClient supplies stable rule clients without entity dispatch`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("MutationRuntime<EntPrivacyReadClient, EntValidationReadClient>"))
-        assert(output.contains("override fun privacyRuleClient(privacyContext: PrivacyContext): EntPrivacyReadClient"))
-        assert(output.contains("override fun validationRuleClient(): EntValidationReadClient"))
+        assert(output.contains(": EntReadRuntime, MutationRuntime, EntClientScope"))
+        assert(output.contains("private val readClientImpl: EntReadClientImpl by lazy"))
+        assert(output.contains("internal val privacyReadClient: EntPrivacyReadClient by lazy"))
+        assert(output.contains("internal val validationReadClient: EntValidationReadClient by lazy"))
+        assert(output.contains("privacyClient = privacyReadClient"))
+        assert(output.contains("validationClient = validationReadClient"))
+        assert(!output.contains("privacyRuleClient(") && !output.contains("validationRuleClient("))
         assert(!output.contains("evaluateCreatePrivacy") && !output.contains("evaluateCreateValidation")) {
             "The generic mutation executor should consume typed rules directly\n$output"
         }
@@ -250,8 +248,7 @@ class ClientGeneratorTest {
         }
 
         // The client owns the coordinator slot and the hook repos call at
-        // every Failed construction site; privacy-context clones propagate
-        // the coordinator so scoped mutations still mark the transaction.
+        // every Failed construction site.
         assert(output.contains("internal var transactionCoordinator: TransactionCoordinator? = null")) {
             "EntClient should carry an internal transactionCoordinator\n$output"
         }
@@ -263,12 +260,8 @@ class ClientGeneratorTest {
         ) {
             "EntClient should expose recordTransactionMutationFailure delegating to the coordinator\n$output"
         }
-        assert(output.contains("scoped.transactionCoordinator = this.transactionCoordinator")) {
-            "withPrivacyContext should propagate the coordinator to the scoped clone\n$output"
-        }
-        assert(output.contains("scoped.transactionExecutionToken = this.transactionExecutionToken")) {
-            "withPrivacyContext should preserve transaction execution authorization\n$output"
-        }
+        assert(!output.contains("scoped.transactionCoordinator"))
+        assert(!output.contains("scoped.transactionExecutionToken"))
         assert(
             output.contains(
                 "transactionExecutionGuard.checkClientOperation(transactionExecutionToken)"
@@ -288,7 +281,7 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntTransactionClient exposes repos and scoped privacy but no nested transaction entry point`() {
+    fun `EntTransactionClient exposes repos but no context scoping or nested transaction entry point`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
         val start = output.indexOf("class EntTransactionClient")
         val end = output.indexOf("class EntClient private constructor(", start)
@@ -298,12 +291,8 @@ class ClientGeneratorTest {
         assert(transactionClient.contains("val cars: CarRepo get() = delegate.cars")) {
             "Transaction facade should expose full repositories\n$transactionClient"
         }
-        assert(transactionClient.contains("fun <T> withPrivacyContext(")) {
-            "Transaction facade should preserve privacy re-scoping\n$transactionClient"
-        }
-        assert(transactionClient.contains("fun <T> bypassPrivacy_DANGEROUS(")) {
-            "Transaction facade should preserve the explicit privacy bypass\n$transactionClient"
-        }
+        assert(!transactionClient.contains("withViewerContext"))
+        assert(!transactionClient.contains("bypassPrivacy_DANGEROUS"))
         assert(!transactionClient.contains("fun <T> withTransaction(")) {
             "Nested transactions must be absent from the transaction facade\n$transactionClient"
         }
@@ -441,89 +430,52 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClientConfig has privacyContext method`() {
+    fun `EntClientConfig has no ambient viewer context method`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("fun privacyContext(provider: PrivacyContextProvider)")) {
-            "Should have privacyContext method on EntClientConfig\n$output"
-        }
-        assert(output.contains("internal var privacyContextProviderConfig: PrivacyContextProvider? = null")) {
-            "The config should store the callback through the named provider contract\n$output"
-        }
-        assert(output.contains("privacyContextProviderConfig = provider")) {
-            "The config should retain the named provider directly\n$output"
-        }
+        assert(!output.contains("ViewerContextProvider"))
+        assert(!output.contains("viewerContextProvider"))
+        assert(!output.contains("fun viewerContext("))
     }
 
     @Test
-    fun `EntClient has withPrivacyContext method`() {
+    fun `EntClient has no context-scoping methods`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("fun <T> withPrivacyContext(context: PrivacyContext, block: (EntClient) -> T): T")) {
-            "Should have withPrivacyContext method\n$output"
-        }
+        assert(!output.contains("withViewerContext"))
+        assert(!output.contains("bypassPrivacy_DANGEROUS"))
+        assert(!output.contains("currentViewerContext"))
     }
 
     @Test
-    fun `EntClient has the guarded internal posture adapters and no fixed-context clone`() {
+    fun `EntClient has stable posture wrappers around one contextless read client`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("internal fun asValidationReadClientForInternalUse(): EntValidationReadClient")) {
-            "Should have the asValidationReadClientForInternalUse adapter\n$output"
-        }
-        assert(output.contains("internal fun asPrivacyReadClientForInternalUse(privacy: PrivacyContext): EntPrivacyReadClient")) {
-            "Should have the asPrivacyReadClientForInternalUse adapter\n$output"
-        }
-        // The validation adapter fixes the bypass context itself, so
-        // evaluators cannot construct a validation reader under an
-        // arbitrary context.
-        assert(
-            output.contains(
-                "EntValidationReadClient(readClientImpl(PrivacyContext(Viewer.PrivacyBypass(\"validation read\"))))"
-            )
-        ) {
-            "Validation adapter should fix the PrivacyBypass(\"validation read\") context\n$output"
-        }
-        // The privacy adapter freezes the supplied caller context.
-        assert(output.contains("EntPrivacyReadClient(readClientImpl(privacy))")) {
-            "Privacy adapter should freeze the caller's context\n$output"
-        }
-        // Both adapters share one private impl builder — the wrappers
-        // cannot drift structurally.
-        assert(output.contains("private fun readClientImpl(context: PrivacyContext): EntReadClientImpl")) {
-            "Both adapters should call one private EntReadClientImpl builder\n$output"
-        }
-        // The opt-in marker is the gate that keeps same-module application
-        // code from minting fixed-context readers.
-        assert(output.contains("@EntktInternal\n  internal fun asValidationReadClientForInternalUse")) {
-            "Validation adapter should carry the @EntktInternal guard\n$output"
-        }
-        assert(output.contains("@EntktInternal\n  internal fun asPrivacyReadClientForInternalUse")) {
-            "Privacy adapter should carry the @EntktInternal guard\n$output"
-        }
-        // The arbitrary-context adapter is replaced by the posture pair —
-        // removed, not kept around.
+        assert(output.contains("private val readClientImpl: EntReadClientImpl by lazy"))
+        assert(output.contains("EntPrivacyReadClient(readClientImpl)"))
+        assert(output.contains("EntValidationReadClient(readClientImpl)"))
+        assert(!output.contains("readClientImpl(context:"))
+        assert(!output.contains("asValidationReadClientForInternalUse"))
+        assert(!output.contains("asPrivacyReadClientForInternalUse"))
         assert(!output.contains("asReadClientForInternalUse")) {
             "The arbitrary-context asReadClientForInternalUse adapter should be removed\n$output"
         }
         // The full-client fixed-context clone is dead once evaluators use
         // the adapters — removed, not kept around.
-        assert(!output.contains("withFixedPrivacyContextForInternalUse")) {
+        assert(!output.contains("withFixedViewerContextForInternalUse")) {
             "The fixed-context full-client clone should be removed\n$output"
         }
     }
 
     @Test
-    fun `withTransaction reuses policy configuration and copies runtime privacy context`() {
+    fun `withTransaction reuses policy configuration without copying viewer state`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("tx.privacyContextProvider = this.privacyContextProvider")) {
-            "withTransaction should copy privacy context provider\n$output"
-        }
+        assert(!output.contains("viewerContextProvider"))
         assert(output.contains("val tx = EntClient(txDriver, configuration)")) {
             "withTransaction should rebuild repos from the resolved policy configuration\n$output"
         }

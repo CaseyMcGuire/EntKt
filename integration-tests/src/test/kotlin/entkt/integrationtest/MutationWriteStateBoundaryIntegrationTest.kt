@@ -45,9 +45,9 @@ class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
             override fun insert(table: String, values: Map<String, Any?>): Map<String, Any?> =
                 throw boom
         }
-        val client = sysClient(failing)
+        val client = EntClient(failing)
 
-        val result = client.users.create { name = "A"; email = "a@example.com" }.save()
+        val result = client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntUnexpectedMutationException>(failed.exception)
@@ -61,18 +61,18 @@ class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
     @Test
     fun `an unclassified update failure reports PersistenceUnknown`() {
         val real = resetAndDriver()
-        val seedClient = sysClient(real)
+        val seedClient = EntClient(real)
         val user = seedClient.users.create { name = "A"; email = "a@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
 
         val boom = RuntimeException("socket reset during UPDATE")
         val failing = object : DatabaseDriver by real {
             override fun update(table: String, id: Any, values: Map<String, Any?>): Map<String, Any?>? =
                 throw boom
         }
-        val client = sysClient(failing)
+        val client = EntClient(failing)
 
-        val result = client.users.update(user.id) { name = "Renamed" }.save()
+        val result = client.users.update(user.id) { name = "Renamed" }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntUnexpectedMutationException>(failed.exception)
@@ -84,10 +84,10 @@ class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a recognized constraint failure reports NotPersisted through the same boundary`() {
-        val client = sysClient(resetAndDriver())
-        client.users.create { name = "A"; email = "dup@example.com" }.save().getOrThrow()
+        val client = EntClient(resetAndDriver())
+        client.users.create { name = "A"; email = "dup@example.com" }.save(testViewerContext).getOrThrow()
 
-        val result = client.users.create { name = "B"; email = "dup@example.com" }.save()
+        val result = client.users.create { name = "B"; email = "dup@example.com" }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntConstraintViolationException>(failed.exception)
@@ -100,11 +100,11 @@ class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
     fun `a beforeCreate hook failure reports NotPersisted and writes nothing`() {
         val hookBoom = IllegalStateException("beforeCreate blew up")
         val driver = resetAndDriver()
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks { users { beforeCreate { throw hookBoom } } }
         }
 
-        val result = client.users.create { name = "A"; email = "a@example.com" }.save()
+        val result = client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntUnexpectedMutationException>(failed.exception)
@@ -119,11 +119,11 @@ class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
     fun `an afterCreate hook failure after an autocommit write reports Committed and the row is present`() {
         val hookBoom = IllegalStateException("afterCreate blew up")
         val driver = resetAndDriver()
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks { users { afterCreate { throw hookBoom } } }
         }
 
-        val result = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad()
+        val result = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntUnexpectedMutationException>(failed.exception)
@@ -137,20 +137,20 @@ class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
     fun `an afterUpdate hook failure after an autocommit write reports Committed and the new value sticks`() {
         val hookBoom = IllegalStateException("afterUpdate blew up")
         val driver = resetAndDriver()
-        val seedClient = sysClient(driver)
+        val seedClient = EntClient(driver)
         val user = seedClient.users.create { name = "A"; email = "a@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
 
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks { users { afterUpdate { throw hookBoom } } }
         }
-        val result = client.users.update(user.id) { name = "Renamed" }.save()
+        val result = client.users.update(user.id) { name = "Renamed" }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntUnexpectedMutationException>(failed.exception)
         assertEquals(MutationWriteState.Committed, ex.writeState)
         assertSame(hookBoom, ex.cause)
-        assertEquals("Renamed", seedClient.users.findById(user.id).getOrThrow()?.name)
+        assertEquals("Renamed", seedClient.users.findById(testViewerContext, user.id).getOrThrow()?.name)
     }
 
     // ---- post-persist callback failure, caller-owned tx → TransactionPending ----
@@ -159,13 +159,13 @@ class MutationWriteStateBoundaryIntegrationTest : PostgresTestBase() {
     fun `the same afterCreate failure inside a caller transaction reports TransactionPending and rolls back`() {
         val hookBoom = IllegalStateException("afterCreate blew up")
         val driver = resetAndDriver()
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks { users { afterCreate { throw hookBoom } } }
         }
 
         var inner: MutationResult<User>? = null
         val txResult = client.withTransaction { tx ->
-            inner = tx.users.create { name = "A"; email = "a@example.com" }.saveAndLoad()
+            inner = tx.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext)
             // Ignore the failure — the rollback-only backstop still fires.
             "completed"
         }

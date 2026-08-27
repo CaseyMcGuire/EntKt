@@ -10,7 +10,7 @@ import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntPrivacyDeniedException
@@ -32,6 +32,7 @@ import kotlin.test.assertSame
  * narrow-fake pattern).
  */
 class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
+    private var viewerContext = testViewerContext
 
     private object AllowAll : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -55,9 +56,10 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
         viewer: Viewer = Viewer.PrivacyBypass("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
     ): Pair<EntClient, RecordingDriver> {
+        viewerContext = ViewerContext(viewer)
         val recording = RecordingDriver(resetAndDriver())
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies {
                 articles(articlePolicy)
                 users(OpenUser)
@@ -67,11 +69,13 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
     }
 
     private fun seedArticle(client: EntClient): Article =
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "A"; email = "a@example.com" }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
             sys.articles.create { title = "T"; published = true; authorId = author.id }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
         }
 
     @Test
@@ -79,7 +83,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
         val (client, recording) = recordingClient()
         val article = seedArticle(client)
 
-        val result = client.articles.findById(article.id)
+        val result = client.articles.findById(viewerContext, article.id)
         assertIs<ReadResult.Success<Article?>>(result)
 
         recording.reset()
@@ -104,7 +108,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
         val (client, recording) = recordingClient(viewer = Viewer.User(1L), articlePolicy = countingDeny)
         val article = seedArticle(client)
 
-        val result = client.articles.findById(article.id)
+        val result = client.articles.findById(viewerContext, article.id)
         assertIs<ReadResult.Failed>(result)
         val evaluationsAtProduce = ruleEvaluations
 
@@ -120,7 +124,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
         val (client, recording) = recordingClient(viewer = Viewer.User(1L), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
-        val result = client.articles.findById(article.id)
+        val result = client.articles.findById(viewerContext, article.id)
         val failed = assertIs<ReadResult.Failed>(result)
 
         recording.reset()
@@ -139,7 +143,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
 
         // Validation failure: produced without reaching the driver's
         // write path; the projection must add nothing.
-        val result = client.users.create { name = "NoEmail" }.save()
+        val result = client.users.create { name = "NoEmail" }.save(viewerContext)
         assertIs<MutationResult.Failed>(result)
 
         recording.reset()
@@ -157,7 +161,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
         val (client, recording) = recordingClient()
 
         val result = client.withTransaction { tx ->
-            tx.users.create { name = "NoEmail" }.save().orRollback()
+            tx.users.create { name = "NoEmail" }.save(viewerContext).orRollback()
         }
         assertIs<TransactionResult.Failed>(result)
 

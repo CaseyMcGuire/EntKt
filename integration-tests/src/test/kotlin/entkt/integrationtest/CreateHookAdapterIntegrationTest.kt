@@ -51,7 +51,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
     private fun newClient(
         beforeSave: ((ArticleMutation) -> Unit)? = null,
         beforeCreate: ((ArticleCreateHookContext) -> Unit)? = null,
-    ): EntClient = sysClient(driver) {
+    ): EntClient = EntClient(driver) {
         hooks {
             articles {
                 if (beforeSave != null) beforeSave(beforeSave)
@@ -61,7 +61,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
     }
 
     private fun seedAuthor(client: EntClient): User =
-        client.users.create { name = "Alice"; email = "alice@example.com" }.saveAndLoad().getOrThrow()
+        client.users.create { name = "Alice"; email = "alice@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
 
     // ──────────────────────────────────────────────────────────────
     // Cast-failure surface (the 4 disallowed casts + 1 allowed)
@@ -75,7 +75,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             catch (e: ClassCastException) { captured = e }
         })
         val author = seedAuthor(client)
-        client.articles.create { title = "x"; published = true; authorId = author.id }.save().getOrThrow()
+        client.articles.create { title = "x"; published = true; authorId = author.id }.save(testViewerContext).getOrThrow()
 
         assertNotNull(captured, "casting beforeSave arg to ArticleCreateDraft must throw ClassCastException")
     }
@@ -91,7 +91,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             catch (e: ClassCastException) { captured = e }
         })
         val author = seedAuthor(client)
-        client.articles.create { title = "x"; published = true; authorId = author.id }.save().getOrThrow()
+        client.articles.create { title = "x"; published = true; authorId = author.id }.save(testViewerContext).getOrThrow()
 
         assertNotNull(captured, "casting beforeSave arg to ArticleCreateMutationView must throw")
     }
@@ -104,7 +104,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             catch (e: ClassCastException) { captured = e }
         })
         val author = seedAuthor(client)
-        client.articles.create { title = "x"; published = true; authorId = author.id }.save().getOrThrow()
+        client.articles.create { title = "x"; published = true; authorId = author.id }.save(testViewerContext).getOrThrow()
 
         assertNotNull(captured, "casting ctx.mutation to ArticleCreateDraft must throw ClassCastException")
     }
@@ -120,7 +120,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             catch (e: ClassCastException) { captured = e }
         })
         val author = seedAuthor(client)
-        client.articles.create { title = "x"; published = true; authorId = author.id }.save().getOrThrow()
+        client.articles.create { title = "x"; published = true; authorId = author.id }.save(testViewerContext).getOrThrow()
 
         assertNotNull(captured, "casting ctx.mutation to ArticleUpdateMutationView must throw")
     }
@@ -143,7 +143,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             title = "hello"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals(true, widenedOk, "ctx.mutation as ArticleMutation must succeed")
         assertEquals("hello!", saved.title, "writes through the widened reference must reach the outer builder")
@@ -167,7 +167,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             title = "draft"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals("edited-by-beforeSave", saved.title)
     }
@@ -184,7 +184,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             title = "draft"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals("edited-by-beforeCreate", saved.title)
     }
@@ -203,7 +203,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             title = "x"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         // beforeSave runs first → "x-A". beforeCreate runs next → "x-A-B".
         assertEquals("x-A-B", saved.title)
@@ -234,14 +234,14 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             title = "x"
             published = true
             authorId = author.id
-        }.save().getOrThrow()
+        }.save(testViewerContext).getOrThrow()
 
         assertEquals(listOf(author.id), seen)
     }
 
     @Test
     fun `beforeSave can rewrite a required FK through the adapter`() {
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks {
                 articles {
                     beforeSave { mutation ->
@@ -254,7 +254,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
         }
         // Seed two real authors — Alice is who the caller picks;
         // Sentinel is the rewrite target.
-        val alice = client.users.create { name = "Alice"; email = "alice@example.com" }.saveAndLoad().getOrThrow()
+        val alice = client.users.create { name = "Alice"; email = "alice@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         // Insert the sentinel directly so the FK target exists.
         driver.insert("users", mapOf("id" to 9999L, "name" to "Sentinel", "email" to "sentinel@example.com"))
 
@@ -262,7 +262,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             title = "rewritten"
             published = true
             authorId = alice.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals(9999L, saved.authorId, "beforeSave's adapter write should reach the persisted row")
     }
@@ -279,14 +279,14 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             title = "x"
             published = true
             authorId = author.id
-        }.save().getOrThrow()
+        }.save(testViewerContext).getOrThrow()
 
         assertEquals(listOf(author.id), seen)
     }
 
     @Test
     fun `beforeCreate can rewrite a required FK through ctx-mutation`() {
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks {
                 articles {
                     beforeCreate { ctx ->
@@ -295,14 +295,14 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val alice = client.users.create { name = "Alice"; email = "alice@example.com" }.saveAndLoad().getOrThrow()
+        val alice = client.users.create { name = "Alice"; email = "alice@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         driver.insert("users", mapOf("id" to 9999L, "name" to "Sentinel", "email" to "sentinel@example.com"))
 
         val saved = client.articles.create {
             title = "rewritten-by-create"
             published = true
             authorId = alice.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals(9999L, saved.authorId)
     }
@@ -319,7 +319,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
     @Test
     fun `beforeSave nullable-FK adapter read returns null when unassigned`() {
         var observed: Long? = 1L  // sentinel; overwritten by the hook
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks {
                 reminders {
                     beforeSave { mutation: ReminderMutation ->
@@ -328,32 +328,32 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        client.reminders.create { body = "no assignee" }.save().getOrThrow()
+        client.reminders.create { body = "no assignee" }.save(testViewerContext).getOrThrow()
         assertNull(observed, "unassigned nullable FK should read as null through the adapter")
     }
 
     @Test
     fun `beforeSave nullable-FK adapter read returns the staged id when set`() {
         var observed: Long? = null
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks {
                 reminders {
                     beforeSave { mutation -> observed = mutation.assigneeId }
                 }
             }
         }
-        val user = client.users.create { name = "U"; email = "u@example.com" }.saveAndLoad().getOrThrow()
+        val user = client.users.create { name = "U"; email = "u@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         client.reminders.create {
             body = "with assignee"
             assigneeId = user.id
-        }.save().getOrThrow()
+        }.save(testViewerContext).getOrThrow()
 
         assertEquals(user.id, observed)
     }
 
     @Test
     fun `beforeSave can write a non-null id to a nullable FK through the adapter`() {
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks {
                 reminders {
                     beforeSave { mutation -> mutation.assigneeId = 7777L }
@@ -361,25 +361,25 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
             }
         }
         driver.insert("users", mapOf("id" to 7777L, "name" to "Forced", "email" to "forced@example.com"))
-        val saved = client.reminders.create { body = "x" }.saveAndLoad().getOrThrow()
+        val saved = client.reminders.create { body = "x" }.saveAndLoad(testViewerContext).getOrThrow()
         assertEquals(7777L, saved.assigneeId)
     }
 
     @Test
     fun `beforeSave can write null to clear a nullable FK through the adapter`() {
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks {
                 reminders {
                     beforeSave { mutation -> mutation.assigneeId = null }
                 }
             }
         }
-        val user = client.users.create { name = "U"; email = "u@example.com" }.saveAndLoad().getOrThrow()
+        val user = client.users.create { name = "U"; email = "u@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         // Caller sets assignee to `user.id`, but the hook clears it.
         val saved = client.reminders.create {
             body = "x"
             assigneeId = user.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
         assertNull(saved.assigneeId, "writing null through the adapter should clear the FK")
     }
 
@@ -390,7 +390,7 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
         // `_createMutationView` side, parallel to the per-direction
         // beforeSave coverage above.
         var observed: Long? = null
-        val client = sysClient(driver) {
+        val client = EntClient(driver) {
             hooks {
                 reminders {
                     beforeCreate { ctx: ReminderCreateHookContext ->
@@ -400,11 +400,11 @@ class CreateHookAdapterIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val user = client.users.create { name = "U"; email = "u@example.com" }.saveAndLoad().getOrThrow()
+        val user = client.users.create { name = "U"; email = "u@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         val saved = client.reminders.create {
             body = "x"
             assigneeId = user.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals(user.id, observed, "ctx.mutation.assigneeId should read the caller-staged id")
         assertNull(saved.assigneeId, "writing null through ctx.mutation should clear the FK")

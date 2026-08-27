@@ -39,6 +39,7 @@ import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.mutation.MUTATION_CANCELLATION_EXCEPTION
 import entkt.codegen.mutation.MUTATION_ENTITY_KEY
 import entkt.codegen.mutation.MUTATION_ENT_OPERATION
@@ -69,7 +70,6 @@ private val INT = Int::class.asClassName()
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_RULE_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyRuleContext")
 private val VALIDATION_RULE_CONTEXT = ClassName("entkt.runtime.validation", "ValidationRuleContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
@@ -86,8 +86,6 @@ private val TRANSACTION_RESULT = ClassName("entkt.runtime.result", "TransactionR
 private val TRANSACTION_FAILURE_STATE = ClassName("entkt.runtime.result", "TransactionFailureState")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
-private val CREATE_MUTATION_OUTPUT =
-    ClassName("entkt.runtime.mutation.execution", "CreateMutationOutput")
 private val CREATE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationSpec")
 private val CREATE_MUTATION_INPUT =
@@ -360,6 +358,7 @@ internal class RepoGenerator(
     private fun buildDelete(schemaName: String, entityClass: ClassName): FunSpec {
         val resultType = MUTATION_RESULT.parameterizedBy(UNIT)
         return function("delete", resultType) {
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entity", entityClass)
             addKdoc(
                 "Delete [entity]'s row. The passed entity is an **id handle\n" +
@@ -390,7 +389,7 @@ internal class RepoGenerator(
                     .add("  if (row == null) {\n")
                     .add("    %T.Success(Unit)\n", MUTATION_RESULT)
                     .add("  } else {\n")
-                    .add("    when (val result = deleteLoaded(%T.fromRow(row))) {\n", entityClass)
+                    .add("    when (val result = deleteLoaded(viewerContext, %T.fromRow(row))) {\n", entityClass)
                     .add("      is %T.Success -> %T.Success(Unit)\n", MUTATION_RESULT, MUTATION_RESULT)
                     .add("      is %T.Failed -> result\n", MUTATION_RESULT)
                     .add("    }\n")
@@ -433,6 +432,7 @@ internal class RepoGenerator(
             MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName()),
         ) {
             addModifiers(KModifier.PRIVATE)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entity", entityClass)
             addCode(codeBlock {
                     add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
@@ -443,9 +443,8 @@ internal class RepoGenerator(
                         "  val postWriteState = if (driver.inTransaction) %T.TransactionPending else %T.Committed\n",
                         MUTATION_WRITE_STATE, MUTATION_WRITE_STATE,
                     )
-                    .add("  val privacy = client.currentPrivacyContext()\n")
                     .add("  val candidate = buildDeleteCandidate(entity)\n")
-                    .add("  val denialReason = deleteDenialReasonOrNull(privacy, entity, candidate)\n")
+                    .add("  val denialReason = deleteDenialReasonOrNull(viewerContext, entity, candidate)\n")
                     .add("  if (denialReason != null) {\n")
                     .add(
                         privacyDeniedFailure(
@@ -508,6 +507,7 @@ internal class RepoGenerator(
     ): FunSpec {
         val resultType = MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName())
         return function("deleteById", resultType) {
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("id", idType)
             addKdoc(
                 "Delete the row with [id] through the same reload-then-delete\n" +
@@ -538,7 +538,7 @@ internal class RepoGenerator(
                     .add("  if (row == null) {\n")
                     .add("    %T.Success(false)\n", MUTATION_RESULT)
                     .add("  } else {\n")
-                    .add("    deleteLoaded(%T.fromRow(row))\n", entityClass)
+                    .add("    deleteLoaded(viewerContext, %T.fromRow(row))\n", entityClass)
                     .add("  }\n")
                     .add(terminalBoundaryTailExpression())
             })
@@ -554,6 +554,7 @@ internal class RepoGenerator(
         val predicateType = PREDICATE.parameterizedBy(entityClass)
         return function("_executeDeleteManyPhases", MUTATION_RESULT.parameterizedBy(INT)) {
             addModifiers(KModifier.PRIVATE)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("predicates", LIST.parameterizedBy(predicateType))
             parameter("promoteDriverNotPersisted", BOOLEAN)
             addCode(codeBlock {
@@ -564,9 +565,8 @@ internal class RepoGenerator(
                         "  val q = %T(driver, client).apply { for (predicate in predicates) where(predicate) }\n",
                         queryClass,
                     )
-                    .add("  val privacy = client.currentPrivacyContext()\n")
                     .add(
-                        "  val spec = q.compileEntityQuery(%T.DELETE_CANDIDATES, privacy)\n",
+                        "  val spec = q.compileEntityQuery(viewerContext, %T.DELETE_CANDIDATES)\n",
                         READ_OPERATION,
                     )
                     .add("  val effectivePredicates = spec.predicates.toList()\n")
@@ -577,7 +577,7 @@ internal class RepoGenerator(
                     .add("  val entities = rows.map { %T.fromRow(it) }\n", entityClass)
                     .add("  if (entities.isEmpty()) return %T.Success(0)\n", MUTATION_RESULT)
                     .add("  val candidates = entities.map { buildDeleteCandidate(it) }\n")
-                    .add("  val denialReasons = deleteDenialReasons(privacy, entities, candidates)\n")
+                    .add("  val denialReasons = deleteDenialReasons(viewerContext, entities, candidates)\n")
                     .add("  val deniedIndex = denialReasons.indexOfFirst { it != null }\n")
                     .add("  if (deniedIndex >= 0) {\n")
                     .add(
@@ -681,6 +681,7 @@ internal class RepoGenerator(
         val repoPropName = clientName
         val resultType = MUTATION_RESULT.parameterizedBy(INT)
         return function("deleteMany", resultType) {
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter(
                 // vararg predicates: Predicate<EntityClass> — typed in
                 // the entity scope so callers can only pass predicates
@@ -713,12 +714,12 @@ internal class RepoGenerator(
                     )
                     .add("  val predicateSnapshot = predicates.toList()\n")
                     .add("  if (driver.inTransaction) {\n")
-                    .add("    _executeDeleteManyPhases(predicateSnapshot, promoteDriverNotPersisted = true)\n")
+                    .add("    _executeDeleteManyPhases(viewerContext, predicateSnapshot, promoteDriverNotPersisted = true)\n")
                     .add("  } else {\n")
                     .add("    val txResult = client.withTransaction { tx ->\n")
                     .add(
                         "      tx.%L._executeDeleteManyPhases(" +
-                            "predicateSnapshot, promoteDriverNotPersisted = false).orRollback()\n",
+                            "viewerContext, predicateSnapshot, promoteDriverNotPersisted = false).orRollback()\n",
                         repoPropName,
                     )
                     .add("    }\n")
@@ -938,19 +939,18 @@ internal class RepoGenerator(
         // terminal's capture boundary as an operational failure.
         return function("loadDenials", LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true))) {
             addModifiers(KModifier.OVERRIDE)
-            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entities", LIST.parameterizedBy(entityClass))
             addCode(codeBlock {
                 addStatement("if (entities.isEmpty()) return emptyList()")
                 .addStatement("val entitySnapshot = entities.toList()")
                 .addStatement(
-                    "if (privacy.viewer is %T.PrivacyBypass) return %T(entitySnapshot.size) { null }",
+                    "if (viewerContext.viewer is %T.PrivacyBypass) return %T(entitySnapshot.size) { null }",
                     VIEWER,
                     LIST,
                 )
                 .addStatement("val rules = privacyConfig.loadRules")
-                .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .addStatement("val ruleContext = %T(privacy, privacyClient)", PRIVACY_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(viewerContext, client.privacyReadClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
                     "val decisions = %M(%S, entitySnapshot, rules, ruleContext) { item ->\n" +
                         "  %T(%L)\n" +
@@ -981,9 +981,9 @@ internal class RepoGenerator(
     private fun buildLoadDenialOrNull(entityClass: ClassName): FunSpec =
         function("loadDenialOrNull", PRIVACY_DENIAL.copy(nullable = true)) {
             addModifiers(KModifier.OVERRIDE)
-            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entity", entityClass)
-            statement("return loadDenials(privacy, listOf(entity)).single()")
+            statement("return loadDenials(viewerContext, listOf(entity)).single()")
         }
 
     // ── Write-side privacy evaluators ─────────────────────────────
@@ -1036,17 +1036,16 @@ internal class RepoGenerator(
         val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
         return function("updateDenialReasonOrNull", String::class.asClassName().copy(nullable = true)) {
             addModifiers(KModifier.INTERNAL)
-            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("before", entityClass)
             parameter("requestedPatch", patchClass)
             parameter("effectivePatch", patchClass)
             parameter("candidate", candidateClass)
             parameter("edgeChanges", edgeChangesViewClass)
             addCode(codeBlock {
-                addStatement("if (privacy.viewer is %T.PrivacyBypass) return null", VIEWER)
+                addStatement("if (viewerContext.viewer is %T.PrivacyBypass) return null", VIEWER)
                 .addStatement("val rules = privacyConfig.updateRules")
-                .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .addStatement("val ruleContext = %T(privacy, privacyClient)", PRIVACY_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(viewerContext, client.privacyReadClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
                     "var decision = %M(%S, listOf(candidate), rules, ruleContext) { item ->\n" +
                     "  %T(%L, %L, %L, %L, %L)\n" +
@@ -1096,7 +1095,7 @@ internal class RepoGenerator(
             LIST.parameterizedBy(String::class.asClassName().copy(nullable = true)),
         ) {
             addModifiers(KModifier.INTERNAL)
-            parameter("privacy", PRIVACY_CONTEXT)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entities", LIST.parameterizedBy(entityClass))
             parameter("candidates", LIST.parameterizedBy(candidateClass))
             addCode(codeBlock {
@@ -1105,14 +1104,13 @@ internal class RepoGenerator(
                 .addStatement("val entitySnapshot = entities.toList()")
                 .addStatement("val candidateSnapshot = candidates.toList()")
                 .addStatement(
-                    "if (privacy.viewer is %T.PrivacyBypass) return %T(entitySnapshot.size) { null }",
+                    "if (viewerContext.viewer is %T.PrivacyBypass) return %T(entitySnapshot.size) { null }",
                     VIEWER,
                     LIST,
                 )
                 .addStatement("val indexes = entitySnapshot.indices.toList()")
                 .addStatement("val rules = privacyConfig.deleteRules")
-                .addStatement("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
-                .addStatement("val ruleContext = %T(privacy, privacyClient)", PRIVACY_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(viewerContext, client.privacyReadClient)", PRIVACY_RULE_CONTEXT)
                 .addStatement(
                     "val decisions = %M(%S, indexes, rules, ruleContext) { index ->\n" +
                         "  %T(%L, %L)\n" +
@@ -1158,11 +1156,11 @@ internal class RepoGenerator(
         candidateClass: ClassName,
     ): FunSpec = function("deleteDenialReasonOrNull", String::class.asClassName().copy(nullable = true)) {
         addModifiers(KModifier.INTERNAL)
-        parameter("privacy", PRIVACY_CONTEXT)
+        parameter("viewerContext", VIEWER_CONTEXT)
         parameter("entity", entityClass)
         parameter("candidate", candidateClass)
         statement(
-            "return deleteDenialReasons(privacy, listOf(entity), listOf(candidate)).single()",
+            "return deleteDenialReasons(viewerContext, listOf(entity), listOf(candidate)).single()",
         )
     }
 
@@ -1264,11 +1262,13 @@ internal class RepoGenerator(
         function("saveCreation", MUTATION_RESULT.parameterizedBy(UNIT)) {
             addAnnotation(ENTKT_INTERNAL)
             addModifiers(KModifier.OVERRIDE)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("draft", createDraftClass)
             addCode(codeBlock {
                     add("return when (val result = client.mutations.create(\n")
                     .indent()
-                    .add("input = createMutationInput(draft),\n")
+                    .add("viewerContext = viewerContext,\n")
+                    .add("input = createMutationInput(viewerContext, draft),\n")
                     .add("spec = createSpec,\n")
                     .add("checkReturnedEntityPrivacy = false,\n")
                     .unindent()
@@ -1286,9 +1286,10 @@ internal class RepoGenerator(
         function("saveAndLoadCreation", MUTATION_RESULT.parameterizedBy(entityClass)) {
             addAnnotation(ENTKT_INTERNAL)
             addModifiers(KModifier.OVERRIDE)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("draft", createDraftClass)
             statement(
-                "return client.mutations.create(createMutationInput(draft), createSpec, checkReturnedEntityPrivacy = true)",
+                "return client.mutations.create(viewerContext, createMutationInput(viewerContext, draft), createSpec, checkReturnedEntityPrivacy = true)",
             )
         }
 
@@ -1305,9 +1306,10 @@ internal class RepoGenerator(
         )
         return function("createMutationInput", inputType) {
             addModifiers(KModifier.PRIVATE)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("draft", createDraftClass)
             statement(
-                "return %T(draft, createBeforeSaveView(draft), createBeforeCreateContext(draft))",
+                "return %T(draft, createBeforeSaveView(draft), createBeforeCreateContext(viewerContext, draft))",
                 CREATE_MUTATION_INPUT,
             )
         }
@@ -1367,9 +1369,10 @@ internal class RepoGenerator(
         }
         return function("createBeforeCreateContext", createHookContextClass) {
             addModifiers(KModifier.PRIVATE)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("draft", createDraftClass)
             statement(
-                "return %T(client.hookClientScopeForInternalUse, %L)",
+                "return %T(client.hookClientScopeForInternalUse, viewerContext, %L)",
                 createHookContextClass,
                 adapter,
             )
@@ -1443,12 +1446,13 @@ internal class RepoGenerator(
         createLambda: LambdaTypeName,
     ): FunSpec {
         val createDraftClass = ClassName(packageName, "${schemaName}CreateDraft")
-        val completionType = CREATE_MUTATION_OUTPUT.parameterizedBy(entityClass)
+        val completionType = LIST.parameterizedBy(entityClass)
         return function(
             "_executeCreateManyWritePhases",
             MUTATION_RESULT.parameterizedBy(completionType),
         ) {
             addModifiers(KModifier.PRIVATE)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("blocks", LIST.parameterizedBy(createLambda))
             parameter("promoteDriverNotPersisted", BOOLEAN)
             addCode(codeBlock {
@@ -1456,10 +1460,11 @@ internal class RepoGenerator(
                     .add("  check(driver.inTransaction) { %S }\n", "createMany write phases require a transaction-scoped driver")
                     .add("  val inputs = %T<%T<%T, %T, %T>>(blocks.size)\n", ArrayList::class, CREATE_MUTATION_INPUT, createDraftClass, ClassName(packageName, "${schemaName}Mutation"), ClassName(packageName, "${schemaName}CreateHookContext"))
                     .add("  for (block in blocks) {\n")
-                    .add("    inputs += createMutationInput(%T().apply(block))\n", createDraftClass)
+                    .add("    inputs += createMutationInput(viewerContext, %T().apply(block))\n", createDraftClass)
                     .add("  }\n")
                     .add(
                             "  return client.mutations.createMany(\n" +
+                            "    viewerContext = viewerContext,\n" +
                             "    inputs = inputs,\n" +
                             "    spec = createSpec,\n" +
                             "    promoteDriverNotPersisted = promoteDriverNotPersisted,\n" +
@@ -1489,7 +1494,7 @@ internal class RepoGenerator(
      * before one correlated `DatabaseDriver.insertMany` persists the batch. Every row
      * is hydrated before the single afterCreate phase begins.
      *
-     * Returned LOAD disclosure uses the same privacy-context snapshot as
+     * Returned LOAD disclosure uses the same supplied `ViewerContext` instance as
      * CREATE privacy. A caller-owned transaction maps disclosure failure to
      * `TransactionPending` and rollback-only. An EntKt-owned transaction
      * captures it as a neutral value, attempts commit, and reports `Committed`
@@ -1506,6 +1511,7 @@ internal class RepoGenerator(
         val disclosureClass = repoClass.nestedClass("CreateManyDisclosure")
         val resultType = MUTATION_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))
         return function("createMany", resultType) {
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("blocks", createLambda) { addModifiers(KModifier.VARARG) }
             addKdoc(
                 "Atomically create one row per block. Lifecycle work is phase-major:\n" +
@@ -1534,7 +1540,7 @@ internal class RepoGenerator(
                     .add("  if (driver.inTransaction) {\n")
                     .add(
                         "    val completion = when (val result = " +
-                            "_executeCreateManyWritePhases(blockSnapshot, promoteDriverNotPersisted = true)) {\n",
+                            "_executeCreateManyWritePhases(viewerContext, blockSnapshot, promoteDriverNotPersisted = true)) {\n",
                     )
                     .add("      is %T.Success -> result.value\n", MUTATION_RESULT)
                     .add("      is %T.Failed -> return result\n", MUTATION_RESULT)
@@ -1542,7 +1548,7 @@ internal class RepoGenerator(
                     .add("    writeState = %T.TransactionPending\n", MUTATION_WRITE_STATE)
                     .add("    val denial = try {\n")
                     .add(
-                        "      loadDenials(completion.privacyContext, completion.entities)" +
+                        "      loadDenials(viewerContext, completion)" +
                             ".filterNotNull().firstOrNull()\n",
                     )
                     .add("    } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
@@ -1561,24 +1567,24 @@ internal class RepoGenerator(
                         ).indented(),
                     )
                     .add("    }\n")
-                    .add("    return %T.Success(completion.entities)\n", MUTATION_RESULT)
+                    .add("    return %T.Success(completion)\n", MUTATION_RESULT)
                     .add("  }\n")
                     .add("  var disclosureFailure: %T? = null\n", KOTLIN_EXCEPTION)
                     .add("  var disclosureDenial: %T? = null\n", PRIVACY_DENIAL)
                     .add("  val txResult = client.withTransaction { tx ->\n")
                     .add(
                         "    val completion = tx.%L._executeCreateManyWritePhases(" +
-                            "blockSnapshot, promoteDriverNotPersisted = false).orRollback()\n",
+                            "viewerContext, blockSnapshot, promoteDriverNotPersisted = false).orRollback()\n",
                         repoPropName,
                     )
                     .add("    try {\n")
                     .add(
-                        "      val denial = tx.%L.loadDenials(completion.privacyContext, completion.entities)" +
+                        "      val denial = tx.%L.loadDenials(viewerContext, completion)" +
                             ".filterNotNull().firstOrNull()\n",
                         repoPropName,
                     )
                     .add("      if (denial == null) {\n")
-                    .add("        %T.Allowed(completion.entities)\n", disclosureClass)
+                    .add("        %T.Allowed(completion)\n", disclosureClass)
                     .add("      } else {\n")
                     .add("        disclosureDenial = denial\n")
                     .add("        %T.Denied(denial)\n", disclosureClass)
@@ -1670,8 +1676,7 @@ internal class RepoGenerator(
             addCode(codeBlock {
                 addStatement("val rules = validationConfig.updateRules")
                 .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return emptyList()")
-                .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
-                .addStatement("val ruleContext = %T(validationClient)", VALIDATION_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(client.validationReadClient)", VALIDATION_RULE_CONTEXT)
                 .addStatement(
                     "val invalids = %M(%S, listOf(candidate), rules, ruleContext) { item ->\n" +
                     "  %T(%L, %L, %L, %L, %L)\n" +
@@ -1720,8 +1725,7 @@ internal class RepoGenerator(
                 .addStatement("val candidateSnapshot = candidates.toList()")
                 .addStatement("val rules = validationConfig.deleteRules")
                 .addStatement("if (rules.isEmpty()) return %T(entitySnapshot.size) { emptyList() }", LIST)
-                .addStatement("val validationClient = client.asValidationReadClientForInternalUse()")
-                .addStatement("val ruleContext = %T(validationClient)", VALIDATION_RULE_CONTEXT)
+                .addStatement("val ruleContext = %T(client.validationReadClient)", VALIDATION_RULE_CONTEXT)
                 .addStatement(
                     "val invalidsByCandidate = %M(%S, entitySnapshot.indices.toList(), rules, ruleContext) { index ->\n" +
                         "  %T(%L, %L)\n" +

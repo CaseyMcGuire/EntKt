@@ -67,16 +67,14 @@ data class SchemaInput(
  * lists in the generated-member manifest.
  */
 private val FIXED_CLIENT_MEMBERS: Set<String> = setOf(
-    "SCHEMAS", "asPrivacyReadClientForInternalUse", "asValidationReadClientForInternalUse",
-    "bypassPrivacy_DANGEROUS", "checkTransactionRequirement", "config",
-    "currentPrivacyContext", "defaultRelationshipLocking", "defaultUpdateConsistency",
-    "delegate", "driver", "entityInterceptors", "get", "global", "hookClientScopeForInternalUse",
+    "SCHEMAS", "checkReadExecution", "checkTransactionRequirement", "config",
+    "defaultRelationshipLocking", "defaultUpdateConsistency",
+    "delegate", "driver", "entityInterceptors", "global", "hookClientScopeForInternalUse",
     "hooks", "hooksConfig", "interceptors", "interceptorsConfig", "mutations", "policies",
-    "policiesConfig", "privacyContext", "privacyContextProvider",
-    "privacyContextProviderConfig", "readClientImpl", "recordTransactionMutationFailure",
+    "policiesConfig", "privacyReadClient", "readClientImpl", "recordTransactionMutationFailure",
     "transactionCoordinator",
     "transactionExecutionGuard", "transactionExecutionToken", "transactionRequirement",
-    "withPrivacyContext", "withTransaction",
+    "validationReadClient", "withTransaction",
 )
 
 /**

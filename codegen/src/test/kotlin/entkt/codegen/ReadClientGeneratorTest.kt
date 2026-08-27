@@ -130,21 +130,21 @@ class ReadClientGeneratorTest {
 
         assert(
             runtimeOutput.contains(
-                "public interface CarReadSurface { public fun hasLoadPrivacy(): Boolean public fun loadDenials(privacy: PrivacyContext, entities: List<Car>): List<PrivacyDenial?> public fun loadDenialOrNull(",
+                "public interface CarReadSurface { public fun hasLoadPrivacy(): Boolean public fun loadDenials(viewerContext: ViewerContext, entities: List<Car>): List<PrivacyDenial?> public fun loadDenialOrNull(",
             ),
         ) {
             "CarReadSurface should expose the plural positional LOAD contract before its singleton projection\n$runtimeOutput"
         }
         assert(
             clientOutput.contains(
-                "override fun loadDenials(privacy: PrivacyContext, entities: List<Car>): List<PrivacyDenial?> = host.loadDenials(privacy, entities)",
+                "override fun loadDenials(viewerContext: ViewerContext, entities: List<Car>): List<PrivacyDenial?> = host.loadDenials(viewerContext, entities)",
             ),
         ) {
             "CarReadRepo should delegate the complete LOAD batch to its host surface\n$clientOutput"
         }
         assert(
             clientOutput.contains(
-                "override fun loadDenialOrNull(privacy: PrivacyContext, entity: Car): PrivacyDenial? = host.loadDenialOrNull(privacy, entity)",
+                "override fun loadDenialOrNull(viewerContext: ViewerContext, entity: Car): PrivacyDenial? = host.loadDenialOrNull(viewerContext, entity)",
             ),
         ) {
             "CarReadRepo should keep singleton LOAD delegation behavior aligned with its host\n$clientOutput"
@@ -157,14 +157,13 @@ class ReadClientGeneratorTest {
 
         assert(
             output.contains(
-                "public interface EntReadRuntime : PrivacyContextProvider, LoadPrivacyEvaluator",
+                "public interface EntReadRuntime : LoadPrivacyEvaluator",
             ),
         ) {
-            "the runtime host should provide privacy capture and LOAD evaluation\n$output"
+            "the runtime host should provide explicit read guards and LOAD evaluation\n$output"
         }
-        assert(output.contains("override fun `get`(): PrivacyContext = currentPrivacyContext()")) {
-            "the read runtime should adapt its existing privacy method to the named provider\n$output"
-        }
+        assert(output.contains("public fun checkReadExecution()"))
+        assert(!output.contains("currentViewerContext") && !output.contains("ViewerContextProvider"))
         assert(
             output.contains(
                 "CarQuery.GeneratedEntityMapping -> cars.hasLoadPrivacy()",
@@ -176,7 +175,7 @@ class ReadClientGeneratorTest {
             output.contains(
                 "CarQuery.GeneratedEntityMapping -> correlateLoadPrivacyEvaluationsForInternalUse( " +
                     "\"Car LOAD privacy\", entities, " +
-                    "cars.loadDenials(privacyContext, entities as List<Car>), )",
+                    "cars.loadDenials(viewerContext, entities as List<Car>), )",
             ),
         ) {
             "recursive targets should correlate each entity with its LOAD denial\n$output"
@@ -208,7 +207,7 @@ class ReadClientGeneratorTest {
 
         // The shared span contributes the id predicate and delegates
         // execution to the runtime query pipeline.
-        assert(readSpan.contains("public fun findById(id: Int): ReadResult<Car?> {")) {
+        assert(readSpan.contains("public fun findById(viewerContext: ViewerContext, id: Int): ReadResult<Car?> {")) {
             "findById should retain its nullable ReadResult surface\n$readSpan"
         }
         assert(

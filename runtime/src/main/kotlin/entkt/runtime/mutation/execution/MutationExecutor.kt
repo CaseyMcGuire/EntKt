@@ -10,7 +10,7 @@ import entkt.runtime.hook.BatchHook
 import entkt.runtime.mutation.CreatePreparation
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.BatchPrivacyRule
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
@@ -38,7 +38,9 @@ import java.util.concurrent.CancellationException
 @EntktInternal
 class MutationExecutor<PrivacyClient, ValidationClient>(
     private val driver: DatabaseDriver,
-    private val mutationRuntime: MutationRuntime<PrivacyClient, ValidationClient>,
+    private val mutationRuntime: MutationRuntime,
+    private val privacyClient: PrivacyClient,
+    private val validationClient: ValidationClient,
 ) {
     /** Execute one create lifecycle and optionally authorize the returned entity. */
     fun <
@@ -49,6 +51,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         ValidationItem,
         Entity : EntEntity<*>,
         > create(
+        viewerContext: ViewerContext,
         input: CreateMutationInput<Draft, BeforeSave, BeforeCreate>,
         spec: CreateMutationSpec<
             Draft, BeforeSave, BeforeCreate, PrivacyItem, ValidationItem,
@@ -65,6 +68,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
 
         val created = executeCreate(
             attempt = attempt,
+            viewerContext = viewerContext,
             inputs = listOf(input),
             spec = spec,
             persistence = CreatePersistence.One,
@@ -72,9 +76,9 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
             promoteDriverNotPersisted = false,
         )
         if (checkReturnedEntityPrivacy) {
-            evaluateReturnedEntityPrivacy(attempt, created, spec.entity)
+            evaluateReturnedEntityPrivacy(attempt, viewerContext, created, spec.entity)
         }
-        created.entities.single()
+        created.single()
     }
 
     /** Enforce transaction policy before createMany chooses or opens its transaction. */
@@ -94,18 +98,20 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         ValidationItem,
         Entity : EntEntity<*>,
         > createMany(
+        viewerContext: ViewerContext,
         inputs: List<CreateMutationInput<Draft, BeforeSave, BeforeCreate>>,
         spec: CreateMutationSpec<
             Draft, BeforeSave, BeforeCreate, PrivacyItem, ValidationItem,
             Entity, PrivacyClient, ValidationClient,
         >,
         promoteDriverNotPersisted: Boolean,
-    ): MutationResult<CreateMutationOutput<Entity>> = executeMutation { attempt ->
+    ): MutationResult<List<Entity>> = executeMutation { attempt ->
         require(inputs.isNotEmpty()) { "createMany requires at least one input" }
         check(driver.inTransaction) { "createMany write phases require a transaction" }
 
         executeCreate(
             attempt = attempt,
+            viewerContext = viewerContext,
             inputs = inputs,
             spec = spec,
             persistence = CreatePersistence.Many,
@@ -124,6 +130,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         Entity : EntEntity<*>,
         > executeCreate(
         attempt: MutationAttempt,
+        viewerContext: ViewerContext,
         inputs: List<CreateMutationInput<Draft, BeforeSave, BeforeCreate>>,
         spec: CreateMutationSpec<
             Draft, BeforeSave, BeforeCreate, PrivacyItem, ValidationItem,
@@ -132,7 +139,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         persistence: CreatePersistence,
         postWriteState: MutationWriteState,
         promoteDriverNotPersisted: Boolean,
-    ): CreateMutationOutput<Entity> {
+    ): List<Entity> {
         runHooks(inputs.map { it.beforeSave }, spec.beforeSave)
         runHooks(inputs.map { it.beforeCreate }, spec.beforeCreate)
 
@@ -143,13 +150,11 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
             entityName = entityName,
             resolveDraft = spec.resolveDraft,
         )
-        val privacyContext = mutationRuntime.get()
-
         evaluateCreatePrivacy(
             attempt = attempt,
             entityName = entityName,
             prepared = resolvedCreates,
-            privacyContext = privacyContext,
+            viewerContext = viewerContext,
             rules = spec.privacyRules,
         )
         evaluateCreateValidation(
@@ -169,10 +174,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         )
         runHooks(createdEntities, spec.afterCreate)
 
-        return CreateMutationOutput(
-            entities = createdEntities,
-            privacyContext = privacyContext,
-        )
+        return createdEntities
     }
 
     /** Run each hook once with the same non-empty ordered batch. */
@@ -211,11 +213,11 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         attempt: MutationAttempt,
         entityName: String,
         prepared: List<PreparedCreate<PrivacyItem, ValidationItem>>,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
         rules: List<BatchPrivacyRule<PrivacyClient, PrivacyItem>>,
     ) {
         val decisions = when {
-            privacyContext.viewer is Viewer.PrivacyBypass ->
+            viewerContext.viewer is Viewer.PrivacyBypass ->
                 List(prepared.size) { PrivacyDecision.Allow }
 
             rules.isEmpty() ->
@@ -226,8 +228,8 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
                 items = prepared,
                 rules = rules,
                 context = PrivacyRuleContext(
-                    privacyContext,
-                    mutationRuntime.privacyRuleClient(privacyContext),
+                    viewerContext = viewerContext,
+                    client = privacyClient,
                 ),
                 freshItem = PreparedCreate<PrivacyItem, ValidationItem>::freshPrivacyItem,
             )
@@ -269,7 +271,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
             lifecycle = "$entityName CREATE validation",
             items = prepared,
             rules = rules,
-            context = ValidationRuleContext(mutationRuntime.validationRuleClient()),
+            context = ValidationRuleContext(validationClient),
             freshItem = PreparedCreate<PrivacyItem, ValidationItem>::freshValidationItem,
         )
         check(invalidsByCandidate.size == prepared.size) {
@@ -347,17 +349,18 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
     /** Apply returned-entity LOAD privacy under the context used by CREATE privacy. */
     private fun <Entity : EntEntity<*>> evaluateReturnedEntityPrivacy(
         attempt: MutationAttempt,
-        created: CreateMutationOutput<Entity>,
+        viewerContext: ViewerContext,
+        created: List<Entity>,
         entity: EntityMapping<Entity>,
     ) {
         val evaluations = mutationRuntime.evaluate(
             entity = entity,
-            privacyContext = created.privacyContext,
-            entities = created.entities,
+            viewerContext = viewerContext,
+            entities = created,
         )
-        check(evaluations.size == created.entities.size) {
+        check(evaluations.size == created.size) {
             "LOAD privacy returned ${evaluations.size} decisions for " +
-                "${created.entities.size} created entities"
+                "${created.size} created entities"
         }
         evaluations.firstNotNullOfOrNull { it.denialOrNull() }?.let { denial ->
             attempt.reject(

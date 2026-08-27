@@ -11,7 +11,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
@@ -42,6 +42,7 @@ import kotlin.test.assertTrue
  * `SqlstateConstraintMappingPostgresIntegrationTest`.
  */
 class CreateResultVariantsIntegrationTest : PostgresTestBase() {
+    private var viewerContext = testViewerContext
 
     private object AllowAll : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -60,9 +61,10 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUser,
     ): EntClient {
+        viewerContext = ViewerContext(viewer)
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies {
                 articles(articlePolicy)
                 users(userPolicy)
@@ -79,7 +81,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         val result = client.users.create {
             name = "Alice"
             email = "alice@example.com"
-        }.save()
+        }.save(viewerContext)
 
         assertEquals(MutationResult.Success(Unit), result)
     }
@@ -91,7 +93,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         val result = client.users.create {
             name = "Bob"
             email = "bob@example.com"
-        }.saveAndLoad()
+        }.saveAndLoad(viewerContext)
 
         val success = assertIs<MutationResult.Success<User>>(result)
         assertNotNull(success.value.id)
@@ -116,7 +118,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
             assertTrue(isSet(User.apiToken))
         }
 
-        val created = creation.saveAndLoad().getOrThrow()
+        val created = creation.saveAndLoad(viewerContext).getOrThrow()
         assertEquals("Casey", created.name)
         assertEquals("casey@example.com", created.email)
         assertNull(created.apiToken)
@@ -135,15 +137,17 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
             }
         }
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = policy)
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        val author = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(viewerContext).getOrThrow()
         }
 
         val result = client.articles.create {
             title = "Sealed"
             published = true
             authorId = author.id
-        }.save()
+        }.save(viewerContext)
 
         assertEquals(MutationResult.Success(Unit), result)
     }
@@ -155,7 +159,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient()
 
         // `email` is required on the User schema.
-        val result = client.users.create { name = "Carol" }.save()
+        val result = client.users.create { name = "Carol" }.save(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntValidationException>(failed.exception)
@@ -184,13 +188,13 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         }
         val client = freshClient(articlePolicy = policy)
         val author = client.users.create { name = "Alice"; email = "a@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(viewerContext).getOrThrow()
 
         val result = client.articles.create {
             title = "Draft"
             published = false
             authorId = author.id
-        }.saveAndLoad()
+        }.saveAndLoad(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntValidationException>(failed.exception)
@@ -205,7 +209,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `getOrThrow throws the exact stored EntValidationException`() {
         val client = freshClient()
 
-        val result = client.users.create { name = "Dan" }.saveAndLoad()
+        val result = client.users.create { name = "Dan" }.saveAndLoad(viewerContext)
         val failed = assertIs<MutationResult.Failed>(result)
         try {
             result.getOrThrow()
@@ -221,7 +225,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     @Test
     fun `save returns Failed(EntMutationPrivacyDeniedException) when CREATE privacy denies`() {
         val requireAuth = ArticleCreatePrivacyRule { context, _ ->
-            if (context.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
+            if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
             else PrivacyDecision.Allow
         }
         val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
@@ -235,15 +239,17 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.Anonymous, articlePolicy = policy)
         // Seed an author with a system context — the test's privacy
         // boundary is on Article, not User.
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "Eve"; email = "eve@example.com" }.saveAndLoad().getOrThrow()
+        val author = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.create { name = "Eve"; email = "eve@example.com" }.saveAndLoad(viewerContext).getOrThrow()
         }
 
         val result = client.articles.create {
             title = "Hidden"
             published = true
             authorId = author.id
-        }.save()
+        }.save(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -269,15 +275,17 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         // Viewer.PrivacyBypass bypasses privacy checks by design — use an
         // authenticated viewer so the deny rule actually fires.
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = policy)
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "F"; email = "f@example.com" }.saveAndLoad().getOrThrow()
+        val author = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.create { name = "F"; email = "f@example.com" }.saveAndLoad(viewerContext).getOrThrow()
         }
 
         val result = client.articles.create {
             title = "x"
             published = true
             authorId = author.id
-        }.saveAndLoad()
+        }.saveAndLoad(viewerContext)
         val failed = assertIs<MutationResult.Failed>(result)
         try {
             result.getOrThrow()
@@ -293,12 +301,12 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     @Test
     fun `save returns Failed(EntConstraintViolationException) for unique violation`() {
         val client = freshClient()
-        client.users.create { name = "G"; email = "dup@example.com" }.save().getOrThrow()
+        client.users.create { name = "G"; email = "dup@example.com" }.save(viewerContext).getOrThrow()
 
         val result = client.users.create {
             name = "H"
             email = "dup@example.com"
-        }.save()
+        }.save(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntConstraintViolationException>(failed.exception)
@@ -317,9 +325,9 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     @Test
     fun `getOrThrow throws the exact stored EntConstraintViolationException`() {
         val client = freshClient()
-        client.users.create { name = "I"; email = "dup2@example.com" }.save().getOrThrow()
+        client.users.create { name = "I"; email = "dup2@example.com" }.save(viewerContext).getOrThrow()
 
-        val result = client.users.create { name = "J"; email = "dup2@example.com" }.saveAndLoad()
+        val result = client.users.create { name = "J"; email = "dup2@example.com" }.saveAndLoad(viewerContext)
         val failed = assertIs<MutationResult.Failed>(result)
         try {
             result.getOrThrow()
@@ -340,7 +348,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
             title = "Orphan"
             published = true
             authorId = 999_999L
-        }.save()
+        }.save(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntConstraintViolationException>(failed.exception)
@@ -357,23 +365,23 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `a validation failure does not persist a row`() {
         val client = freshClient()
 
-        assertIs<MutationResult.Failed>(client.users.create { name = "K" }.save())
+        assertIs<MutationResult.Failed>(client.users.create { name = "K" }.save(viewerContext))
 
         // DatabaseDriver count must be zero — nothing reached insert().
-        assertEquals(0L, client.users.query().rawCount().getOrThrow())
+        assertEquals(0L, client.users.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
     fun `a unique conflict does not persist the second row`() {
         val client = freshClient()
-        client.users.create { name = "L"; email = "once@example.com" }.save().getOrThrow()
+        client.users.create { name = "L"; email = "once@example.com" }.save(viewerContext).getOrThrow()
 
         assertIs<MutationResult.Failed>(
-            client.users.create { name = "M"; email = "once@example.com" }.save(),
+            client.users.create { name = "M"; email = "once@example.com" }.save(viewerContext),
         )
 
         // Still one row — the conflicting insert rolled back at the
         // driver's row-level uniqueness check.
-        assertEquals(1L, client.users.query().rawCount().getOrThrow())
+        assertEquals(1L, client.users.query().rawCount(viewerContext).getOrThrow())
     }
 }

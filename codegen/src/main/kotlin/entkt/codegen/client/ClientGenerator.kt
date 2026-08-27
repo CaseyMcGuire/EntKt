@@ -38,12 +38,8 @@ import entkt.codegen.metadata.ENTITY_SCHEMA
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
-private val PRIVACY_CONTEXT_PROVIDER =
-    ClassName("entkt.runtime.privacy", "PrivacyContextProvider")
 private val MUTATION_RUNTIME = ClassName("entkt.runtime.mutation.execution", "MutationRuntime")
 private val MUTATION_EXECUTOR = ClassName("entkt.runtime.mutation.execution", "MutationExecutor")
-private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "TransactionRequirement")
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime.mutation", "TransactionRequiredException")
@@ -76,8 +72,8 @@ private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
  *
  * Configuration is resolved before repositories are constructed, so each
  * repository receives its complete hooks, privacy, and validation inputs in
- * its constructor. Transactional and privacy-scoped clients reuse that same
- * resolved configuration.
+ * its constructor. Transactional clients reuse that same resolved
+ * configuration; viewer identity remains operation-scoped.
  */
 internal class ClientGenerator(
     private val packageName: String,
@@ -137,12 +133,7 @@ internal class ClientGenerator(
             // existed — the query constructors' `EntReadRuntime?` accepts
             // the full client by upcast.
             addSuperinterface(ClassName(packageName, "EntReadRuntime"))
-            addSuperinterface(
-                MUTATION_RUNTIME.parameterizedBy(
-                    ClassName(packageName, "EntPrivacyReadClient"),
-                    ClassName(packageName, "EntValidationReadClient"),
-                ),
-            )
+            addSuperinterface(MUTATION_RUNTIME)
             addSuperinterface(clientScopeClass)
             primaryConstructor {
                 addModifiers(KModifier.PRIVATE)
@@ -175,28 +166,6 @@ internal class ClientGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("configuration")
             }
-            property(
-                "mutations",
-                MUTATION_EXECUTOR.parameterizedBy(
-                    ClassName(packageName, "EntPrivacyReadClient"),
-                    ClassName(packageName, "EntValidationReadClient"),
-                ),
-            ) {
-                addKdoc("Mutation lifecycles shared by this client's generated repositories.")
-                addAnnotation(ClassName("entkt.query", "EntktInternal"))
-                addModifiers(KModifier.INTERNAL)
-                initializer("%T(driver, this)", MUTATION_EXECUTOR)
-            }
-            property("privacyContextProvider", PRIVACY_CONTEXT_PROVIDER) {
-                addModifiers(KModifier.INTERNAL)
-                mutable(true)
-                initializer(
-                    "configuration.privacyContextProviderConfig ?: %T { %T(%T.Anonymous) }",
-                    PRIVACY_CONTEXT_PROVIDER,
-                    PRIVACY_CONTEXT,
-                    VIEWER,
-                )
-            }
             property("transactionRequirement", TRANSACTION_REQUIREMENT) {
                 addModifiers(KModifier.INTERNAL)
                 mutable(true)
@@ -218,9 +187,8 @@ internal class ClientGenerator(
                 initializer("configuration.defaultRelationshipLocking")
             }
                 // The per-transaction coordinator, non-null only on the
-                // transaction-scoped clone built by withTransaction (and
-                // propagated through withPrivacyContext re-scoping inside
-                // a transaction block). Mutation terminals record every
+                // transaction-scoped clone built by withTransaction.
+                // Mutation terminals record every
                 // MutationResult.Failed here via
                 // recordTransactionMutationFailure so an ignored failure
                 // still marks the scope rollback-only.
@@ -262,8 +230,7 @@ internal class ClientGenerator(
             }
                 // Per-entity interceptor registries, populated from
                 // EntClientConfig.interceptorsConfig in the init
-                // block, inherited unchanged by withTransaction /
-                // withPrivacyContext / fixed clones. Read by
+                // block, inherited unchanged by withTransaction. Read by
                 // runtime query compilation at each terminal call
                 // to supply the registered interceptor chain.
                 //
@@ -338,22 +305,39 @@ internal class ClientGenerator(
                 initializer("%T(this)", hookClientScopeFacadeClass)
             }
             addProperties(sorted.map { buildRepoProperty(it) })
-            function("currentPrivacyContext", PRIVACY_CONTEXT) {
+            addProperty(buildReadClientImplProperty(sorted))
+            property("privacyReadClient", ClassName(packageName, "EntPrivacyReadClient")) {
+                addModifiers(KModifier.INTERNAL)
+                delegate("lazy { %T(readClientImpl) }", ClassName(packageName, "EntPrivacyReadClient"))
+            }
+            property("validationReadClient", ClassName(packageName, "EntValidationReadClient")) {
+                addModifiers(KModifier.INTERNAL)
+                delegate("lazy { %T(readClientImpl) }", ClassName(packageName, "EntValidationReadClient"))
+            }
+            property(
+                "mutations",
+                MUTATION_EXECUTOR.parameterizedBy(
+                    ClassName(packageName, "EntPrivacyReadClient"),
+                    ClassName(packageName, "EntValidationReadClient"),
+                ),
+            ) {
+                addKdoc("Mutation lifecycles shared by this client's generated repositories.")
+                addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                addModifiers(KModifier.INTERNAL)
+                delegate(
+                    "lazy { %T(\n" +
+                        "  driver = driver,\n" +
+                        "  mutationRuntime = this,\n" +
+                        "  privacyClient = privacyReadClient,\n" +
+                        "  validationClient = validationReadClient,\n" +
+                        ") }",
+                    MUTATION_EXECUTOR,
+                )
+            }
+            function("checkReadExecution") {
                 addModifiers(KModifier.OVERRIDE)
                 statement("transactionExecutionGuard.checkClientOperation(transactionExecutionToken)")
-                statement("return privacyContextProvider.get()")
             }
-            function("get", PRIVACY_CONTEXT) {
-                addModifiers(KModifier.OVERRIDE)
-                statement("return currentPrivacyContext()")
-            }
-            addFunction(buildReadClientImplBuilder(sorted))
-            addFunction(buildAsValidationReadClientForInternalUse())
-            addFunction(buildAsPrivacyReadClientForInternalUse())
-            addFunction(buildPrivacyRuleClient())
-            addFunction(buildValidationRuleClient())
-            addFunction(buildWithPrivacyContext(clientClass, t))
-            addFunction(buildBypassPrivacyDangerous(clientClass, t))
             addFunction(buildWithTransaction(clientClass, transactionClientClass, t))
             addType(buildCompanionObject(sorted))
         }
@@ -497,14 +481,6 @@ internal class ClientGenerator(
                 addModifiers(KModifier.INTERNAL)
                 initializer("%T()", interceptorsClass)
             }
-            property(
-                    "privacyContextProviderConfig",
-                    PRIVACY_CONTEXT_PROVIDER.copy(nullable = true),
-                ) {
-                addModifiers(KModifier.INTERNAL)
-                mutable(true)
-                initializer("null")
-            }
                 // Configurable per-client transaction requirement. The config
                 // exposes it as a public DSL property so callers write
                 // `EntClient(driver) { transactionRequirement = TransactionRequirement.RequiredForAllWrites }`.
@@ -538,31 +514,8 @@ internal class ClientGenerator(
                 parameter("block", interceptorsBlockLambda)
                 statement("interceptorsConfig.apply(block)")
             }
-            function("privacyContext") {
-                parameter("provider", PRIVACY_CONTEXT_PROVIDER)
-                statement("privacyContextProviderConfig = provider")
-            }
             addFunction(buildConfigSnapshot(configClass, schemas))
         }
-    }
-
-    /** Supply the viewer-scoped read client used by generic CREATE-privacy evaluation. */
-    private fun buildPrivacyRuleClient(): FunSpec = function(
-        "privacyRuleClient",
-        ClassName(packageName, "EntPrivacyReadClient"),
-    ) {
-        addModifiers(KModifier.OVERRIDE)
-        parameter("privacyContext", PRIVACY_CONTEXT)
-        statement("return asPrivacyReadClientForInternalUse(privacyContext)")
-    }
-
-    /** Supply the privileged read client used by generic CREATE-validation evaluation. */
-    private fun buildValidationRuleClient(): FunSpec = function(
-        "validationRuleClient",
-        ClassName(packageName, "EntValidationReadClient"),
-    ) {
-        addModifiers(KModifier.OVERRIDE)
-        statement("return asValidationReadClientForInternalUse()")
     }
 
     /** Freeze the mutable construction DSL into the configuration shared by every client scope. */
@@ -573,7 +526,6 @@ internal class ClientGenerator(
         addAnnotation(ClassName("entkt.query", "EntktInternal"))
         addModifiers(KModifier.INTERNAL)
         statement("val snapshot = %T()", configClass)
-        statement("snapshot.privacyContextProviderConfig = privacyContextProviderConfig")
         statement("snapshot.transactionRequirement = transactionRequirement")
         statement("snapshot.defaultUpdateConsistency = defaultUpdateConsistency")
         statement("snapshot.defaultRelationshipLocking = defaultRelationshipLocking")
@@ -666,7 +618,6 @@ internal class ClientGenerator(
             beginControlFlow("return try")
             beginControlFlow("%M(driver, { txDriver, coordinator ->", runEntTransaction)
             statement("val tx = %T(txDriver, configuration)", clientClass)
-            statement("tx.privacyContextProvider = this.privacyContextProvider")
             statement("tx.transactionRequirement = this.transactionRequirement")
             statement("tx.defaultUpdateConsistency = this.defaultUpdateConsistency")
             statement("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")
@@ -712,8 +663,6 @@ internal class ClientGenerator(
      * repository operation to the hidden transaction-bound [EntClient]
      * while deliberately omitting `withTransaction`, so nested client
      * transactions fail at compile time rather than at execution.
-     * Privacy re-scoping returns another facade over the re-scoped
-     * transaction client and therefore cannot restore the root surface.
      */
     private fun buildTransactionClient(
         clientClass: ClassName,
@@ -721,12 +670,10 @@ internal class ClientGenerator(
         transactionClientClass: ClassName,
         schemas: List<SchemaInput>,
     ): TypeSpec {
-        val t = TypeVariableName("T")
         return classType(transactionClientClass) {
             addKdoc(
                 "Transaction-scoped EntKt client supplied to `withTransaction` blocks.\n" +
-                    "It exposes the ordinary generated repository surface and preserves\n" +
-                    "the transaction across privacy re-scoping, but deliberately has no\n" +
+                    "It exposes the ordinary generated repository surface but deliberately has no\n" +
                     "`withTransaction` entry point: nested client transactions are not a\n" +
                     "supported operation and therefore do not compile.",
             )
@@ -749,54 +696,13 @@ internal class ClientGenerator(
                     getter { statement("return delegate.%L", propName) }
                 }
             }
-
-            function("currentPrivacyContext", PRIVACY_CONTEXT) {
-                addModifiers(KModifier.OVERRIDE)
-                statement("return delegate.currentPrivacyContext()")
-            }
-            function("withPrivacyContext", t) {
-                addTypeVariable(t)
-                parameter("context", PRIVACY_CONTEXT)
-                parameter(
-                    "block",
-                    LambdaTypeName.get(
-                        parameters = listOf(ParameterSpec.unnamed(transactionClientClass)),
-                        returnType = t,
-                    ),
-                )
-                addCode(codeBlock {
-                    add("return delegate.withPrivacyContext(context) { scoped ->\n")
-                    add("  block(%T(scoped))\n", transactionClientClass)
-                    add("}\n")
-                })
-            }
-            function("bypassPrivacy_DANGEROUS", t) {
-                addTypeVariable(t)
-                parameter("reason", String::class.asClassName())
-                parameter(
-                    "block",
-                    LambdaTypeName.get(
-                        parameters = listOf(ParameterSpec.unnamed(transactionClientClass)),
-                        returnType = t,
-                    ),
-                )
-                statement(
-                    "require(reason.isNotBlank()) { %S }",
-                    "bypassPrivacy_DANGEROUS requires a non-blank reason",
-                )
-                statement(
-                    "return withPrivacyContext(%T(%T.PrivacyBypass(reason)), block)",
-                    PRIVACY_CONTEXT,
-                    VIEWER,
-                )
-            }
         }
     }
 
     /**
      * Repository capability shared by root and transaction-scoped clients.
-     * It deliberately omits transaction entry, privacy re-scoping, bypass,
-     * and configuration APIs, so helpers can operate on either client without
+     * It deliberately omits transaction entry and configuration APIs, so
+     * helpers can operate on either client without
      * regaining capabilities that are invalid from nested contexts.
      */
     private fun buildClientScope(
@@ -807,16 +713,13 @@ internal class ClientGenerator(
             addKdoc(
                 "Common generated repository surface implemented by [EntClient] and\n" +
                     "[EntTransactionClient]. Accept this type in helpers that should work\n" +
-                    "with either client. It intentionally omits transaction entry, privacy\n" +
-                    "re-scoping and bypass, and client configuration APIs.\n",
+                    "with either client. It intentionally omits transaction entry and\n" +
+                    "client configuration APIs.\n",
             )
             for (input in schemas) {
                 property(input.clientName, ClassName(packageName, "${input.name}Repo")) {
                     addModifiers(KModifier.ABSTRACT)
                 }
-            }
-            function("currentPrivacyContext", PRIVACY_CONTEXT) {
-                addModifiers(KModifier.ABSTRACT)
             }
         }
     }
@@ -848,10 +751,6 @@ internal class ClientGenerator(
                     addModifiers(KModifier.OVERRIDE)
                     getter { statement("return delegate.%L", propName) }
                 }
-            }
-            function("currentPrivacyContext", PRIVACY_CONTEXT) {
-                addModifiers(KModifier.OVERRIDE)
-                statement("return delegate.currentPrivacyContext()")
             }
         }
     }
@@ -984,72 +883,6 @@ internal class ClientGenerator(
         }
     }
 
-    private fun buildWithPrivacyContext(
-        clientClass: ClassName,
-        t: TypeVariableName,
-    ): FunSpec {
-        val body = codeBlock {
-            statement("val scoped = %T(driver, configuration)", clientClass)
-            statement("scoped.privacyContextProvider = %T { context }", PRIVACY_CONTEXT_PROVIDER)
-            statement("scoped.transactionRequirement = this.transactionRequirement")
-            statement("scoped.defaultUpdateConsistency = this.defaultUpdateConsistency")
-            statement("scoped.defaultRelationshipLocking = this.defaultRelationshipLocking")
-            statement("scoped.transactionCoordinator = this.transactionCoordinator")
-            statement("scoped.transactionExecutionGuard = this.transactionExecutionGuard")
-            statement("scoped.transactionExecutionToken = this.transactionExecutionToken")
-            statement("scoped.entityInterceptors = this.entityInterceptors")
-            statement("return block(scoped)")
-        }
-
-        return function("withPrivacyContext", t) {
-            addTypeVariable(t)
-            parameter("context", PRIVACY_CONTEXT)
-            parameter(
-                "block",
-                LambdaTypeName.get(
-                    parameters = listOf(ParameterSpec.unnamed(clientClass)),
-                    returnType = t,
-                ),
-            )
-            addCode(body)
-        }
-    }
-
-    /**
-     * The intentionally-noisy privacy escape hatch. Scopes a
-     * [Viewer.PrivacyBypass] over [block], preserving the current driver,
-     * transaction scope, policies, hooks, and interceptors (it delegates to
-     * `withPrivacyContext`). The loud name + required reason make bypass call
-     * sites stand out in review and easy to grep for.
-     */
-    private fun buildBypassPrivacyDangerous(clientClass: ClassName, t: com.squareup.kotlinpoet.TypeVariableName): FunSpec {
-        return function("bypassPrivacy_DANGEROUS", t) {
-            addKdoc(
-                "Run [block] with privacy checks bypassed (LOAD/CREATE/UPDATE/DELETE only —\n" +
-                    "validation, hooks, interceptors, transactions, and DB constraints still apply).\n" +
-                    "Prefer this over `withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass(...)))`\n" +
-                    "so bypass call sites are obvious. [reason] must be non-blank.",
-            )
-            addTypeVariable(t)
-            parameter("reason", String::class.asClassName())
-            parameter(
-                "block",
-                LambdaTypeName.get(
-                    parameters = listOf(ParameterSpec.unnamed(clientClass)),
-                    returnType = t,
-                ),
-            )
-            statement(
-                "require(reason.isNotBlank()) { %S }",
-                "bypassPrivacy_DANGEROUS requires a non-blank reason",
-            )
-            statement(
-                "return withPrivacyContext(%T(%T.PrivacyBypass(reason)), block)",
-                PRIVACY_CONTEXT, VIEWER,
-            )
-        }
-    }
-
     private fun buildRepoProperty(input: SchemaInput): PropertySpec {
         val repoClass = ClassName(packageName, "${input.name}Repo")
         val propertyName = input.clientName
@@ -1074,105 +907,21 @@ internal class ClientGenerator(
         }
     }
 
-    /**
-     * Generates the private `readClientImpl(context)` builder both
-     * posture adapters call: the shared read-only view of this client
-     * that generated evaluators hand to rule code (wrapped in a posture
-     * type). Copies only the read-relevant adapter state — the same
-     * driver instance (so a transaction-scoped client yields a
-     * transaction-scoped read client), the passed context fixed for the
-     * reader's lifetime, the shared transaction execution authorization,
-     * the interceptor registry, and the repos as per-entity read surfaces (LOAD-privacy
-     * behavior identical to this client's). `transactionRequirement`,
-     * hooks, and validation config are deliberately absent — they are
-     * write-side state, and their absence is part of the no-writes
-     * guarantee.
-     *
-     * One builder for both adapters keeps the two semantic wrappers
-     * structurally identical; only the fixed context differs.
-     */
-    private fun buildReadClientImplBuilder(schemas: List<SchemaInput>): FunSpec {
+    /** One stable, contextless read implementation shared by both rule-client wrappers. */
+    private fun buildReadClientImplProperty(schemas: List<SchemaInput>): PropertySpec {
         val implClass = ClassName(packageName, "EntReadClientImpl")
         val body = codeBlock {
-            add("return %T(\n", implClass)
+            add("lazy { %T(\n", implClass)
             add("  driver,\n")
-            add("  context,\n")
             add("  entityInterceptors,\n")
             add("  transactionExecutionGuard,\n")
             add("  transactionExecutionToken,\n")
             for (input in schemas) add("  %L,\n", input.clientName)
-            add(")\n")
+            add(") }\n")
         }
-        return function("readClientImpl", implClass) {
+        return property("readClientImpl", implClass) {
             addModifiers(KModifier.PRIVATE)
-            parameter("context", PRIVACY_CONTEXT)
-            addCode(body)
-        }
-    }
-
-    /**
-     * Generates `asValidationReadClientForInternalUse()`: the adapter
-     * generated validation evaluators call. The
-     * `PrivacyBypass("validation read")` context is fixed here rather
-     * than at call sites, so evaluators cannot construct a validation
-     * reader under an arbitrary context. `@EntktInternal internal`
-     * because minting fixed-context readers is framework wiring — the
-     * `ForInternalUse` suffix matches the convention the old
-     * fixed-context clone used.
-     */
-    private fun buildAsValidationReadClientForInternalUse(): FunSpec {
-        return function(
-            "asValidationReadClientForInternalUse",
-            ClassName(packageName, "EntValidationReadClient"),
-        ) {
-            addKdoc(
-                "Read-only view of this client for generated validation evaluators,\n" +
-                    "with a `PrivacyBypass(\"validation read\")` context fixed for its\n" +
-                    "lifetime — invariant checks are not blocked by LOAD privacy, and raw\n" +
-                    "terminals are available. Same driver (transaction scoping\n" +
-                    "preserved), same read interceptors. No write surface compiles\n" +
-                    "against it.",
-            )
-            addAnnotation(ClassName("entkt.query", "EntktInternal"))
-            addModifiers(KModifier.INTERNAL)
-            statement(
-                "return %T(readClientImpl(%T(%T.PrivacyBypass(%S))))",
-                ClassName(packageName, "EntValidationReadClient"),
-                PRIVACY_CONTEXT,
-                VIEWER,
-                "validation read",
-            )
-        }
-    }
-
-    /**
-     * Generates `asPrivacyReadClientForInternalUse(privacy)`: the
-     * adapter generated privacy evaluators call, freezing the caller's
-     * context for the reader's lifetime so authorization reads see only
-     * what the viewer sees. A separate adapter (instead of one taking an
-     * arbitrary context) prevents evaluators from accidentally minting
-     * the wrong semantic wrapper.
-     */
-    private fun buildAsPrivacyReadClientForInternalUse(): FunSpec {
-        return function(
-            "asPrivacyReadClientForInternalUse",
-            ClassName(packageName, "EntPrivacyReadClient"),
-        ) {
-            addKdoc(
-                "Read-only view of this client for generated privacy evaluators, with\n" +
-                    "the caller's [privacy] context fixed for its lifetime — rule reads\n" +
-                    "that materialize entities are viewer-scoped. Raw terminals remain\n" +
-                    "explicit storage-level reads that skip LOAD privacy. Same driver\n" +
-                    "(transaction scoping preserved), same read interceptors. No write\n" +
-                    "surface compiles against it.",
-            )
-            addAnnotation(ClassName("entkt.query", "EntktInternal"))
-            addModifiers(KModifier.INTERNAL)
-            parameter("privacy", PRIVACY_CONTEXT)
-            statement(
-                "return %T(readClientImpl(privacy))",
-                ClassName(packageName, "EntPrivacyReadClient"),
-            )
+            delegate(body)
         }
     }
 }

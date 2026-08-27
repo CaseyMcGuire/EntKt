@@ -9,7 +9,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
@@ -43,6 +43,7 @@ import kotlin.test.assertTrue
  * unknown transaction outcome has its own dedicated exception.
  */
 class WithTransactionIntegrationTest : PostgresTestBase() {
+    private var viewerContext = testViewerContext
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -71,9 +72,10 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         viewer: Viewer = Viewer.PrivacyBypass("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
     ): EntClient {
+        viewerContext = ViewerContext(viewer)
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies {
                 articles(articlePolicy)
                 users(OpenUser)
@@ -82,8 +84,10 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
     }
 
     private fun userCount(client: EntClient): Long =
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.query().rawCount().getOrThrow()
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.query().rawCount(viewerContext).getOrThrow()
         }
 
     // ---- Success ----
@@ -94,32 +98,34 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
 
         val result = client.withTransaction { tx ->
             val author = tx.users.create { name = "A"; email = "a@example.com" }
-                .saveAndLoad().orRollback()
+                .saveAndLoad(viewerContext).orRollback()
             tx.articles.create {
                 title = "Hello"
                 published = true
                 authorId = author.id
-            }.saveAndLoad().orRollback()
+            }.saveAndLoad(viewerContext).orRollback()
         }
 
         val success = assertIs<TransactionResult.Success<Article>>(result)
         assertEquals("Hello", success.value.title)
 
         // Both rows survived the commit.
-        assertEquals(1L, client.users.query().rawCount().getOrThrow())
-        assertEquals(1L, client.articles.query().rawCount().getOrThrow())
+        assertEquals(1L, client.users.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(1L, client.articles.query().rawCount(viewerContext).getOrThrow())
     }
 
     @Test
-    fun `privacy re-scoping on the transaction client preserves rollback`() {
+    fun `explicit viewer context on the transaction client preserves rollback`() {
         val client = freshClient()
         val stop = IllegalStateException("roll back after scoped write")
 
         val result = client.withTransaction<Unit> { tx ->
-            tx.withPrivacyContext(PrivacyContext(Viewer.Anonymous)) { scoped ->
-                assertEquals(Viewer.Anonymous, scoped.currentPrivacyContext().viewer)
+            run {
+                val scoped = tx
+                val viewerContext = ViewerContext(Viewer.Anonymous)
+                assertEquals(Viewer.Anonymous, viewerContext.viewer)
                 scoped.users.create { name = "Scoped"; email = "scoped@example.com" }
-                    .save()
+                    .save(viewerContext)
                     .orRollback()
             }
             throw stop
@@ -136,14 +142,14 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
     @Test
     fun `orRollback on a Failed mutation rolls back and surfaces the stored exception`() {
         val client = freshClient()
-        client.users.create { name = "Existing"; email = "dup@example.com" }.save().getOrThrow()
+        client.users.create { name = "Existing"; email = "dup@example.com" }.save(viewerContext).getOrThrow()
 
         val result = client.withTransaction { tx ->
             tx.users.create { name = "Alice"; email = "alice@example.com" }
-                .saveAndLoad().orRollback()
+                .saveAndLoad(viewerContext).orRollback()
             // Unique-email violation → Failed → orRollback stops the block.
             tx.users.create { name = "Dup"; email = "dup@example.com" }
-                .saveAndLoad().orRollback()
+                .saveAndLoad(viewerContext).orRollback()
             "unreachable"
         }
 
@@ -163,9 +169,9 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
 
         val result = client.withTransaction { tx ->
             tx.users.create { name = "Kept"; email = "kept@example.com" }
-                .saveAndLoad().orRollback()
+                .saveAndLoad(viewerContext).orRollback()
             // Validation failure (missing email), result ignored.
-            tx.users.create { name = "Broken" }.save()
+            tx.users.create { name = "Broken" }.save(viewerContext)
             "block completed normally"
         }
 
@@ -184,8 +190,8 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         var first: MutationResult<*>? = null
         var second: MutationResult<*>? = null
         val result = client.withTransaction { tx ->
-            first = tx.users.create { name = "NoEmail1" }.save()
-            second = tx.users.create { name = "NoEmail2" }.save()
+            first = tx.users.create { name = "NoEmail1" }.save(viewerContext)
+            second = tx.users.create { name = "NoEmail2" }.save(viewerContext)
             "ignored both"
         }
 
@@ -210,7 +216,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         var recorded: MutationResult<*>? = null
         val appBug = IllegalStateException("application bug")
         val result = client.withTransaction<Unit> { tx ->
-            recorded = tx.users.create { name = "NoEmail" }.save()
+            recorded = tx.users.create { name = "NoEmail" }.save(viewerContext)
             throw appBug
         }
 
@@ -231,18 +237,20 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
     @Test
     fun `a read failure does not mark the scope rollback-only unless orRollback'd`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyLoadArticles)
-        val article = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        val article = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "A"; email = "a@example.com" }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
             sys.articles.create { title = "T"; published = true; authorId = author.id }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
         }
 
         val result = client.withTransaction { tx ->
             // Denied read; the caller legitimately tolerates it.
-            val read = tx.articles.findById(article.id)
+            val read = tx.articles.findById(viewerContext, article.id)
             assertIs<ReadResult.Failed>(read)
-            tx.users.create { name = "B"; email = "b@example.com" }.saveAndLoad().orRollback()
+            tx.users.create { name = "B"; email = "b@example.com" }.saveAndLoad(viewerContext).orRollback()
             "done"
         }
 
@@ -255,18 +263,20 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
     @Test
     fun `orRollback on a Failed read rolls back the transaction`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyLoadArticles)
-        val article = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        val article = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
             val author = sys.users.create { name = "A"; email = "a@example.com" }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
             sys.articles.create { title = "T"; published = true; authorId = author.id }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(viewerContext).getOrThrow()
         }
 
         val result = client.withTransaction { tx ->
-            tx.users.create { name = "B"; email = "b@example.com" }.saveAndLoad().orRollback()
+            tx.users.create { name = "B"; email = "b@example.com" }.saveAndLoad(viewerContext).orRollback()
             // A REQUIRED read: project through orRollback — the denial
             // stops the block and rolls back the earlier write.
-            tx.articles.findById(article.id).orRollback()
+            tx.articles.findById(viewerContext, article.id).orRollback()
             "unreachable"
         }
 
@@ -285,9 +295,9 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
 
         val result = client.withTransaction { tx ->
             tx.users.create { name = "Inside"; email = "inside@example.com" }
-                .save().orRollback()
+                .save(viewerContext).orRollback()
             client.users.create { name = "Outside"; email = "outside@example.com" }
-                .save().getOrThrow()
+                .save(viewerContext).getOrThrow()
             "unreachable"
         }
 
@@ -305,7 +315,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         val client = freshClient()
 
         val value = client.withTransaction { tx ->
-            tx.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().orRollback().name
+            tx.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(viewerContext).orRollback().name
         }.getOrThrow()
 
         assertEquals("A", value)
@@ -316,7 +326,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         val client = freshClient()
 
         val result = client.withTransaction { tx ->
-            tx.users.create { name = "Broken" }.save().orRollback()
+            tx.users.create { name = "Broken" }.save(viewerContext).orRollback()
         }
 
         val failed = assertIs<TransactionResult.Failed>(result)
@@ -331,7 +341,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         val client = freshClient()
 
         val result: TransactionResult<String> = client.withTransaction { tx ->
-            tx.users.create { name = "Broken" }.save()
+            tx.users.create { name = "Broken" }.save(viewerContext)
             "the block value"
         }
 

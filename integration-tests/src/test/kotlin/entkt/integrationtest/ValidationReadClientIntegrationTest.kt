@@ -14,7 +14,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
@@ -44,14 +44,14 @@ import kotlin.test.assertTrue
  */
 private val UniqueEmailViaQuery = UserCreateValidationRule { context, item ->
     val client: EntValidationReadClient = context.client
-    val taken = client.users.query { where(User.email.eq(item.candidate.email)) }.rawExists().getOrThrow()
+    val taken = client.users.query { where(User.email.eq(item.candidate.email)) }.rawExists(context.readViewerContext).getOrThrow()
     if (taken) ValidationDecision.Invalid("email already taken", field = "email")
     else ValidationDecision.Valid
 }
 
 /** Same invariant through the staged index helpers (unique `find()` terminal). */
 private val UniqueEmailViaIndex = UserCreateValidationRule { context, item ->
-    if (context.client.users.indexes.email(item.candidate.email).find().getOrThrow() != null) {
+    if (context.client.users.indexes.email(item.candidate.email).find(context.readViewerContext).getOrThrow() != null) {
         ValidationDecision.Invalid("email already taken", field = "email")
     } else {
         ValidationDecision.Valid
@@ -60,7 +60,7 @@ private val UniqueEmailViaIndex = UserCreateValidationRule { context, item ->
 
 /** Existence check via findById on a *different* entity's repo. */
 private val AuthorMustExist = ArticleCreateValidationRule { context, item ->
-    if (context.client.users.findById(item.candidate.authorId).getOrThrow() == null) {
+    if (context.client.users.findById(context.readViewerContext, item.candidate.authorId).getOrThrow() == null) {
         ValidationDecision.Invalid("author does not exist", field = "authorId")
     } else {
         ValidationDecision.Valid
@@ -77,9 +77,9 @@ private val AuthorReachableViaEdges = ArticleCreateValidationRule { context, ite
     val prior = context.client.articles.query {
         where(Article.authorId eq item.candidate.authorId)
         loadAuthor()
-    }.all().getOrThrow()
+    }.all(context.readViewerContext).getOrThrow()
     val traversed = context.client.articles.query { where(Article.authorId eq item.candidate.authorId) }
-        .queryAuthor().all().getOrThrow()
+        .queryAuthor().all(context.readViewerContext).getOrThrow()
     if (prior.all { it.edges.author.requireLoaded() != null } && (prior.isEmpty() || traversed.isNotEmpty())) {
         ValidationDecision.Valid
     } else {
@@ -138,10 +138,9 @@ private object EdgeCheckedArticlePolicy : EntityPolicy<Article, ArticlePolicySco
 }
 
 /**
- * End-to-end semantics of the validation-context read client
- * (`asValidationReadClientForInternalUse()`, which fixes the
- * `PrivacyBypass("validation read")` context and is exposed as
- * `EntValidationReadClient`): validator reads work across the whole
+ * End-to-end semantics of the stable `EntValidationReadClient`, used with
+ * `context.readViewerContext` (`PrivacyBypass("validation read")`): validator
+ * reads work across the whole
  * read surface — including raw terminals, which the bypass posture
  * keeps available (they return `ReadResult` like every read terminal,
  * unlike viewer-scoped privacy readers where the gate captures them as
@@ -153,6 +152,7 @@ private object EdgeCheckedArticlePolicy : EntityPolicy<Article, ArticlePolicySco
  * in `codegen`'s `ValidationReadClientCompileTest`.
  */
 class ValidationReadClientIntegrationTest : PostgresTestBase() {
+    private val anonymousViewerContext = ViewerContext(Viewer.Anonymous)
 
     private fun freshClient(config: EntClientConfig.() -> Unit): EntClient =
         EntClient(resetAndDriver(), config)
@@ -162,15 +162,15 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
     @Test
     fun `uniqueness validator via the query DSL rejects duplicates and allows fresh emails`() {
         val client = freshClient {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(UniqueEmailViaQueryPolicy) }
         }
 
-        client.users.create { name = "Alice"; email = "alice@test.com" }.save().getOrThrow()
-        client.users.create { name = "Bob"; email = "bob@test.com" }.save().getOrThrow()
+        client.users.create { name = "Alice"; email = "alice@test.com" }.save(testViewerContext).getOrThrow()
+        client.users.create { name = "Bob"; email = "bob@test.com" }.save(testViewerContext).getOrThrow()
 
         val failed = assertIs<MutationResult.Failed>(
-            client.users.create { name = "Mallory"; email = "alice@test.com" }.save(),
+            client.users.create { name = "Mallory"; email = "alice@test.com" }.save(testViewerContext),
         )
         val ex = assertIs<EntValidationException>(failed.exception)
         assertEquals("User", ex.entityType)
@@ -180,14 +180,14 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
     @Test
     fun `uniqueness validator via the index helper rejects duplicates`() {
         val client = freshClient {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(UniqueEmailViaIndexPolicy) }
         }
 
-        client.users.create { name = "Alice"; email = "alice@test.com" }.save().getOrThrow()
+        client.users.create { name = "Alice"; email = "alice@test.com" }.save(testViewerContext).getOrThrow()
 
         val failed = assertIs<MutationResult.Failed>(
-            client.users.create { name = "Mallory"; email = "alice@test.com" }.save(),
+            client.users.create { name = "Mallory"; email = "alice@test.com" }.save(testViewerContext),
         )
         val ex = assertIs<EntValidationException>(failed.exception)
         assertEquals("email", ex.violations.single().field)
@@ -198,18 +198,20 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
     @Test
     fun `validator reads bypass LOAD privacy that blocks the calling viewer`() {
         val client = freshClient {
-            privacyContext { PrivacyContext(Viewer.Anonymous) }
+
             policies {
                 users(LockedDownUserPolicy)
                 articles(AuthorCheckedArticlePolicy)
             }
         }
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            sys.users.create { name = "Alice"; email = "alice@test.com" }.saveAndLoad().getOrThrow()
+        val author = run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            sys.users.create { name = "Alice"; email = "alice@test.com" }.saveAndLoad(testViewerContext).getOrThrow()
         }
 
         // The calling viewer cannot read users at all…
-        val denied = assertIs<ReadResult.Failed>(client.users.findById(author.id))
+        val denied = assertIs<ReadResult.Failed>(client.users.findById(anonymousViewerContext, author.id))
         assertIs<EntPrivacyDeniedException>(denied.exception)
 
         // …but the validator's existence check runs bypass-scoped, so the
@@ -218,14 +220,14 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
         val article = client.articles.create {
             title = "Validated"
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(anonymousViewerContext).getOrThrow()
         assertNotNull(article)
 
         val failed = assertIs<MutationResult.Failed>(
             client.articles.create {
                 title = "Orphaned"
                 authorId = author.id + 999_999L
-            }.save(),
+            }.save(anonymousViewerContext),
         )
         val ex = assertIs<EntValidationException>(failed.exception)
         assertEquals("authorId", ex.violations.single().field)
@@ -234,27 +236,29 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
     @Test
     fun `validator eager loads and traversals bypass LOAD privacy`() {
         val client = freshClient {
-            privacyContext { PrivacyContext(Viewer.Anonymous) }
+
             policies {
                 users(LockedDownUserPolicy)
                 articles(EdgeCheckedArticlePolicy)
             }
         }
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val alice = sys.users.create { name = "Alice"; email = "alice@test.com" }.saveAndLoad().getOrThrow()
-            sys.articles.create { title = "First"; authorId = alice.id }.save().getOrThrow()
+        val author = run {
+            val sys = client
+            val testViewerContext = testBypassContext("seed")
+            val alice = sys.users.create { name = "Alice"; email = "alice@test.com" }.saveAndLoad(testViewerContext).getOrThrow()
+            sys.articles.create { title = "First"; authorId = alice.id }.save(testViewerContext).getOrThrow()
             alice
         }
 
         // The calling viewer cannot read users at all…
-        val denied = assertIs<ReadResult.Failed>(client.users.findById(author.id))
+        val denied = assertIs<ReadResult.Failed>(client.users.findById(anonymousViewerContext, author.id))
         assertIs<EntPrivacyDeniedException>(denied.exception)
 
         // …but the validator's eager load and traversal for the second
         // create run under the fixed bypass context: the hidden author
         // row materializes on both edge paths and the invariant passes
         // instead of surfacing the caller's denial.
-        val second = client.articles.create { title = "Second"; authorId = author.id }.saveAndLoad().getOrThrow()
+        val second = client.articles.create { title = "Second"; authorId = author.id }.saveAndLoad(anonymousViewerContext).getOrThrow()
         assertNotNull(second)
     }
 
@@ -263,7 +267,7 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
     @Test
     fun `validator reads inside a transaction see uncommitted writes`() {
         val client = freshClient {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(UniqueEmailViaQueryPolicy) }
         }
 
@@ -273,8 +277,8 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
         // would pass, and the DB unique constraint would surface a
         // driver-level failure instead of EntValidationException.
         val result = client.withTransaction { tx ->
-            tx.users.create { name = "First"; email = "dup@test.com" }.save().orRollback()
-            tx.users.create { name = "Second"; email = "dup@test.com" }.save().orRollback()
+            tx.users.create { name = "First"; email = "dup@test.com" }.save(testViewerContext).orRollback()
+            tx.users.create { name = "Second"; email = "dup@test.com" }.save(testViewerContext).orRollback()
         }
         val failed = assertIs<TransactionResult.Failed>(result)
         assertIs<EntValidationException>(failed.exception)
@@ -285,15 +289,15 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
     @Test
     fun `read interceptors run for validator queries and observe the bypass context`() {
         val seenViewers = mutableListOf<Viewer>()
-        val recorder = QueryInterceptor<User> { _, context -> seenViewers.add(context.privacy.viewer) }
+        val recorder = QueryInterceptor<User> { _, context -> seenViewers.add(context.viewerContext.viewer) }
 
         val client = freshClient {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(UniqueEmailViaQueryPolicy) }
             interceptors { users(recorder, "validation-read-recorder") }
         }
 
-        client.users.create { name = "Alice"; email = "alice@test.com" }.save().getOrThrow()
+        client.users.create { name = "Alice"; email = "alice@test.com" }.save(testViewerContext).getOrThrow()
 
         // The validator's uniqueness query passed through the interceptor
         // chain with the validation client's fixed bypass context.

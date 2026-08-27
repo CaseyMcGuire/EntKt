@@ -1190,7 +1190,7 @@ class EdgeCodegenTest {
         // mutation-view adapter, not the concrete draft. This matches the runtime-enforced contract
         // the update path has had since transaction locking and link-table M2M helpers — a hook
         // attempting `ctx.mutation as PetCreateDraft` throws.
-        assert(output.contains("private fun createBeforeCreateContext(draft: PetCreateDraft): PetCreateHookContext")) {
+        assert(output.contains("private fun createBeforeCreateContext(viewerContext: ViewerContext, draft: PetCreateDraft): PetCreateHookContext")) {
             "the repo should construct the typed hook context for its create specification\n$output"
         }
         assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetMutation, PetCreateHookContext,")) {
@@ -1199,7 +1199,7 @@ class EdgeCodegenTest {
         assert(output.contains("resolveDraft = ::resolve, beforeSave = beforeSaveHooks, beforeCreate = beforeCreateHooks, afterCreate = afterCreateHooks, privacyRules = privacyConfig.createRules.toList(), validationRules = validationConfig.createRules.toList(),")) {
             "the create hook lists and rule snapshots should remain explicit specification inputs\n$output"
         }
-        assert(output.contains("private fun createMutationInput(draft: PetCreateDraft): CreateMutationInput<PetCreateDraft, PetMutation, PetCreateHookContext>")) {
+        assert(output.contains("private fun createMutationInput(viewerContext: ViewerContext, draft: PetCreateDraft): CreateMutationInput<PetCreateDraft, PetMutation, PetCreateHookContext>")) {
             "the repo should keep each draft correlated with its generated hook values\n$output"
         }
         assert(!output.contains("createDenialReasons =") && !output.contains("validationViolations =") && !output.contains("loadDenials =")) {
@@ -1801,7 +1801,7 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Owner", byName["Owner"]!!, names).toString()
 
-        assert(output.contains("query.loadEdges(entities, privacyContext)")) {
+        assert(output.contains("query.loadEdges(entities, viewerContext)")) {
             "the selected-edge adapter should delegate graph completion after root privacy\n$output"
         }
     }
@@ -1920,13 +1920,13 @@ class EdgeCodegenTest {
             output.contains(
                 "val inWindowTargetIds = loadedGroups.values.flatten().mapTo(mutableSetOf()) { it.id } " +
                     "val privacyTargets = decodedTargets.map { it.second }.filter { it.id in inWindowTargetIds }.distinctBy { it.id } " +
-                    "val privacyDenials = eagerClient.pets.loadDenials(eagerPrivacyContext, privacyTargets)",
+                    "val privacyDenials = eagerClient.pets.loadDenials(eagerViewerContext, privacyTargets)",
             ),
         ) {
             "Eager LOAD privacy should batch the in-window targets in ordered, ID-deduplicated form\n$output"
         }
         val batchCalls = Regex(
-            Regex.escape("eagerClient.pets.loadDenials(eagerPrivacyContext, privacyTargets)"),
+            Regex.escape("eagerClient.pets.loadDenials(eagerViewerContext, privacyTargets)"),
         ).findAll(output).count()
         assert(batchCalls == 1) {
             "The emitted pets edge block should make exactly one plural LOAD call; found $batchCalls\n$output"
@@ -1983,7 +1983,7 @@ class EdgeCodegenTest {
         // KotlinPoet wraps long statements, so the argument list may span
         // lines depending on how long the target's clientName is. Match
         // across whitespace — wrapping is formatting, not semantics.
-        val eagerBatchCall = Regex("eagerClient\\.\\w+\\.loadDenials\\(eagerPrivacyContext,\\s*privacyTargets\\)")
+        val eagerBatchCall = Regex("eagerClient\\.\\w+\\.loadDenials\\(eagerViewerContext,\\s*privacyTargets\\)")
         val eagerSingletonCall = Regex("eagerClient\\.\\w+\\.loadDenialOrNull\\(")
         for ((shape, source) in outputs) {
             val batchCalls = eagerBatchCall.findAll(source).count()

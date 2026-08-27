@@ -9,7 +9,6 @@ import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.asTypeName
 import entkt.codegen.SchemaInput
 import entkt.codegen.columnName
@@ -22,6 +21,7 @@ import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.ColumnDescriptor
 import entkt.codegen.metadata.FIELD_TYPE
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.columnMetadataFor
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.resolveEdgeJoin
@@ -30,7 +30,6 @@ import entkt.schema.EntSchema
 import entkt.schema.FieldType
 
 private val VIEWER_ENTITY = ClassName("entkt.viewer", "EntViewerEntity")
-private val VIEWER_REGISTRY = ClassName("entkt.viewer", "EntViewerRegistry")
 private val VIEWER_COLUMN = ClassName("entkt.viewer", "EntViewerColumn")
 private val VIEWER_EDGE = ClassName("entkt.viewer", "EntViewerEdge")
 private val VIEWER_ROW = ClassName("entkt.viewer", "EntViewerRow")
@@ -43,7 +42,6 @@ private val VIEWER_BAD_REQUEST = ClassName("entkt.viewer", "EntViewerBadRequestE
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val ORDER_FIELD = ClassName("entkt.query", "OrderField")
 private val ORDER_DIRECTION = ClassName("entkt.query", "OrderDirection")
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
 private val ENT_PRIVACY_DENIED = ClassName("entkt.runtime.result", "EntPrivacyDeniedException")
 private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOrigin")
@@ -266,7 +264,7 @@ internal class ViewerGenerator(private val packageName: String) {
             statement("limit(fetchLimit)")
             statement("offset(request.offset)")
             endControlFlow()
-            statement(".all()")
+            statement(".all(viewerContext)")
             beginControlFlow("val rows = when (result)")
             statement("is %T.Success -> result.value", READ_RESULT)
             beginControlFlow("is %T.Failed ->", READ_RESULT)
@@ -288,6 +286,7 @@ internal class ViewerGenerator(private val packageName: String) {
         return function("list", VIEWER_LIST_RESULT) {
             addModifiers(KModifier.OVERRIDE)
             parameter("client", clientClass)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("request", VIEWER_LIST_REQUEST)
             addCode(body)
         }
@@ -311,12 +310,13 @@ internal class ViewerGenerator(private val packageName: String) {
         return function("get", VIEWER_ROW.copy(nullable = true)) {
             addModifiers(KModifier.OVERRIDE)
             parameter("client", clientClass)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("id", String::class.asTypeName())
             addCode(codeBlock {
                 // Unparseable id, missing row, and privacy-denied row all return null.
                 statement("val parsed = %L", idParse)
                 statement(
-                        "val entity = client.%L.findById(parsed).%M().getOrThrow() ?: return·null",
+                        "val entity = client.%L.findById(viewerContext, parsed).%M().getOrThrow() ?: return·null",
                         repoProp, VISIBLE_OR_NULL,
                     )
                 statement("return toRow(entity)")
@@ -392,34 +392,19 @@ internal class ViewerGenerator(private val packageName: String) {
     private fun generateRegistry(schemas: List<SchemaInput>): FileSpec {
         val clientClass = ClassName(packageName, "EntClient")
         val entityList = schemas.joinToString(", ") { "${it.name}ViewerEntity" }
-        val t = TypeVariableName("T")
-        val type = objectType("GeneratedEntViewerRegistry") {
-            addSuperinterface(VIEWER_REGISTRY.parameterizedBy(clientClass))
-            addKdoc(
-                "Generated viewer registry: every generated entity, in schema order.\n" +
-                    "Pass to `EntViewer(client, GeneratedEntViewerRegistry) { ... }`.\n",
-            )
+        return kotlinFile(packageName, "GeneratedEntViewerRegistry") {
             property(
-                    "entities",
+                    "GeneratedEntViewerRegistry",
                     ClassName("kotlin.collections", "List")
                         .parameterizedBy(VIEWER_ENTITY.parameterizedBy(clientClass)),
                 ) {
-                addModifiers(KModifier.OVERRIDE)
+                addKdoc(
+                    "Every generated viewer entity, in schema order.\n" +
+                        "Pass to `EntViewer(client, GeneratedEntViewerRegistry) { ... }`.\n",
+                )
                 initializer("listOf(%L)", entityList)
             }
-            function("withPrivacyContext", t) {
-                addModifiers(KModifier.OVERRIDE)
-                addTypeVariable(t)
-                parameter("client", clientClass)
-                parameter("context", PRIVACY_CONTEXT)
-                parameter(
-                        "block",
-                        com.squareup.kotlinpoet.LambdaTypeName.get(parameters = arrayOf(clientClass), returnType = t),
-                    )
-                statement("return client.withPrivacyContext(context, block)")
-            }
         }
-        return kotlinFile(packageName, "GeneratedEntViewerRegistry") { addType(type) }
     }
 }
 

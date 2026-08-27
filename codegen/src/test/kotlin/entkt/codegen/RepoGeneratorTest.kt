@@ -58,14 +58,14 @@ class RepoGeneratorTest {
         assert(output.contains("private fun snapshotCreateCandidate(candidate: RepoBytesRecordWriteCandidate): RepoBytesRecordWriteCandidate")) {
             "mutable create candidates should be detached by one generated mapping helper\n$output"
         }
-        val privacyContexts = Regex(
-            Regex.escape("val ruleContext = PrivacyRuleContext(privacy, privacyClient)"),
+        val viewerContexts = Regex(
+            Regex.escape("val ruleContext = PrivacyRuleContext(viewerContext, client.privacyReadClient)"),
         ).findAll(output).count()
-        assert(privacyContexts == 3) {
-            "Each privacy lifecycle helper should construct shared state exactly once; found $privacyContexts\n$output"
+        assert(viewerContexts == 3) {
+            "Each privacy lifecycle helper should construct shared state exactly once; found $viewerContexts\n$output"
         }
         val validationContexts = Regex(
-            Regex.escape("val ruleContext = ValidationRuleContext(validationClient)"),
+            Regex.escape("val ruleContext = ValidationRuleContext(client.validationReadClient)"),
         ).findAll(output).count()
         assert(validationContexts == 2) {
             "Each validation lifecycle helper should construct shared state exactly once; found $validationContexts\n$output"
@@ -154,7 +154,7 @@ class RepoGeneratorTest {
         // single `findById(id): ReadResult<Entity?>` (absence is a
         // successful null payload). The old byId / *OrNull /
         // *OrThrow / *OrError family is gone.
-        assert(output.contains("public fun findById(id: UUID): ReadResult<User?>")) {
+        assert(output.contains("public fun findById(viewerContext: ViewerContext, id: UUID): ReadResult<User?>")) {
             "findById should take the schema id type and return ReadResult<User?>\n$output"
         }
         assert(!output.contains("explainFindById")) {
@@ -176,13 +176,13 @@ class RepoGeneratorTest {
         assert(
             output.contains(
                 "val query = CarQuery(driver, client) return when (val result = " +
-                    "query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1, " +
+                    "query.readRootQuery( viewerContext = viewerContext, operation = ReadOperation.BY_ID, maximumRows = 1, " +
                     "structuralPredicates = listOf(Predicate.Leaf<Car>(\"id\", Op.EQ, id)), ))",
             ),
         ) {
             "findById should build the id-scoped EntityQuery\n$output"
         }
-        assert(output.contains("query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1,")) {
+        assert(output.contains("query.readRootQuery( viewerContext = viewerContext, operation = ReadOperation.BY_ID, maximumRows = 1,")) {
             "findById should delegate BY_ID and its single-row bound to ReadQueryExecutor\n$output"
         }
         assert(output.contains("ReadResult.Success(result.value.firstOrNull())")) {
@@ -227,7 +227,7 @@ class RepoGeneratorTest {
             raw.indexOf("public fun findById"),
             raw.indexOf("public fun delete"),
         ).replace("\\s+".toRegex(), " ")
-        assert(body.contains("query.readRootQuery( operation = ReadOperation.BY_ID, maximumRows = 1,")) {
+        assert(body.contains("query.readRootQuery( viewerContext = viewerContext, operation = ReadOperation.BY_ID, maximumRows = 1,")) {
             "findById should use the same ReadQueryExecutor root-privacy lifecycle as entity queries\n$body"
         }
         assert(!body.contains("loadDenialOrNull")) {
@@ -245,10 +245,10 @@ class RepoGeneratorTest {
         // deleteById(id) preserves the affected-row Boolean; both are
         // MutationResult terminals (the *OrThrow / *OrError variants
         // are gone — getOrThrow() on the result is the projection).
-        assert(output.contains("public fun delete(entity: Car): MutationResult<Unit>")) {
+        assert(output.contains("public fun delete(viewerContext: ViewerContext, entity: Car): MutationResult<Unit>")) {
             "Should generate delete(entity): MutationResult<Unit>\n$output"
         }
-        assert(output.contains("public fun deleteById(id: Int): MutationResult<Boolean>")) {
+        assert(output.contains("public fun deleteById(viewerContext: ViewerContext, id: Int): MutationResult<Boolean>")) {
             "Should generate deleteById(id): MutationResult<Boolean>\n$output"
         }
     }
@@ -304,7 +304,7 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "if (row == null) { MutationResult.Success(Unit) } else { when (val result = deleteLoaded(Car.fromRow(row))) { is MutationResult.Success -> MutationResult.Success(Unit) is MutationResult.Failed -> result } }",
+                "if (row == null) { MutationResult.Success(Unit) } else { when (val result = deleteLoaded(viewerContext, Car.fromRow(row))) { is MutationResult.Success -> MutationResult.Success(Unit) is MutationResult.Failed -> result } }",
             ),
         ) {
             "delete should map absence to Success(Unit) and delegate present rows to deleteLoaded\n$output"
@@ -322,7 +322,7 @@ class RepoGeneratorTest {
         // deleteById, and deleteMany. Hooks and the driver call live
         // there; after-delete hooks run only when the row was removed,
         // after the write state advanced past the persist point.
-        assert(output.contains("private fun deleteLoaded(entity: Car): MutationResult<Boolean>")) {
+        assert(output.contains("private fun deleteLoaded(viewerContext: ViewerContext, entity: Car): MutationResult<Boolean>")) {
             "deleteLoaded should be the private MutationResult<Boolean> pipeline\n$output"
         }
         assert(output.contains("runBatchHooksForInternalUse(listOf(entity), beforeDeleteHooks)")) {
@@ -359,7 +359,7 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "if (row == null) { MutationResult.Success(false) } else { deleteLoaded(Car.fromRow(row)) }",
+                "if (row == null) { MutationResult.Success(false) } else { deleteLoaded(viewerContext, Car.fromRow(row)) }",
             ),
         ) {
             "deleteById should map absence to Success(false) and delegate to deleteLoaded\n$output"
@@ -372,7 +372,7 @@ class RepoGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("public fun deleteById(id: UUID): MutationResult<Boolean>")) {
+        assert(output.contains("public fun deleteById(viewerContext: ViewerContext, id: UUID): MutationResult<Boolean>")) {
             "deleteById should use UUID for User's id type\n$output"
         }
     }
@@ -478,7 +478,12 @@ class RepoGeneratorTest {
         // the whole atomic batch. The multi-write preflight classifies
         // against the caller's transaction posture; zero blocks are
         // Success(emptyList()) with no transaction work.
-        assert(output.contains("public fun createMany(vararg blocks: CarCreateDraft.() -> Unit): MutationResult<List<Car>>")) {
+        assert(
+            Regex(
+                "public fun createMany\\(\\s*viewerContext: ViewerContext,\\s*" +
+                    "vararg blocks: CarCreateDraft\\.\\(\\) -> Unit,?\\s*\\):\\s*MutationResult<List<Car>>",
+            ).containsMatchIn(output),
+        ) {
             "Should have createMany with vararg blocks returning MutationResult<List<Car>>\n$output"
         }
         assert(output.contains("client.mutations.checkCreateManyTransactionRequirement(\"Car\", blocks.size)")) {
@@ -499,14 +504,14 @@ class RepoGeneratorTest {
         assert(
             output.contains(
                 "val inputs = ArrayList<CreateMutationInput<CarCreateDraft, CarMutation, CarCreateHookContext>>(blocks.size) for (block in blocks) { " +
-                    "inputs += createMutationInput(CarCreateDraft().apply(block))",
+                    "inputs += createMutationInput(viewerContext, CarCreateDraft().apply(block))",
             ),
         ) {
             "createMany should instantiate and configure every draft in input order\n$output"
         }
         assert(
             output.contains(
-                "return client.mutations.createMany( inputs = inputs, " +
+                "return client.mutations.createMany( viewerContext = viewerContext, inputs = inputs, " +
                     "spec = createSpec, " +
                     "promoteDriverNotPersisted = promoteDriverNotPersisted, )",
             ),
@@ -536,7 +541,7 @@ class RepoGeneratorTest {
         assert(
             output.contains(
                 "val completion = tx.cars._executeCreateManyWritePhases(" +
-                    "blockSnapshot, promoteDriverNotPersisted = false).orRollback()",
+                    "viewerContext, blockSnapshot, promoteDriverNotPersisted = false).orRollback()",
             ),
         ) {
             "the EntKt-owned batch should run the phase-major write helper through the tx-scoped repo\n$output"
@@ -550,11 +555,11 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("loadDenials(completion.privacyContext, completion.entities).filterNotNull().firstOrNull()")) {
-            "caller-owned createMany should batch LOAD disclosure with the captured context\n$output"
+        assert(output.contains("loadDenials(viewerContext, completion).filterNotNull().firstOrNull()")) {
+            "caller-owned createMany should batch LOAD disclosure with the terminal context\n$output"
         }
-        assert(output.contains("tx.cars.loadDenials(completion.privacyContext, completion.entities).filterNotNull().firstOrNull()")) {
-            "owned createMany should batch LOAD disclosure through the transaction repo\n$output"
+        assert(output.contains("tx.cars.loadDenials(viewerContext, completion).filterNotNull().firstOrNull()")) {
+            "owned createMany should batch LOAD disclosure through the transaction repo with the terminal context\n$output"
         }
         assert(
             output.contains(
@@ -587,7 +592,12 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("public fun deleteMany(vararg predicates: Predicate<Car>): MutationResult<Int>")) {
+        assert(
+            Regex(
+                "public fun deleteMany\\(\\s*viewerContext: ViewerContext,\\s*" +
+                    "vararg predicates: Predicate<Car>,?\\s*\\):\\s*MutationResult<Int>",
+            ).containsMatchIn(output),
+        ) {
             "Should have deleteMany with vararg typed Predicate<Car> returning MutationResult<Int>\n$output"
         }
         assert(output.contains("client.checkTransactionRequirement(\"Car deleteMany\", multiWrite = true)")) {
@@ -605,7 +615,7 @@ class RepoGeneratorTest {
         assert(output.contains("private fun _executeDeleteManyPhases(")) {
             "deleteMany should isolate its transaction-scoped phase-major pipeline\n$output"
         }
-        val privacyAt = output.indexOf("deleteDenialReasons(privacy, entities, candidates)")
+        val privacyAt = output.indexOf("deleteDenialReasons(viewerContext, entities, candidates)")
         val validationAt = output.indexOf("evaluateDeleteValidations(entities, candidates)")
         val beforeHookAt = output.indexOf("runBatchHooksForInternalUse(entities, beforeDeleteHooks)")
         val writeAt = output.indexOf(
@@ -646,14 +656,14 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "if (driver.inTransaction) { _executeDeleteManyPhases(predicateSnapshot, promoteDriverNotPersisted = true)",
+                "if (driver.inTransaction) { _executeDeleteManyPhases(viewerContext, predicateSnapshot, promoteDriverNotPersisted = true)",
             ),
         ) {
             "caller-owned deleteMany should run the private phases in place\n$output"
         }
         assert(
             output.contains(
-                "tx.cars._executeDeleteManyPhases(predicateSnapshot, promoteDriverNotPersisted = false).orRollback()",
+                "tx.cars._executeDeleteManyPhases(viewerContext, predicateSnapshot, promoteDriverNotPersisted = false).orRollback()",
             ),
         ) {
             "deleteMany should run the same private phases once in its owned transaction\n$output"
@@ -729,7 +739,7 @@ class RepoGeneratorTest {
         // maps decisions back by position. This preserves duplicate IDs
         // and caller order; the singleton API is only a projection of the
         // plural contract.
-        assert(output.contains("override fun loadDenials(privacy: PrivacyContext, entities: List<Car>): List<PrivacyDenial?>")) {
+        assert(output.contains("override fun loadDenials(viewerContext: ViewerContext, entities: List<Car>): List<PrivacyDenial?>")) {
             "Should expose the plural LOAD evaluator through the read surface\n$output"
         }
         assert(output.contains("if (entities.isEmpty()) return emptyList() val entitySnapshot = entities.toList()")) {
@@ -752,10 +762,10 @@ class RepoGeneratorTest {
         ) {
             "Each positional LOAD denial should be keyed from the corresponding entity\n$output"
         }
-        assert(output.contains("override fun loadDenialOrNull(privacy: PrivacyContext, entity: Car): PrivacyDenial?")) {
+        assert(output.contains("override fun loadDenialOrNull(viewerContext: ViewerContext, entity: Car): PrivacyDenial?")) {
             "Should have loadDenialOrNull overriding the read surface\n$output"
         }
-        assert(output.contains("loadDenialOrNull(privacy: PrivacyContext, entity: Car): PrivacyDenial? = loadDenials(privacy, listOf(entity)).single()")) {
+        assert(output.contains("loadDenialOrNull(viewerContext: ViewerContext, entity: Car): PrivacyDenial? = loadDenials(viewerContext, listOf(entity)).single()")) {
             "Singleton LOAD evaluation should delegate to the plural evaluator\n$output"
         }
 
@@ -764,14 +774,14 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "internal fun updateDenialReasonOrNull( privacy: PrivacyContext, before: Car, requestedPatch: CarUpdatePatch, effectivePatch: CarUpdatePatch, candidate: CarWriteCandidate, edgeChanges: CarEdgeChangesView, ): String?",
+                "internal fun updateDenialReasonOrNull( viewerContext: ViewerContext, before: Car, requestedPatch: CarUpdatePatch, effectivePatch: CarUpdatePatch, candidate: CarWriteCandidate, edgeChanges: CarEdgeChangesView, ): String?",
             ),
         ) {
             "Should have updateDenialReasonOrNull with the full update-context parameter list\n$output"
         }
         assert(
             output.contains(
-                "internal fun deleteDenialReasonOrNull( privacy: PrivacyContext, entity: Car, candidate: CarWriteCandidate, ): String?",
+                "internal fun deleteDenialReasonOrNull( viewerContext: ViewerContext, entity: Car, candidate: CarWriteCandidate, ): String?",
             ),
         ) {
             "Should have deleteDenialReasonOrNull taking entity + candidate\n$output"
@@ -807,19 +817,19 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "if (privacy.viewer is Viewer.PrivacyBypass) return List(entitySnapshot.size) { null }",
+                "if (viewerContext.viewer is Viewer.PrivacyBypass) return List(entitySnapshot.size) { null }",
             ),
         ) {
             "Plural LOAD bypass should retain one null slot per snapshotted entity\n$output"
         }
         val entityBatchBypasses = Regex(
-            Regex.escape("if (privacy.viewer is Viewer.PrivacyBypass) return List(entitySnapshot.size) { null }")
+            Regex.escape("if (viewerContext.viewer is Viewer.PrivacyBypass) return List(entitySnapshot.size) { null }")
         ).findAll(output).count()
         assert(entityBatchBypasses == 2) {
             "LOAD and DELETE batch evaluators should retain positional nulls; found $entityBatchBypasses\n$output"
         }
         val scalarWriteBypasses = Regex(
-            Regex.escape("if (privacy.viewer is Viewer.PrivacyBypass) return null")
+            Regex.escape("if (viewerContext.viewer is Viewer.PrivacyBypass) return null")
         ).findAll(output).count()
         assert(scalarWriteBypasses == 1) {
             "The singleton UPDATE evaluator should return null for PrivacyBypass; found $scalarWriteBypasses\n$output"
@@ -890,7 +900,7 @@ class RepoGeneratorTest {
         assert(output.contains("val candidate = buildDeleteCandidate(entity)")) {
             "deleteLoaded should build the delete candidate\n$output"
         }
-        assert(output.contains("val denialReason = deleteDenialReasonOrNull(privacy, entity, candidate)")) {
+        assert(output.contains("val denialReason = deleteDenialReasonOrNull(viewerContext, entity, candidate)")) {
             "deleteLoaded should evaluate delete privacy via deleteDenialReasonOrNull\n$output"
         }
         assert(
@@ -918,10 +928,10 @@ class RepoGeneratorTest {
         assert(output.contains("CarQuery(driver, client).apply { for (predicate in predicates) where(predicate) }")) {
             "deleteMany should construct a transient CarQuery from caller predicates via the public DSL\n$output"
         }
-        assert(output.contains("val privacy = client.currentPrivacyContext()")) {
-            "deleteMany should capture a privacy context for candidate-selection interceptors\n$output"
+        assert(!output.contains("currentViewerContext")) {
+            "deleteMany should not read ambient viewer state\n$output"
         }
-        assert(output.contains("compileEntityQuery(ReadOperation.DELETE_CANDIDATES, privacy)")) {
+        assert(output.contains("compileEntityQuery(viewerContext, ReadOperation.DELETE_CANDIDATES)")) {
             "deleteMany should delegate DELETE_CANDIDATES preparation to the runtime pipeline\n$output"
         }
         assert(output.contains("val effectivePredicates = spec.predicates.toList()")) {
@@ -1118,7 +1128,7 @@ class RepoGeneratorTest {
             "violations should become a typed EntValidationException with DELETE\n$output"
         }
         // Privacy runs before validation inside deleteLoaded.
-        val privacyAt = output.indexOf("deleteDenialReasonOrNull(privacy, entity, candidate)")
+        val privacyAt = output.indexOf("deleteDenialReasonOrNull(viewerContext, entity, candidate)")
         val validationAt = output.indexOf("evaluateDeleteValidation(entity, candidate)")
         assert(privacyAt in 0 until validationAt) {
             "delete privacy should be evaluated before delete validation\n$output"
@@ -1126,48 +1136,38 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `validation evaluators hand rules the validation-posture read client`() {
+    fun `validation evaluators reuse the stable validation-posture read client`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // The bypass context is fixed inside the adapter, not at the call
-        // site — evaluators cannot construct a validation reader under an
-        // arbitrary context, so no context literal appears here. All
-        // Update and delete evaluators emit the call
-        // independently, so pin the count, not mere presence.
-        val mints = Regex(
-            Regex.escape("val validationClient = client.asValidationReadClientForInternalUse()")
+        val uses = Regex(
+            Regex.escape("ValidationRuleContext(client.validationReadClient)")
         ).findAll(output).count()
-        assert(mints == 2) {
-            "Update and delete validation evaluators should mint the validation-posture read client; found $mints\n$output"
+        assert(uses == 2) {
+            "Update and delete validation evaluators should reuse the stable validation client; found $uses\n$output"
         }
+        assert(!output.contains("asValidationReadClientForInternalUse"))
         assert(!output.contains("asReadClientForInternalUse")) {
             "The arbitrary-context adapter must not be called anymore\n$output"
         }
-        assert(!output.contains("withFixedPrivacyContextForInternalUse")) {
+        assert(!output.contains("withFixedViewerContextForInternalUse")) {
             "Evaluators must not clone a full write-capable client\n$output"
         }
     }
 
     @Test
-    fun `privacy evaluators hand rules the privacy-posture read client with the caller context`() {
+    fun `privacy evaluators reuse the stable privacy-posture read client with the caller context`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // Privacy rule reads are viewer-scoped: the evaluator passes the
-        // caller's context into the posture-specific adapter, which
-        // freezes it for the reader's lifetime. LOAD, update, and delete
-        // evaluators emit the call
-        // independently — and unlike the nullary validation adapter, this
-        // one accepts any context, so a single diverging site would still
-        // compile. Pin the count, not mere presence.
-        val mints = Regex(
-            Regex.escape("val privacyClient = client.asPrivacyReadClientForInternalUse(privacy)")
+        val uses = Regex(
+            Regex.escape("PrivacyRuleContext(viewerContext, client.privacyReadClient)")
         ).findAll(output).count()
-        assert(mints == 3) {
-            "LOAD, update, and delete privacy evaluators should freeze the caller's context; found $mints\n$output"
+        assert(uses == 3) {
+            "LOAD, update, and delete privacy evaluators should reuse the stable privacy client; found $uses\n$output"
         }
+        assert(!output.contains("asPrivacyReadClientForInternalUse"))
     }
 }

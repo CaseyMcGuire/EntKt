@@ -45,12 +45,11 @@ package entkt.query
  *   `${Entity}ReadSurface`): the seam between generated queries and
  *   their host clients — implementing or invoking it directly is
  *   framework wiring, not application API.
- * - **Read-client construction** (`asValidationReadClientForInternalUse`,
- *   `asPrivacyReadClientForInternalUse`, `EntValidationReadClient` /
+ * - **Read-client construction** (`EntValidationReadClient` /
  *   `EntPrivacyReadClient` / `EntReadClientImpl` / `${Entity}ReadRepo`
- *   constructors): mints fixed-context read clients, including
- *   privacy-bypass-scoped ones; generated evaluators are the supported
- *   construction path.
+ *   constructors): mints the stable contextless readers owned by a generated
+ *   client; generated client initialization is the supported construction
+ *   path.
  *
  * If extension code genuinely needs one of these, add
  * `@OptIn(EntktInternal::class)` (or `@file:OptIn`) and own the

@@ -43,9 +43,9 @@ interface DatabaseDriver {
      * expressible at all.
      *
      * **Must be free of I/O when there is nothing new.** Generated
-     * clients are constructed constantly — `withTransaction` builds one
-     * *inside* the open transaction, `withPrivacyContext` builds one per
-     * call — and each construction re-registers. When every incoming
+     * root clients and transaction-scoped clients both register their
+     * schemas, including when `withTransaction` builds a client *inside*
+     * the open transaction. When every incoming
      * schema is already registered and unchanged, this must return
      * without opening a connection or issuing a statement.
      *

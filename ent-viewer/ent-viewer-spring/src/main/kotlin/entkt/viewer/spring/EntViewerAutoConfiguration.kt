@@ -17,7 +17,7 @@ import org.springframework.web.servlet.function.ServerResponse
 
 /**
  * Resolves the application identity handed to the viewer's `authorize` and
- * `privacyContext` callbacks as [EntViewerRequest.principal]. The default
+ * `viewerContext` callbacks as [EntViewerRequest.principal]. The default
  * uses the servlet's `userPrincipal` (populated by Spring Security);
  * applications with custom auth declare their own bean:
  *
@@ -34,7 +34,7 @@ fun interface EntViewerPrincipalResolver {
 /**
  * Auto-configuration that mounts an application-declared [EntViewer] bean at
  * its configured path. Deliberately does **not** create a viewer: the
- * security-critical configuration (`authorize`, `privacyContext`,
+ * security-critical configuration (`authorize`, `viewerContext`,
  * exclusions, redaction) stays application-supplied, exactly as the
  * ent-viewer security model requires — having this module on the classpath
  * changes nothing until the application defines the bean.
@@ -44,7 +44,7 @@ fun interface EntViewerPrincipalResolver {
  * fun entViewer(client: EntClient): EntViewer<EntClient> =
  *     EntViewer(client, GeneratedEntViewerRegistry) {
  *         authorize { it.principal != null }
- *         privacyContext { ... }
+ *         viewerContext { ... }
  *     }
  * ```
  *

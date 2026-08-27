@@ -15,7 +15,7 @@ import entkt.integrationtest.ent.ArticleCreatePrivacyRule
 import entkt.postgres.PostgresDriver
 import entkt.runtime.mutation.FieldPatch
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -83,7 +83,7 @@ private val CannotDeletePublished = ArticleDeleteValidationRule { _, item ->
 private val AllowAllLoads = ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
 private val AllowAllUserLoads = UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
 private val RequireAuthForCreate = ArticleCreatePrivacyRule { context, _ ->
-    if (context.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
+    if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
     else PrivacyDecision.Allow
 }
 
@@ -257,6 +257,7 @@ private object ByteArraySnapshotArticlePolicy : EntityPolicy<Article, ArticlePol
  */
 @Testcontainers
 class ValidationIntegrationTest {
+    private var viewerContext = testViewerContext
 
     companion object {
         @Container
@@ -282,6 +283,7 @@ class ValidationIntegrationTest {
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = ValidatedArticlePolicy,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUserPolicy,
     ): EntClient {
+        viewerContext = ViewerContext(viewer)
         val driver = PostgresDriver(dataSource)
         seedSchemas()
 
@@ -293,7 +295,7 @@ class ValidationIntegrationTest {
         }
 
         return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies {
                 articles(articlePolicy)
                 users(userPolicy)
@@ -302,8 +304,10 @@ class ValidationIntegrationTest {
     }
 
     private fun seedAuthor(client: EntClient): User {
-        return client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "Alice"; email = "alice@test.com" }.saveAndLoad().getOrThrow()
+        return run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.create { name = "Alice"; email = "alice@test.com" }.saveAndLoad(viewerContext).getOrThrow()
         }
     }
 
@@ -321,7 +325,7 @@ class ValidationIntegrationTest {
             published = true
             payload = createPayload
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
         assertContentEquals(byteArrayOf(1, 10), createPayload)
         assertContentEquals(byteArrayOf(1, 10), created.payload)
@@ -329,13 +333,13 @@ class ValidationIntegrationTest {
         val updatePayload = byteArrayOf(2, 20)
         val updated = client.articles.update(created.id) {
             payload = updatePayload
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
         assertContentEquals(byteArrayOf(2, 20), updatePayload)
         assertContentEquals(byteArrayOf(2, 20), updated.payload)
         assertContentEquals(
             byteArrayOf(2, 20),
-            client.articles.findById(created.id).getOrThrow()?.payload,
+            client.articles.findById(viewerContext, created.id).getOrThrow()?.payload,
         )
     }
 
@@ -351,7 +355,7 @@ class ValidationIntegrationTest {
                 title = "DRAFT: My Post"
                 published = true
                 authorId = author.id
-            }.save(),
+            }.save(viewerContext),
         )
         val ex = assertIs<EntValidationException>(failed.exception)
         assertEquals("Article", ex.entityType)
@@ -371,7 +375,7 @@ class ValidationIntegrationTest {
                 title = "AB" // too short (fails RequireMinTitleLength)
                 published = false // not published (fails RejectUnpublishedCreate)
                 authorId = author.id
-            }.save(),
+            }.save(viewerContext),
         )
         val ex = assertIs<EntValidationException>(failed.exception)
         // Both rules fire independently — a fail-fast implementation would only report one.
@@ -389,7 +393,7 @@ class ValidationIntegrationTest {
             title = "Valid Title"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
         assertEquals("Valid Title", article.title)
     }
 
@@ -403,12 +407,12 @@ class ValidationIntegrationTest {
                 title = "AB"
                 published = false
                 authorId = author.id
-            }.save(),
+            }.save(viewerContext),
         )
         val ex = assertIs<EntValidationException>(failed.exception)
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
 
-        val count = client.articles.query().rawCount().getOrThrow()
+        val count = client.articles.query().rawCount(viewerContext).getOrThrow()
         assertEquals(0L, count)
     }
 
@@ -423,10 +427,10 @@ class ValidationIntegrationTest {
             title = "Published"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
         val failed = assertIs<MutationResult.Failed>(
-            client.articles.update(article.id) { published = false }.save(),
+            client.articles.update(article.id) { published = false }.save(viewerContext),
         )
         val ex = assertIs<EntValidationException>(failed.exception)
         assertEquals(EntOperation.UPDATE, ex.operation)
@@ -442,9 +446,9 @@ class ValidationIntegrationTest {
             title = "Draft"
             published = false
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
-        val updated = client.articles.update(article.id) { published = true }.saveAndLoad().getOrThrow()
+        val updated = client.articles.update(article.id) { published = true }.saveAndLoad(viewerContext).getOrThrow()
         assertTrue(updated.published)
     }
 
@@ -459,9 +463,9 @@ class ValidationIntegrationTest {
             title = "Published"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
-        val failed = assertIs<MutationResult.Failed>(client.articles.delete(article))
+        val failed = assertIs<MutationResult.Failed>(client.articles.delete(viewerContext, article))
         val ex = assertIs<EntValidationException>(failed.exception)
         assertEquals(EntOperation.DELETE, ex.operation)
         assertTrue(ex.violations.any { it.message.contains("cannot delete a published") })
@@ -476,9 +480,9 @@ class ValidationIntegrationTest {
             title = "Draft"
             published = false
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
-        client.articles.delete(article).getOrThrow()
+        client.articles.delete(viewerContext, article).getOrThrow()
     }
 
     // ---- Privacy runs before validation ----
@@ -489,8 +493,10 @@ class ValidationIntegrationTest {
             viewer = Viewer.Anonymous,
             articlePolicy = PrivacyBeforeValidationPolicy,
         )
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.users.create { name = "U"; email = "u@test.com" }.saveAndLoad().getOrThrow()
+        val author = run {
+            val sys = client
+            val viewerContext = testBypassContext("test")
+            sys.users.create { name = "U"; email = "u@test.com" }.saveAndLoad(viewerContext).getOrThrow()
         }
 
         // Title "AB" would fail validation (too short), but privacy denies first.
@@ -500,7 +506,7 @@ class ValidationIntegrationTest {
                 title = "AB"
                 published = false
                 authorId = author.id
-            }.save(),
+            }.save(viewerContext),
         )
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
         assertEquals(EntOperation.CREATE, ex.operation)
@@ -510,7 +516,7 @@ class ValidationIntegrationTest {
     // ---- Viewer.PrivacyBypass does NOT bypass validation ----
 
     @Test
-    fun `System viewer does not bypass create validation`() {
+    fun `PrivacyBypass viewer does not bypass create validation`() {
         val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
         val author = seedAuthor(client)
 
@@ -519,13 +525,13 @@ class ValidationIntegrationTest {
                 title = "AB" // too short
                 published = false
                 authorId = author.id
-            }.save(),
+            }.save(viewerContext),
         )
         assertIs<EntValidationException>(failed.exception)
     }
 
     @Test
-    fun `System viewer does not bypass update validation`() {
+    fun `PrivacyBypass viewer does not bypass update validation`() {
         val client = freshClient(
             viewer = Viewer.PrivacyBypass("test"),
             articlePolicy = FullyValidatedArticlePolicy,
@@ -536,16 +542,16 @@ class ValidationIntegrationTest {
             title = "Published"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
         val failed = assertIs<MutationResult.Failed>(
-            client.articles.update(article.id) { published = false }.save(),
+            client.articles.update(article.id) { published = false }.save(viewerContext),
         )
         assertIs<EntValidationException>(failed.exception)
     }
 
     @Test
-    fun `System viewer does not bypass delete validation`() {
+    fun `PrivacyBypass viewer does not bypass delete validation`() {
         val client = freshClient(
             viewer = Viewer.PrivacyBypass("test"),
             articlePolicy = FullyValidatedArticlePolicy,
@@ -556,9 +562,9 @@ class ValidationIntegrationTest {
             title = "Published"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
-        val failed = assertIs<MutationResult.Failed>(client.articles.delete(article))
+        val failed = assertIs<MutationResult.Failed>(client.articles.delete(viewerContext, article))
         assertIs<EntValidationException>(failed.exception)
     }
 
@@ -573,14 +579,14 @@ class ValidationIntegrationTest {
             title = "Good Title"
             published = false
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
         // Update title to something that fails create validation (DRAFT: prefix + published)
         val failed = assertIs<MutationResult.Failed>(
             client.articles.update(article.id) {
                 title = "DRAFT: Now Published"
                 published = true
-            }.save(),
+            }.save(viewerContext),
         )
         val ex = assertIs<EntValidationException>(failed.exception)
         assertTrue(ex.violations.any { it.message.contains("DRAFT:") })
@@ -595,10 +601,10 @@ class ValidationIntegrationTest {
             title = "Good Title"
             published = false
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
 
         val failed = assertIs<MutationResult.Failed>(
-            client.articles.update(article.id) { title = "AB" }.save(),
+            client.articles.update(article.id) { title = "AB" }.save(viewerContext),
         )
         val ex = assertIs<EntValidationException>(failed.exception)
         assertTrue(ex.violations.any { it.message.contains("at least 3") })
@@ -607,18 +613,20 @@ class ValidationIntegrationTest {
     // ---- Scoped and transaction clients preserve validation config ----
 
     @Test
-    fun `withPrivacyContext preserves validation config`() {
+    fun `explicit viewer context preserves validation config`() {
         val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
         val author = seedAuthor(client)
 
         // Validation is still enforced inside a scoped client
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { scoped ->
+        run {
+            val scoped = client
+            val viewerContext = testBypassContext("test")
             val failed = assertIs<MutationResult.Failed>(
                 scoped.articles.create {
                     title = "AB"
                     published = false
                     authorId = author.id
-                }.save(),
+                }.save(viewerContext),
             )
             assertIs<EntValidationException>(failed.exception)
         }
@@ -636,7 +644,7 @@ class ValidationIntegrationTest {
                 title = "AB"
                 published = false
                 authorId = author.id
-            }.save().orRollback()
+            }.save(viewerContext).orRollback()
         }
         val failed = assertIs<TransactionResult.Failed>(result)
         assertIs<EntValidationException>(failed.exception)
@@ -654,17 +662,15 @@ class ValidationIntegrationTest {
             }
         }
 
-        val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        val client = EntClient(driver)
 
-        val user = client.users.create { name = "U"; email = "u@test.com" }.saveAndLoad().getOrThrow()
+        val user = client.users.create { name = "U"; email = "u@test.com" }.saveAndLoad(viewerContext).getOrThrow()
         // Title "AB" would fail validation if rules were registered, but none are
         val article = client.articles.create {
             title = "AB"
             published = false
             authorId = user.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(viewerContext).getOrThrow()
         assertEquals("AB", article.title)
     }
 }

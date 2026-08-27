@@ -33,7 +33,7 @@ private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
  * - `{Entity}{Op}ValidationRule` and `{Entity}{Op}BatchValidationRule` — typealiases for each operation's rule types
  *
  * Unlike privacy, validation has no LOAD operation and its shared rule context
- * does not carry a [PrivacyContext] — validation is viewer-agnostic. The
+ * does not carry a [ViewerContext] — validation is viewer-agnostic. The
  * [WriteCandidate] is reused from the privacy generator.
  */
 internal class ValidationGenerator(
@@ -48,11 +48,11 @@ internal class ValidationGenerator(
         val entityClass = ClassName(packageName, schemaName)
         // The shared ValidationRuleContext exposes the validation-posture read client,
         // not the full EntClient — validator writes are compile errors,
-        // not a documentation convention. Generated evaluators construct
-        // it via `client.asValidationReadClientForInternalUse()`, which
-        // fixes the PrivacyBypass("validation read") context, and the
-        // concrete type makes the privacy-bypass read posture visible in
-        // helper signatures.
+        // not a documentation convention. Generated evaluators reuse the
+        // client's stable validation reader; ValidationRuleContext supplies
+        // the explicit PrivacyBypass("validation read") context. The concrete
+        // type makes the privacy-bypass read posture visible in helper
+        // signatures.
         val clientClass = ClassName(packageName, "EntValidationReadClient")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")

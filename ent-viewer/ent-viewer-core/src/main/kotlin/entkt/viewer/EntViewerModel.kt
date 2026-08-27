@@ -1,30 +1,8 @@
 package entkt.viewer
 
 import entkt.runtime.driver.EntitySchema
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.schema.FieldType
-
-/**
- * The generated bridge between the framework-neutral viewer and one
- * application's generated ent API. Codegen emits an object implementing this
- * (`GeneratedEntViewerRegistry`) when `entkt { viewer.set(true) }` is enabled.
- *
- * [C] is the application's generated `EntClient` type — the viewer core never
- * references generated types directly; everything client-specific flows
- * through this interface and the per-entity [EntViewerEntity] adapters.
- */
-interface EntViewerRegistry<C : Any> {
-    val entities: List<EntViewerEntity<C>>
-
-    /**
-     * Run [block] against a client scoped to [context]. The generated
-     * implementation delegates to the generated client's
-     * `withPrivacyContext`, so every viewer read runs under the per-request
-     * privacy context — the viewer is a presentation surface over the normal
-     * read path, never a bypass.
-     */
-    fun <T> withPrivacyContext(client: C, context: PrivacyContext, block: (C) -> T): T
-}
 
 /**
  * One entity's typed bridge from dynamic viewer requests to the generated
@@ -67,7 +45,11 @@ interface EntViewerEntity<C : Any> {
      * Throws [EntViewerBadRequestException] for filters/orders the entity
      * cannot translate — before any query executes.
      */
-    fun list(client: C, request: EntViewerListRequest): EntViewerListResult
+    fun list(
+        client: C,
+        viewerContext: ViewerContext,
+        request: EntViewerListRequest,
+    ): EntViewerListResult
 
     /**
      * One row by its route id string, or null when the id does not parse,
@@ -75,7 +57,7 @@ interface EntViewerEntity<C : Any> {
      * behavior in all three cases, so the viewer discloses nothing about
      * existence.
      */
-    fun get(client: C, id: String): EntViewerRow?
+    fun get(client: C, viewerContext: ViewerContext, id: String): EntViewerRow?
 }
 
 /** Display/filter metadata for one column, derived from the schema at codegen time. */

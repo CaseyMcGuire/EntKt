@@ -161,10 +161,12 @@ The `EntClient` is configured as a Spring bean:
 
 ### Controllers
 
-Each controller injects the `EntClient` and uses the generated repos:
+Each controller injects the long-lived `EntClient`, derives a `ViewerContext`
+from the request-scoped `AuthContext`, and passes it explicitly to generated
+execution terminals:
 
-- `client.users.create { ... }.saveAndLoad().getOrThrow()` -- type-safe builders
-- `client.users.query { where(...) }.all().getOrThrow()` -- type-safe queries
-- `client.users.findById(id).getOrThrow()` -- primary key lookup
-- `client.users.update(id) { ... }.saveAndLoad().getOrThrow()` -- partial updates
-- `client.users.deleteById(id).getOrThrow()` -- delete by ID
+- `client.users.create { ... }.saveAndLoad(viewerContext).getOrThrow()` -- type-safe builders
+- `client.users.query { where(...) }.all(viewerContext).getOrThrow()` -- type-safe queries
+- `client.users.findById(viewerContext, id).getOrThrow()` -- primary key lookup
+- `client.users.update(id) { ... }.saveAndLoad(viewerContext).getOrThrow()` -- partial updates
+- `client.users.deleteById(viewerContext, id).getOrThrow()` -- delete by ID

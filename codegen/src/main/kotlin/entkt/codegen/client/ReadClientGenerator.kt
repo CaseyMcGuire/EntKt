@@ -20,12 +20,12 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val LIST = ClassName("kotlin.collections", "List")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
@@ -40,15 +40,13 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  * wrappers, the shared internal `EntReadClientImpl`, and one
  * `${Entity}ReadRepo` per schema.
  *
- * The privacy posture is visible in the wrapper type, not hidden
- * instance state: validation rule contexts carry `EntValidationReadClient`
- * (fixed `PrivacyBypass("validation read")` context, so invariant
- * checks are not blocked by LOAD privacy and raw terminals work);
- * privacy rule contexts carry `EntPrivacyReadClient` (the caller's own
- * context, so materializing authorization reads see only what the
- * viewer sees; raw terminals remain explicit storage-level reads that
- * skip LOAD privacy). Both wrappers delegate `EntReadClient` to one
- * `EntReadClientImpl`, which owns the read state and repositories —
+ * The intended privacy posture is visible in the wrapper and rule-context
+ * types, not hidden instance state: validation contexts pair
+ * `EntValidationReadClient` with `readViewerContext`, while privacy contexts
+ * pair `EntPrivacyReadClient` with the caller's `viewerContext`. Every nested
+ * terminal takes that context explicitly. Both stable wrappers delegate
+ * `EntReadClient` to one contextless `EntReadClientImpl`, which owns the read
+ * state and repositories —
  * the two semantic types cannot drift, and helpers that are genuinely
  * posture-agnostic accept the shared interface.
  *
@@ -56,7 +54,7 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  * full `query { }` DSL (all terminals come with the query class), and
  * the generated index helpers. The write
  * surface (create / update / save / delete* / edge mutators /
- * `withTransaction` / re-scoping / config setters) simply does not
+ * `withTransaction` / config setters) simply does not
  * exist on these types, so rule code calling it is a compile error —
  * the read-only guarantee is structural, not conventional.
  *
@@ -69,12 +67,11 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  * `hasLoadPrivacy` / `loadDenials` behave identically through
  * either client.
  *
- * Construction is framework-internal: the constructors here carry
- * `@EntktInternal internal`, and the only supported minting paths are
- * the generated evaluators' `asValidationReadClientForInternalUse()` /
- * `asPrivacyReadClientForInternalUse(privacy)` adapter calls. That is
- * a deliberate-use gate, not a security boundary — see the marker's
- * KDoc.
+ * Construction is framework-internal: `EntClient` constructs one shared
+ * implementation and one wrapper of each posture, and transaction clients do
+ * the same over their transaction driver. The constructors carry
+ * `@EntktInternal internal`; that is a deliberate-use gate, not a security
+ * boundary — see the marker's KDoc.
  */
 internal class ReadClientGenerator(
     private val packageName: String,
@@ -108,13 +105,13 @@ internal class ReadClientGenerator(
             addType(
                 buildPostureWrapper(
                     name = "EntValidationReadClient",
-                    kdoc = "Read client handed to validation rules through `ValidationRuleContext`. Reads bypass\n" +
-                        "LOAD privacy (fixed `PrivacyBypass(\"validation read\")` context), so\n" +
+                    kdoc = "Stable read client handed to validation rules through `ValidationRuleContext`. Rules\n" +
+                        "pass `context.readViewerContext` (the framework's explicit\n" +
+                        "`PrivacyBypass(\"validation read\")` context), so\n" +
                         "invariant checks observe all rows and raw terminals (`rawCount`,\n" +
                         "`rawExists`, raw aggregates) are available. Same driver instance as\n" +
                         "the operation's client (transaction-scoped reads see prior writes),\n" +
-                        "same read interceptors. The posture is fixed for the instance's\n" +
-                        "lifetime — there is no re-scoping surface. Helpers that require\n" +
+                        "same read interceptors. There is no client re-scoping surface. Helpers that require\n" +
                         "privacy-bypassing reads should accept this type; posture-agnostic\n" +
                         "helpers accept [EntReadClient].",
                 ),
@@ -122,14 +119,14 @@ internal class ReadClientGenerator(
             addType(
                 buildPostureWrapper(
                     name = "EntPrivacyReadClient",
-                    kdoc = "Read client handed to privacy rules through `PrivacyRuleContext`. Reads are\n" +
-                        "viewer-scoped when they materialize rows: returned entities are\n" +
+                    kdoc = "Stable read client handed to privacy rules through `PrivacyRuleContext`. Rules pass\n" +
+                        "`context.viewerContext`, so materialized entities are\n" +
                         "evaluated under the caller's LOAD privacy. Raw terminals (`rawCount`,\n" +
                         "`rawExists`, raw aggregates) are explicit storage-level reads that\n" +
                         "skip LOAD privacy and entity materialization. Same\n" +
                         "driver instance as the operation's client (transaction-scoped reads\n" +
-                        "see prior writes), same read interceptors. The posture is fixed for\n" +
-                        "the instance's lifetime — there is no re-scoping surface. Helpers\n" +
+                        "see prior writes), same read interceptors. There is no client\n" +
+                        "re-scoping surface. Helpers\n" +
                         "that participate in authorization decisions should accept this\n" +
                         "type; posture-agnostic helpers accept [EntReadClient].",
                 ),
@@ -153,8 +150,8 @@ internal class ReadClientGenerator(
             addKdoc(
                 "Read-only `%L` repository handed to validators and privacy rules via\n" +
                     "`EntReadClient`. Reads behave exactly like the full repo's (same query\n" +
-                    "machinery, read interceptors, LOAD-privacy delegation) under the\n" +
-                    "client's fixed context; the write surface does not exist here, so\n" +
+                    "machinery, read interceptors, LOAD-privacy delegation) under each\n" +
+                    "terminal-supplied context; the write surface does not exist here, so\n" +
                     "rule writes fail to compile.",
                 schemaName,
             )
@@ -200,15 +197,15 @@ internal class ReadClientGenerator(
                 returnType = LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)),
             ) {
                 addModifiers(KModifier.OVERRIDE)
-                parameter("privacy", PRIVACY_CONTEXT)
+                parameter("viewerContext", VIEWER_CONTEXT)
                 parameter("entities", LIST.parameterizedBy(entityClass))
-                statement("return host.loadDenials(privacy, entities)")
+                statement("return host.loadDenials(viewerContext, entities)")
             }
             function("loadDenialOrNull", returnType = PRIVACY_DENIAL.copy(nullable = true)) {
                 addModifiers(KModifier.OVERRIDE)
-                parameter("privacy", PRIVACY_CONTEXT)
+                parameter("viewerContext", VIEWER_CONTEXT)
                 parameter("entity", entityClass)
-                statement("return host.loadDenialOrNull(privacy, entity)")
+                statement("return host.loadDenialOrNull(viewerContext, entity)")
             }
             addFunction(buildQueryEntry(queryClass, clientRef = "runtime"))
             // Index-helper namespace: the same `${schemaName}Indexes`
@@ -272,15 +269,12 @@ internal class ReadClientGenerator(
     private fun buildClientImpl(sorted: List<SchemaInput>): TypeSpec {
         return classType("EntReadClientImpl") {
             addKdoc(
-                "Shared implementation behind [EntValidationReadClient] and\n" +
-                    "[EntPrivacyReadClient]. Constructed by the `EntClient` posture\n" +
-                    "adapters from the operation's current client: same driver instance\n" +
+                "Contextless shared implementation behind [EntValidationReadClient] and\n" +
+                    "[EntPrivacyReadClient]. Constructed once by `EntClient`: same driver instance\n" +
                     "(a transaction-scoped client yields a transaction-scoped read\n" +
                     "client), same transaction execution authorization, same read\n" +
-                    "interceptors, same per-repo LOAD-privacy\n" +
-                    "behavior, and the passed context fixed for this instance's lifetime\n" +
-                    "— bypass-scoped for validation reads, caller-scoped for privacy\n" +
-                    "rule reads. Owns repository construction and the [EntReadRuntime]\n" +
+                    "interceptors, and same per-repo LOAD-privacy behavior. Every terminal\n" +
+                    "receives its `ViewerContext` explicitly. Owns repository construction and the [EntReadRuntime]\n" +
                     "contract so the two wrappers cannot drift; no public generated\n" +
                     "signature exposes this type.",
             )
@@ -291,7 +285,6 @@ internal class ReadClientGenerator(
 
             primaryConstructor {
                 parameter("driver", DRIVER)
-                parameter("privacyContext", PRIVACY_CONTEXT)
                 parameter("entityInterceptors", ENT_INTERCEPTORS_CONFIG)
                 parameter("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD)
                 parameter(
@@ -306,10 +299,6 @@ internal class ReadClientGenerator(
                 }
             }
 
-            property("privacyContext", PRIVACY_CONTEXT) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("privacyContext")
-            }
             property("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("transactionExecutionGuard")
@@ -362,12 +351,11 @@ internal class ReadClientGenerator(
                 },
             )
 
-            function("currentPrivacyContext", returnType = PRIVACY_CONTEXT) {
+            function("checkReadExecution") {
                 addModifiers(KModifier.OVERRIDE)
                 statement(
                     "transactionExecutionGuard.checkClientOperation(transactionExecutionToken)",
                 )
-                statement("return privacyContext")
             }
         }
     }

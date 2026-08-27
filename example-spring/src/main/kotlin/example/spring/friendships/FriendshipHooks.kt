@@ -31,7 +31,7 @@ class FriendshipHooksConfig {
                 ((Friendship.requesterId eq requesterId) and (Friendship.recipientId eq recipientId))
                     or ((Friendship.requesterId eq recipientId) and (Friendship.recipientId eq requesterId)),
             )
-        }.all().getOrThrow()
+        }.all(ctx.viewerContext).getOrThrow()
         require(existing.isEmpty()) { "Friend request already exists" }
     }
 

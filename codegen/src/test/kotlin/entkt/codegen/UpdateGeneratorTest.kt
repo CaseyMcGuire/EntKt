@@ -348,7 +348,7 @@ class UpdateGeneratorTest {
         // id, entity, or the private patch helpers.
         assert(
             output.contains(
-                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val beforeSnapshot = entity val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, beforeSnapshot, snapshot, pendingEdges, _mutationView) runBatchHooksForInternalUse(listOf(ctx), listOf(hook)) }",
+                "for (hook in beforeUpdateHooks) { val snapshot = _buildRequestedPatch() val beforeSnapshot = entity val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, _mutationView) runBatchHooksForInternalUse(listOf(ctx), listOf(hook)) }",
             ),
         ) {
             "beforeUpdate hooks should receive a per-call snapshot wrapped around _mutationView\n$output"
@@ -442,7 +442,7 @@ class UpdateGeneratorTest {
         // candidate (built from `before`) with empty patches; a denial
         // carries writeState = NotPersisted since nothing was written.
         assert(emptyBlock.contains(
-            "updateDenialReasonOrNull(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
+            "updateDenialReasonOrNull(viewerContext, entity, requestedPatch, effectivePatch, candidate, edgeChanges)",
         )) {
             "Hook-cleared branch should run UPDATE privacy on the unchanged candidate with edgeChanges sidecar\n$output"
         }
@@ -515,12 +515,12 @@ class UpdateGeneratorTest {
         // One private execution member parameterized on returned-entity
         // LOAD privacy; the two public terminals are thin projections
         // over it, so pipeline behavior cannot diverge between them.
-        assert(output.contains("private fun executeSave(applyLoadPrivacy: Boolean): MutationResult<User>")) {
-            "Should generate private executeSave(applyLoadPrivacy) returning MutationResult<User>\n$output"
+        assert(output.contains("private fun executeSave(viewerContext: ViewerContext, applyLoadPrivacy: Boolean): MutationResult<User>")) {
+            "Should generate private executeSave(viewerContext, applyLoadPrivacy) returning MutationResult<User>\n$output"
         }
         assert(
             output.contains(
-                "public fun save(): MutationResult<Unit> = when (val result = executeSave(applyLoadPrivacy = false)) " +
+                "public fun save(viewerContext: ViewerContext): MutationResult<Unit> = when (val result = executeSave(viewerContext, applyLoadPrivacy = false)) " +
                     "{ is MutationResult.Success -> MutationResult.Success(Unit) is MutationResult.Failed -> result }",
             ),
         ) {
@@ -528,7 +528,7 @@ class UpdateGeneratorTest {
         }
         assert(
             output.contains(
-                "public fun saveAndLoad(): MutationResult<User> = executeSave(applyLoadPrivacy = true)",
+                "public fun saveAndLoad(viewerContext: ViewerContext): MutationResult<User> = executeSave(viewerContext, applyLoadPrivacy = true)",
             ),
         ) {
             "saveAndLoad() must delegate to executeSave(applyLoadPrivacy = true)\n$output"
@@ -1273,7 +1273,7 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // The 5-arg form: (client, detached before, patch, pendingEdges, mutation).
-        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, beforeSnapshot, snapshot, pendingEdges, _mutationView)")) {
+        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, _mutationView)")) {
             "beforeUpdate hook context should receive pendingEdges as the 4th argument\n$output"
         }
     }
@@ -1899,7 +1899,7 @@ class UpdateGeneratorTest {
         // replacing the old throw-style evaluateUpdatePrivacy. Both
         // branches evaluate privacy then validation, all with the
         // sidecar: two occurrences of each.
-        val privacyCall = "updateDenialReasonOrNull(privacy, entity, requestedPatch, effectivePatch, candidate, edgeChanges)"
+        val privacyCall = "updateDenialReasonOrNull(viewerContext, entity, requestedPatch, effectivePatch, candidate, edgeChanges)"
         val privacyOccurrences = output.split(privacyCall).size - 1
         assert(privacyOccurrences == 2) {
             "Expected exactly 2 updateDenialReasonOrNull calls with edgeChanges (empty + non-empty branches), got $privacyOccurrences\n$output"

@@ -9,7 +9,7 @@ import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
 import entkt.runtime.mutation.CreatePreparation
 import entkt.runtime.mutation.PreparedCreate
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.privacy.Viewer
@@ -119,7 +119,7 @@ class MutationExecutorTest {
         var loadDenial: PrivacyDenial? = null
         var beforeCreateAction: () -> Unit = {}
         var afterCreateAction: (Widget) -> Unit = {}
-        val receivedPrivacyContexts = mutableListOf<PrivacyContext>()
+        val receivedViewerContexts = mutableListOf<ViewerContext>()
 
         val value: CreateMutationSpec<
             RecordingInput,
@@ -150,7 +150,7 @@ class MutationExecutorTest {
             privacyRules = listOf(
                 batchPrivacyRule<Unit, Candidate> { context, batch ->
                     events += "create-privacy"
-                    receivedPrivacyContexts += context.privacy
+                    receivedViewerContexts += context.viewerContext
                     batch.decideEach { createDecision }
                 },
             ),
@@ -206,10 +206,11 @@ class MutationExecutorTest {
     }
 
     @Test
-    fun `mutation executor runs the create lifecycle in order and captures privacy once`() {
+    fun `mutation executor threads the supplied viewer context through the create lifecycle`() {
         val fixture = fixture()
 
         val result = fixture.executor.create(
+            viewerContext = fixture.viewerContext,
             input = fixture.input.mutationInput(),
             spec = fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -227,7 +228,6 @@ class MutationExecutorTest {
                 "before-save:save",
                 "before-create:create",
                 "prepare",
-                "privacy-context",
                 "create-privacy",
                 "validate",
                 "insert",
@@ -237,9 +237,9 @@ class MutationExecutorTest {
             ),
             fixture.events,
         )
-        assertEquals(2, fixture.spec.receivedPrivacyContexts.size)
-        fixture.spec.receivedPrivacyContexts.forEach {
-            assertSame(fixture.privacyContext, it)
+        assertEquals(2, fixture.spec.receivedViewerContexts.size)
+        fixture.spec.receivedViewerContexts.forEach {
+            assertSame(fixture.viewerContext, it)
         }
         assertTrue(fixture.recordedFailures.isEmpty())
     }
@@ -252,6 +252,7 @@ class MutationExecutorTest {
         )
 
         val result = fixture.executor.create(
+            fixture.viewerContext,
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -261,7 +262,6 @@ class MutationExecutorTest {
         val validation = assertIs<EntValidationException>(failure)
         assertEquals(EntOperation.CREATE, validation.operation)
         assertEquals("name", validation.violations.single().field)
-        assertFalse("privacy-context" in fixture.events)
         assertFalse("insert" in fixture.events)
         assertSame(failure, fixture.recordedFailures.single())
     }
@@ -272,6 +272,7 @@ class MutationExecutorTest {
         fixture.spec.createDecision = PrivacyDecision.Deny("not yours")
 
         val result = fixture.executor.create(
+            fixture.viewerContext,
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -294,6 +295,7 @@ class MutationExecutorTest {
         fixture.spec.createDecision = PrivacyDecision.Continue
 
         val result = fixture.executor.create(
+            fixture.viewerContext,
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -314,6 +316,7 @@ class MutationExecutorTest {
         fixture.driver.insertFailure = driverFailure
 
         val result = fixture.executor.create(
+            fixture.viewerContext,
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -342,6 +345,7 @@ class MutationExecutorTest {
         fixture.driver.classifiedFailure = classified
 
         val result = fixture.executor.create(
+            fixture.viewerContext,
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -362,6 +366,7 @@ class MutationExecutorTest {
             fixture.spec.afterCreateAction = { throw callbackFailure }
 
             val result = fixture.executor.create(
+                fixture.viewerContext,
                 fixture.input.mutationInput(),
                 fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
@@ -387,6 +392,7 @@ class MutationExecutorTest {
         )
 
         val result = fixture.executor.create(
+            fixture.viewerContext,
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = true,
@@ -411,6 +417,7 @@ class MutationExecutorTest {
         )
 
         val result = fixture.executor.create(
+            fixture.viewerContext,
             fixture.input.mutationInput(),
             fixture.spec.value,
             checkReturnedEntityPrivacy = false,
@@ -437,17 +444,17 @@ class MutationExecutorTest {
         }
 
         val result = fixture.executor.createMany(
+            viewerContext = fixture.viewerContext,
             inputs = listOf(fixture.input.mutationInput(), secondInput.mutationInput()),
             spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
         )
 
-        val completion = assertIs<MutationResult.Success<CreateMutationOutput<Widget>>>(result).value
+        val completion = assertIs<MutationResult.Success<List<Widget>>>(result).value
         assertEquals(
             listOf(Widget(1, "Ada"), Widget(2, "Grace")),
-            completion.entities,
+            completion,
         )
-        assertSame(fixture.privacyContext, completion.privacyContext)
         assertEquals(
             listOf(mapOf("name" to "Ada"), mapOf("name" to "Grace")),
             fixture.driver.insertedBatch,
@@ -465,7 +472,6 @@ class MutationExecutorTest {
                 "before-create:create",
                 "prepare",
                 "prepare",
-                "privacy-context",
                 "create-privacy",
                 "validate",
                 "insert-many",
@@ -486,6 +492,7 @@ class MutationExecutorTest {
         fixture.spec.beforeCreateAction = { throw callbackFailure }
 
         val result = fixture.executor.createMany(
+            viewerContext = fixture.viewerContext,
             inputs = listOf(fixture.input.mutationInput()),
             spec = fixture.spec.value,
             promoteDriverNotPersisted = false,
@@ -509,6 +516,7 @@ class MutationExecutorTest {
 
         val thrown = assertFailsWith<CancellationException> {
             fixture.executor.create(
+                fixture.viewerContext,
                 fixture.input.mutationInput(),
                 fixture.spec.value,
                 checkReturnedEntityPrivacy = true,
@@ -526,16 +534,11 @@ class MutationExecutorTest {
         val mapping = RecordingMapping(events)
         val spec = RecordingSpec(events, mapping)
         val input = RecordingInput(events)
-        val privacyContext = PrivacyContext(Viewer.User(7L))
+        val viewerContext = ViewerContext(Viewer.User(7L))
         val recordedFailures = mutableListOf<EntMutationException>()
         val executor = MutationExecutor(
             driver = driver,
-            mutationRuntime = object : MutationRuntime<Unit, Unit> {
-                override fun get(): PrivacyContext {
-                    events += "privacy-context"
-                    return privacyContext
-                }
-
+            mutationRuntime = object : MutationRuntime {
                 override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
                     events += "transaction-preflight:$operation"
                 }
@@ -545,19 +548,15 @@ class MutationExecutorTest {
                     recordedFailures += exception
                 }
 
-                override fun privacyRuleClient(privacyContext: PrivacyContext) = Unit
-
-                override fun validationRuleClient() = Unit
-
                 override fun isConfigured(entity: EntityMapping<*>): Boolean = true
 
                 override fun <Entity : EntEntity<*>> evaluate(
                     entity: EntityMapping<Entity>,
-                    privacyContext: PrivacyContext,
+                    viewerContext: ViewerContext,
                     entities: List<Entity>,
                 ): List<LoadPrivacyEvaluation<Entity>> {
                     events += "load-privacy"
-                    spec.receivedPrivacyContexts += privacyContext
+                    spec.receivedViewerContexts += viewerContext
                     return correlateLoadPrivacyEvaluationsForInternalUse(
                         lifecycle = "Widget LOAD privacy",
                         entities = entities,
@@ -565,6 +564,8 @@ class MutationExecutorTest {
                     )
                 }
             },
+            privacyClient = Unit,
+            validationClient = Unit,
         )
         return Fixture(
             events = events,
@@ -572,7 +573,7 @@ class MutationExecutorTest {
             spec = spec,
             input = input,
             executor = executor,
-            privacyContext = privacyContext,
+            viewerContext = viewerContext,
             recordedFailures = recordedFailures,
         )
     }
@@ -583,7 +584,7 @@ class MutationExecutorTest {
         val spec: RecordingSpec,
         val input: RecordingInput,
         val executor: MutationExecutor<Unit, Unit>,
-        val privacyContext: PrivacyContext,
+        val viewerContext: ViewerContext,
         val recordedFailures: MutableList<EntMutationException>,
     )
 }

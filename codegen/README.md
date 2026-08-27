@@ -15,31 +15,36 @@ For each schema the generator emits:
   Create and Update builders, with `var` properties for all mutable fields.
   Enables shared `beforeSave` hooks registered through the client lifecycle
   DSL.
-- **`{Entity}Create` builder** — DSL setters + `.save(): MutationResult<Unit>`
-  and `.saveAndLoad(): MutationResult<Entity>`.
+- **`{Entity}Create` builder** — DSL setters +
+  `.save(viewerContext): MutationResult<Unit>` and
+  `.saveAndLoad(viewerContext): MutationResult<Entity>`.
   Mints client UUIDs when `IdStrategy.CLIENT_UUID`. Implements `{Entity}Mutation`.
 - **`{Entity}Update` builder** — DSL setters (immutable fields are elided) plus
-  `.save(): MutationResult<Unit>` / `.saveAndLoad(): MutationResult<Entity>`.
+  `.save(viewerContext): MutationResult<Unit>` /
+  `.saveAndLoad(viewerContext): MutationResult<Entity>`.
   Implements `{Entity}Mutation`. The current owner row is loaded internally at
   the start of the save pipeline (bypassing LOAD privacy); hooks receive a
   `{Entity}UpdateHookContext` with `before`, `patch`, and a restricted
   `mutation` view.
 - **`{Entity}Query` builder** — `.where(...)`, `.orderBy(...)`, `.limit(...)`,
-  `.offset(...)`, `.all(): ReadResult<List<E>>`,
-  `.firstOrNull(): ReadResult<E?>`, edge traversal methods
+  `.offset(...)`, `.all(viewerContext): ReadResult<List<E>>`,
+  `.firstOrNull(viewerContext): ReadResult<E?>`, edge traversal methods
   (e.g. `.queryPosts()`), and edge loading methods (e.g. `.loadPosts { }`,
   returning an `EdgeLoad` handle whose `filterVisible()` opts that edge out
   of strict eager privacy).
 - **`{Entity}Repo`** — `.create { }`, `.update(id) { }`, `.query { }`,
-  `.findById(id): ReadResult<Entity?>`, `.delete(entity)`, `.deleteById(id)`,
-  `.deleteMany(vararg predicates)`, and, for generated-ID repositories,
-  `.createMany(vararg blocks)` — the mutation terminals return
+  `.findById(viewerContext, id): ReadResult<Entity?>`,
+  `.delete(viewerContext, entity)`, `.deleteById(viewerContext, id)`,
+  `.deleteMany(viewerContext, vararg predicates)`, and, for generated-ID repositories,
+  `.createMany(viewerContext, vararg blocks)` — the mutation terminals return
   `MutationResult`. Explicit-ID repositories use `.create(id) { }` and do not
   currently expose a bulk-create signature.
   There is no generated lifecycle-aware `updateMany()` terminal.
   Registers the entity's `EntitySchema` with the driver on construction.
-- **`EntClient`** — single entry point holding one repo per entity, constructed
-  with a `DatabaseDriver` and an optional lifecycle-configuration lambda.
+- **`EntClient`** — long-lived, contextless entry point holding one repo per
+  entity, constructed with a `DatabaseDriver` and an optional
+  lifecycle-configuration lambda. Every execution terminal receives its
+  operation-scoped `ViewerContext` explicitly.
 - **Hooks DSL classes** — `EntClientConfig`, `EntClientHooks`, and per-entity
   `{Entity}Hooks` classes that provide a structured DSL for registering
   lifecycle hooks at client construction time.
@@ -141,8 +146,8 @@ using `IN` predicates after the main query.
 LOAD privacy is batch-aware too: the first rule receives the ordered root
 result, and later rules receive only the ordered still-unresolved subset.
 Eager queries apply the same active-subset evaluation to their ordered,
-deduplicated in-window targets. The terminal's single captured privacy context
-is shared across root and eager evaluation.
+deduplicated in-window targets. The terminal's exact supplied `ViewerContext`
+instance is shared across root and eager evaluation.
 
 ```kotlin
 val users = client.users.query {
@@ -151,7 +156,7 @@ val users = client.users.query {
         where(Post.published eq true)    // optional: filter/order the edge
         orderBy(Post.createdAt.desc())
     }
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 
 users[0].edges.posts                  // → EdgeState.Loaded(List<Post>)
 users[0].edges.posts.requireLoaded()  // → List<Post>; throws EdgeNotLoadedException if loadPosts() wasn't called
@@ -171,5 +176,5 @@ val owners = client.owners.query {
     loadPets {
         loadOwner()  // nested: also load each pet's owner
     }
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 ```

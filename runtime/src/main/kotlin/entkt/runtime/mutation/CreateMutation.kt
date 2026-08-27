@@ -7,6 +7,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.result.EntMutationAlreadyConsumedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.MutationResult
+import entkt.runtime.privacy.ViewerContext
 
 /** A configurable create operation that can be consumed by exactly one save terminal. */
 class CreateMutation<Draft : Any, Entity : EntEntity<*>> @EntktInternal constructor(
@@ -23,15 +24,15 @@ class CreateMutation<Draft : Any, Entity : EntEntity<*>> @EntktInternal construc
     }
 
     /** Persist the configured draft without disclosing the created entity. */
-    fun save(): MutationResult<Unit> {
+    fun save(viewerContext: ViewerContext): MutationResult<Unit> {
         consume("save")
-        return repository.saveCreation(draft)
+        return repository.saveCreation(viewerContext, draft)
     }
 
     /** Persist the configured draft and return the created entity under LOAD privacy. */
-    fun saveAndLoad(): MutationResult<Entity> {
+    fun saveAndLoad(viewerContext: ViewerContext): MutationResult<Entity> {
         consume("saveAndLoad")
-        return repository.saveAndLoadCreation(draft)
+        return repository.saveAndLoadCreation(viewerContext, draft)
     }
 
     private fun consume(action: String) {

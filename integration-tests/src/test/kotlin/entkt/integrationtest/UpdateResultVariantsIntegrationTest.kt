@@ -11,7 +11,7 @@ import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
@@ -57,7 +57,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
     private fun freshClient(): EntClient {
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAll)
                 users(OpenUser)
@@ -70,15 +70,15 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
     @Test
     fun `save returns Failed(EntConstraintViolationException) for unique violation on update`() {
         val client = freshClient()
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
         val bob = client.users.create { name = "B"; email = "b@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
 
         // Retargeting bob's email to "a@example.com" trips the
         // unique-email constraint.
         val result = client.users.update(bob.id) {
             email = "a@example.com"
-        }.save()
+        }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntConstraintViolationException>(failed.exception)
@@ -93,11 +93,11 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
     @Test
     fun `getOrThrow throws the exact stored EntConstraintViolationException on update`() {
         val client = freshClient()
-        client.users.create { name = "C"; email = "c@example.com" }.save().getOrThrow()
+        client.users.create { name = "C"; email = "c@example.com" }.save(testViewerContext).getOrThrow()
         val dan = client.users.create { name = "D"; email = "d@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
 
-        val result = client.users.update(dan.id) { email = "c@example.com" }.saveAndLoad()
+        val result = client.users.update(dan.id) { email = "c@example.com" }.saveAndLoad(testViewerContext)
         val failed = assertIs<MutationResult.Failed>(result)
         try {
             result.getOrThrow()
@@ -113,17 +113,17 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `save returns Failed(EntConstraintViolationException) for FK violation on update`() {
         val client = freshClient()
         val author = client.users.create { name = "E"; email = "e@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
         val article = client.articles.create {
             title = "Hello"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         // Repoint authorId to a non-existent user.
         val result = client.articles.update(article.id) {
             authorId = 999_999L
-        }.save()
+        }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntConstraintViolationException>(failed.exception)
@@ -137,19 +137,19 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
     @Test
     fun `a unique violation leaves the owner row unchanged`() {
         val client = freshClient()
-        client.users.create { name = "F"; email = "f@example.com" }.save().getOrThrow()
+        client.users.create { name = "F"; email = "f@example.com" }.save(testViewerContext).getOrThrow()
         val guy = client.users.create { name = "G"; email = "g@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
 
         assertIs<MutationResult.Failed>(
             client.users.update(guy.id) {
                 name = "Guy"
                 email = "f@example.com"
-            }.save(),
+            }.save(testViewerContext),
         )
 
         // The conflicting update did not partially apply.
-        val reread = client.users.findById(guy.id).getOrThrow()!!
+        val reread = client.users.findById(testViewerContext, guy.id).getOrThrow()!!
         assertEquals("g@example.com", reread.email)
         assertEquals("G", reread.name)
     }
@@ -160,7 +160,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `update of a missing target is Failed(EntTargetAbsentException)`() {
         val client = freshClient()
 
-        val result = client.users.update(999_999L) { name = "ghost" }.saveAndLoad()
+        val result = client.users.update(999_999L) { name = "ghost" }.saveAndLoad(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntTargetAbsentException>(failed.exception)
@@ -175,7 +175,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient()
 
         // The no-op path establishes target existence before succeeding.
-        val result = client.users.update(999_999L) { }.save()
+        val result = client.users.update(999_999L) { }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         assertIs<EntTargetAbsentException>(failed.exception)
@@ -189,7 +189,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
         var beforeUpdates = 0
         var afterUpdates = 0
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser); articles(AllowAll) }
             hooks {
                 users {
@@ -199,10 +199,10 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
             }
         }
         val user = client.users.create { name = "N"; email = "n@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
 
         recording.reset()
-        val result = client.users.update(user.id) { }.save()
+        val result = client.users.update(user.id) { }.save(testViewerContext)
 
         assertEquals(MutationResult.Success(Unit), result)
         // Pre-write phases ran; persist and post-persist were skipped.
@@ -213,7 +213,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
         assertEquals(0, recording.callCount("update:"))
         assertTrue(recording.callCount("byId:") >= 1, "target-existence check must read the row")
 
-        val reread = client.users.findById(user.id).getOrThrow()!!
+        val reread = client.users.findById(testViewerContext, user.id).getOrThrow()!!
         assertEquals("N", reread.name)
     }
 
@@ -221,9 +221,9 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `a no-op saveAndLoad returns the current row`() {
         val client = freshClient()
         val user = client.users.create { name = "O"; email = "o@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
 
-        val loaded = client.users.update(user.id) { }.saveAndLoad().getOrThrow()
+        val loaded = client.users.update(user.id) { }.saveAndLoad(testViewerContext).getOrThrow()
         assertEquals(user.id, loaded.id)
         assertEquals("O", loaded.name)
     }
@@ -233,17 +233,17 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         var afterUpdates = 0
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies { users(OpenUser); articles(AllowAll) }
             hooks { users { afterUpdate { afterUpdates++ } } }
         }
         val user = client.users.create { name = "P"; email = "p@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
 
         recording.reset()
         // Assigning the current value is still an assignment: the write
         // happens and post-persist hooks run.
-        val result = client.users.update(user.id) { name = "P" }.save()
+        val result = client.users.update(user.id) { name = "P" }.save(testViewerContext)
 
         assertEquals(MutationResult.Success(Unit), result)
         assertEquals(1, recording.callCount("update:"))
@@ -254,6 +254,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a pre-write UPDATE privacy rejection carries operation UPDATE and NotPersisted`() {
+        val viewerContext = ViewerContext(Viewer.User(1L))
         val denyUpdate = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
@@ -264,17 +265,19 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
         }
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies { articles(denyUpdate); users(OpenUser) }
         }
-        val article = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
+        val article = run {
+            val sys = client
+            val testViewerContext = testBypassContext("test")
             val author = sys.users.create { name = "Q"; email = "q@example.com" }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(testViewerContext).getOrThrow()
             sys.articles.create { title = "T"; published = true; authorId = author.id }
-                .saveAndLoad().getOrThrow()
+                .saveAndLoad(testViewerContext).getOrThrow()
         }
 
-        val result = client.articles.update(article.id) { title = "T2" }.save()
+        val result = client.articles.update(article.id) { title = "T2" }.save(viewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -289,8 +292,10 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
         assertEquals("update denied", ex.reason)
 
         // Nothing was written.
-        val reread = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("test"))) { sys ->
-            sys.articles.findById(article.id).getOrThrow()!!
+        val reread = run {
+            val sys = client
+            val testViewerContext = testBypassContext("test")
+            sys.articles.findById(testViewerContext, article.id).getOrThrow()!!
         }
         assertEquals("T", reread.title)
     }

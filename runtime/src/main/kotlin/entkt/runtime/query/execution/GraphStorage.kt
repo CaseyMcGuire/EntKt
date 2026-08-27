@@ -3,7 +3,7 @@
 package entkt.runtime.query.execution
 
 import entkt.runtime.entity.EntEntity
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EdgeSelection
 import entkt.runtime.query.EdgeStep
@@ -18,7 +18,7 @@ internal interface GraphStorage {
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
     ): List<Entity>
 
     /** Load one selected relationship and retain how its targets correlate to the sources. */
@@ -32,7 +32,7 @@ internal interface GraphStorage {
 /** Read state shared by all storage work for one selected relationship. */
 internal class RelationshipReadContext(
     /** Viewer context supplied to relationship read interceptors. */
-    val privacyContext: PrivacyContext,
+    val viewerContext: ViewerContext,
 
     /** Entity type at the root of the complete graph read. */
     val rootEntity: KClass<*>,
@@ -42,7 +42,7 @@ internal class RelationshipReadContext(
 ) {
     /** Return the read context for a child selected edge. */
     fun child(edge: EdgeMapping<*, *>): RelationshipReadContext = RelationshipReadContext(
-        privacyContext = privacyContext,
+        viewerContext = viewerContext,
         rootEntity = rootEntity,
         interceptorPath = interceptorPath + EdgeStep(
             source = edge.source.entityClass,

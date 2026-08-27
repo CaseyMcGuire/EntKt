@@ -7,7 +7,7 @@ import entkt.integrationtest.ent.PostUpdatePrivacyRule
 import entkt.integrationtest.ent.PostUpdateValidationRule
 import entkt.postgres.PostgresDriver
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
@@ -86,8 +86,7 @@ class LinkTableM2MPostgresIntegrationTest {
             }
         }
 
-        // Not testing privacy — run as System so fail-closed defaults don't block.
-        return EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
+        return EntClient(driver)
     }
 
     private fun linkedTagIds(postId: Long): List<Long> {
@@ -124,7 +123,7 @@ class LinkTableM2MPostgresIntegrationTest {
         // on INSERT — without the matching `tag_id` in `tags`,
         // PostgreSQL raises a 23503 (foreign_key_violation).
         val client = freshClient()
-        val post = client.posts.create { title = "Hello" }.saveAndLoad().getOrThrow()
+        val post = client.posts.create { title = "Hello" }.saveAndLoad(testViewerContext).getOrThrow()
         val nonexistentTagId = 999_999L
 
         // The failed junction INSERT surfaces structurally: the save
@@ -134,7 +133,7 @@ class LinkTableM2MPostgresIntegrationTest {
         val result = client.withTransaction { tx ->
             tx.posts.update(post.id) {
                 tags.add(nonexistentTagId)
-            }.save().orRollback()
+            }.save(testViewerContext).orRollback()
         }
 
         val failed = assertIs<TransactionResult.Failed>(result)
@@ -162,7 +161,7 @@ class LinkTableM2MPostgresIntegrationTest {
     @Test
     fun `M2M failure after an owner write reports TransactionPending and rolls the owner write back`() {
         val client = freshClient()
-        val post = client.posts.create { title = "Original" }.saveAndLoad().getOrThrow()
+        val post = client.posts.create { title = "Original" }.saveAndLoad(testViewerContext).getOrThrow()
         val nonexistentTagId = 999_999L
 
         var inner: MutationResult<Unit>? = null
@@ -170,7 +169,7 @@ class LinkTableM2MPostgresIntegrationTest {
             inner = tx.posts.update(post.id) {
                 title = "Changed"
                 tags.add(nonexistentTagId)
-            }.save()
+            }.save(testViewerContext)
             // Ignoring the returned failure cannot commit the earlier
             // owner-row update: the mutation coordinator is rollback-only.
         }
@@ -184,28 +183,28 @@ class LinkTableM2MPostgresIntegrationTest {
         val transactionFailed = assertIs<TransactionResult.Failed>(result)
         assertEquals(TransactionFailureState.NotCommitted, transactionFailed.transactionState)
         assertSame(pending, transactionFailed.exception)
-        assertEquals("Original", client.posts.findById(post.id).getOrThrow()?.title)
+        assertEquals("Original", client.posts.findById(testViewerContext, post.id).getOrThrow()?.title)
         assertEquals(emptyList(), linkedTagIds(post.id))
     }
 
     @Test
     fun `re-adding an existing M2M link remains NotPersisted when an afterUpdate hook fails`() {
         val seedClient = freshClient()
-        val post = seedClient.posts.create { title = "Hello" }.saveAndLoad().getOrThrow()
-        val tag = seedClient.tags.create { name = "a" }.saveAndLoad().getOrThrow()
+        val post = seedClient.posts.create { title = "Hello" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tag = seedClient.tags.create { name = "a" }.saveAndLoad(testViewerContext).getOrThrow()
         seedClient.withTransaction { tx ->
-            tx.posts.update(post.id) { tags.add(tag.id) }.save().orRollback()
+            tx.posts.update(post.id) { tags.add(tag.id) }.save(testViewerContext).orRollback()
         }.getOrThrow()
 
         val hookFailure = IllegalStateException("afterUpdate failed")
         val client = EntClient(PostgresDriver(dataSource)) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             hooks { posts { afterUpdate { throw hookFailure } } }
         }
 
         var inner: MutationResult<Unit>? = null
         val result = client.withTransaction { tx ->
-            inner = tx.posts.update(post.id) { tags.add(tag.id) }.save()
+            inner = tx.posts.update(post.id) { tags.add(tag.id) }.save(testViewerContext)
         }
 
         val innerFailed = assertIs<MutationResult.Failed>(inner)
@@ -228,12 +227,12 @@ class LinkTableM2MPostgresIntegrationTest {
         // this happens first, so the FK path is not the failure mode
         // for the missing-owner case.
         val client = freshClient()
-        val tag = client.tags.create { name = "a" }.saveAndLoad().getOrThrow()
+        val tag = client.tags.create { name = "a" }.saveAndLoad(testViewerContext).getOrThrow()
 
         val result = client.withTransaction { tx ->
             tx.posts.update(id = 9_999_999L) {
                 tags.add(tag.id)
-            }.save().orRollback()
+            }.save(testViewerContext).orRollback()
         }
 
         // The owner-row read returned no row → EntTargetAbsentException.
@@ -250,15 +249,15 @@ class LinkTableM2MPostgresIntegrationTest {
         // and runs against real Postgres semantics (FK satisfied, ON
         // CONFLICT not triggered, etc.).
         val client = freshClient()
-        val post = client.posts.create { title = "Hello" }.saveAndLoad().getOrThrow()
-        val tagA = client.tags.create { name = "a" }.saveAndLoad().getOrThrow()
-        val tagB = client.tags.create { name = "b" }.saveAndLoad().getOrThrow()
+        val post = client.posts.create { title = "Hello" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tagA = client.tags.create { name = "a" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tagB = client.tags.create { name = "b" }.saveAndLoad(testViewerContext).getOrThrow()
 
         val saved = client.withTransaction { tx ->
             tx.posts.update(post.id) {
                 tags.add(tagA.id)
                 tags.add(tagB.id)
-            }.saveAndLoad().orRollback()
+            }.saveAndLoad(testViewerContext).orRollback()
         }.getOrThrow()
 
         assertEquals(post.id, saved.id)
@@ -267,21 +266,21 @@ class LinkTableM2MPostgresIntegrationTest {
 
     @Test
     fun `Postgres set replaces the link set — deleteMany removes the dropped ids`() {
-        // Exercises the generated `driver.deleteMany(junction, [sourceFk=ownerId, targetFk IN removed])`
+        // Exercises the generated `driver.deleteMany(testViewerContext, junction, [sourceFk=ownerId, targetFk IN removed])`
         // call against real Postgres. Earlier codegen quirks
         // around list/array binding for IN clauses would surface here.
         val client = freshClient()
-        val post = client.posts.create { title = "Hello" }.saveAndLoad().getOrThrow()
-        val tagA = client.tags.create { name = "a" }.saveAndLoad().getOrThrow()
-        val tagB = client.tags.create { name = "b" }.saveAndLoad().getOrThrow()
-        val tagC = client.tags.create { name = "c" }.saveAndLoad().getOrThrow()
+        val post = client.posts.create { title = "Hello" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tagA = client.tags.create { name = "a" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tagB = client.tags.create { name = "b" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tagC = client.tags.create { name = "c" }.saveAndLoad(testViewerContext).getOrThrow()
 
         // Seed: [a, b]
         client.withTransaction { tx ->
             tx.posts.update(post.id) {
                 tags.add(tagA.id)
                 tags.add(tagB.id)
-            }.save().orRollback()
+            }.save(testViewerContext).orRollback()
         }.getOrThrow()
         assertEquals(listOf(tagA.id, tagB.id).sorted(), linkedTagIds(post.id))
 
@@ -289,20 +288,21 @@ class LinkTableM2MPostgresIntegrationTest {
         client.withTransaction { tx ->
             tx.posts.update(post.id) {
                 tags.set(listOf(tagA.id, tagC.id))
-            }.save().orRollback()
+            }.save(testViewerContext).orRollback()
         }.getOrThrow()
         assertEquals(listOf(tagA.id, tagC.id).sorted(), linkedTagIds(post.id))
     }
 
     @Test
     fun `hook and rule edge snapshots cannot mutate later contexts or junction writes`() {
+        val viewerContext = ViewerContext(Viewer.User(1L))
         val seedClient = freshClient()
-        val post = seedClient.posts.create { title = "Hello" }.saveAndLoad().getOrThrow()
-        val tagA = seedClient.tags.create { name = "a" }.saveAndLoad().getOrThrow()
-        val tagB = seedClient.tags.create { name = "b" }.saveAndLoad().getOrThrow()
-        val tagC = seedClient.tags.create { name = "c" }.saveAndLoad().getOrThrow()
+        val post = seedClient.posts.create { title = "Hello" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tagA = seedClient.tags.create { name = "a" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tagB = seedClient.tags.create { name = "b" }.saveAndLoad(testViewerContext).getOrThrow()
+        val tagC = seedClient.tags.create { name = "c" }.saveAndLoad(testViewerContext).getOrThrow()
         seedClient.withTransaction { tx ->
-            tx.posts.update(post.id) { tags.add(tagC.id) }.save().orRollback()
+            tx.posts.update(post.id) { tags.add(tagC.id) }.save(testViewerContext).orRollback()
         }.getOrThrow()
 
         val hookSnapshots = mutableListOf<Set<Long>>()
@@ -355,7 +355,7 @@ class LinkTableM2MPostgresIntegrationTest {
             }
         }
         val client = EntClient(PostgresDriver(dataSource)) {
-            privacyContext { PrivacyContext(Viewer.User(1L)) }
+
             policies { posts(policy) }
             hooks {
                 posts {
@@ -377,7 +377,7 @@ class LinkTableM2MPostgresIntegrationTest {
         client.withTransaction { tx ->
             tx.posts.update(post.id) {
                 tags.set(listOf(tagA.id, tagB.id))
-            }.save().orRollback()
+            }.save(viewerContext).orRollback()
         }.getOrThrow()
 
         val expectedSet = setOf(tagA.id, tagB.id)

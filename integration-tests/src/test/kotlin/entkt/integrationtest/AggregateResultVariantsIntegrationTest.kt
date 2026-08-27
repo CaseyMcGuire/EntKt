@@ -5,9 +5,7 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
 import entkt.query.Op
 import entkt.query.Predicate
-import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.query.QueryInterceptor
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.result.ReadResult
 import kotlin.test.Test
@@ -33,17 +31,17 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     private fun freshClient(driver: PostgresDriver = freshDriver()): EntClient =
-        EntClient(driver) { privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) } }
+        EntClient(driver)
 
     // ---------- rawCount ----------
 
     @Test
     fun `rawCount happy path returns Success with the count`() {
         val client = freshClient()
-        client.posts.create { title = "a" }.save().getOrThrow()
-        client.posts.create { title = "b" }.save().getOrThrow()
+        client.posts.create { title = "a" }.save(testViewerContext).getOrThrow()
+        client.posts.create { title = "b" }.save(testViewerContext).getOrThrow()
 
-        val result = client.posts.query().rawCount()
+        val result = client.posts.query().rawCount(testViewerContext)
         val ok = assertIs<ReadResult.Success<Long>>(result)
         assertEquals(2L, ok.value)
     }
@@ -52,7 +50,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `rawCount honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -62,11 +60,11 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "yes" }.save().getOrThrow()
-        client.posts.create { title = "no" }.save().getOrThrow()
-        client.posts.create { title = "yes" }.save().getOrThrow()
+        client.posts.create { title = "yes" }.save(testViewerContext).getOrThrow()
+        client.posts.create { title = "no" }.save(testViewerContext).getOrThrow()
+        client.posts.create { title = "yes" }.save(testViewerContext).getOrThrow()
 
-        val result = client.posts.query().rawCount()
+        val result = client.posts.query().rawCount(testViewerContext)
         val ok = assertIs<ReadResult.Success<Long>>(result)
         assertEquals(2L, ok.value)
     }
@@ -75,7 +73,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `rawCount surfaces interceptor rejection as Failed(EntQueryRejectedException)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope", code = "rc_rej") },
@@ -83,7 +81,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val result = client.posts.query().rawCount()
+        val result = client.posts.query().rawCount(testViewerContext)
         val failed = assertIs<ReadResult.Failed>(result)
         val rejected = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("nope", rejected.reason)
@@ -97,13 +95,13 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `rawExists happy paths`() {
         val client = freshClient()
 
-        val emptyResult = client.posts.query().rawExists()
+        val emptyResult = client.posts.query().rawExists(testViewerContext)
         val emptyOk = assertIs<ReadResult.Success<Boolean>>(emptyResult)
         assertEquals(false, emptyOk.value)
 
-        client.posts.create { title = "x" }.save().getOrThrow()
+        client.posts.create { title = "x" }.save(testViewerContext).getOrThrow()
 
-        val populatedResult = client.posts.query().rawExists()
+        val populatedResult = client.posts.query().rawExists(testViewerContext)
         val populatedOk = assertIs<ReadResult.Success<Boolean>>(populatedResult)
         assertEquals(true, populatedOk.value)
     }
@@ -112,7 +110,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
     fun `rawExists honors interceptor predicate`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ ->
@@ -122,19 +120,19 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.posts.create { title = "haystack" }.save().getOrThrow()
+        client.posts.create { title = "haystack" }.save(testViewerContext).getOrThrow()
 
-        assertEquals(false, client.posts.query().rawExists().getOrThrow())
+        assertEquals(false, client.posts.query().rawExists(testViewerContext).getOrThrow())
 
-        client.posts.create { title = "needle" }.save().getOrThrow()
-        assertEquals(true, client.posts.query().rawExists().getOrThrow())
+        client.posts.create { title = "needle" }.save(testViewerContext).getOrThrow()
+        assertEquals(true, client.posts.query().rawExists(testViewerContext).getOrThrow())
     }
 
     @Test
     fun `rawExists surfaces interceptor rejection as Failed(EntQueryRejectedException)`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 posts(
                     QueryInterceptor { scope, _ -> scope.reject("nope") },
@@ -142,7 +140,7 @@ class AggregateResultVariantsIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val result = client.posts.query().rawExists()
+        val result = client.posts.query().rawExists(testViewerContext)
         val failed = assertIs<ReadResult.Failed>(result)
         val rejected = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("nope", rejected.reason)

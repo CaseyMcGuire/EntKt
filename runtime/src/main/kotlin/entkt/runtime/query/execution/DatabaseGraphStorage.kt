@@ -9,7 +9,7 @@ import entkt.runtime.driver.PerParentWindow
 import entkt.runtime.driver.executeDirectToMany
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EdgeSelection
 import entkt.runtime.query.EdgeStorage
 import entkt.runtime.query.EagerWindowStrategy
@@ -53,16 +53,16 @@ internal class DatabaseGraphStorage(
      * @param query recursively captured query whose root rows should be read.
      * @param operation terminal operation exposed to read interceptors.
      * @param maximumRows optional internal upper bound on returned entities.
-     * @param privacyContext viewer context supplied to every interceptor in this read.
+     * @param viewerContext viewer context supplied to every interceptor in this read.
      * @return decoded root entities in storage-query order.
      */
     override fun <Entity : EntEntity<*>> loadRoot(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
     ): List<Entity> {
-        val queryForStorage = queryCompiler.compile(query, operation, privacyContext)
+        val queryForStorage = queryCompiler.compile(query, operation, viewerContext)
         val storageLimit = maximumRows?.let { maximum ->
             minOf(maximum, queryForStorage.limit ?: maximum)
         } ?: queryForStorage.limit

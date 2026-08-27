@@ -13,7 +13,7 @@ data class EntViewerRequest(
     /** Query parameters (repeatable keys). */
     val query: Map<String, List<String>> = emptyMap(),
     /**
-     * Application-supplied identity for the `authorize` and `privacyContext`
+     * Application-supplied identity for the `authorize` and `viewerContext`
      * callbacks — typically the authenticated principal. Opaque to the viewer.
      */
     val principal: Any? = null,

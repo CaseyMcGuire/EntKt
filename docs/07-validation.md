@@ -308,10 +308,13 @@ data class PostDeleteValidationItem(
 )
 ```
 
-Validation rule contexts do **not** include `PrivacyContext`. Privacy has already been
-enforced by the time validators run — validators are viewer-agnostic.
-If a rule cares about who is performing the operation, it belongs in
-privacy, not validation.
+Validation rule contexts do **not** include the caller's `ViewerContext`.
+Privacy has already been enforced by the time validators run — validators are
+viewer-agnostic. If a rule cares about who is performing the operation, it
+belongs in privacy, not validation. They instead expose
+`readViewerContext`, initialized by the framework as
+`ViewerContext.privacyBypass_DANGEROUS("validation read")`, solely for
+explicit reads through the validation client.
 
 The `EntValidationReadClient` in `ValidationRuleContext` is read-only and its
 reads bypass LOAD privacy, allowing invariant checks such as uniqueness and
@@ -319,8 +322,8 @@ referential integrity to inspect all relevant rows. Read interceptors still
 apply, and validation performed inside `withTransaction` sees earlier writes
 from the same transaction.
 
-`PrivacyRuleContext` exposes `EntPrivacyReadClient` instead, whose reads use
-the caller's privacy context. Both concrete types implement the shared
+`PrivacyRuleContext` exposes `EntPrivacyReadClient` and `viewerContext`
+instead; nested terminals pass that caller context explicitly. Both concrete types implement the shared
 `EntReadClient` interface: helpers that work correctly under either posture
 can accept `EntReadClient`. Raw terminals have the same storage-level behavior
 under both postures: they skip LOAD privacy and entity materialization. Helpers
@@ -455,7 +458,7 @@ class UniqueSlug : PostCreateValidationRule {
     ): ValidationDecision {
         val exists = context.client.posts.query {
             where(Post.slug eq item.candidate.slug)
-        }.rawExists().getOrThrow()
+        }.rawExists(context.readViewerContext).getOrThrow()
         return if (exists) ValidationDecision.Invalid("slug already taken")
         else ValidationDecision.Valid
     }
@@ -466,7 +469,9 @@ class AuthorExists : PostCreateValidationRule {
         context: ValidationRuleContext<EntValidationReadClient>,
         item: PostCreateValidationItem,
     ): ValidationDecision {
-        val author = context.client.users.findById(item.candidate.authorId).getOrThrow()
+        val author = context.client.users
+            .findById(context.readViewerContext, item.candidate.authorId)
+            .getOrThrow()
         return if (author == null) ValidationDecision.Invalid("author does not exist")
         else ValidationDecision.Valid
     }
@@ -485,7 +490,9 @@ class UniqueEmail : UserCreateValidationRule {
         context: ValidationRuleContext<EntValidationReadClient>,
         item: UserCreateValidationItem,
     ): ValidationDecision =
-        if (context.client.users.indexes.email(item.candidate.email).find().getOrThrow() != null) {
+        if (context.client.users.indexes.email(item.candidate.email)
+                .find(context.readViewerContext).getOrThrow() != null
+        ) {
             ValidationDecision.Invalid("email already taken", field = "email")
         } else {
             ValidationDecision.Valid
@@ -629,7 +636,7 @@ class CannotDeleteWithOpenInvoices : UserDeleteValidationRule {
     ): ValidationDecision {
         val openCount = context.client.invoices.query {
             where(Invoice.userId eq item.entity.id and (Invoice.status eq Status.OPEN))
-        }.rawCount().getOrThrow()
+        }.rawCount(context.readViewerContext).getOrThrow()
         return if (openCount > 0) {
             ValidationDecision.Invalid("user has $openCount open invoice(s)")
         } else {

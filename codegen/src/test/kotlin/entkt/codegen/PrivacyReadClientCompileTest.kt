@@ -8,24 +8,20 @@ import com.tschuchort.compiletesting.SourceFile
 import entkt.schema.EntSchema
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
  * Compile-time proof of the read-only privacy client's contract:
- * **privacy rule code cannot write, open transactions, re-scope, or
- * mutate client configuration**. Privacy contexts expose
- * `EntPrivacyReadClient` (implementing the shared `EntReadClient`
- * interface), so every such member is an unresolved reference.
+ * **privacy rule code cannot write, open transactions, or mutate client
+ * configuration**, and the client exposes no ambient re-scoping or
+ * client-level bypass helpers. Each read terminal still accepts an explicit
+ * `ViewerContext`, including a deliberately selected bypass context. Privacy
+ * contexts expose `EntPrivacyReadClient` (implementing the shared
+ * `EntReadClient` interface), so every such member is an unresolved reference.
  *
- * Also pins the adapters' opt-in gate: kctfork compiles the snippets
- * into the same module as the generated output, so `internal` is
- * satisfied either way and `@EntktInternal` is the boundary actually
- * being tested — calling `asValidationReadClientForInternalUse` or
- * `asPrivacyReadClientForInternalUse` without opt-in must fail on the
- * opt-in diagnostic (not an unresolved reference), and the same calls
- * under `@OptIn(EntktInternal::class)` must compile.
+ * Also pins removal of the former rule-client factories: they remain
+ * unresolved even from same-module code carrying `@OptIn(EntktInternal)`.
  *
  * The validation-context twin lives in [ValidationReadClientCompileTest];
  * both wrappers delegate to the same shared implementation, so the
@@ -58,6 +54,7 @@ class PrivacyReadClientCompileTest {
         import com.example.ent.EntPrivacyReadClient
         import com.example.ent.EntReadClient
         import entkt.runtime.privacy.PrivacyDecision
+        import entkt.runtime.privacy.ViewerContext
         import entkt.runtime.result.visibleOrNull
         import java.util.UUID
 
@@ -103,12 +100,12 @@ class PrivacyReadClientCompileTest {
                 """
                 val concrete: EntPrivacyReadClient = ctx.client
                 val typed: EntReadClient = ctx.client
-                ctx.client.cars.query { }.firstOrNull()
-                ctx.client.cars.query { }.all().getOrThrow()
-                ctx.client.cars.query { }.rawExists()
-                ctx.client.users.findById(UUID.randomUUID()).getOrThrow()
-                ctx.client.users.findById(UUID.randomUUID()).visibleOrNull()
-                ctx.client.users.indexes.email("a@b.c").find()
+                ctx.client.cars.query { }.firstOrNull(ctx.viewerContext)
+                ctx.client.cars.query { }.all(ctx.viewerContext).getOrThrow()
+                ctx.client.cars.query { }.rawExists(ctx.viewerContext)
+                ctx.client.users.findById(ctx.viewerContext, UUID.randomUUID()).getOrThrow()
+                ctx.client.users.findById(ctx.viewerContext, UUID.randomUUID()).visibleOrNull()
+                ctx.client.users.indexes.email("a@b.c").find(ctx.viewerContext)
                 """.trimIndent(),
             ),
         )
@@ -116,6 +113,24 @@ class PrivacyReadClientCompileTest {
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
             "Expected the read-only privacy rule snippet to compile, got:\n${result.messages}",
+        )
+    }
+
+    @Test
+    fun `privacy rule can explicitly select a bypass context for a terminal`() {
+        val result = compile(
+            generatedSources() + ruleSnippet(
+                """
+                ctx.client.cars.query().all(
+                    ViewerContext.privacyBypass_DANGEROUS("rule read"),
+                )
+                """.trimIndent(),
+            ),
+        )
+        assertEquals(
+            KotlinCompilation.ExitCode.OK,
+            result.exitCode,
+            "Expected an explicit terminal-level bypass context to compile, got:\n${result.messages}",
         )
     }
 
@@ -213,12 +228,12 @@ class PrivacyReadClientCompileTest {
     }
 
     @Test
-    fun `privacy rule cannot re-scope to another viewer`() {
-        assertUnresolved("withPrivacyContext", "ctx.client.withPrivacyContext(ctx.privacy) { }")
+    fun `privacy read client does not expose withViewerContext`() {
+        assertUnresolved("withViewerContext", "ctx.client.withViewerContext(ctx.viewerContext) { }")
     }
 
     @Test
-    fun `privacy rule cannot bypass privacy`() {
+    fun `privacy read client does not expose client-level bypass helper`() {
         assertUnresolved("bypassPrivacy_DANGEROUS", "ctx.client.bypassPrivacy_DANGEROUS(\"x\") { }")
     }
 
@@ -228,71 +243,54 @@ class PrivacyReadClientCompileTest {
         // members on the read client, so each probe fails the same
         // unresolved-reference way.
         assertUnresolved("transactionRequirement", "ctx.client.transactionRequirement = null")
-        assertUnresolved("privacyContextProvider", "ctx.client.privacyContextProvider = { ctx.privacy }")
+        assertUnresolved("viewerContextProvider", "ctx.client.viewerContextProvider = { ctx.viewerContext }")
         assertUnresolved("defaultUpdateConsistency", "ctx.client.defaultUpdateConsistency = null")
         assertUnresolved("defaultRelationshipLocking", "ctx.client.defaultRelationshipLocking = null")
     }
 
-    // ---- The adapters' opt-in gate ----
+    // ---- Removed rule-client factories stay absent ----
 
-    private fun mintSnippet(optIn: Boolean, call: String): SourceFile {
-        val header = if (optIn) "@file:OptIn(entkt.query.EntktInternal::class)\n\n" else ""
-        return SourceFile.kotlin(
-            "MintSnippet.kt",
-            header +
-                """
-                package com.example.app
+    private fun mintSnippet(call: String): SourceFile = SourceFile.kotlin(
+        "MintSnippet.kt",
+        """
+            package com.example.app
 
-                import com.example.ent.EntClient
-                import entkt.runtime.privacy.PrivacyContext
-                import entkt.runtime.privacy.Viewer
+            import com.example.ent.EntClient
+            import entkt.runtime.privacy.ViewerContext
+            import entkt.runtime.privacy.Viewer
 
-                fun mint(client: EntClient) {
-                    client.$call
-                }
-                """.trimIndent(),
-        )
-    }
+            fun mint(client: EntClient) {
+                client.$call
+            }
+        """.trimIndent(),
+    )
 
-    private fun assertOptInGated(adapter: String, call: String) {
-        val result = compile(generatedSources() + mintSnippet(optIn = false, call = call))
+    private fun assertAdapterRemoved(adapter: String, call: String) {
+        val result = compile(generatedSources() + mintSnippet(call))
         assertNotEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "Expected $adapter without opt-in to fail compilation but it succeeded",
+            "Expected removed $adapter to fail compilation but it succeeded",
         )
-        // The failure must be the opt-in requirement, not visibility or
-        // resolution: the snippet compiles same-module, so `internal` is
-        // satisfied and the member resolves — the marker is the gate.
         assertTrue(
-            result.messages.contains("EntktInternal"),
-            "Expected the opt-in diagnostic to name EntktInternal, got:\n${result.messages}",
-        )
-        assertFalse(
-            result.messages.contains("nresolved reference"),
-            "Expected an opt-in failure, not an unresolved reference:\n${result.messages}",
-        )
-        val optedIn = compile(generatedSources() + mintSnippet(optIn = true, call = call))
-        assertEquals(
-            KotlinCompilation.ExitCode.OK,
-            optedIn.exitCode,
-            "Expected $adapter under @OptIn(EntktInternal::class) to compile, got:\n${optedIn.messages}",
+            result.messages.contains("nresolved reference") && result.messages.contains(adapter),
+            "Expected an unresolved-reference error for $adapter, got:\n${result.messages}",
         )
     }
 
     @Test
-    fun `minting a validation read client is gated on the opt-in marker`() {
-        assertOptInGated(
+    fun `validation read client factory is absent`() {
+        assertAdapterRemoved(
             "asValidationReadClientForInternalUse",
             "asValidationReadClientForInternalUse()",
         )
     }
 
     @Test
-    fun `minting a privacy read client is gated on the opt-in marker`() {
-        assertOptInGated(
+    fun `privacy read client factory is absent`() {
+        assertAdapterRemoved(
             "asPrivacyReadClientForInternalUse",
-            "asPrivacyReadClientForInternalUse(PrivacyContext(Viewer.Anonymous))",
+            "asPrivacyReadClientForInternalUse(ViewerContext(Viewer.Anonymous))",
         )
     }
 }

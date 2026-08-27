@@ -14,7 +14,7 @@ import entkt.runtime.driver.RelatedRow
 import entkt.runtime.driver.RelatedRows
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.DatabaseGraphStorage
 import entkt.runtime.query.execution.ReadQueryCompiler
@@ -229,7 +229,7 @@ class DatabaseGraphStorageTest {
         }
     }
 
-    private val privacyContext = PrivacyContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext(Viewer.User(7L))
 
     @Test
     fun `root loading prepares the query and preserves the terminal row bound`() {
@@ -253,7 +253,7 @@ class DatabaseGraphStorageTest {
             query = query(ParentMapping),
             operation = ReadOperation.FIRST,
             maximumRows = 1,
-            privacyContext = privacyContext,
+            viewerContext = viewerContext,
         )
 
         assertEquals(listOf(Parent(2, null)), loaded)
@@ -426,7 +426,7 @@ class DatabaseGraphStorageTest {
 
     private fun relationshipContext(step: EdgeStep): RelationshipReadContext =
         RelationshipReadContext(
-            privacyContext = privacyContext,
+            viewerContext = viewerContext,
             rootEntity = Parent::class,
             interceptorPath = listOf(step),
         )

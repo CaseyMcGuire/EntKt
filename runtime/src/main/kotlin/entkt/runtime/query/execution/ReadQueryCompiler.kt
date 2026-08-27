@@ -11,7 +11,7 @@ import entkt.query.TraversalSourceShape
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EdgeTraversal
@@ -57,9 +57,9 @@ class ReadQueryCompiler(
     fun <Entity : EntEntity<*>> compile(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
     ): StorageQuerySpec<Entity> {
-        val compiledNode = compileQueryNode(query, operation, privacyContext)
+        val compiledNode = compileQueryNode(query, operation, viewerContext)
         return compiledNode.query
     }
 
@@ -135,7 +135,7 @@ class ReadQueryCompiler(
             orderBy
         }
         val queryContext = QueryContext(
-            privacy = context.privacyContext,
+            viewerContext = context.viewerContext,
             operation = operation,
             rootEntity = context.rootEntity,
             currentEntity = entity.entityClass,
@@ -162,11 +162,11 @@ class ReadQueryCompiler(
     private fun <Entity : EntEntity<*>> compileQueryNode(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
     ): CompiledQueryNode<Entity> {
-        val traversal = resolveTraversal(query, privacyContext)
+        val traversal = resolveTraversal(query, viewerContext)
         val context = QueryContext(
-            privacy = privacyContext,
+            viewerContext = viewerContext,
             operation = operation,
             rootEntity = traversal?.rootEntity ?: query.entity.entityClass,
             currentEntity = query.entity.entityClass,
@@ -192,22 +192,22 @@ class ReadQueryCompiler(
     /** Resolve a chained query source into its storage bridge and interceptor context. */
     private fun <Entity : EntEntity<*>> resolveTraversal(
         query: EntityQuery<Entity>,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
     ): ResolvedTraversal<Entity>? = when (val source = query.source) {
         is QuerySource.Root -> null
-        is QuerySource.Traversal<*, *> -> resolveTraversalSource(source, privacyContext)
+        is QuerySource.Traversal<*, *> -> resolveTraversalSource(source, viewerContext)
     }
 
     @Suppress("UNCHECKED_CAST")
     private fun <Target : EntEntity<*>> resolveTraversalSource(
         source: QuerySource.Traversal<*, *>,
-        privacyContext: PrivacyContext,
+        viewerContext: ViewerContext,
     ): ResolvedTraversal<Target> {
         val typedSource = source as QuerySource.Traversal<EntEntity<*>, Target>
         val sourceNode = compileQueryNode(
             typedSource.source,
             ReadOperation.EDGE_TRAVERSAL,
-            privacyContext,
+            viewerContext,
         )
         val traversal = checkNotNull(typedSource.edge.traversal) {
             "Edge '${typedSource.edge.name}' does not support chained query traversal"
@@ -440,7 +440,7 @@ class ReadQueryCompiler(
             target = edge.target.entityClass,
         )
         val context = QueryContext(
-            privacy = parentContext.privacy,
+            viewerContext = parentContext.viewerContext,
             operation = ReadOperation.EDGE_PREDICATE,
             rootEntity = parentContext.rootEntity,
             currentEntity = edge.target.entityClass,

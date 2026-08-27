@@ -2,7 +2,9 @@
 
 Privacy rules control who can read, create, update, and delete entities.
 Rules are declared per-entity via policies and enforced automatically by
-the generated code -- no manual checks needed at call sites.
+the generated code. Every executing terminal receives a mandatory
+`ViewerContext`; callers choose the viewer explicitly instead of configuring
+ambient client state.
 
 ## Quick Example
 
@@ -13,7 +15,7 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
             load(
                 // Users can see their own profile
                 PrivacyRule { context, item ->
-                    val v = context.privacy.userOrNull()
+                    val v = context.viewerContext.userOrNull()
                         ?: return@PrivacyRule PrivacyDecision.Continue
                     if (v.id == item.entity.id) PrivacyDecision.Allow
                     else PrivacyDecision.Continue
@@ -23,7 +25,7 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
                 PrivacyRule { context, _ ->
                     // Privacy is fail-closed, so authenticated callers must be
                     // explicitly allowed — a fallthrough Continue would deny.
-                    if (context.privacy.viewer is Viewer.Anonymous)
+                    if (context.viewerContext.viewer is Viewer.Anonymous)
                         PrivacyDecision.Deny("only system can create users")
                     else PrivacyDecision.Allow
                 },
@@ -35,11 +37,13 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
 }
 
 val client = EntClient(driver) {
-    privacyContext { PrivacyContext(Viewer.User(currentUserId())) }
     policies {
         users(UserPolicy)
     }
 }
+
+val viewerContext = ViewerContext(Viewer.User(currentUserId()))
+val users = client.users.query().all(viewerContext).getOrThrow()
 ```
 
 ## Concepts
@@ -60,30 +64,32 @@ sealed interface Viewer {
 runtime helpers instead of handwritten casts:
 
 ```kotlin
-context.privacy.userOrNull()      // Viewer.User?
-context.privacy.userIdOrNull()    // Any?
-context.privacy.longIdOrNull()    // Long?
-context.privacy.intIdOrNull()     // Int?
-context.privacy.stringIdOrNull()  // String?
-context.privacy.uuidIdOrNull()    // UUID?
+context.viewerContext.userOrNull()      // Viewer.User?
+context.viewerContext.userIdOrNull()    // Any?
+context.viewerContext.longIdOrNull()    // Long?
+context.viewerContext.intIdOrNull()     // Int?
+context.viewerContext.stringIdOrNull()  // String?
+context.viewerContext.uuidIdOrNull()    // UUID?
 ```
 
 Typed helpers are exact type checks. For example, `longIdOrNull()` returns
 `null` for an `Int` id; it does not coerce numeric values.
 
-### PrivacyContext
+### ViewerContext
 
-`PrivacyContext` bundles the viewer captured for a generated operation.
-One logical operation captures at most one context and shares that exact value
+`ViewerContext` bundles the viewer supplied to a generated operation.
+Every execution terminal requires it as its first argument. One logical
+operation retains and shares that exact instance
 across every privacy-consuming phase. For a read, that includes interceptors,
 traversal and eager subqueries, and root/eager LOAD checks. For `createMany`,
 CREATE privacy and returned LOAD privacy share one context; `deleteMany`
-shares one across candidate interceptors and DELETE privacy. An empty operation
-or a failure before the first privacy-consuming phase need not call the
-provider.
+shares one across candidate interceptors and DELETE privacy. Clients, query
+builders, and mutation builders do not store a current viewer, so one
+long-lived client can safely execute operations for different viewers,
+including concurrently when each operation uses its own builder.
 
 ```kotlin
-data class PrivacyContext(val viewer: Viewer)
+data class ViewerContext(val viewer: Viewer)
 ```
 
 ### PrivacyDecision
@@ -104,7 +110,7 @@ order.
 
 ```kotlin
 class PrivacyRuleContext<out Client>(
-    val privacy: PrivacyContext,
+    val viewerContext: ViewerContext,
     val client: Client,
 )
 
@@ -156,7 +162,7 @@ val allowReadablePosts: PostLoadBatchPrivacyRule =
     batchPrivacyRule { context, batch ->
         val readableIds = loadReadablePostIds(
             client = context.client,
-            viewer = context.privacy.viewer,
+            viewer = context.viewerContext.viewer,
             postIds = batch.map { it.entity.id },
         )
         batch.decideEach { item ->
@@ -223,18 +229,24 @@ for an operation — use it deliberately.
 
 ## Setting Up Privacy
 
-### Privacy Context Provider
+### Supplying the Viewer Context
 
-Tell the client how to determine the current viewer. This lambda is
-called at operation time:
+Construct the context at the application boundary and pass it directly to
+every terminal that executes an entity operation:
 
 ```kotlin
-val client = EntClient(driver) {
-    privacyContext { PrivacyContext(Viewer.User(getCurrentUserId())) }
-}
+val viewerContext = ViewerContext(Viewer.User(getCurrentUserId()))
+
+client.posts.query { where(Post.published eq true) }
+    .all(viewerContext)
+client.posts.create { title = "Hello" }
+    .save(viewerContext)
 ```
 
-If no provider is configured, the default is `Viewer.Anonymous`.
+There is no default, provider, thread-local lookup, or client-scoping API.
+Use `ViewerContext(Viewer.Anonymous)` explicitly for unauthenticated work.
+Builders and `withTransaction` remain contextless because they do not execute
+an entity operation.
 
 ### Policies
 
@@ -287,7 +299,7 @@ you opt into access explicitly.
 load(
     // Users can see their own profile
     PrivacyRule { context, item ->
-        val v = context.privacy.userOrNull()
+        val v = context.viewerContext.userOrNull()
             ?: return@PrivacyRule PrivacyDecision.Continue
         if (v.id == item.entity.id) PrivacyDecision.Allow
         else PrivacyDecision.Continue
@@ -312,20 +324,21 @@ a later rule. Rules should not rely on cross-item side-effect ordering.
 > **`Viewer.PrivacyBypass(reason)` bypasses all privacy checks** at the framework
 > level -- it is the escape hatch for trusted/internal operations (the required
 > `reason` says why). You do not need (and cannot write) a rule for it. At
-> application call sites prefer the generated `bypassPrivacy_DANGEROUS(reason)`
-> client helper (below), whose loud name makes bypasses obvious in review.
+> application call sites prefer
+> `ViewerContext.privacyBypass_DANGEROUS(reason)` (below), whose loud name
+> makes bypasses obvious in review.
 
 LOAD privacy is enforced on every read terminal that materializes
 entities. Denial is never thrown from the terminal — it is the read's
 result:
 
-- `repo.findById(id)` -- `Failed(EntPrivacyDeniedException(Root, ...))`
+- `repo.findById(viewerContext, id)` -- `Failed(EntPrivacyDeniedException(Root, ...))`
   when the row exists but is denied; `Success(null)` only for
   authoritative absence
-- `query.all()` -- `Failed(EntPrivacyDeniedException(Root, ...))` if any
+- `query.all(viewerContext)` -- `Failed(EntPrivacyDeniedException(Root, ...))` if any
   entity in the selected window is denied, with one keyed
   `PrivacyDenial` per denied row; never a partial list
-- `query.firstOrNull()` -- `Failed(EntPrivacyDeniedException(Root, ...))`
+- `query.firstOrNull(viewerContext)` -- `Failed(EntPrivacyDeniedException(Root, ...))`
   if the fetched row is denied; `Success(null)` only when no matching
   row exists
 - Eager-loaded edges (`loadPosts()`, etc.) --
@@ -359,7 +372,7 @@ denies one class of viewer and explicitly allows the rest:
 ```kotlin
 create(
     PrivacyRule { context, _ ->
-        if (context.privacy.viewer is Viewer.Anonymous) PrivacyDecision.Deny("login required")
+        if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("login required")
         else PrivacyDecision.Allow   // explicit Allow — a Continue here would deny
     },
 )
@@ -373,34 +386,46 @@ returns `MutationResult.Failed(EntMutationPrivacyDeniedException)` with
 
 Every privacy rule receives one shared `PrivacyRuleContext` parameter in
 addition to its item or item batch. Its `client` is an
-`EntPrivacyReadClient`: a read-only client fixed to the **caller's**
-privacy context — rules can query the graph to decide (ownership
-walks, parent-visibility checks), and every row those reads
-**materialize** passes the viewer's LOAD privacy: a rule cannot load
-what its viewer cannot load. Writes, transactions, re-scoping
-(`withPrivacyContext` / `bypassPrivacy_DANGEROUS`), and configuration
-do not exist on the type, so a rule that tries to mutate does not
-compile:
+`EntPrivacyReadClient`: a stable read-only client. Rules normally pass the
+**caller's** `context.viewerContext` when querying the graph to decide (ownership
+walks, parent-visibility checks). Every row those reads **materialize** then
+passes that viewer's LOAD privacy. The read client is stable and contextless:
+it does not bind or validate a viewer context, and the context supplied to each
+terminal determines the read's privacy behavior. Nested rule reads that should
+retain the outer operation's viewer explicitly pass `context.viewerContext`,
+preserving that exact instance. Privacy rules are trusted authorization code
+and may deliberately supply another context, including an explicit
+`ViewerContext.privacyBypass_DANGEROUS(reason)`. Writes, transactions, and
+configuration do not exist on the client type, so a rule that tries to mutate
+does not compile:
 
-Rule reads evaluate LOAD privacy like any other read: a rule loading a
+```kotlin
+val author = context.client.users
+    .findById(context.viewerContext, item.entity.authorId)
+    .getOrThrow()
+```
+
+Rule reads made with `context.viewerContext` evaluate LOAD privacy like any
+other read: a rule loading a
 row its viewer cannot see gets the denial
-(`findById` returns `Failed(EntPrivacyDeniedException)`; chaining
+(`findById(context.viewerContext, id)` returns
+`Failed(EntPrivacyDeniedException)`; chaining
 `.visibleOrNull()` collapses that root denial to `Success(null)`),
-never the row. This is deliberately the opposite posture from
-validation rule contexts, whose `EntValidationReadClient` reads are
-privacy-bypass-scoped — invariant checks can materialize every row,
-while authorization reads materialize only viewer-visible rows. Both
+never the row. Validation rules normally pass their framework-provided
+`readViewerContext`, which is privacy-bypassing, so invariant checks can
+materialize every row. Both
 concrete types implement the shared `EntReadClient` interface, so a
 helper that works correctly under either posture can accept
 `EntReadClient`; a helper that is
 specifically part of an authorization decision should accept
-`EntPrivacyReadClient` and then cannot be handed a privacy-bypassing
-reader by mistake.
+`EntPrivacyReadClient` so it cannot be handed an
+`EntValidationReadClient` by mistake. The concrete client type does not
+constrain the `ViewerContext` passed to its terminals.
 
 The raw terminals (`rawCount` / `rawExists` and the raw aggregates) are
 available on every read client and have one explicit meaning: they query
 storage without materializing entities or evaluating LOAD privacy. They still
-run read interceptors under the operation's captured privacy context. Privacy
+run read interceptors under the operation's supplied viewer context. Privacy
 rules are trusted authorization code and may use raw terminals for facts such
 as ACL membership or existence; doing so can also avoid recursive LOAD-policy
 evaluation. Use `findById`, `firstOrNull`, or `all` instead when the referenced
@@ -441,7 +466,7 @@ data class UserCreatePrivacyItem(
 
 ```kotlin
 data class UserUpdatePrivacyItem(
-    val before: User,                   // current state of the entity (loaded by save())
+    val before: User,                   // current state (loaded by save(viewerContext))
     val requestedPatch: UserUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: UserUpdatePatch, // after framework update defaults (e.g. updatedAt)
     val candidate: UserWriteCandidate,  // full after-state = before + effectivePatch
@@ -533,45 +558,42 @@ fallback (using a `CreatePrivacyItem` built from the candidate). If
 the create rules also fail to `Allow`, the operation is denied
 (fail-closed).
 
-## Scoped Context
+## Explicit Contexts
 
-### bypassPrivacy_DANGEROUS
+### `ViewerContext.privacyBypass_DANGEROUS`
 
-Run a block with privacy checks bypassed. The loud name + required `reason` make
-escape-hatch call sites obvious and easy to grep for:
+Construct a context that bypasses privacy checks. The loud name and required
+`reason` make escape-hatch call sites obvious and easy to grep for:
 
 ```kotlin
-client.bypassPrivacy_DANGEROUS(reason = "migration backfill") { bypassed ->
-    bypassed.users.create { email = "admin@example.com" }.save().getOrThrow()
-}
+val bypass = ViewerContext.privacyBypass_DANGEROUS("migration backfill")
+client.users.create { email = "admin@example.com" }.save(bypass).getOrThrow()
 ```
 
 It bypasses only generated privacy checks (LOAD/CREATE/UPDATE/DELETE) — validation,
 hooks, query interceptors, transactions, and database constraints still apply.
 
-### withPrivacyContext
+### Ordinary viewer changes
 
-Override the privacy context for a block of code — use this for ordinary identity
-changes (e.g. acting as `Viewer.User(id)`), not for bypassing privacy:
+Use the same long-lived client and pass the intended context to each terminal:
 
 ```kotlin
-client.withPrivacyContext(PrivacyContext(Viewer.User(42L))) { scoped ->
-    scoped.users.query().all().getOrThrow()
-}
-```
+val viewer42 = ViewerContext(Viewer.User(42L))
+val viewer99 = ViewerContext(Viewer.User(99L))
 
-This creates a scoped client that inherits hooks and privacy rules but
-uses the provided context.
+client.users.query().all(viewer42).getOrThrow()
+client.users.query().all(viewer99).getOrThrow()
+```
 
 ### Transactions
 
-Privacy context and rules are automatically inherited by transaction
-clients:
+Rules and configuration are inherited by transaction clients. Context remains
+operation-scoped, so every terminal supplies it explicitly and one transaction
+may execute terminals for different viewers:
 
 ```kotlin
 client.withTransaction { tx ->
-    // tx has the same privacy context provider and rules as client
-    tx.users.create { name = "Alice"; email = "a@b.com" }.save().orRollback()
+    tx.users.create { name = "Alice"; email = "a@b.com" }.save(viewerContext).orRollback()
 }
 ```
 
@@ -579,14 +601,14 @@ client.withTransaction { tx ->
 
 Delete operations enforce DELETE privacy independently of LOAD privacy:
 
-- `deleteById(id)` may delete an entity the viewer cannot load, but only
+- `deleteById(viewerContext, id)` may delete an entity the viewer cannot load, but only
   when its DELETE rules allow the operation.
-- `deleteMany(predicates)` evaluates DELETE privacy for every matching
+- `deleteMany(viewerContext, predicates)` evaluates DELETE privacy for every matching
   entity as one rule-major batch. A denial anywhere fails the whole call with
   `Failed(EntMutationPrivacyDeniedException)` before the delete statement, so
   no denied candidate is silently skipped.
 
-`deleteMany` captures its context before running candidate read interceptors,
+`deleteMany` retains its supplied context before running candidate read interceptors,
 then freezes the complete effective predicate list produced by the caller and
 those interceptors. After DELETE privacy, validation, and `beforeDelete`, the
 write combines the approved IDs with those same predicates. It does not rerun
@@ -626,7 +648,7 @@ data class PrivacyDenial(
 ```
 
 A denied **write** — whether the mutation itself is rejected pre-write
-or `saveAndLoad()` cannot disclose the returned entity — is
+or `saveAndLoad(viewerContext)` cannot disclose the returned entity — is
 `MutationResult.Failed(EntMutationPrivacyDeniedException)`. Its
 `operation` names the privacy decision that denied (`CREATE`, `UPDATE`,
 `DELETE`, or `LOAD` for returned-entity disclosure) and its
@@ -643,7 +665,8 @@ EntKt privacy rule returned a denial decision; exceptions thrown by
 privacy-rule application code remain unexpected operational failures
 and do not implement it.
 
-All read operations (`all()`, `firstOrNull()`, `findById()`) and all
+All read terminals (`all(viewerContext)`, `firstOrNull(viewerContext)`,
+`findById(viewerContext, id)`) and all
 write operations (`create`, `update`, `delete`) surface denial this
 way. The strict read model ensures unreadable entities never silently
 disappear from results — callers handle the `Failed` state explicitly
@@ -673,7 +696,7 @@ When a missing and an invisible entity should be indistinguishable, apply
 ```kotlin
 fun findNote(id: Long): Note? =
     client.notes
-        .findById(id)
+        .findById(viewerContext, id)
         .visibleOrNull()
         .getOrThrow()
 ```
@@ -696,7 +719,7 @@ including any rows that were visible; that coarse policy must be explicit:
 fun notesForUser(userId: Long): List<Note> {
     val result = client.notes.query {
         where(Note.userId eq userId)
-    }.all()
+    }.all(viewerContext)
 
     return when (result) {
         is ReadResult.Success -> result.value
@@ -728,7 +751,7 @@ A direct mutation failure remains ordinarily catchable:
 try {
     client.notes.update(id) {
         title = newTitle
-    }.saveAndLoad().getOrThrow()
+    }.saveAndLoad(viewerContext).getOrThrow()
 } catch (e: EntMutationPrivacyDeniedException) {
     // Choose the boundary response using both the denial and e.writeState.
 }
@@ -744,19 +767,19 @@ what EntKt knows about persistence:
 | `Committed` | The write happened even though later work, such as returned-entity LOAD disclosure, failed. Do not present it as an unperformed write or blindly retry it. |
 | `PersistenceUnknown` | EntKt cannot establish whether persistence happened. Reconcile or use a deliberately idempotent retry strategy. |
 
-For example, `saveAndLoad()` can commit its write and then fail LOAD privacy for
+For example, `saveAndLoad(viewerContext)` can commit its write and then fail LOAD privacy for
 the returned entity. Mapping every `EntMutationPrivacyDeniedException` to a
 normal not-found response without considering `writeState` can cause a caller
 to repeat a write that already happened.
 
-`createMany()` always has this returned-disclosure phase because its success
+`createMany(viewerContext, ...)` always has this returned-disclosure phase because its success
 value is the entity list. An EntKt-owned transaction attempts commit after a
 returned-LOAD denial or ordinary rule failure; only a confirmed commit reports
 `Committed`. If disclosure work aborts the database transaction, a confirmed
 rollback reports `NotPersisted`, while an uncertain boundary reports
 `PersistenceUnknown`. Inside a caller-owned transaction the failure is
 `TransactionPending` and marks that transaction rollback-only. CREATE privacy
-and returned LOAD privacy use the same context capture, but they remain
+and returned LOAD privacy use the same supplied context instance, but they remain
 distinct authorization phases.
 
 ### Transactions: uncertainty is not a normal rejection
@@ -777,12 +800,12 @@ try {
         val note = tx.notes.create {
             userId = currentUserId
             content = input.content
-        }.saveAndLoad().orRollback()
+        }.saveAndLoad(viewerContext).orRollback()
 
         tx.noteAssets.create {
             noteId = note.id
             assetId = input.assetId
-        }.save().orRollback()
+        }.save(viewerContext).orRollback()
 
         note
     }.getOrThrow()
@@ -820,7 +843,7 @@ For each schema with a policy, entkt provides:
 | Public type | Purpose |
 |-------------|---------|
 | `{Entity}WriteCandidate` | Snapshot of writable fields for write rules |
-| `PrivacyRuleContext<Client>` | Shared captured privacy and viewer-scoped read client |
+| `PrivacyRuleContext<Client>` | Shared supplied `viewerContext` and stable privacy read client |
 | `{Entity}LoadPrivacyItem` | Per-entity input for LOAD rules |
 | `{Entity}CreatePrivacyItem` | Per-candidate input for CREATE rules |
 | `{Entity}UpdatePrivacyItem` | Per-entity input for UPDATE rules |

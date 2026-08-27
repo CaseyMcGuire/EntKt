@@ -22,6 +22,7 @@ import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.kotlinpoet.typeAlias
 import entkt.codegen.metadata.HelperEligibleM2M
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
@@ -60,13 +61,11 @@ internal class PrivacyGenerator(
     ): FileSpec {
         val entityClass = ClassName(packageName, schemaName)
         // Hook contexts keep a write-capable repository scope but omit
-        // transaction entry, privacy re-scoping, and configuration APIs;
-        // privacy rule contexts get the privacy-posture
-        // read client — rule writes are compile errors, and rule reads
-        // run viewer-scoped under the caller's context fixed by
-        // `client.asPrivacyReadClientForInternalUse(privacy)` in the
-        // generated evaluators. The concrete type makes the viewer-scoped
-        // read posture visible in helper signatures.
+        // transaction entry and configuration APIs. Privacy rule contexts get
+        // the stable privacy-posture read client plus the caller's explicit
+        // viewerContext — rule writes are compile errors, and nested rule reads
+        // pass that context to their terminals. The concrete type makes the
+        // viewer-scoped read posture visible in helper signatures.
         val hookClientScopeClass = ClassName(packageName, "EntClientScope")
         val readClientClass = ClassName(packageName, "EntPrivacyReadClient")
         val configClass = ClassName(packageName, "${schemaName}PrivacyConfig")
@@ -315,6 +314,7 @@ internal class PrivacyGenerator(
         ctxClass,
         listOf(
             "client" to clientClass,
+            "viewerContext" to VIEWER_CONTEXT,
             "before" to entityClass,
             "patch" to patchClass,
             "pendingEdges" to pendingEdgesClass,
@@ -334,7 +334,11 @@ internal class PrivacyGenerator(
         mutationClass: ClassName,
     ): TypeSpec = immutableValueType(
         ctxClass,
-        listOf("client" to clientClass, "mutation" to mutationClass),
+        listOf(
+            "client" to clientClass,
+            "viewerContext" to VIEWER_CONTEXT,
+            "mutation" to mutationClass,
+        ),
     )
 
     /**

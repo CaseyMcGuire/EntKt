@@ -145,28 +145,29 @@ fun main() {
         password = "mypassword"
     }
     val client = EntClient(PostgresDriver(dataSource))
+    val viewerContext = ViewerContext(Viewer.User(currentUserId()))
 
-    // Create — saveAndLoad() returns MutationResult<User>
+    // Create — saveAndLoad(viewerContext) returns MutationResult<User>
     val alice = client.users.create {
         name = "Alice"
         email = "alice@example.com"
         age = 30
         active = true
-    }.saveAndLoad().getOrThrow()
+    }.saveAndLoad(viewerContext).getOrThrow()
 
-    // Query — all() returns ReadResult<List<User>>
+    // Query — all(viewerContext) returns ReadResult<List<User>>
     val adults = client.users.query {
         where(User.age gte 18)
         orderBy(User.age.desc())
-    }.all().getOrThrow()
+    }.all(viewerContext).getOrThrow()
 
-    // Update — save() returns MutationResult<Unit>
+    // Update — save(viewerContext) returns MutationResult<Unit>
     client.users.update(alice.id) {
         age = 31
-    }.save().getOrThrow()
+    }.save(viewerContext).getOrThrow()
 
     // Delete — idempotent; MutationResult<Unit>
-    client.users.delete(alice).getOrThrow()
+    client.users.delete(viewerContext, alice).getOrThrow()
 }
 ```
 
@@ -183,13 +184,13 @@ if (includeAge) {
     creation.configure { age = 30 }
 }
 
-val alice = creation.saveAndLoad().getOrThrow()
+val alice = creation.saveAndLoad(viewerContext).getOrThrow()
 ```
 
 Create-draft fields are nullable while the input is incomplete, so reading an
 unspecified field returns `null`. Use `isSet(User.age)` when application logic
 must distinguish an omitted value from an explicit `age = null`. The first
-`save()` or `saveAndLoad()` consumes the mutation; later configuration or save
+`save(viewerContext)` or `saveAndLoad(viewerContext)` consumes the mutation; later configuration or save
 attempts throw `EntMutationAlreadyConsumedException`.
 
 Every data operation returns an exhaustive result — `ReadResult<T>` for

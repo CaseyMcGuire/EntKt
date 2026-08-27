@@ -3,8 +3,7 @@ package entkt.viewer
 import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.ViewerContext
 import entkt.schema.FieldType
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,6 +29,7 @@ class EntViewerTest {
         private val rows: MutableMap<String, EntViewerRow> = mutableMapOf(),
     ) : EntViewerEntity<FakeClient> {
         var lastListRequest: EntViewerListRequest? = null
+        var lastViewerContext: ViewerContext? = null
         var listResult: List<EntViewerRow> = emptyList()
 
         override val schema = EntitySchema(
@@ -64,7 +64,12 @@ class EntViewerTest {
 
         var throwOnList: RuntimeException? = null
 
-        override fun list(client: FakeClient, request: EntViewerListRequest): EntViewerListResult {
+        override fun list(
+            client: FakeClient,
+            viewerContext: ViewerContext,
+            request: EntViewerListRequest,
+        ): EntViewerListResult {
+            lastViewerContext = viewerContext
             lastListRequest = request
             throwOnList?.let { throw it }
             val window = listResult.drop(request.offset)
@@ -74,26 +79,20 @@ class EntViewerTest {
             )
         }
 
-        override fun get(client: FakeClient, id: String): EntViewerRow? = rows[id]
-    }
-
-    private class FakeRegistry(
-        override val entities: List<EntViewerEntity<FakeClient>>,
-    ) : EntViewerRegistry<FakeClient> {
-        var lastContext: PrivacyContext? = null
-        override fun <T> withPrivacyContext(client: FakeClient, context: PrivacyContext, block: (FakeClient) -> T): T {
-            lastContext = context
-            return block(client)
+        override fun get(
+            client: FakeClient,
+            viewerContext: ViewerContext,
+            id: String,
+        ): EntViewerRow? {
+            lastViewerContext = viewerContext
+            return rows[id]
         }
     }
 
     private fun viewer(
         vararg entities: FakeEntity,
         configure: EntViewerConfig.() -> Unit = { authorize { true } },
-    ): Pair<EntViewer<FakeClient>, FakeRegistry> {
-        val registry = FakeRegistry(entities.toList())
-        return EntViewer(FakeClient(), registry, configure) to registry
-    }
+    ): EntViewer<FakeClient> = EntViewer(FakeClient(), entities.toList(), configure)
 
     private fun get(path: String, vararg params: Pair<String, String>): EntViewerRequest =
         EntViewerRequest(
@@ -105,7 +104,7 @@ class EntViewerTest {
 
     @Test
     fun `unauthorized requests are cloaked 404s that disclose nothing`() {
-        val (viewer, _) = viewer(FakeEntity("user", "User"), configure = {})
+        val viewer = viewer(FakeEntity("user", "User"), configure = {})
         val response = viewer.handle(get("/_ent"))
         assertEquals(404, response.status)
         assertTrue(response.unmapped, "hosts should render their native not-found")
@@ -122,20 +121,20 @@ class EntViewerTest {
 
     @Test
     fun `rejects non-GET methods — the viewer is read-only`() {
-        val (viewer, _) = viewer(FakeEntity("user", "User"))
+        val viewer = viewer(FakeEntity("user", "User"))
         assertEquals(405, viewer.handle(EntViewerRequest(path = "/_ent", method = "POST")).status)
     }
 
     @Test
-    fun `the per-request privacy context reaches every read`() {
+    fun `the per-request viewer context reaches every read`() {
         val entity = FakeEntity("user", "User")
-        val marker = PrivacyContext(Viewer.PrivacyBypass("viewer-test"))
-        val (viewer, registry) = viewer(entity, configure = {
+        val marker = ViewerContext.privacyBypass_DANGEROUS("viewer-test")
+        val viewer = viewer(entity, configure = {
             authorize { true }
-            privacyContext { marker }
+            viewerContext { marker }
         })
         viewer.handle(get("/_ent/entities/user"))
-        assertEquals(marker, registry.lastContext)
+        assertEquals(marker, entity.lastViewerContext)
     }
 
     // ---------- routing ----------
@@ -144,7 +143,7 @@ class EntViewerTest {
     fun `unknown paths, unknown entities, and excluded entities are the same 404`() {
         val user = FakeEntity("user", "User")
         val session = FakeEntity("session", "Session")
-        val (viewer, _) = viewer(user, session, configure = {
+        val viewer = viewer(user, session, configure = {
             authorize { true }
             entities { exclude("session") }
         })
@@ -160,7 +159,7 @@ class EntViewerTest {
 
     @Test
     fun `home lists visible entities and omits excluded ones`() {
-        val (viewer, _) = viewer(FakeEntity("user", "User"), FakeEntity("session", "Session"), configure = {
+        val viewer = viewer(FakeEntity("user", "User"), FakeEntity("session", "Session"), configure = {
             authorize { true }
             entities { exclude("session") }
         })
@@ -175,7 +174,7 @@ class EntViewerTest {
     fun `pagination is always applied and drives prev-next links`() {
         val entity = FakeEntity("user", "User")
         entity.listResult = (1..60).map { entity.row(it.toString(), "u$it", it) }
-        val (viewer, _) = viewer(entity)
+        val viewer = viewer(entity)
 
         val response = viewer.handle(get("/_ent/entities/user", "size" to "50"))
         assertEquals(50, entity.lastListRequest!!.pageSize)
@@ -195,7 +194,7 @@ class EntViewerTest {
     @Test
     fun `filters parse into the adapter request and invalid ones fail with 400 before any query`() {
         val entity = FakeEntity("user", "User")
-        val (viewer, _) = viewer(entity)
+        val viewer = viewer(entity)
 
         viewer.handle(get("/_ent/entities/user", "f" to "name:eq:casey", "f" to "age:isnull"))
         assertEquals(
@@ -217,7 +216,7 @@ class EntViewerTest {
     @Test
     fun `the add-filter form triple parses like a filter token`() {
         val entity = FakeEntity("user", "User")
-        val (viewer, _) = viewer(entity)
+        val viewer = viewer(entity)
         viewer.handle(get("/_ent/entities/user", "fc" to "name", "fo" to "contains", "fv" to "ca"))
         assertEquals(
             listOf(EntViewerFilter("name", EntViewerFilterOp.CONTAINS, "ca")),
@@ -228,7 +227,7 @@ class EntViewerTest {
     @Test
     fun `ordering validates orderability`() {
         val entity = FakeEntity("user", "User")
-        val (viewer, _) = viewer(entity)
+        val viewer = viewer(entity)
         viewer.handle(get("/_ent/entities/user", "order" to "age", "dir" to "desc"))
         assertEquals(EntViewerOrder("age", descending = true), entity.lastListRequest!!.order)
         assertEquals(400, viewer.handle(get("/_ent/entities/user", "order" to "secret")).status)
@@ -240,7 +239,7 @@ class EntViewerTest {
     fun `sensitive cells render as stars and never their value`() {
         val entity = FakeEntity("user", "User")
         entity.listResult = listOf(entity.row("1", "casey", 30))
-        val (viewer, _) = viewer(entity)
+        val viewer = viewer(entity)
         val body = viewer.handle(get("/_ent/entities/user")).body
         assertTrue("***" in body)
     }
@@ -249,7 +248,7 @@ class EntViewerTest {
     fun `extra redaction masks values the adapter emitted and blocks filtering`() {
         val entity = FakeEntity("user", "User")
         entity.row("1", "casey", 30)
-        val (viewer, _) = viewer(entity, configure = {
+        val viewer = viewer(entity, configure = {
             authorize { true }
             redaction { extra("users", "name") }
         })
@@ -263,7 +262,7 @@ class EntViewerTest {
     @Test
     fun `unknown and missing ids are the same 404`() {
         val entity = FakeEntity("user", "User")
-        val (viewer, _) = viewer(entity)
+        val viewer = viewer(entity)
         assertEquals(404, viewer.handle(get("/_ent/entities/user/999")).status)
     }
 
@@ -279,7 +278,7 @@ class EntViewerTest {
         entity.row("1", "casey", 30)
         val post = FakeEntity("post", "Post")
         val tag = FakeEntity("tag", "Tag")
-        val (viewer, _) = viewer(entity, post, tag)
+        val viewer = viewer(entity, post, tag)
         val body = viewer.handle(get("/_ent/entities/user/1")).body
         assertTrue("/_ent/entities/user/30" in body, "to-one links via the local FK value")
         assertTrue("f=age%3Aeq%3A1" in body, "to-many links to a filtered target list")
@@ -323,27 +322,27 @@ class EntViewerReviewContractTest {
             EntViewerColumn("owner_id", entkt.schema.FieldType.STRING, nullable = false, unique = false, sensitive = !fkFilterable, filterable = fkFilterable, orderable = fkFilterable),
         )
 
-        override fun list(client: FakeClient, request: EntViewerListRequest): EntViewerListResult {
+        override fun list(
+            client: FakeClient,
+            viewerContext: ViewerContext,
+            request: EntViewerListRequest,
+        ): EntViewerListResult {
             throwOnList?.let { throw it }
             return result
         }
 
-        override fun get(client: FakeClient, id: String): EntViewerRow? {
+        override fun get(
+            client: FakeClient,
+            viewerContext: ViewerContext,
+            id: String,
+        ): EntViewerRow? {
             gotIds.add(id)
             return EntViewerRow(id, listOf(EntViewerValue.of("id", id), EntViewerValue.of("owner_id", "o1")))
         }
     }
 
-    private class Registry(override val entities: List<EntViewerEntity<FakeClient>>) : EntViewerRegistry<FakeClient> {
-        override fun <T> withPrivacyContext(
-            client: FakeClient,
-            context: entkt.runtime.privacy.PrivacyContext,
-            block: (FakeClient) -> T,
-        ): T = block(client)
-    }
-
     private fun viewer(vararg entities: Entity, configure: EntViewerConfig.() -> Unit = { authorize { true } }) =
-        EntViewer(FakeClient(), Registry(entities.toList()), configure)
+        EntViewer(FakeClient(), entities.toList(), configure)
 
     private fun get(path: String, vararg params: Pair<String, String>) =
         EntViewerRequest(path = path, query = params.groupBy({ it.first }, { it.second }))

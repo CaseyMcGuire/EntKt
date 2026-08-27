@@ -7,8 +7,7 @@ import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.limitOpsApply
-import entkt.runtime.privacy.Viewer
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.UntypedQueryShape
 
@@ -149,7 +148,7 @@ class InterceptorRuntimeTypesTest {
     @Test
     fun `QueryContext isEagerSubquery is true only for EAGER_LOAD operation`() {
         val rootCtx = QueryContext(
-            privacy = PrivacyContext(Viewer.PrivacyBypass("test")),
+            viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
             operation = ReadOperation.ALL,
             rootEntity = A::class,
             currentEntity = A::class,
@@ -168,7 +167,7 @@ class InterceptorRuntimeTypesTest {
     fun `QueryContext path carries each EdgeStep in chain order`() {
         val step1 = EdgeStep(source = A::class, edgeName = "bs", target = B::class)
         val ctx = QueryContext(
-            privacy = PrivacyContext(Viewer.PrivacyBypass("test")),
+            viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
             operation = ReadOperation.EDGE_TRAVERSAL,
             rootEntity = A::class,
             currentEntity = B::class,

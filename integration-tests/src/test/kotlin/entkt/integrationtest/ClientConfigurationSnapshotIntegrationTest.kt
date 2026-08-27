@@ -9,7 +9,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
@@ -58,22 +58,25 @@ class ClientConfigurationSnapshotIntegrationTest : PostgresTestBase() {
             name = "late-interceptor",
         )
 
-        val created = client.withPrivacyContext(
-            PrivacyContext(Viewer.PrivacyBypass("seed")),
-        ) { scoped ->
+        val created = run {
+            val scoped = client
+            val testViewerContext = testBypassContext("seed")
             scoped.users.create {
                 name = "Ada"
                 email = "ada@example.com"
-            }.saveAndLoad().getOrThrow()
+            }.saveAndLoad(testViewerContext).getOrThrow()
         }
         assertEquals("Ada", created.name)
 
-        val rootRead = assertIs<ReadResult.Failed>(client.users.query().all())
+        val anonymousContext = ViewerContext(Viewer.Anonymous)
+        val rootRead = assertIs<ReadResult.Failed>(client.users.query().all(anonymousContext))
         assertIs<EntPrivacyDeniedException>(rootRead.exception)
 
         val transactionRead = client.withTransaction { transaction ->
-            transaction.withPrivacyContext(PrivacyContext(Viewer.Anonymous)) { scoped ->
-                scoped.users.query().all()
+            run {
+                val scoped = transaction
+                val testViewerContext = ViewerContext(Viewer.Anonymous)
+                scoped.users.query().all(testViewerContext)
             }
         }.getOrThrow()
         val transactionFailure = assertIs<ReadResult.Failed>(transactionRead)

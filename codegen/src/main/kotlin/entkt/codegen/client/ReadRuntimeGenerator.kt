@@ -20,10 +20,8 @@ import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
+import entkt.codegen.metadata.VIEWER_CONTEXT
 
-private val PRIVACY_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyContext")
-private val PRIVACY_CONTEXT_PROVIDER =
-    ClassName("entkt.runtime.privacy", "PrivacyContextProvider")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val LIST = ClassName("kotlin.collections", "List")
 private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
@@ -44,8 +42,8 @@ private val CORRELATE_LOAD_PRIVACY_EVALUATIONS = MemberName(
  * `${Entity}ReadSurface` interface per schema.
  *
  * `EntReadRuntime` names exactly what generated queries need from their
- * host — `currentPrivacyContext()`, the
- * `@EntktInternal` interceptor registry, and one accessor per entity
+ * host — the read-execution guard, the `@EntktInternal` interceptor
+ * registry, and one accessor per entity
  * typed to that entity's read surface (`hasLoadPrivacy()` /
  * `loadDenials(...)`, the only repo members query terminals
  * call). Both `EntClient` and `EntReadClientImpl` (the shared delegate
@@ -110,12 +108,12 @@ internal class ReadRuntimeGenerator(
                 returnType = LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)),
             ) {
                 addModifiers(KModifier.ABSTRACT)
-                parameter("privacy", PRIVACY_CONTEXT)
+                parameter("viewerContext", VIEWER_CONTEXT)
                 parameter("entities", LIST.parameterizedBy(entityClass))
             }
             function("loadDenialOrNull", returnType = PRIVACY_DENIAL.copy(nullable = true)) {
                 addModifiers(KModifier.ABSTRACT)
-                parameter("privacy", PRIVACY_CONTEXT)
+                parameter("viewerContext", VIEWER_CONTEXT)
                 parameter("entity", entityClass)
             }
         }
@@ -124,7 +122,6 @@ internal class ReadRuntimeGenerator(
     private fun buildReadRuntime(sorted: List<SchemaInput>): TypeSpec {
         return interfaceType("EntReadRuntime") {
             addAnnotation(ENTKT_INTERNAL)
-            addSuperinterface(PRIVACY_CONTEXT_PROVIDER)
             addSuperinterface(LOAD_PRIVACY_EVALUATOR)
             addKdoc(
                 "The read-runtime contract generated queries and index stages depend\n" +
@@ -133,15 +130,11 @@ internal class ReadRuntimeGenerator(
                     "`EntValidationReadClient` / `EntPrivacyReadClient` — the public\n" +
                     "`EntReadClient` interface deliberately does not extend this\n" +
                     "contract); a query constructed with either host behaves identically\n" +
-                    "on the read path (privacy context, LOAD privacy, read\n" +
+                    "on the read path (operation-supplied viewer context, LOAD privacy, read\n" +
                     "interceptors).",
             )
-            function("currentPrivacyContext", returnType = PRIVACY_CONTEXT) {
+            function("checkReadExecution") {
                 addModifiers(KModifier.ABSTRACT)
-            }
-            function("get", returnType = PRIVACY_CONTEXT) {
-                addModifiers(KModifier.OVERRIDE)
-                statement("return currentPrivacyContext()")
             }
             property(
                 // Keeps the concrete property's `@EntktInternal` guard:
@@ -201,7 +194,7 @@ internal class ReadRuntimeGenerator(
                     "  %T.GeneratedEntityMapping -> %M(\n" +
                         "    %S,\n" +
                         "    entities,\n" +
-                        "    %L.loadDenials(privacyContext, entities as %T<%T>),\n" +
+                        "    %L.loadDenials(viewerContext, entities as %T<%T>),\n" +
                         "  )\n",
                     ClassName(packageName, "${input.name}Query"),
                     CORRELATE_LOAD_PRIVACY_EVALUATIONS,
@@ -229,7 +222,7 @@ internal class ReadRuntimeGenerator(
             addModifiers(KModifier.OVERRIDE)
             addTypeVariable(entityType)
             parameter("entity", ENTITY_MAPPING.parameterizedBy(entityType))
-            parameter("privacyContext", PRIVACY_CONTEXT)
+            parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entities", LIST.parameterizedBy(entityType))
             addCode(body)
         }

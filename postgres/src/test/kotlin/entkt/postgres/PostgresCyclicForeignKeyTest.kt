@@ -147,9 +147,8 @@ class PostgresCyclicForeignKeyTest {
     fun `re-registering the same batch touches the database not at all`() {
         dropAll()
         // Load-bearing, not an optimization: withTransaction builds a
-        // generated client INSIDE the open transaction and
-        // withPrivacyContext builds one per call, so this path runs
-        // constantly on a fully-registered driver. Opening a connection
+        // generated client INSIDE the open transaction, so this path runs
+        // on a fully-registered driver. Opening a connection
         // here would put DDL inside every user transaction.
         val counting = CountingDataSource(dataSource)
         val driver = PostgresDriver(counting, autoDdl = true)

@@ -2,8 +2,7 @@
 
 package entkt.runtime
 import entkt.runtime.driver.NoopDriver
-import entkt.runtime.privacy.Viewer
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.RegisteredGlobalInterceptor
 import entkt.runtime.query.GlobalQueryInterceptor
@@ -65,7 +64,7 @@ class ReadQueryCompilerInterceptorTest {
 
     private fun rootContext(operation: ReadOperation = ReadOperation.ALL): QueryContext =
         QueryContext(
-            privacy = PrivacyContext(Viewer.PrivacyBypass("test")),
+            viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
             operation = operation,
             rootEntity = Post::class,
             currentEntity = Post::class,

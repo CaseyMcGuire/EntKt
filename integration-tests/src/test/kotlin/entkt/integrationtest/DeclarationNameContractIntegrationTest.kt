@@ -3,8 +3,6 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.Directory
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.support.PostgresTestBase
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.loadedOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -28,9 +26,7 @@ class DeclarationNameContractIntegrationTest : PostgresTestBase() {
 
     private fun freshClient(): EntClient {
         val driver = resetAndDriver()
-        return EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        return EntClient(driver)
     }
 
     @Test
@@ -40,14 +36,14 @@ class DeclarationNameContractIntegrationTest : PostgresTestBase() {
         // inflecting the class name this would have to be `directories`,
         // and this line would not resolve.
         val created = client.people.create { publicLabel = "Reference desk" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
         assertEquals("Reference desk", created.publicLabel)
     }
 
     @Test
     fun `field API uses the declaration name while storage keeps the column`() {
         val client = freshClient()
-        val row = client.people.create { publicLabel = "Archive" }.saveAndLoad().getOrThrow()
+        val row = client.people.create { publicLabel = "Archive" }.saveAndLoad(testViewerContext).getOrThrow()
 
         // Kotlin side: `publicLabel`, never `legacyLabelTxt`.
         assertEquals("Archive", row.publicLabel)
@@ -69,13 +65,13 @@ class DeclarationNameContractIntegrationTest : PostgresTestBase() {
     @Test
     fun `predicates over a declaration-named field lower to the storage column`() {
         val client = freshClient()
-        client.people.create { publicLabel = "Alpha" }.save().getOrThrow()
-        client.people.create { publicLabel = "Beta" }.save().getOrThrow()
+        client.people.create { publicLabel = "Alpha" }.save(testViewerContext).getOrThrow()
+        client.people.create { publicLabel = "Beta" }.save(testViewerContext).getOrThrow()
 
         // The companion column ref is `Directory.publicLabel`; the SQL it
         // lowers to must filter on `legacy_label_txt`, or this finds nothing.
         val found = client.people.query { where(Directory.publicLabel eq "Beta") }
-            .all().getOrThrow()
+            .all(testViewerContext).getOrThrow()
         assertEquals(1, found.size)
         assertEquals("Beta", found.single().publicLabel)
     }
@@ -84,14 +80,14 @@ class DeclarationNameContractIntegrationTest : PostgresTestBase() {
     fun `implicit FK API is the edge declaration plus Id, over a divergent column`() {
         val client = freshClient()
         val user = client.users.create { name = "Ada"; email = "ada@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
 
         // Compile-time: the FK setter is `curatorId` — from the edge
         // declaration `curator`, not from the storage name `legacy_owner`.
         val row = client.people.create {
             publicLabel = "Special collections"
             curatorId = user.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals(user.id, row.curatorId)
 
@@ -113,27 +109,27 @@ class DeclarationNameContractIntegrationTest : PostgresTestBase() {
     fun `edge traversal and eager loading use the edge declaration name`() {
         val client = freshClient()
         val user = client.users.create { name = "Grace"; email = "grace@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
         client.people.create { publicLabel = "Rare books"; curatorId = user.id }
-            .save().getOrThrow()
-        client.people.create { publicLabel = "Unstaffed" }.save().getOrThrow()
+            .save(testViewerContext).getOrThrow()
+        client.people.create { publicLabel = "Unstaffed" }.save(testViewerContext).getOrThrow()
 
         // `queryCurator` traverses Directory → User and is named from the
         // edge declaration `curator`. A storage-derived name would be
         // `queryLegacyOwner`; a target-derived one would be `queryUser`.
         val curators = client.people.query { }
             .queryCurator { }
-            .all().getOrThrow()
+            .all(testViewerContext).getOrThrow()
         assertEquals(listOf("Grace"), curators.map { it.name })
 
         // The inverse hasMany is declared `directories` over storage edge
         // `legacy_owner`, so traversal back is `queryDirectories`.
         val owned = client.users.query { }
             .queryDirectories { }
-            .all().getOrThrow()
+            .all(testViewerContext).getOrThrow()
         assertEquals(listOf("Rare books"), owned.map { it.publicLabel })
 
-        val loaded = client.people.query { loadCurator() }.all().getOrThrow()
+        val loaded = client.people.query { loadCurator() }.all(testViewerContext).getOrThrow()
         // Both rows were *requested*, so both edges are Loaded; only the
         // value differs. Asserting on the wrapper keeps "loaded with no
         // target" distinct from "never requested".
@@ -153,15 +149,15 @@ class DeclarationNameContractIntegrationTest : PostgresTestBase() {
         // fine and fails only when the SQL is built, which is why this
         // has to execute rather than just inspect generated source.
         val client = freshClient()
-        val topic = client.topics.create { label = "Cartography" }.saveAndLoad().getOrThrow()
-        val other = client.topics.create { label = "Unlinked" }.saveAndLoad().getOrThrow()
-        val dir = client.people.create { publicLabel = "Map room" }.saveAndLoad().getOrThrow()
+        val topic = client.topics.create { label = "Cartography" }.saveAndLoad(testViewerContext).getOrThrow()
+        val other = client.topics.create { label = "Unlinked" }.saveAndLoad(testViewerContext).getOrThrow()
+        val dir = client.people.create { publicLabel = "Map room" }.saveAndLoad(testViewerContext).getOrThrow()
         client.directoryTopics.create { directoryId = dir.id; topicId = topic.id }
-            .save().getOrThrow()
+            .save(testViewerContext).getOrThrow()
 
         val reached = client.people.query { where(Directory.publicLabel eq "Map room") }
             .queryTopics { }
-            .all().getOrThrow()
+            .all(testViewerContext).getOrThrow()
         assertEquals(listOf("Cartography"), reached.map { it.label })
         assertEquals(false, reached.any { it.id == other.id })
     }

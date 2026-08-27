@@ -222,7 +222,7 @@ class BatchLifecycleCodegenCompileTest {
             import entkt.runtime.driver.NoopDriver
             import entkt.runtime.privacy.EntityPolicy
             import entkt.runtime.privacy.PrivacyDecision
-            import entkt.runtime.privacy.PrivacyContext
+            import entkt.runtime.privacy.ViewerContext
             import entkt.runtime.privacy.PrivacyRuleContext
             import entkt.runtime.privacy.Viewer
             import entkt.runtime.privacy.batchPrivacyRule
@@ -258,6 +258,7 @@ class BatchLifecycleCodegenCompileTest {
 
                 @JvmStatic
                 fun run(): String {
+                    val viewerContext = ViewerContext(Viewer.User(1))
                     val batchIds = mutableListOf<List<Int>>()
                     val batchPolicy = object : EntityPolicy<Widget, WidgetPolicyScope> {
                         override fun configure(scope: WidgetPolicyScope) = scope.run {
@@ -272,7 +273,7 @@ class BatchLifecycleCodegenCompileTest {
                     val batchOrder = (100 downTo 1).toList()
                     val loadedIds = EntClient(rowDriver(*batchOrder.toIntArray())) {
                         policies { widgets(batchPolicy) }
-                    }.widgets.query().all().getOrThrow().map { it.id }
+                    }.widgets.query().all(viewerContext).getOrThrow().map { it.id }
                     check(loadedIds == batchOrder)
                     check(batchIds == listOf(batchOrder))
 
@@ -288,7 +289,7 @@ class BatchLifecycleCodegenCompileTest {
                                 }
                             })
                         }
-                    }.widgets.query().all()
+                    }.widgets.query().all(viewerContext)
                     val mixedFailure = mixedResult as? ReadResult.Failed
                         ?: error("expected mixed ReadResult.Failed, got ${'$'}mixedResult")
                     val mixedException = mixedFailure.exception as? EntPrivacyDeniedException
@@ -317,7 +318,7 @@ class BatchLifecycleCodegenCompileTest {
                     }
                     EntClient(rowDriver(8, 5, 6)) {
                         policies { widgets(scalarPolicy) }
-                    }.widgets.query().all().getOrThrow()
+                    }.widgets.query().all(viewerContext).getOrThrow()
                     check(scalarIds == listOf(8, 5, 6))
 
                     var emptyBatchCalls = 0
@@ -333,7 +334,7 @@ class BatchLifecycleCodegenCompileTest {
                     }
                     val empty = EntClient(rowDriver()) {
                         policies { widgets(emptyPolicy) }
-                    }.widgets.query().all().getOrThrow()
+                    }.widgets.query().all(viewerContext).getOrThrow()
                     check(empty.isEmpty())
                     check(emptyBatchCalls == 0)
 
@@ -346,11 +347,8 @@ class BatchLifecycleCodegenCompileTest {
                             })
                         }
                     }
-                    val bypassIds = bypassRoot.withPrivacyContext(
-                        PrivacyContext(Viewer.PrivacyBypass("generated-probe")),
-                    ) { scoped ->
-                        scoped.widgets.query().all().getOrThrow().map { it.id }
-                    }
+                    val bypassContext = ViewerContext.privacyBypass_DANGEROUS("generated-probe")
+                    val bypassIds = bypassRoot.widgets.query().all(bypassContext).getOrThrow().map { it.id }
                     check(bypassIds == listOf(71, 72))
                     check(bypassBatchCalls == 0)
 
@@ -361,22 +359,22 @@ class BatchLifecycleCodegenCompileTest {
                     }
                     val found = EntClient(rowDriver(41)) {
                         policies { widgets(singletonPolicy) }
-                    }.widgets.findById(41).getOrThrow()
+                    }.widgets.findById(viewerContext, 41).getOrThrow()
                     check(found?.id == 41)
                     val first = EntClient(rowDriver(42)) {
                         policies { widgets(singletonPolicy) }
-                    }.widgets.query().firstOrNull().getOrThrow()
+                    }.widgets.query().firstOrNull(viewerContext).getOrThrow()
                     check(first?.id == 42)
                     check(singletonBatches == listOf(listOf(41), listOf(42)))
 
                     val presentCallbackCount = singletonBatches.size
                     val missing = EntClient(rowDriver()) {
                         policies { widgets(singletonPolicy) }
-                    }.widgets.findById(404).getOrThrow()
+                    }.widgets.findById(viewerContext, 404).getOrThrow()
                     check(missing == null)
                     val noFirst = EntClient(rowDriver()) {
                         policies { widgets(singletonPolicy) }
-                    }.widgets.query().firstOrNull().getOrThrow()
+                    }.widgets.query().firstOrNull(viewerContext).getOrThrow()
                     check(noFirst == null)
                     check(singletonBatches.size == presentCallbackCount)
 
@@ -394,8 +392,8 @@ class BatchLifecycleCodegenCompileTest {
                     val foreignClient = EntClient(rowDriver(4, 7, 9)) {
                         policies { widgets(foreignDecisionsPolicy) }
                     }
-                    foreignClient.widgets.query().all().getOrThrow()
-                    val foreign = foreignClient.widgets.query().all()
+                    foreignClient.widgets.query().all(viewerContext).getOrThrow()
+                    val foreign = foreignClient.widgets.query().all(viewerContext)
                     val failure = foreign as? ReadResult.Failed
                         ?: error("expected ReadResult.Failed, got ${'$'}foreign")
                     val contract = failure.exception as? EntBatchRuleContractException

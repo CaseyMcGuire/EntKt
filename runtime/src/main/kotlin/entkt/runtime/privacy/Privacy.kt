@@ -22,8 +22,8 @@ sealed interface Viewer {
      * checks (LOAD / CREATE / UPDATE / DELETE). It does NOT bypass validation,
      * hooks, query interceptors, transactions, or database constraints. Use only
      * for seed data, migrations, validation reads, tests, and similarly explicit
-     * internal operations — prefer the generated `bypassPrivacy_DANGEROUS(reason)`
-     * client helper at application call sites. The required [reason] forces
+     * internal operations — prefer [ViewerContext.privacyBypass_DANGEROUS] at
+     * application call sites. The required [reason] forces
      * authors to say why the escape hatch is being used.
      */
     data class PrivacyBypass(val reason: String) : Viewer {
@@ -54,49 +54,49 @@ fun Viewer.uuidIdOrNull(): UUID? =
     userOrNull()?.id as? UUID
 
 /**
- * Privacy context captured for a generated operation and threaded
- * through its privacy checks. Scalar operations capture one context;
- * batch-aware collection reads and `createMany` likewise capture once
- * for the complete logical operation rather than once per item.
+ * Viewer context supplied to a generated operation and threaded through its
+ * privacy checks. Scalar operations retain one context; batch-aware
+ * collection reads and `createMany` likewise retain the same instance for the
+ * complete logical operation rather than once per item.
  */
-data class PrivacyContext(
+data class ViewerContext(
     val viewer: Viewer,
-)
-
-/** Supplies the privacy context active when a framework operation begins execution. */
-fun interface PrivacyContextProvider {
-    /** Return the privacy context for the operation that is starting now. */
-    fun get(): PrivacyContext
+) {
+    companion object {
+        /** Construct an explicitly privileged operation context. */
+        fun privacyBypass_DANGEROUS(reason: String): ViewerContext =
+            ViewerContext(Viewer.PrivacyBypass(reason))
+    }
 }
 
-fun PrivacyContext.userOrNull(): Viewer.User? =
+fun ViewerContext.userOrNull(): Viewer.User? =
     viewer.userOrNull()
 
-fun PrivacyContext.userIdOrNull(): Any? =
+fun ViewerContext.userIdOrNull(): Any? =
     viewer.userIdOrNull()
 
-fun PrivacyContext.stringIdOrNull(): String? =
+fun ViewerContext.stringIdOrNull(): String? =
     viewer.stringIdOrNull()
 
-fun PrivacyContext.intIdOrNull(): Int? =
+fun ViewerContext.intIdOrNull(): Int? =
     viewer.intIdOrNull()
 
-fun PrivacyContext.longIdOrNull(): Long? =
+fun ViewerContext.longIdOrNull(): Long? =
     viewer.longIdOrNull()
 
-fun PrivacyContext.uuidIdOrNull(): UUID? =
+fun ViewerContext.uuidIdOrNull(): UUID? =
     viewer.uuidIdOrNull()
 
 /**
  * State shared by every item and reached rule in one privacy evaluation phase.
  *
  * Generated lifecycle item types contain only per-item state. The operation's
- * captured [privacy] context and privacy-capable [client] live here so scalar
+ * captured [viewerContext] and privacy-capable [client] live here so scalar
  * and batch rules receive the same item shape. The framework passes the exact
  * same instance to every reached rule in that phase.
  */
 class PrivacyRuleContext<out Client>(
-    val privacy: PrivacyContext,
+    val viewerContext: ViewerContext,
     val client: Client,
 )
 

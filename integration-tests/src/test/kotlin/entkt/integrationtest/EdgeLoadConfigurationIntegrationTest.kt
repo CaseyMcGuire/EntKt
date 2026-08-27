@@ -7,8 +7,6 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserQuery
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EdgeLoad
 import entkt.runtime.query.EdgeState
 import entkt.runtime.query.QueryInterceptor
@@ -40,7 +38,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     private fun recordingClient(interceptorFires: AtomicInteger = AtomicInteger()): Pair<EntClient, RecordingDriver> {
         val recording = RecordingDriver(resetAndDriver())
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { _, _ -> interceptorFires.incrementAndGet() },
@@ -77,7 +75,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         val query = client.users.query { loadArticles() }
         recording.reset()
 
-        val result = query.rawCount()
+        val result = query.rawCount(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<EntQueryConfigurationException>(failed.exception)
@@ -98,9 +96,9 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         recording.reset()
 
         val results = mapOf(
-            "rawExists()" to query.rawExists(),
-            "rawMin()" to query.rawMin(User.name),
-            "rawCountBy()" to query.rawCountBy(User.name),
+            "rawExists()" to query.rawExists(testViewerContext),
+            "rawMin()" to query.rawMin(testViewerContext, User.name),
+            "rawCountBy()" to query.rawCountBy(testViewerContext, User.name),
         )
         for ((operation, result) in results) {
             val failed = assertIs<ReadResult.Failed>(result, "expected $operation to fail")
@@ -127,12 +125,12 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     @Test
     fun `traversing first and selecting loads on the target query succeeds`() {
         val (client, _) = recordingClient()
-        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
+        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "T"; authorId = author.id }.save(testViewerContext).getOrThrow()
 
         val articles = client.users.query { }
             .queryArticles { loadAuthor() }
-            .all()
+            .all(testViewerContext)
             .getOrThrow()
 
         assertEquals(listOf("T"), articles.map { it.title })
@@ -142,12 +140,12 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     @Test
     fun `a fully configured query stays executable more than once`() {
         val (client, _) = recordingClient()
-        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
+        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "T"; authorId = author.id }.save(testViewerContext).getOrThrow()
         val query = client.users.query { loadArticles() }
 
-        val first = query.all().getOrThrow().single()
-        val second = query.all().getOrThrow().single()
+        val first = query.all(testViewerContext).getOrThrow().single()
+        val second = query.all(testViewerContext).getOrThrow().single()
 
         // Re-execution is not a duplicate selection: the selected
         // graph remains part of the query until it is discarded.
@@ -172,9 +170,9 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
 
         // The failed outer selection rolled back, so a clean retry
         // selects the edge normally.
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
         query.loadArticles { where(Article.title eq "outer") }
-        val user = query.all().getOrThrow().single()
+        val user = query.all(testViewerContext).getOrThrow().single()
         assertEquals(emptyList(), user.edges.articles.requireLoaded())
     }
 
@@ -187,10 +185,10 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
 
         // Nothing was installed: a non-entity terminal accepts the
         // query, and the edge can still be selected cleanly.
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
-        assertIs<ReadResult.Success<Long>>(query.rawCount())
+        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
+        assertIs<ReadResult.Success<Long>>(query.rawCount(testViewerContext))
         query.loadArticles()
-        assertTrue(query.all().getOrThrow().single().edges.articles.isLoaded)
+        assertTrue(query.all(testViewerContext).getOrThrow().single().edges.articles.isLoaded)
     }
 
     @Test
@@ -198,7 +196,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         var target: UserQuery? = null
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { _, _ -> target?.loadArticles() },
@@ -206,18 +204,18 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
         val query = client.users.query { }
 
         target = query
-        val first = query.all().getOrThrow().single()
+        val first = query.all(testViewerContext).getOrThrow().single()
         assertEquals(EdgeState.Unloaded, first.edges.articles)
 
         // Terminal entry captured the original graph before the
         // interceptor mutated the reusable builder. A later terminal
         // captures and executes the newly selected edge.
         target = null
-        val user = query.all().getOrThrow().single()
+        val user = query.all(testViewerContext).getOrThrow().single()
         assertTrue(user.edges.articles.isLoaded)
     }
 
@@ -226,7 +224,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         var target: ArticleQuery? = null
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { _, _ -> target?.loadAuthor() },
@@ -234,8 +232,8 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
+        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "T"; authorId = author.id }.save(testViewerContext).getOrThrow()
 
         // Retain the nested builder so the root interceptor can mutate it
         // after terminal entry has captured the complete recursive graph.
@@ -244,13 +242,13 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         query.loadArticles { captured = this }
 
         target = captured
-        val first = query.all().getOrThrow().single()
+        val first = query.all(testViewerContext).getOrThrow().single()
         val firstArticle = first.edges.articles.requireLoaded().single()
         assertEquals(EdgeState.Unloaded, firstArticle.edges.author)
 
         // The builder mutation appears in the next recursive capture.
         target = null
-        val user = query.all().getOrThrow().single()
+        val user = query.all(testViewerContext).getOrThrow().single()
         val article = user.edges.articles.requireLoaded().single()
         assertTrue(article.edges.author.isLoaded)
     }
@@ -260,7 +258,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         val recording = RecordingDriver(resetAndDriver())
         var retained: EdgeLoad<UserQuery>? = null
         val client = EntClient(recording) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { _, _ -> retained?.filterVisible() },
@@ -268,25 +266,25 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
         val query = client.users.query { }
         val handle = query.loadArticles()
 
         retained = handle
-        assertTrue(query.all().getOrThrow().single().edges.articles.isLoaded)
+        assertTrue(query.all(testViewerContext).getOrThrow().single().edges.articles.isLoaded)
 
         // The interceptor changed the reusable builder after the first
         // capture. The same handle remains idempotent for later captures.
         retained = null
         handle.filterVisible()
-        assertTrue(query.all().getOrThrow().single().edges.articles.isLoaded)
+        assertTrue(query.all(testViewerContext).getOrThrow().single().edges.articles.isLoaded)
     }
 
     @Test
     fun `call order does not override schema-declaration execution order`() {
         val (client, recording) = recordingClient()
-        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
+        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "T"; authorId = author.id }.save(testViewerContext).getOrThrow()
         recording.reset()
 
         // groups is selected first, articles second — but User declares
@@ -295,7 +293,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         client.users.query {
             loadGroups()
             loadArticles()
-        }.all().getOrThrow()
+        }.all(testViewerContext).getOrThrow()
 
         val articlesAt = recording.calls.indexOf("queryDirectToMany:articles")
         val junctionAt = recording.calls.indexOf("query:memberships")
@@ -312,16 +310,16 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     @Test
     fun `mutating the query after a terminal affects only later executions`() {
         val (client, _) = recordingClient()
-        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "T"; authorId = author.id }.save().getOrThrow()
+        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "T"; authorId = author.id }.save(testViewerContext).getOrThrow()
         val query = client.users.query { loadArticles() }
 
-        val first = query.all().getOrThrow().single()
+        val first = query.all(testViewerContext).getOrThrow().single()
         // Selecting a *different* edge after a completed terminal is not
         // a duplicate selection; it extends the graph for later
         // executions only.
         query.loadGroups()
-        val second = query.all().getOrThrow().single()
+        val second = query.all(testViewerContext).getOrThrow().single()
 
         assertEquals(EdgeState.Unloaded, first.edges.groups)
         assertTrue(first.edges.articles.isLoaded)
@@ -332,10 +330,10 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     @Test
     fun `entity terminals accept a selected graph`() {
         val (client, _) = recordingClient()
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
         val query = client.users.query { loadArticles() }
 
-        val user = query.firstOrNull().getOrThrow()
+        val user = query.firstOrNull(testViewerContext).getOrThrow()
         assertEquals(emptyList(), user?.edges?.articles?.requireLoaded())
     }
 }

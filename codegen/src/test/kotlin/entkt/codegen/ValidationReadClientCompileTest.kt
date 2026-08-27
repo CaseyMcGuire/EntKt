@@ -105,14 +105,14 @@ class ValidationReadClientCompileTest {
                 """
                 val concrete: EntValidationReadClient = ctx.client
                 val typed: EntReadClient = ctx.client
-                ctx.client.cars.query { }.rawCount().getOrThrow()
-                ctx.client.cars.query { }.rawExists()
-                ctx.client.cars.query { }.all()
-                ctx.client.cars.query { }.firstOrNull()
-                ctx.client.users.findById(UUID.randomUUID()).getOrThrow()
-                ctx.client.users.findById(UUID.randomUUID()).visibleOrNull()
-                ctx.client.users.indexes.email("a@b.c").find()
-                ctx.client.users.indexes.name("n").email("a@b.c").find().getOrThrow()
+                ctx.client.cars.query { }.rawCount(ctx.readViewerContext).getOrThrow()
+                ctx.client.cars.query { }.rawExists(ctx.readViewerContext)
+                ctx.client.cars.query { }.all(ctx.readViewerContext)
+                ctx.client.cars.query { }.firstOrNull(ctx.readViewerContext)
+                ctx.client.users.findById(ctx.readViewerContext, UUID.randomUUID()).getOrThrow()
+                ctx.client.users.findById(ctx.readViewerContext, UUID.randomUUID()).visibleOrNull()
+                ctx.client.users.indexes.email("a@b.c").find(ctx.readViewerContext)
+                ctx.client.users.indexes.name("n").email("a@b.c").find(ctx.readViewerContext).getOrThrow()
                 """.trimIndent(),
             ),
         )

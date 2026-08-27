@@ -4,8 +4,6 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
 import entkt.runtime.query.ExcludeDeleted
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.MutationResult
 import java.time.Instant
 import kotlin.test.Test
@@ -40,7 +38,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
     /** Client with `ExcludeDeleted` installed — hides soft-deleted rows by default. */
     private fun filteredClient(driver: PostgresDriver): EntClient =
         EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 memos(ExcludeDeleted(), name = "soft-delete")
             }
@@ -48,9 +46,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
 
     /** Client without the interceptor — sees every row, deleted or not. */
     private fun unfilteredClient(driver: PostgresDriver): EntClient =
-        EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
+        EntClient(driver)
 
     // ---- Read-filter behavior ----
 
@@ -60,20 +56,20 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
 
-        val alive = filtered.memos.create { body = "alive" }.saveAndLoad().getOrThrow()
-        val gone = filtered.memos.create { body = "gone" }.saveAndLoad().getOrThrow()
+        val alive = filtered.memos.create { body = "alive" }.saveAndLoad(testViewerContext).getOrThrow()
+        val gone = filtered.memos.create { body = "gone" }.saveAndLoad(testViewerContext).getOrThrow()
 
         // Soft-delete `gone` via the ordinary update API.
-        filtered.memos.update(gone.id) { deletedAt = Instant.now() }.save().getOrThrow()
+        filtered.memos.update(gone.id) { deletedAt = Instant.now() }.save(testViewerContext).getOrThrow()
 
         // Filtered client sees only the live row.
-        val visible = filtered.memos.query().all().getOrThrow()
+        val visible = filtered.memos.query().all(testViewerContext).getOrThrow()
         assertEquals(listOf("alive"), visible.map { it.body })
         assertEquals(listOf(alive.id), visible.map { it.id })
 
         // Unfiltered client sees both rows; the soft-deleted one
         // carries the stamped timestamp.
-        val all = unfiltered.memos.query().all().getOrThrow().sortedBy { it.id }
+        val all = unfiltered.memos.query().all(testViewerContext).getOrThrow().sortedBy { it.id }
         assertEquals(listOf("alive", "gone"), all.map { it.body })
         assertNull(all[0].deletedAt, "live row's deletedAt must remain null")
         assertNotNull(all[1].deletedAt, "soft-deleted row's deletedAt must be stamped")
@@ -85,14 +81,14 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
 
-        val memo = filtered.memos.create { body = "x" }.saveAndLoad().getOrThrow()
-        filtered.memos.update(memo.id) { deletedAt = Instant.now() }.save().getOrThrow()
+        val memo = filtered.memos.create { body = "x" }.saveAndLoad(testViewerContext).getOrThrow()
+        filtered.memos.update(memo.id) { deletedAt = Instant.now() }.save(testViewerContext).getOrThrow()
 
         // Filtered client: invisible via findById — authoritative absence.
-        assertNull(filtered.memos.findById(memo.id).getOrThrow())
+        assertNull(filtered.memos.findById(testViewerContext, memo.id).getOrThrow())
 
         // Unfiltered client: still reachable.
-        val reread = unfiltered.memos.findById(memo.id).getOrThrow()
+        val reread = unfiltered.memos.findById(testViewerContext, memo.id).getOrThrow()
         assertNotNull(reread)
         assertEquals(memo.id, reread.id)
         assertNotNull(reread.deletedAt)
@@ -104,16 +100,16 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
 
-        filtered.memos.create { body = "live-a" }.save().getOrThrow()
-        val gone = filtered.memos.create { body = "live-b" }.saveAndLoad().getOrThrow()
-        filtered.memos.update(gone.id) { deletedAt = Instant.now() }.save().getOrThrow()
+        filtered.memos.create { body = "live-a" }.save(testViewerContext).getOrThrow()
+        val gone = filtered.memos.create { body = "live-b" }.saveAndLoad(testViewerContext).getOrThrow()
+        filtered.memos.update(gone.id) { deletedAt = Instant.now() }.save(testViewerContext).getOrThrow()
 
         // Filtered: 1 visible row.
-        assertEquals(1L, filtered.memos.query().rawCount().getOrThrow())
-        assertTrue(filtered.memos.query().rawExists().getOrThrow())
+        assertEquals(1L, filtered.memos.query().rawCount(testViewerContext).getOrThrow())
+        assertTrue(filtered.memos.query().rawExists(testViewerContext).getOrThrow())
 
         // Unfiltered: 2 rows in storage.
-        assertEquals(2L, unfiltered.memos.query().rawCount().getOrThrow())
+        assertEquals(2L, unfiltered.memos.query().rawCount(testViewerContext).getOrThrow())
     }
 
     // ---- Restore needs the unfiltered client ----
@@ -127,25 +123,25 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
 
-        val memo = filtered.memos.create { body = "phoenix" }.saveAndLoad().getOrThrow()
-        filtered.memos.update(memo.id) { deletedAt = Instant.now() }.save().getOrThrow()
+        val memo = filtered.memos.create { body = "phoenix" }.saveAndLoad(testViewerContext).getOrThrow()
+        filtered.memos.update(memo.id) { deletedAt = Instant.now() }.save(testViewerContext).getOrThrow()
 
         // Sanity: row is invisible via filtered query path.
-        assertNull(filtered.memos.findById(memo.id).getOrThrow())
+        assertNull(filtered.memos.findById(testViewerContext, memo.id).getOrThrow())
 
         // Restore via the unfiltered client (the recommended pattern).
-        val restored = unfiltered.memos.update(memo.id) { deletedAt = null }.saveAndLoad().getOrThrow()
+        val restored = unfiltered.memos.update(memo.id) { deletedAt = null }.saveAndLoad(testViewerContext).getOrThrow()
         assertNull(restored.deletedAt)
 
         // And the row reappears through the filtered client.
-        val reread = filtered.memos.findById(memo.id).getOrThrow()
+        val reread = filtered.memos.findById(testViewerContext, memo.id).getOrThrow()
         assertNotNull(reread)
         assertEquals("phoenix", reread.body)
     }
 
     @Test
     fun `restore through the filtered client also works today — but pattern is brittle`() {
-        // Owner-row load inside update(id).save() routes through
+        // Owner-row load inside update(id).save(testViewerContext) routes through
         // driver.byId(...) directly today, NOT through the
         // read-interceptor chain. So the filtered client can in
         // fact restore a soft-deleted row. This test pins the
@@ -158,18 +154,18 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
 
-        val memo = filtered.memos.create { body = "fragile" }.saveAndLoad().getOrThrow()
-        filtered.memos.update(memo.id) { deletedAt = Instant.now() }.save().getOrThrow()
+        val memo = filtered.memos.create { body = "fragile" }.saveAndLoad(testViewerContext).getOrThrow()
+        filtered.memos.update(memo.id) { deletedAt = Instant.now() }.save(testViewerContext).getOrThrow()
 
         // Filtered restore happens to succeed today via the unfiltered
         // owner-row load; a Failed(EntTargetAbsentException) here would
         // mean the owner-row load started honoring interceptors.
-        val restored = filtered.memos.update(memo.id) { deletedAt = null }.saveAndLoad().getOrThrow()
+        val restored = filtered.memos.update(memo.id) { deletedAt = null }.saveAndLoad(testViewerContext).getOrThrow()
         assertNull(restored.deletedAt)
 
         // Visible through both clients again.
-        assertNotNull(filtered.memos.findById(memo.id).getOrThrow())
-        assertNotNull(unfiltered.memos.findById(memo.id).getOrThrow())
+        assertNotNull(filtered.memos.findById(testViewerContext, memo.id).getOrThrow())
+        assertNotNull(unfiltered.memos.findById(testViewerContext, memo.id).getOrThrow())
     }
 
     // ---- Generated delete* keeps its physical-delete meaning ----
@@ -180,15 +176,15 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
 
-        val memo = filtered.memos.create { body = "for-real" }.saveAndLoad().getOrThrow()
+        val memo = filtered.memos.create { body = "for-real" }.saveAndLoad(testViewerContext).getOrThrow()
 
-        filtered.memos.delete(memo).getOrThrow()
+        filtered.memos.delete(testViewerContext, memo).getOrThrow()
 
         // Both clients see zero rows — physical removal, not a
         // soft delete masquerading.
-        assertEquals(0L, filtered.memos.query().rawCount().getOrThrow())
-        assertEquals(0L, unfiltered.memos.query().rawCount().getOrThrow())
-        assertNull(unfiltered.memos.findById(memo.id).getOrThrow())
+        assertEquals(0L, filtered.memos.query().rawCount(testViewerContext).getOrThrow())
+        assertEquals(0L, unfiltered.memos.query().rawCount(testViewerContext).getOrThrow())
+        assertNull(unfiltered.memos.findById(testViewerContext, memo.id).getOrThrow())
     }
 
     @Test
@@ -197,13 +193,13 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
 
-        val memo = filtered.memos.create { body = "rm" }.saveAndLoad().getOrThrow()
+        val memo = filtered.memos.create { body = "rm" }.saveAndLoad(testViewerContext).getOrThrow()
 
-        val result = filtered.memos.deleteById(memo.id)
+        val result = filtered.memos.deleteById(testViewerContext, memo.id)
         val ok = assertIs<MutationResult.Success<Boolean>>(result)
         assertTrue(ok.value, "deleteById must report true when this call deleted the row")
 
-        assertEquals(0L, unfiltered.memos.query().rawCount().getOrThrow())
+        assertEquals(0L, unfiltered.memos.query().rawCount(testViewerContext).getOrThrow())
     }
 
     @Test
@@ -212,26 +208,26 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
 
-        val live = filtered.memos.create { body = "live" }.saveAndLoad().getOrThrow()
-        val gone = filtered.memos.create { body = "gone" }.saveAndLoad().getOrThrow()
-        filtered.memos.update(gone.id) { deletedAt = Instant.now() }.save().getOrThrow()
+        val live = filtered.memos.create { body = "live" }.saveAndLoad(testViewerContext).getOrThrow()
+        val gone = filtered.memos.create { body = "gone" }.saveAndLoad(testViewerContext).getOrThrow()
+        filtered.memos.update(gone.id) { deletedAt = Instant.now() }.save(testViewerContext).getOrThrow()
 
         // deleteMany's candidate fetch routes through read
         // interceptors today (DELETE_CANDIDATES) — so the filtered
         // client's ExcludeDeleted narrows the candidate set to
         // visible rows only. The already-soft-deleted row is left
         // alone.
-        val purged = filtered.memos.deleteMany().getOrThrow()
+        val purged = filtered.memos.deleteMany(testViewerContext, ).getOrThrow()
         assertEquals(1, purged, "only the live row should be physically removed")
 
         // The soft-deleted row survives, still soft-deleted.
-        val remaining = unfiltered.memos.query().all().getOrThrow()
+        val remaining = unfiltered.memos.query().all(testViewerContext).getOrThrow()
         assertEquals(1, remaining.size)
         assertEquals("gone", remaining.single().body)
         assertNotNull(remaining.single().deletedAt)
 
         // The live row is gone from storage.
-        assertNull(unfiltered.memos.findById(live.id).getOrThrow())
+        assertNull(unfiltered.memos.findById(testViewerContext, live.id).getOrThrow())
     }
 
     // ---- Convention-level invariants ----
@@ -243,10 +239,10 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val unfiltered = unfilteredClient(driver)
 
         val stamp = Instant.parse("2024-01-15T12:00:00Z")
-        val memo = filtered.memos.create { body = "tick" }.saveAndLoad().getOrThrow()
+        val memo = filtered.memos.create { body = "tick" }.saveAndLoad(testViewerContext).getOrThrow()
         val stamped = filtered.memos.update(memo.id) {
             deletedAt = stamp
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         // The update returned the post-write entity, including the
         // new deletedAt — proving this was an UPDATE that returned
@@ -256,7 +252,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         // The row's body is unchanged — only deletedAt was patched
         // (and the bound timestamp round-trips through the driver
         // unchanged, not e.g. replaced with NOW() at the SQL layer).
-        val reread = unfiltered.memos.findById(memo.id).getOrThrow()
+        val reread = unfiltered.memos.findById(testViewerContext, memo.id).getOrThrow()
         assertNotNull(reread)
         assertEquals("tick", reread.body)
         assertEquals(stamp, reread.deletedAt)

@@ -7,8 +7,6 @@ import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.query.OrderDirection
 import entkt.query.OrderField
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EagerWindowStrategy
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
@@ -45,7 +43,7 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
 
     private fun capturingClient(captured: MutableList<ShapeCapture>): EntClient =
         EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 articles(
                     QueryInterceptor { scope, ctx ->
@@ -65,13 +63,13 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
     fun `an eager query with no caller ordering executes primary-key ascending order`() {
         val captured = mutableListOf<ShapeCapture>()
         val client = capturingClient(captured)
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         // Titles deliberately sort against creation order so an
         // id-ordered result can't be mistaken for title order.
-        client.articles.create { title = "z-first"; authorId = a.id }.save().getOrThrow()
-        client.articles.create { title = "a-second"; authorId = a.id }.save().getOrThrow()
+        client.articles.create { title = "z-first"; authorId = a.id }.save(testViewerContext).getOrThrow()
+        client.articles.create { title = "a-second"; authorId = a.id }.save(testViewerContext).getOrThrow()
 
-        val users = client.users.query { loadArticles() }.all().getOrThrow()
+        val users = client.users.query { loadArticles() }.all(testViewerContext).getOrThrow()
 
         val shape = captured.single()
         assertEquals(listOf(OrderField<Article>("id", OrderDirection.ASC)), shape.orderBy)
@@ -89,9 +87,9 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
     fun `caller ordering gains the primary-key tie-breaker`() {
         val captured = mutableListOf<ShapeCapture>()
         val client = capturingClient(captured)
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
 
-        client.users.query { loadArticles { orderBy(Article.title.desc()) } }.all().getOrThrow()
+        client.users.query { loadArticles { orderBy(Article.title.desc()) } }.all(testViewerContext).getOrThrow()
 
         val shape = captured.single()
         assertEquals(
@@ -109,9 +107,9 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
     fun `caller ordering that already includes the primary key is not extended`() {
         val captured = mutableListOf<ShapeCapture>()
         val client = capturingClient(captured)
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
 
-        client.users.query { loadArticles { orderBy(Article.id.desc()) } }.all().getOrThrow()
+        client.users.query { loadArticles { orderBy(Article.id.desc()) } }.all(testViewerContext).getOrThrow()
 
         // The caller ordered by the primary key (any direction), so
         // the framework appends nothing — the caller's total order
@@ -123,20 +121,18 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `tied rows enter a finite per-parent window deterministically by primary key`() {
-        val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
-        }
-        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-        val first = client.articles.create { title = "same"; authorId = a.id }.saveAndLoad().getOrThrow()
-        val second = client.articles.create { title = "same"; authorId = a.id }.saveAndLoad().getOrThrow()
-        client.articles.create { title = "same"; authorId = a.id }.save().getOrThrow()
+        val client = EntClient(resetAndDriver())
+        val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        val first = client.articles.create { title = "same"; authorId = a.id }.saveAndLoad(testViewerContext).getOrThrow()
+        val second = client.articles.create { title = "same"; authorId = a.id }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "same"; authorId = a.id }.save(testViewerContext).getOrThrow()
 
         val users = client.users.query {
             loadArticles {
                 orderBy(Article.title.asc())
                 limit(2)
             }
-        }.all().getOrThrow()
+        }.all(testViewerContext).getOrThrow()
 
         // All three rows tie on the caller's term; the primary-key
         // tie-breaker decides which two enter the window, so the
@@ -151,7 +147,7 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
     fun `a root query gains no framework ordering term`() {
         var rootOrderBy: List<OrderField<User>>? = null
         val client = EntClient(resetAndDriver()) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             interceptors {
                 users(
                     QueryInterceptor { scope, ctx ->
@@ -161,9 +157,9 @@ class EagerEffectiveOrderIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.users.create { name = "A"; email = "a@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
 
-        client.users.query { loadArticles() }.all().getOrThrow()
+        client.users.query { loadArticles() }.all(testViewerContext).getOrThrow()
 
         // The deterministic-ordering rule is scoped to eager target
         // queries; the root read keeps exactly what the caller wrote

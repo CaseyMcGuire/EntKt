@@ -38,7 +38,7 @@ class TransactionClientCompileTest {
         }.compile()
 
     @Test
-    fun `transaction blocks receive the transaction client across privacy scopes`() {
+    fun `transaction blocks receive a contextless transaction client`() {
         val result = compile(
             SourceFile.kotlin(
                 "TransactionClientSnippet.kt",
@@ -47,20 +47,15 @@ class TransactionClientCompileTest {
 
                 import com.example.ent.EntClient
                 import com.example.ent.EntTransactionClient
-                import entkt.runtime.privacy.PrivacyContext
+                import entkt.runtime.privacy.ViewerContext
                 import entkt.runtime.privacy.Viewer
 
                 fun useTransactionClient(client: EntClient) {
+                    val viewerContext = ViewerContext(Viewer.Anonymous)
                     client.withTransaction { tx ->
                         val typed: EntTransactionClient = tx
-                        typed.cars.query { }.all()
-                        tx.withPrivacyContext(PrivacyContext(Viewer.Anonymous)) { scoped ->
-                            val scopedTyped: EntTransactionClient = scoped
-                            scopedTyped.users.query { }.all()
-                        }
-                        tx.bypassPrivacy_DANGEROUS("compile test") { scoped ->
-                            scoped.cars.query { }.all()
-                        }
+                        typed.cars.query { }.all(viewerContext)
+                        typed.users.query { }.all(viewerContext)
                     }
                 }
                 """.trimIndent(),
@@ -70,7 +65,7 @@ class TransactionClientCompileTest {
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "Expected transaction repositories and privacy scopes to compile, got:\n${result.messages}",
+            "Expected transaction repositories with explicit contexts to compile, got:\n${result.messages}",
         )
     }
 
@@ -84,17 +79,17 @@ class TransactionClientCompileTest {
 
                 import com.example.ent.EntClient
                 import com.example.ent.EntClientScope
+                import entkt.runtime.privacy.ViewerContext
 
-                fun sharedHelper(client: EntClientScope) {
-                    client.cars.query { }.all()
-                    client.users.create { name = "helper" }.save()
-                    client.currentPrivacyContext()
+                fun sharedHelper(client: EntClientScope, viewerContext: ViewerContext) {
+                    client.cars.query { }.all(viewerContext)
+                    client.users.create { name = "helper" }.save(viewerContext)
                 }
 
-                fun useBoth(client: EntClient) {
-                    sharedHelper(client)
+                fun useBoth(client: EntClient, viewerContext: ViewerContext) {
+                    sharedHelper(client, viewerContext)
                     client.withTransaction { tx ->
-                        sharedHelper(tx)
+                        sharedHelper(tx, viewerContext)
                     }
                 }
                 """.trimIndent(),

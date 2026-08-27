@@ -1,5 +1,7 @@
 package example.spring.auth
 
+import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.ViewerContext
 import org.springframework.stereotype.Component
 import org.springframework.web.context.annotation.RequestScope
 import java.util.UUID
@@ -21,3 +23,8 @@ class AuthContext {
         }
     }
 }
+
+/** Capture the authenticated viewer once for an entity operation. */
+fun AuthContext.viewerContext(): ViewerContext = ViewerContext(
+    userId?.let(Viewer::User) ?: Viewer.Anonymous,
+)

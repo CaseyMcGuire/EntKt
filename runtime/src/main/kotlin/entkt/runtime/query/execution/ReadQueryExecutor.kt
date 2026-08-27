@@ -5,8 +5,7 @@ package entkt.runtime.query.execution
 import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.PrivacyContextProvider
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.query.EntInterceptorsConfig
@@ -27,7 +26,7 @@ import java.util.concurrent.CancellationException
 @EntktInternal
 class ReadQueryExecutor<Entity : EntEntity<*>>(
     private val driver: DatabaseDriver,
-    private val privacyContextProvider: PrivacyContextProvider,
+    private val readExecutionGuard: () -> Unit,
     registeredInterceptorsProvider: () -> EntInterceptorsConfig,
     loadPrivacyEvaluatorProvider: () -> LoadPrivacyEvaluator,
 ) {
@@ -43,6 +42,7 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
 
     /** Load root entities, authorize them, and recursively load their selected edges. */
     fun readRootQuery(
+        viewerContext: ViewerContext,
         captureQuery: () -> EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,
@@ -52,44 +52,47 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
         }
         return captureFailure {
             val query = captureQuery()
-            val privacyContext = privacyContextProvider.get()
+            readExecutionGuard()
             entityGraphLoader.load(
                 query = query,
                 operation = operation,
                 maximumRows = maximumRows,
-                privacyContext = privacyContext,
+                viewerContext = viewerContext,
             )
         }
     }
 
     /** Compile a captured entity query for a framework-owned storage operation. */
     fun compileEntityQuery(
+        viewerContext: ViewerContext,
         query: EntityQuery<Entity>,
         operation: ReadOperation,
-        privacyContext: PrivacyContext,
-    ): StorageQuerySpec<Entity> = queryCompiler.compile(
-        query,
-        operation,
-        privacyContext,
-    )
+    ): StorageQuerySpec<Entity> {
+        readExecutionGuard()
+        return queryCompiler.compile(query, operation, viewerContext)
+    }
 
     /** Count matching storage rows without evaluating LOAD privacy. */
     fun rawCount(
+        viewerContext: ViewerContext,
         captureQuery: () -> EntityQuery<Entity>,
     ): ReadResult<Long> = captureFailure {
         val query = captureQuery()
         query.requireNoSelectedEdges("rawCount()", NON_ENTITY_TERMINAL_EDGE_REASON)
-        val compiledQuery = compileRawQuery(query, ReadOperation.RAW_COUNT)
+        readExecutionGuard()
+        val compiledQuery = compileRawQuery(viewerContext, query, ReadOperation.RAW_COUNT)
         driver.count(compiledQuery.table, compiledQuery.predicates)
     }
 
     /** Test whether the caller's storage window contains at least one row. */
     fun rawExists(
+        viewerContext: ViewerContext,
         captureQuery: () -> EntityQuery<Entity>,
     ): ReadResult<Boolean> = captureFailure {
         val query = captureQuery()
         query.requireNoSelectedEdges("rawExists()", NON_ENTITY_TERMINAL_EDGE_REASON)
-        val compiledQuery = compileRawQuery(query, ReadOperation.RAW_EXISTS)
+        readExecutionGuard()
+        val compiledQuery = compileRawQuery(viewerContext, query, ReadOperation.RAW_EXISTS)
         val limit = minOf(1, compiledQuery.limit ?: 1)
         driver.query(
             compiledQuery.table,
@@ -102,6 +105,7 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
 
     /** Execute one raw aggregate, optionally grouped by one storage column. */
     fun <Value> rawAggregate(
+        viewerContext: ViewerContext,
         captureQuery: () -> EntityQuery<Entity>,
         terminal: String,
         function: AggregateFunction,
@@ -111,7 +115,8 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
     ): ReadResult<Value> = captureFailure {
         val query = captureQuery()
         query.requireNoSelectedEdges("$terminal()", NON_ENTITY_TERMINAL_EDGE_REASON)
-        val compiledQuery = compileRawQuery(query, ReadOperation.RAW_AGGREGATE)
+        readExecutionGuard()
+        val compiledQuery = compileRawQuery(viewerContext, query, ReadOperation.RAW_AGGREGATE)
         transform(
             driver.aggregate(
                 compiledQuery.table,
@@ -124,12 +129,13 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
     }
 
     private fun compileRawQuery(
+        viewerContext: ViewerContext,
         query: EntityQuery<Entity>,
         operation: ReadOperation,
     ): StorageQuerySpec<Entity> = queryCompiler.compile(
         query,
         operation,
-        privacyContextProvider.get(),
+        viewerContext,
     )
 
     private inline fun <Value> captureFailure(block: () -> Value): ReadResult<Value> = try {

@@ -14,8 +14,6 @@ import entkt.runtime.driver.DirectToManyQuery
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.RelatedRows
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.query.EdgeState
 import kotlin.test.Test
@@ -75,32 +73,34 @@ class ReadQueryExecutorIntegrationTest : PostgresTestBase() {
     fun `generated all and first terminals delegate while retaining graph completion`() {
         val driver = RecordingDriver(resetAndDriver())
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.User(7L)) }
+
             policies {
                 users(OpenUsers)
                 articles(OpenArticles)
             }
         }
-        val author = client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { seed ->
+        val author = run {
+            val seed = client
+            val testViewerContext = testBypassContext("seed")
             val created = seed.users.create {
                 name = "Ada"
                 email = "ada@example.com"
-            }.saveAndLoad().getOrThrow()
+            }.saveAndLoad(testViewerContext).getOrThrow()
             seed.articles.create {
                 title = "First"
                 authorId = created.id
-            }.save().getOrThrow()
+            }.save(testViewerContext).getOrThrow()
             seed.articles.create {
                 title = "Second"
                 authorId = created.id
-            }.save().getOrThrow()
+            }.save(testViewerContext).getOrThrow()
             created
         }
 
         driver.clearReads()
         val all = client.users.query {
             where(User.id eq author.id)
-        }.all().getOrThrow()
+        }.all(testViewerContext).getOrThrow()
 
         assertEquals(listOf(author.id), all.map { it.id })
         assertEquals(listOf(RecordingDriver.RootQuery("users", null, null)), driver.rootQueries)
@@ -110,7 +110,7 @@ class ReadQueryExecutorIntegrationTest : PostgresTestBase() {
         val first = client.users.query {
             where(User.id eq author.id)
             loadArticles { orderBy(Article.id.asc()) }
-        }.firstOrNull().getOrThrow()
+        }.firstOrNull(testViewerContext).getOrThrow()
 
         assertNotNull(first)
         val articles = assertIs<EdgeState.Loaded<List<Article>>>(first.edges.articles).value

@@ -9,9 +9,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.postgres.PostgresDriver
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.MutationResult
@@ -97,7 +95,7 @@ class SqlstateConstraintMappingPostgresIntegrationTest {
         }
 
         return EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
@@ -113,12 +111,12 @@ class SqlstateConstraintMappingPostgresIntegrationTest {
 
         // User.email is unique on the schema. Insert two rows with
         // the same email — the second trips the unique index.
-        client.users.create { name = "A"; email = "dup@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "dup@example.com" }.save(testViewerContext).getOrThrow()
 
         val result = client.users.create {
             name = "B"
             email = "dup@example.com"
-        }.save()
+        }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntConstraintViolationException>(failed.exception)
@@ -140,9 +138,9 @@ class SqlstateConstraintMappingPostgresIntegrationTest {
     @Test
     fun `getOrThrow throws the exact stored constraint exception`() {
         val client = freshClient()
-        client.users.create { name = "A"; email = "dup2@example.com" }.save().getOrThrow()
+        client.users.create { name = "A"; email = "dup2@example.com" }.save(testViewerContext).getOrThrow()
 
-        val result = client.users.create { name = "B"; email = "dup2@example.com" }.saveAndLoad()
+        val result = client.users.create { name = "B"; email = "dup2@example.com" }.saveAndLoad(testViewerContext)
         val failed = assertIs<MutationResult.Failed>(result)
         try {
             result.getOrThrow()
@@ -167,7 +165,7 @@ class SqlstateConstraintMappingPostgresIntegrationTest {
             title = "Orphan"
             published = true
             authorId = 999_999L
-        }.save()
+        }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntConstraintViolationException>(failed.exception)
@@ -183,18 +181,18 @@ class SqlstateConstraintMappingPostgresIntegrationTest {
     fun `foreign key violation on update carries operation UPDATE and driverCode 23503`() {
         val client = freshClient()
         val author = client.users.create { name = "A"; email = "a@example.com" }
-            .saveAndLoad().getOrThrow()
+            .saveAndLoad(testViewerContext).getOrThrow()
         val article = client.articles.create {
             title = "Hello"
             published = true
             authorId = author.id
-        }.saveAndLoad().getOrThrow()
+        }.saveAndLoad(testViewerContext).getOrThrow()
 
         // Repoint authorId to a non-existent user — trips the FK on the
         // UPDATE path.
         val result = client.articles.update(article.id) {
             authorId = 999_999L
-        }.save()
+        }.save(testViewerContext)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntConstraintViolationException>(failed.exception)
@@ -213,7 +211,7 @@ class SqlstateConstraintMappingPostgresIntegrationTest {
         // Postgres without false-positive classifications.
         val client = freshClient()
 
-        val result = client.users.findById(999_999L)
+        val result = client.users.findById(testViewerContext, 999_999L)
         val success = assertIs<ReadResult.Success<User?>>(result)
         assertNull(success.value)
     }

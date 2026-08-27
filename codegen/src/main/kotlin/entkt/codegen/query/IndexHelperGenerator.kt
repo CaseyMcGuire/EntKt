@@ -29,6 +29,7 @@ import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.schema.ColumnStorage
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
@@ -561,8 +562,12 @@ internal class IndexHelperGenerator(
 
         private fun terminal(name: String, returns: TypeName, call: String): FunSpec =
             function(name, returnType = returns) {
+                parameter(
+                    "viewerContext",
+                    VIEWER_CONTEXT,
+                )
                 seedStatements(this)
-                statement("return q.%L", call)
+                statement("return q.%L(viewerContext)", call)
             }
 
         // The completed unique-index helper exposes one canonical
@@ -572,7 +577,7 @@ internal class IndexHelperGenerator(
         // not additional database terminals; `query()` remains for
         // further composition.
         private fun uniqueTerminals(): List<FunSpec> = listOf(
-            terminal("find", READ_RESULT.parameterizedBy(nullableEntity), "firstOrNull()"),
+            terminal("find", READ_RESULT.parameterizedBy(nullableEntity), "firstOrNull"),
         )
 
         private fun stageConstructor(): FunSpec =

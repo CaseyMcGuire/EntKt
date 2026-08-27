@@ -49,17 +49,17 @@ class QueryGeneratorTest {
         }
 
         // Ungrouped scalar terminals, typed by the column marker, wrapped in ReadResult.
-        assert(output.contains("rawSum(column: IntegralColumn<Car, *>): ReadResult<Long?>")) { "rawSum on integral → ReadResult<Long?>\n$output" }
-        assert(output.contains("rawSum(column: FloatingColumn<Car, *>): ReadResult<Double?>")) { "rawSum on floating → ReadResult<Double?>\n$output" }
-        assert(output.contains("rawAvg(column: NumericColumn<Car, *>): ReadResult<Double?>")) { "rawAvg → ReadResult<Double?>\n$output" }
-        assert(output.contains("rawMin(column: ComparableColumn<Car, T>): ReadResult<T?>")) { "rawMin takes ComparableColumn → ReadResult<T?>\n$output" }
-        assert(output.contains("rawMax(column: ComparableColumn<Car, T>): ReadResult<T?>")) { "rawMax takes ComparableColumn → ReadResult<T?>\n$output" }
+        assert(output.contains("rawSum(viewerContext: ViewerContext, column: IntegralColumn<Car, *>): ReadResult<Long?>")) { "rawSum on integral → ReadResult<Long?>\n$output" }
+        assert(output.contains("rawSum(viewerContext: ViewerContext, column: FloatingColumn<Car, *>): ReadResult<Double?>")) { "rawSum on floating → ReadResult<Double?>\n$output" }
+        assert(output.contains("rawAvg(viewerContext: ViewerContext, column: NumericColumn<Car, *>): ReadResult<Double?>")) { "rawAvg → ReadResult<Double?>\n$output" }
+        assert(output.contains("rawMin(viewerContext: ViewerContext, column: ComparableColumn<Car, T>): ReadResult<T?>")) { "rawMin takes ComparableColumn → ReadResult<T?>\n$output" }
+        assert(output.contains("rawMax(viewerContext: ViewerContext, column: ComparableColumn<Car, T>): ReadResult<T?>")) { "rawMax takes ComparableColumn → ReadResult<T?>\n$output" }
 
         // Grouped terminals: non-null key → K, nullable key → K?; bucket lists in ReadResult.
-        assert(output.contains("rawCountBy(groupBy: GroupableColumn<Car, K>): ReadResult<List<AggregateBucket<K, Long>>>")) {
+        assert(output.contains("rawCountBy(viewerContext: ViewerContext, groupBy: GroupableColumn<Car, K>): ReadResult<List<AggregateBucket<K, Long>>>")) {
             "rawCountBy non-null key overload → ReadResult of buckets\n$output"
         }
-        assert(output.contains("rawCountBy(groupBy: NullableGroupableColumn<Car, K>): ReadResult<List<AggregateBucket<K?, Long>>>")) {
+        assert(output.contains("rawCountBy(viewerContext: ViewerContext, groupBy: NullableGroupableColumn<Car, K>): ReadResult<List<AggregateBucket<K?, Long>>>")) {
             "rawCountBy nullable key overload → ReadResult of nullable-key buckets\n$output"
         }
 
@@ -138,14 +138,14 @@ class QueryGeneratorTest {
 
         assert(
             output.contains(
-                "readRootQuery(ReadOperation.FIRST, maximumRows = 1)",
+                "readRootQuery(viewerContext, ReadOperation.FIRST, maximumRows = 1)",
             ),
         ) {
             "firstOrNull should retain its public result type and delegate to runtime\n$output"
         }
         assert(
             output.contains(
-                "internal fun readRootQuery( operation: ReadOperation, maximumRows: Int?, " +
+                "internal fun readRootQuery( viewerContext: ViewerContext, operation: ReadOperation, maximumRows: Int?, " +
                     "structuralPredicates: List<Predicate<Car>> = emptyList(), ): " +
                     "ReadResult<List<Car>> = _readQueryExecutor.readRootQuery(",
             ),
@@ -154,7 +154,7 @@ class QueryGeneratorTest {
         }
         assert(
             output.contains(
-                "readRootQuery( captureQuery = { captureEntityQuery(structuralPredicates) }, operation = operation, " +
+                "readRootQuery( viewerContext = viewerContext, captureQuery = { captureEntityQuery(structuralPredicates) }, operation = operation, " +
                     "maximumRows = maximumRows, )",
             ),
         ) {
@@ -168,7 +168,7 @@ class QueryGeneratorTest {
                     "private val _readQueryExecutor: ReadQueryExecutor<Car> by " +
                     "lazy(LazyThreadSafetyMode.NONE) { ReadQueryExecutor( " +
                     "driver = driver, " +
-                    "privacyContextProvider = requireClient(), " +
+                    "readExecutionGuard = { requireClient().checkReadExecution() }, " +
                     "registeredInterceptorsProvider = { requireClient().entityInterceptors }, " +
                     "loadPrivacyEvaluatorProvider = { requireClient() }, ) }",
             ),
@@ -187,7 +187,7 @@ class QueryGeneratorTest {
         assert(!output.contains("GeneratedEntitySelection")) {
             "the captured entity mapping now owns table metadata and decoding\n$output"
         }
-        assert(!output.contains("override fun capturePrivacyContext")) {
+        assert(!output.contains("override fun captureViewerContext")) {
             "privacy-context capture should be a named loader dependency\n$output"
         }
         assert(!output.contains("GeneratedRootQueryPreparation")) {
@@ -548,10 +548,10 @@ class QueryGeneratorTest {
         assert(!output.contains("private fun requireNoSelectedEdges")) {
             "selected-edge validation should live in runtime, not each generated query\n$output"
         }
-        assert(output.contains("_readQueryExecutor.rawCount { captureEntityQuery() }")) {
+        assert(output.contains("_readQueryExecutor.rawCount(viewerContext) { captureEntityQuery() }")) {
             "rawCount should delegate its selected-edge validation to runtime\n$output"
         }
-        assert(output.contains("_readQueryExecutor.rawExists { captureEntityQuery() }")) {
+        assert(output.contains("_readQueryExecutor.rawExists(viewerContext) { captureEntityQuery() }")) {
             "rawExists should delegate its selected-edge validation to runtime\n$output"
         }
         // Traversal captures the source once, validates that captured graph,
@@ -586,10 +586,10 @@ class QueryGeneratorTest {
         assert(!output.contains("releaseEdgeTopology")) {
             "there should be no generated topology release phase\n$output"
         }
-        assert(output.contains("fun all(): ReadResult<List<Car>> = readRootQuery(ReadOperation.ALL, maximumRows = null)")) {
+        assert(output.contains("fun all(viewerContext: ViewerContext): ReadResult<List<Car>> = readRootQuery(viewerContext, ReadOperation.ALL, maximumRows = null)")) {
             "all() should delegate its complete root boundary to runtime\n$output"
         }
-        assert(output.contains("readRootQuery(ReadOperation.FIRST, maximumRows = 1)")) {
+        assert(output.contains("readRootQuery(viewerContext, ReadOperation.FIRST, maximumRows = 1)")) {
             "firstOrNull() should delegate its complete root boundary to runtime\n$output"
         }
     }
@@ -672,10 +672,10 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("public fun rawCount(): ReadResult<Long>")) {
-            "Should generate rawCount(): ReadResult<Long>\n$output"
+        assert(output.contains("public fun rawCount(viewerContext: ViewerContext): ReadResult<Long>")) {
+            "Should generate rawCount(ViewerContext): ReadResult<Long>\n$output"
         }
-        assert(output.contains("= _readQueryExecutor.rawCount { captureEntityQuery() }")) {
+        assert(output.contains("= _readQueryExecutor.rawCount(viewerContext) { captureEntityQuery() }")) {
             "rawCount execution and failure capture should be runtime-owned\n$output"
         }
     }
@@ -695,10 +695,10 @@ class QueryGeneratorTest {
         assert(!output.contains("visibleExists")) {
             "visibleExists is deleted with the visible* family\n$output"
         }
-        assert(output.contains("public fun rawExists(): ReadResult<Boolean>")) {
-            "Should generate rawExists(): ReadResult<Boolean>\n$output"
+        assert(output.contains("public fun rawExists(viewerContext: ViewerContext): ReadResult<Boolean>")) {
+            "Should generate rawExists(ViewerContext): ReadResult<Boolean>\n$output"
         }
-        assert(output.contains("= _readQueryExecutor.rawExists { captureEntityQuery() }")) {
+        assert(output.contains("= _readQueryExecutor.rawExists(viewerContext) { captureEntityQuery() }")) {
             "rawExists probe shape and failure capture should be runtime-owned\n$output"
         }
     }
@@ -723,8 +723,8 @@ class QueryGeneratorTest {
 
         assert(
             output.contains(
-                "fun all(): ReadResult<List<Car>> = " +
-                    "readRootQuery(ReadOperation.ALL, maximumRows = null)",
+                "fun all(viewerContext: ViewerContext): ReadResult<List<Car>> = " +
+                    "readRootQuery(viewerContext, ReadOperation.ALL, maximumRows = null)",
             ),
         ) {
             "all() should preserve its public type while delegating to runtime\n$output"
@@ -732,7 +732,7 @@ class QueryGeneratorTest {
         assert(output.contains("loadPrivacyEvaluatorProvider = { requireClient() }")) {
             "the read executor should lazily obtain the runtime-wide typed privacy evaluator\n$output"
         }
-        assert(!output.contains("query.loadEdges(entities, privacyContext)")) {
+        assert(!output.contains("query.loadEdges(entities, viewerContext)")) {
             "generated queries should not retain a second graph-loading algorithm\n$output"
         }
         assert(!output.contains("catch (e: CancellationException)")) {

@@ -9,7 +9,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.PrivacyContext
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.privacy.Viewer
@@ -38,6 +38,7 @@ import kotlin.test.assertTrue
  * synthesized unique index from `User.email.unique()`.
  */
 class IndexHelpersIntegrationTest : PostgresTestBase() {
+    private var viewerContext = testViewerContext
 
     private object AllowAllArticles : EntityPolicy<Article, ArticlePolicyScope> {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
@@ -68,9 +69,10 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUser,
     ): EntClient {
+        viewerContext = ViewerContext(viewer)
         val driver = resetAndDriver()
         return EntClient(driver) {
-            privacyContext { PrivacyContext(viewer) }
+
             policies {
                 articles(articlePolicy)
                 users(userPolicy)
@@ -82,13 +84,15 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
 
     /** Author A: Alpha (pub), Mango (unpub), Zebra (pub). Author B: Other (pub). */
     private fun seed(client: EntClient): Seed =
-        client.withPrivacyContext(PrivacyContext(Viewer.PrivacyBypass("seed"))) { sys ->
-            val a = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad().getOrThrow()
-            val b = sys.users.create { name = "B"; email = "b@example.com" }.saveAndLoad().getOrThrow()
-            sys.articles.create { title = "Alpha"; published = true; authorId = a.id }.save().getOrThrow()
-            sys.articles.create { title = "Mango"; published = false; authorId = a.id }.save().getOrThrow()
-            sys.articles.create { title = "Zebra"; published = true; authorId = a.id }.save().getOrThrow()
-            sys.articles.create { title = "Other"; published = true; authorId = b.id }.save().getOrThrow()
+        run {
+            val sys = client
+            val viewerContext = testBypassContext("seed")
+            val a = sys.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(viewerContext).getOrThrow()
+            val b = sys.users.create { name = "B"; email = "b@example.com" }.saveAndLoad(viewerContext).getOrThrow()
+            sys.articles.create { title = "Alpha"; published = true; authorId = a.id }.save(viewerContext).getOrThrow()
+            sys.articles.create { title = "Mango"; published = false; authorId = a.id }.save(viewerContext).getOrThrow()
+            sys.articles.create { title = "Zebra"; published = true; authorId = a.id }.save(viewerContext).getOrThrow()
+            sys.articles.create { title = "Other"; published = true; authorId = b.id }.save(viewerContext).getOrThrow()
             Seed(a.id, b.id)
         }
 
@@ -97,7 +101,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         val s = seed(client)
 
-        val rows = client.articles.indexes.authorId(s.authorA).query().all().getOrThrow()
+        val rows = client.articles.indexes.authorId(s.authorA).query().all(viewerContext).getOrThrow()
         assertEquals(3, rows.size)
         assertTrue(rows.all { it.authorId == s.authorA })
     }
@@ -110,7 +114,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val rows = client.articles.indexes
             .authorId(s.authorA)
             .query { where(Article.published eq true) }
-            .all()
+            .all(viewerContext)
             .getOrThrow()
         assertEquals(setOf("Alpha", "Zebra"), rows.map { it.title }.toSet())
     }
@@ -123,7 +127,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val rows = client.articles.indexes
             .authorId(s.authorA)
             .query { orderBy(Article.title.asc()); limit(2) }
-            .all()
+            .all(viewerContext)
             .getOrThrow()
         assertEquals(listOf("Alpha", "Mango"), rows.map { it.title })
     }
@@ -137,7 +141,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
             .authorId(s.authorA)
             .title { gte("M") }
             .query()
-            .all()
+            .all(viewerContext)
             .getOrThrow()
         // Author A's titles >= "M": Mango, Zebra (Alpha < "M"); Author B's
         // "Other" excluded by the seeded author_id prefix.
@@ -153,7 +157,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
             .authorId(s.authorA)
             .title { gte("A") }
             .query { orderBy(Article.title.desc()) }
-            .all()
+            .all(viewerContext)
             .getOrThrow()
         // All of Author A's titles are >= "A"; ordered descending by title.
         assertEquals(listOf("Zebra", "Mango", "Alpha"), rows.map { it.title })
@@ -164,11 +168,11 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         seed(client)
 
-        val found = client.users.indexes.email("a@example.com").find().getOrThrow()
+        val found = client.users.indexes.email("a@example.com").find(viewerContext).getOrThrow()
         assertNotNull(found)
         assertEquals("A", found.name)
 
-        assertNull(client.users.indexes.email("missing@example.com").find().getOrThrow())
+        assertNull(client.users.indexes.email("missing@example.com").find(viewerContext).getOrThrow())
     }
 
     @Test
@@ -176,13 +180,13 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val client = freshClient()
         seed(client)
 
-        val hit = client.users.indexes.email("b@example.com").find()
+        val hit = client.users.indexes.email("b@example.com").find(viewerContext)
         val ok = assertIs<ReadResult.Success<User?>>(hit)
         assertEquals("B", assertNotNull(ok.value).name)
 
         // No not-found failure exists on this surface: a missing row is
         // an authoritative Success(null), not a Failed.
-        val miss = client.users.indexes.email("nobody@example.com").find()
+        val miss = client.users.indexes.email("nobody@example.com").find(viewerContext)
         val absent = assertIs<ReadResult.Success<User?>>(miss)
         assertNull(absent.value)
     }
@@ -192,7 +196,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
         val s = seed(client)
 
-        val result = client.articles.indexes.authorId(s.authorA).query().all()
+        val result = client.articles.indexes.authorId(s.authorA).query().all(viewerContext)
         val failed = assertIs<ReadResult.Failed>(result)
         val denied = assertIs<EntPrivacyDeniedException>(failed.exception)
         assertIs<LoadDenialOrigin.Root>(denied.origin)
@@ -203,7 +207,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), userPolicy = denyAllUsers)
         seed(client)
 
-        val result = client.users.indexes.email("a@example.com").find()
+        val result = client.users.indexes.email("a@example.com").find(viewerContext)
         val failed = assertIs<ReadResult.Failed>(result)
         val denied = assertIs<EntPrivacyDeniedException>(failed.exception)
         assertIs<LoadDenialOrigin.Root>(denied.origin)
@@ -214,7 +218,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
     fun `read interceptors still fire through an index query terminal`() {
         val driver = resetAndDriver()
         val client = EntClient(driver) {
-            privacyContext { PrivacyContext(Viewer.PrivacyBypass("test")) }
+
             policies {
                 articles(AllowAllArticles)
                 users(OpenUser)
@@ -230,7 +234,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
 
         // The interceptor's published = true predicate composes with the
         // seeded author_id prefix: Author A's published rows are Alpha, Zebra.
-        val rows = client.articles.indexes.authorId(s.authorA).query().all().getOrThrow()
+        val rows = client.articles.indexes.authorId(s.authorA).query().all(viewerContext).getOrThrow()
         assertEquals(setOf("Alpha", "Zebra"), rows.map { it.title }.toSet())
     }
 }

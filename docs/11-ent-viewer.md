@@ -2,7 +2,7 @@
 
 An optional, read-only, server-rendered surface for inspecting generated ents
 in a browser: what entities and columns exist, which rows the configured
-privacy context can see, what one row looks like, and which edges it can
+viewer context can see, what one row looks like, and which edges it can
 follow. It is a debug/admin presentation layer over the normal generated read
 path — never a privileged backdoor around it.
 
@@ -24,7 +24,7 @@ dependencies {
 }
 ```
 
-With `viewer.set(true)`, the generated `GeneratedEntViewerRegistry` makes
+With `viewer.set(true)`, the generated `GeneratedEntViewerRegistry` list makes
 your entities available to the viewer. The default is `false`, so projects
 that do not use the viewer need no viewer dependency.
 
@@ -37,8 +37,8 @@ The core is framework-neutral — adapt your framework's request into
 val viewer = EntViewer(client, GeneratedEntViewerRegistry) {
     path = "/_ent"
     authorize { request -> request.principal.isAdminOfSomeKind() }
-    privacyContext { request ->
-        PrivacyContext(Viewer.User((request.principal as Admin).userId))
+    viewerContext { request ->
+        ViewerContext(Viewer.User((request.principal as Admin).userId))
     }
     entities { exclude("session") }
     redaction { extra("users", "legacy_secret_column") }
@@ -58,7 +58,7 @@ fun entViewer(client: EntClient): EntViewer<EntClient> =
     EntViewer(client, GeneratedEntViewerRegistry) {
         path = "/_ent"
         authorize { it.principal != null }
-        privacyContext { ... }
+        viewerContext { ... }
     }
 
 @Bean
@@ -100,7 +100,7 @@ http.authorizeHttpRequests { it.requestMatchers("/_ent/**").hasRole("ADMIN") }
 fun entViewer(client: EntClient): EntViewer<EntClient> = ...
 ```
 
-Which *rows* are visible is `privacyContext`'s job, not `authorize`'s; which
+Which *rows* are visible is `viewerContext`'s job, not `authorize`'s; which
 *entities* exist is `entities { exclude(...) }`; which *columns* show values
 is `.sensitive()` / `redaction { extra(...) }` — see below.
 
@@ -113,12 +113,12 @@ is `.sensitive()` / `redaction { extra(...) }` — see below.
   is never disclosed to unauthorized callers. Authorization gates the
   *endpoint*; it grants nothing about rows. If you want 401/redirect
   semantics instead, gate in front with Spring Security.
-- **Rows come from the privacy context.** Every read runs under the
-  per-request `privacyContext` through the generated client's
-  `withPrivacyContext`, using the canonical read terminals. A list window
+- **Rows come from the viewer context.** Every generated adapter receives the
+  per-request `viewerContext` and passes it directly to the canonical read
+  terminals on the same long-lived client. A list window
   containing any privacy-denied row renders as an explicitly
   privacy-filtered empty page (see below); the detail route reads with
-  `findById(id).visibleOrNull()`, so a privacy-denied, missing, or
+  `findById(viewerContext, id).visibleOrNull()`, so a privacy-denied, missing, or
   unparseable id is the same 404 — no existence disclosure. The default
   context is `Viewer.Anonymous` (fail-closed).
 - **Read-only.** Non-GET requests are 405, and the viewer exposes no create,
@@ -150,7 +150,8 @@ partial window, and further navigation is offered unconditionally, since
 deriving next-link presence from visible rows would let it disclose
 denied-row information; later pages may still contain visible rows. For
 full listings of a privacy-guarded entity, run the viewer under a
-bypass-scoped context (`privacyContext { PrivacyContext(Viewer.PrivacyBypass(...)) }`).
+bypass context
+(`viewerContext { ViewerContext.privacyBypass_DANGEROUS("admin viewer") }`).
 Read-interceptor rejections (tenant guards and similar) render as
 controlled 400s naming the interceptor.
 

@@ -13,18 +13,19 @@ those executions are sequential.
 ## Basic Usage
 
 ```kotlin
+val viewerContext = ViewerContext(Viewer.User(currentUserId()))
 val users = client.users.query {
     where(User.active eq true)
     orderBy(User.name.asc())
     limit(10)
     offset(20)
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 ```
 
-`.all()` returns `ReadResult<List<User>>` — the canonical exhaustive
-result of every read terminal. Use `.firstOrNull()`
-(`ReadResult<User?>`) for single results, `.rawCount()` for a fast
-aggregate count, or `.rawExists()` to check whether a match exists
+`.all(viewerContext)` returns `ReadResult<List<User>>` — the canonical exhaustive
+result of every read terminal. Use `.firstOrNull(viewerContext)`
+(`ReadResult<User?>`) for single results, `.rawCount(viewerContext)` for a fast
+aggregate count, or `.rawExists(viewerContext)` to check whether a match exists
 (the `raw` prefix means the terminal skips LOAD privacy).
 
 A `ReadResult` is either `Success(value)` or `Failed(exception)`.
@@ -45,10 +46,10 @@ ordered root result. The first explicit batch privacy rule is invoked once with
 that list; each later rule receives the ordered still-unresolved subset after
 earlier `Allow` / `Deny` decisions. An ordinary scalar rule adapts by visiting
 its supplied subset in order.
-`findById()` and `firstOrNull()` use the same evaluator with a singleton when a
-row exists, and do not invoke LOAD rules on absence. One captured
-`PrivacyContext` is shared by the terminal's interceptors, root LOAD phase, and
-all traversal and eager work.
+`findById(viewerContext, id)` and `firstOrNull(viewerContext)` use the same
+evaluator with a singleton when a row exists, and do not invoke LOAD rules on
+absence. The exact terminal-supplied `ViewerContext` instance is shared by the
+terminal's interceptors, root LOAD phase, and all traversal and eager work.
 
 ## Indexed Query Helpers
 
@@ -78,7 +79,7 @@ stage offers only the next indexed column, which keeps you on the index:
 client.posts.indexes
     .authorId(userId)
     .query()
-    .all()
+    .all(viewerContext)
     .getOrThrow()
 
 // equivalent to query { where(Post.authorId eq userId); where(Post.createdAt eq t) }
@@ -100,7 +101,7 @@ client.posts.indexes
         orderBy(Post.createdAt.desc())
         limit(20)
     }
-    .all()
+    .all(viewerContext)
 ```
 
 ### Range blocks
@@ -116,7 +117,7 @@ client.posts.indexes
     .authorId(userId)
     .createdAt { gte(since); lt(until) }
     .query { orderBy(Post.createdAt.desc()) }
-    .all()
+    .all(viewerContext)
 ```
 
 ### The unique terminal
@@ -125,14 +126,14 @@ When a bound prefix exactly matches a non-nullable **unique** index, the
 stage exposes a single-row terminal alongside `query()`:
 
 ```kotlin
-val result = client.users.indexes.email("a@example.com").find()
+val result = client.users.indexes.email("a@example.com").find(viewerContext)
 // ReadResult<User?> — Success(user), Success(null) on a miss,
 // Failed(EntPrivacyDeniedException) on denial, Failed(e) otherwise
 
-client.users.indexes.email("a@example.com").find().getOrThrow()
+client.users.indexes.email("a@example.com").find(viewerContext).getOrThrow()
 // User? — miss is null; denial and failure throw
 
-client.users.indexes.email("a@example.com").find().visibleOrNull().getOrThrow()
+client.users.indexes.email("a@example.com").find(viewerContext).visibleOrNull().getOrThrow()
 // User? — miss OR root LOAD denial → null
 ```
 
@@ -290,9 +291,9 @@ what it says — no rows — on every terminal that reads rows, including
 the single-result ones:
 
 ```kotlin
-client.users.query { limit(0) }.firstOrNull().getOrThrow()  // → null
-client.users.query { limit(0) }.rawExists().getOrThrow()    // → false
-client.users.query { limit(0) }.all().getOrThrow()          // → []
+client.users.query { limit(0) }.firstOrNull(viewerContext).getOrThrow()  // → null
+client.users.query { limit(0) }.rawExists(viewerContext).getOrThrow()    // → false
+client.users.query { limit(0) }.all(viewerContext).getOrThrow()          // → []
 ```
 
 Note that `limit(n)` above 1 doesn't change what a first-row terminal
@@ -326,7 +327,7 @@ exists; it does not prove the viewer could load the matching entities. See
 ```kotlin
 val totalActiveUsers = client.users.query {
     where(User.active eq true)
-}.rawCount().getOrThrow()  // → Long
+}.rawCount(viewerContext).getOrThrow()  // → Long
 ```
 
 ### `rawExists()` -- fast existence check, skips privacy
@@ -339,7 +340,7 @@ of the caller is not the relevant question. Returns `ReadResult<Boolean>`.
 ```kotlin
 val emailTaken = client.users.query {
     where(User.email eq "alice@example.com")
-}.rawExists().getOrThrow()  // → Boolean
+}.rawExists(viewerContext).getOrThrow()  // → Boolean
 ```
 
 There is deliberately no privacy-aware count or existence terminal.
@@ -359,7 +360,7 @@ result. Match on it when you want exhaustive handling instead of
 throwing:
 
 ```kotlin
-when (val result = client.posts.query().rawCount()) {
+when (val result = client.posts.query().rawCount(viewerContext)) {
     is ReadResult.Success -> println("count: ${result.value}")
     is ReadResult.Failed -> when (val e = result.exception) {
         is EntQueryRejectedException -> println("rejected by ${e.interceptor}")
@@ -392,9 +393,9 @@ The success payload follows the column you pass; each terminal returns
 ```kotlin
 val orders = client.orders.query { where(Order.status eq Status.SHIPPED) }
 
-val latest:  Instant? = orders.rawMax(Order.placedAt).getOrThrow()  // min/max → the column's type
-val units:   Long?    = orders.rawSum(Order.quantity).getOrThrow()  // sum of an integer column → Long?
-val revenue: Double?  = orders.rawSum(Order.price).getOrThrow()     // sum of a floating column → Double?
+val latest:  Instant? = orders.rawMax(viewerContext, Order.placedAt).getOrThrow()  // min/max → the column's type
+val units:   Long?    = orders.rawSum(viewerContext, Order.quantity).getOrThrow()  // sum of an integer column → Long?
+val revenue: Double?  = orders.rawSum(viewerContext, Order.price).getOrThrow()     // sum of a floating column → Double?
 val avgLine: Double?  = orders.rawAvg(Order.price).getOrThrow()     // avg is always Double?
 ```
 
@@ -433,7 +434,7 @@ Aggregate terminals return `ReadResult` directly — there are no
 privacy denial):
 
 ```kotlin
-when (val r = client.orders.query().rawSum(Order.quantity)) {
+when (val r = client.orders.query().rawSum(viewerContext, Order.quantity)) {
     is ReadResult.Success -> println("units: ${r.value}")
     is ReadResult.Failed  -> println("failed: ${r.exception}")
 }
@@ -457,7 +458,7 @@ users:
 val postsOfActiveUsers = client.users
     .query { where(User.active eq true) }
     .queryPosts()
-    .all()
+    .all(viewerContext)
     .getOrThrow()  // List<Post>
 ```
 
@@ -473,7 +474,7 @@ val recentPosts = client.users
         orderBy(Post.id.desc())
         limit(10)
     }
-    .all()
+    .all(viewerContext)
     .getOrThrow()
 ```
 
@@ -491,7 +492,7 @@ traversed. For example:
 client.users.query {
     orderBy(User.createdAt.desc())
     limit(10)
-}.queryPosts().all()
+}.queryPosts().all(viewerContext)
 ```
 
 means "posts whose author is one of the 10 most-recently-created
@@ -552,7 +553,7 @@ val users = client.users.query {
         where(Post.published eq true)
         orderBy(Post.createdAt.desc())
     }
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 
 // Access loaded edges
 users.forEach { user ->
@@ -577,7 +578,7 @@ class User : EntSchema("people", clientName = "users") {
 client.users.query {
     loadAuthoredPosts()   // not loadPosts, loadPostEdges, or loadUser
     loadReviewedPosts { orderBy(Post.createdAt.desc()) }
-}.all()
+}.all(viewerContext)
 ```
 
 A declaration/storage mismatch generates only the declaration-based
@@ -666,7 +667,7 @@ rather than silently ignoring it:
 ```kotlin
 val query = client.users.query { loadPosts() }
 
-query.rawCount()        // ReadResult.Failed(EntQueryConfigurationException)
+query.rawCount(viewerContext)        // ReadResult.Failed(EntQueryConfigurationException)
 ```
 
 The failure happens before any interceptor or driver work, and the
@@ -681,7 +682,7 @@ client.users.query { loadPosts() }.queryPosts()   // throws
 
 client.users.query { where(User.active eq true) }
     .queryPosts { loadComments() }                // fine
-    .all()
+    .all(viewerContext)
 ```
 
 ### Eager Privacy and `filterVisible()`
@@ -715,7 +716,7 @@ val users = client.users.query {
         orderBy(Post.createdAt.desc())
         limit(10)
     }.filterVisible()
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 ```
 
 With `filterVisible()`, a denied to-one target loads as
@@ -743,7 +744,7 @@ val users = client.users.query {
             orderBy(Comment.createdAt.asc())
         }
     }
-}.all().getOrThrow()
+}.all(viewerContext).getOrThrow()
 ```
 
 ### The `Edges` Data Class
@@ -804,13 +805,12 @@ Interceptors are registered at client construction:
 
 ```kotlin
 val client = EntClient(driver) {
-    privacyContext { PrivacyContext(viewer) }
     interceptors {
         // Per-entity: narrow every Post read to the viewer's tenant.
         posts(
             interceptor = QueryInterceptor { scope, ctx ->
                 scope.addPredicate(
-                    Post.tenantId eq ctx.privacy.viewer.requireTenantId(),
+                    Post.tenantId eq ctx.viewerContext.viewer.requireTenantId(),
                 )
             },
             name = "tenant-scope",
@@ -842,7 +842,7 @@ read. The `context` carries:
   (`BY_ID`, `FIRST`, `ALL`, `RAW_COUNT`, `RAW_EXISTS`,
   `RAW_AGGREGATE`, `EDGE_TRAVERSAL`, `EDGE_PREDICATE`,
   `EAGER_LOAD`, `EAGER_JUNCTION`, `DELETE_CANDIDATES`)
-- `context.privacy` — the active `PrivacyContext` (viewer, etc.)
+- `context.viewerContext` — the active `ViewerContext` (viewer, etc.)
 - `context.rootEntity` / `context.currentEntity` /
   `context.sourceEntity` / `context.edgeName` / `context.path` —
   set for traversal / eager / edge-predicate steps; null/empty
@@ -896,7 +896,7 @@ shape reflecting prior mutations (`scope.shape` re-derives on
 every access).
 
 For traversal chains like
-`client.users.query().queryGroups().queryPosts().all()`,
+`client.users.query().queryGroups().queryPosts().all(viewerContext)`,
 each step fires the appropriate entity's interceptors with its
 own `QueryContext`:
 
@@ -904,7 +904,7 @@ own `QueryContext`:
   `operation = EDGE_TRAVERSAL`
 - `queryPosts()` — fires `Group.interceptors` with
   `operation = EDGE_TRAVERSAL`
-- `.all()` — fires `Post.interceptors` with
+- `.all(viewerContext)` — fires `Post.interceptors` with
   `operation = ALL`, `sourceEntity = Group`, `edgeName = "posts"`,
   `path = [User→groups→Group, Group→posts→Post]`
 
@@ -941,11 +941,11 @@ then returns the exhaustive `TransactionResult<T>`:
 ```kotlin
 val posts = client.withTransaction { tx ->
     val user = tx.users.create { name = "Alice"; email = "a@b.com" }
-        .saveAndLoad()
+        .saveAndLoad(viewerContext)
         .orRollback()
     tx.posts.query {
         where(Post.authorId eq user.id)
-    }.all().orRollback()
+    }.all(viewerContext).orRollback()
     // Both operations run in the same transaction
 }.getOrThrow()
 ```
@@ -965,20 +965,20 @@ could not be confirmed, it instead throws
 `EntTransactionOutcomeUnknownException` with the stored exception as
 its cause. Callers needing the complete state without throwing can
 inspect `TransactionResult.Failed` directly.
-`EntTransactionClient` exposes repositories and privacy re-scoping but
-has no `withTransaction` member, so nested client transactions do not
+`EntTransactionClient` exposes repositories but has no `withTransaction`
+member, so nested client transactions do not
 compile. At the lower-level driver API, an already-transactional driver
 still throws `NestedTransactionUnsupportedException` before the nested
 block runs.
 
 `EntClient` and `EntTransactionClient` both implement the generated
-`EntClientScope` interface, which contains the repositories and
-`currentPrivacyContext()` but no transaction entry point, privacy re-scoping,
-or configuration APIs. Helpers that should operate with either client can
+`EntClientScope` interface, which contains repositories but no transaction
+entry point or configuration APIs. Helpers that should operate with either client can
 accept this interface instead of overloading on the two concrete types.
 `beforeCreate` and `beforeUpdate` hook contexts expose the same narrow type,
-so nested client transactions do not become reachable again through
-`ctx.client`.
+plus the operation's `ctx.viewerContext`, so nested repository operations can
+pass the exact context explicitly without making nested client transactions
+reachable through `ctx.client`.
 
 For write-side transaction discipline — `TransactionRequirement`
 (client-level write guardrail) and `UpdateConsistency.Pessimistic`
