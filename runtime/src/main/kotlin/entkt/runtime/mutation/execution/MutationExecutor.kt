@@ -36,11 +36,10 @@ import java.util.concurrent.CancellationException
  * applies returned-entity LOAD privacy when the terminal exposes entities.
  */
 @EntktInternal
-class MutationExecutor<PrivacyClient, ValidationClient>(
+class MutationExecutor<RuleClient>(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime,
-    private val privacyClient: PrivacyClient,
-    private val validationClient: ValidationClient,
+    private val ruleClient: RuleClient,
 ) {
     /** Execute one create lifecycle and optionally authorize the returned entity. */
     fun <
@@ -55,7 +54,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         input: CreateMutationInput<Draft, BeforeSave, BeforeCreate>,
         spec: CreateMutationSpec<
             Draft, BeforeSave, BeforeCreate, PrivacyItem, ValidationItem,
-            Entity, PrivacyClient, ValidationClient,
+            Entity, RuleClient,
         >,
         checkReturnedEntityPrivacy: Boolean,
     ): MutationResult<Entity> = executeMutation { attempt ->
@@ -102,7 +101,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         inputs: List<CreateMutationInput<Draft, BeforeSave, BeforeCreate>>,
         spec: CreateMutationSpec<
             Draft, BeforeSave, BeforeCreate, PrivacyItem, ValidationItem,
-            Entity, PrivacyClient, ValidationClient,
+            Entity, RuleClient,
         >,
         promoteDriverNotPersisted: Boolean,
     ): MutationResult<List<Entity>> = executeMutation { attempt ->
@@ -134,7 +133,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         inputs: List<CreateMutationInput<Draft, BeforeSave, BeforeCreate>>,
         spec: CreateMutationSpec<
             Draft, BeforeSave, BeforeCreate, PrivacyItem, ValidationItem,
-            Entity, PrivacyClient, ValidationClient,
+            Entity, RuleClient,
         >,
         persistence: CreatePersistence,
         postWriteState: MutationWriteState,
@@ -214,7 +213,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         entityName: String,
         prepared: List<PreparedCreate<PrivacyItem, ValidationItem>>,
         viewerContext: ViewerContext,
-        rules: List<BatchPrivacyRule<PrivacyClient, PrivacyItem>>,
+        rules: List<BatchPrivacyRule<RuleClient, PrivacyItem>>,
     ) {
         val decisions = when {
             viewerContext.viewer is Viewer.PrivacyBypass ->
@@ -229,7 +228,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
                 rules = rules,
                 context = PrivacyRuleContext(
                     viewerContext = viewerContext,
-                    client = privacyClient,
+                    client = ruleClient,
                 ),
                 freshItem = PreparedCreate<PrivacyItem, ValidationItem>::freshPrivacyItem,
             )
@@ -263,7 +262,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
         attempt: MutationAttempt,
         entityName: String,
         prepared: List<PreparedCreate<PrivacyItem, ValidationItem>>,
-        rules: List<BatchValidationRule<ValidationClient, ValidationItem>>,
+        rules: List<BatchValidationRule<RuleClient, ValidationItem>>,
     ) {
         if (rules.isEmpty()) return
 
@@ -271,7 +270,7 @@ class MutationExecutor<PrivacyClient, ValidationClient>(
             lifecycle = "$entityName CREATE validation",
             items = prepared,
             rules = rules,
-            context = ValidationRuleContext(validationClient),
+            context = ValidationRuleContext(ruleClient),
             freshItem = PreparedCreate<PrivacyItem, ValidationItem>::freshValidationItem,
         )
         check(invalidsByCandidate.size == prepared.size) {

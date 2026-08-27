@@ -129,7 +129,6 @@ class MutationExecutorTest {
             Candidate,
             Widget,
             Unit,
-            Unit,
             > =
             CreateMutationSpec(
             entity = entity,
@@ -564,8 +563,7 @@ class MutationExecutorTest {
                     )
                 }
             },
-            privacyClient = Unit,
-            validationClient = Unit,
+            ruleClient = Unit,
         )
         return Fixture(
             events = events,
@@ -583,7 +581,7 @@ class MutationExecutorTest {
         val driver: RecordingDriver,
         val spec: RecordingSpec,
         val input: RecordingInput,
-        val executor: MutationExecutor<Unit, Unit>,
+        val executor: MutationExecutor<Unit>,
         val viewerContext: ViewerContext,
         val recordedFailures: MutableList<EntMutationException>,
     )

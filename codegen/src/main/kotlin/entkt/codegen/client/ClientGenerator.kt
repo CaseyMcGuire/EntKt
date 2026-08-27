@@ -310,7 +310,6 @@ internal class ClientGenerator(
                 "mutations",
                 MUTATION_EXECUTOR.parameterizedBy(
                     ClassName(packageName, "ReadOnlyEntClient"),
-                    ClassName(packageName, "ReadOnlyEntClient"),
                 ),
             ) {
                 addKdoc("Mutation lifecycles shared by this client's generated repositories.")
@@ -320,8 +319,7 @@ internal class ClientGenerator(
                     "lazy { %T(\n" +
                         "  driver = driver,\n" +
                         "  mutationRuntime = this,\n" +
-                        "  privacyClient = readOnlyClient,\n" +
-                        "  validationClient = readOnlyClient,\n" +
+                        "  ruleClient = readOnlyClient,\n" +
                         ") }",
                     MUTATION_EXECUTOR,
                 )

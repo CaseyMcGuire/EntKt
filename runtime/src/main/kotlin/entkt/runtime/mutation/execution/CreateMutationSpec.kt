@@ -17,8 +17,7 @@ class CreateMutationSpec<
     PrivacyItem,
     ValidationItem,
     Entity : EntEntity<*>,
-    PrivacyClient,
-    ValidationClient,
+    RuleClient,
     >(
     /** Generated identity, storage metadata, and row decoder for the created entity. */
     val entity: EntityMapping<Entity>,
@@ -36,8 +35,8 @@ class CreateMutationSpec<
     val resolveDraft: (Draft) -> CreatePreparation<PrivacyItem, ValidationItem>,
 
     /** CREATE-privacy rules evaluated against the resolved write candidates. */
-    val privacyRules: List<BatchPrivacyRule<PrivacyClient, PrivacyItem>>,
+    val privacyRules: List<BatchPrivacyRule<RuleClient, PrivacyItem>>,
 
     /** CREATE-validation rules evaluated against the resolved write candidates. */
-    val validationRules: List<BatchValidationRule<ValidationClient, ValidationItem>>,
+    val validationRules: List<BatchValidationRule<RuleClient, ValidationItem>>,
 )

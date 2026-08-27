@@ -162,9 +162,8 @@ class ClientGeneratorTest {
         assert(output.contains(": EntReadRuntime, MutationRuntime, EntClientScope"))
         assert(output.contains("internal val readOnlyClient: ReadOnlyEntClient by lazy"))
         assert(output.contains("ReadOnlyEntClientImpl("))
-        assert(output.contains("MutationExecutor<ReadOnlyEntClient, ReadOnlyEntClient>"))
-        assert(output.contains("privacyClient = readOnlyClient"))
-        assert(output.contains("validationClient = readOnlyClient"))
+        assert(output.contains("MutationExecutor<ReadOnlyEntClient>"))
+        assert(output.contains("ruleClient = readOnlyClient"))
         assert(!output.contains("privacyReadClient") && !output.contains("validationReadClient"))
         assert(!output.contains("privacyRuleClient(") && !output.contains("validationRuleClient("))
         assert(!output.contains("evaluateCreatePrivacy") && !output.contains("evaluateCreateValidation")) {

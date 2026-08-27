@@ -1220,7 +1220,6 @@ internal class RepoGenerator(
             validationItemClass,
             entityClass,
             ClassName(packageName, "ReadOnlyEntClient"),
-            ClassName(packageName, "ReadOnlyEntClient"),
         )
         return property("createSpec", specType) {
             addModifiers(KModifier.PRIVATE)
