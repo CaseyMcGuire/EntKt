@@ -1,8 +1,6 @@
 package entkt.codegen
 
 import entkt.codegen.mutation.CreateGenerator
-import entkt.codegen.mutation.buildClassifyDriverFailureHelper
-import entkt.codegen.mutation.driverCallFailureTail
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test
@@ -149,23 +147,6 @@ class CreateGeneratorTest {
         assertTrue(draft.contains("class SessionCreateDraft @EntktInternal constructor("), draft)
         assertTrue(draft.contains("internal val id: String,"), draft)
         assertTrue(resolver.contains("\"id\" to id"), resolver)
-    }
-
-    @Test
-    fun `shared driver failure emitters support an operation-specific classifier name`() {
-        val helper = buildClassifyDriverFailureHelper(
-            schemaName = "Car",
-            operationName = "DELETE",
-            helperName = "_classifyDeleteDriverFailure",
-        ).toString()
-        val tail = driverCallFailureTail(
-            fallbackStateName = "PersistenceUnknown",
-            classifierName = "_classifyDeleteDriverFailure",
-        ).toString()
-
-        assertTrue(helper.contains("fun _classifyDeleteDriverFailure"), helper)
-        assertTrue(helper.contains("EntOperation.DELETE"), helper)
-        assertTrue(tail.contains("_classifyDeleteDriverFailure(e"), tail)
     }
 
     private fun resolve(schemaName: String, schema: EntSchema): String =

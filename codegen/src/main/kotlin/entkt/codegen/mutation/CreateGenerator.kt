@@ -9,7 +9,6 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.MemberName
-import com.squareup.kotlinpoet.NOTHING
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.asClassName
@@ -51,10 +50,8 @@ private val UUID_CLASS = ClassName("java.util", "UUID")
 internal val MUTATION_RESULT = ClassName("entkt.runtime.result", "MutationResult")
 internal val MUTATION_WRITE_STATE = ClassName("entkt.runtime.result", "MutationWriteState")
 internal val ENT_MUTATION_EXCEPTION = ClassName("entkt.runtime.result", "EntMutationException")
-internal val ENT_TARGET_ABSENT_EXCEPTION = ClassName("entkt.runtime.result", "EntTargetAbsentException")
 internal val ENT_MUTATION_PRIVACY_DENIED_EXCEPTION =
     ClassName("entkt.runtime.result", "EntMutationPrivacyDeniedException")
-internal val ENT_VALIDATION_EXCEPTION = ClassName("entkt.runtime.result", "EntValidationException")
 internal val ENT_UNEXPECTED_MUTATION_EXCEPTION =
     ClassName("entkt.runtime.result", "EntUnexpectedMutationException")
 internal val MUTATION_ENTITY_KEY = ClassName("entkt.runtime.result", "EntityKey")
@@ -143,89 +140,6 @@ internal fun privacyDeniedFailure(
                 },
             ),
         )
-    }
-
-/**
- * Emission fragment: the catch tail for a single driver call inside a
- * mutation pipeline. Opens with `} catch` so the caller supplies the
- * `... = try {` head and the driver-call statement. Rethrows
- * `CancellationException`, then routes the exception through the
- * generated classifier member named by [classifierName] with [fallbackStateName]
- * as the phase-derived fallback: `NotPersisted` for pre-write reads
- * (owner load, delete reload), `PersistenceUnknown` for owner write
- * statements whose effect is unknown (never optimistic NotPersisted),
- * and `TransactionPending` for junction writes, which are
- * preflight-guaranteed to run inside a caller-owned transaction.
- */
-internal fun driverCallFailureTail(
-    fallbackStateName: String,
-    classifierName: String = "_classifyDriverFailure",
-): CodeBlock =
-    codeBlock {
-        add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
-        add("  throw e\n")
-        add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
-        add(
-            "  val classified = %N(e, %T.%L)\n",
-            classifierName,
-            MUTATION_WRITE_STATE,
-            fallbackStateName,
-        )
-        add("  client.recordTransactionMutationFailure(classified)\n")
-        add("  return %T.failedForInternalUse(classified)\n", MUTATION_RESULT)
-        add("}\n")
-    }
-
-/**
- * Build the private driver-classification member named by [helperName]:
- * the driver-exception classification point for one entity + operation.
- * Consults [entkt.runtime.driver.DatabaseDriver.classifyMutationException]; a
- * classification carrying a sealed [ENT_MUTATION_EXCEPTION] (a
- * recognized constraint violation or expected conflict, both hardcoded
- * NotPersisted) is used directly, any other classified exception is
- * null classification falls back to the caller's phase-derived
- * [MUTATION_WRITE_STATE] wrapped as an unexpected mutation failure —
- * the returned exception's own writeState IS the classification (no
- * parallel state field).
- */
-internal fun buildClassifyDriverFailureHelper(
-    schemaName: String,
-    operationName: String,
-    helperName: String = "_classifyDriverFailure",
-): FunSpec =
-    function(helperName, returnType = ENT_MUTATION_EXCEPTION) {
-        addModifiers(KModifier.PRIVATE)
-        parameter("e", KOTLIN_EXCEPTION)
-        parameter("fallback", MUTATION_WRITE_STATE)
-        addCode(
-            codeBlock {
-                add(
-                    "return driver.classifyMutationException(e, %S, %T.%L)\n",
-                    schemaName, MUTATION_ENT_OPERATION, operationName,
-                )
-                add("  ?: %T(fallback, e)\n", ENT_UNEXPECTED_MUTATION_EXCEPTION)
-            },
-        )
-    }
-
-/**
- * Build the private `_validationFailed(violations)` member shared by
- * the inline normalize-phase checks (required fields, field
- * validators) and the rule-evaluator call sites. Constructs the typed
- * [ENT_VALIDATION_EXCEPTION] (hardcoded NotPersisted), records it on
- * the coordinator, and returns the Failed result. `MutationResult<Nothing>`
- * so a `return _validationFailed(...)` type-checks in any terminal.
- */
-internal fun buildValidationFailedHelper(schemaName: String, operationName: String): FunSpec =
-    function("_validationFailed", returnType = MUTATION_RESULT.parameterizedBy(NOTHING)) {
-        addModifiers(KModifier.PRIVATE)
-        parameter("violations", List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION))
-        statement(
-            "val exception = %T(%S, %T.%L, violations)",
-            ENT_VALIDATION_EXCEPTION, schemaName, MUTATION_ENT_OPERATION, operationName,
-        )
-        statement("client.recordTransactionMutationFailure(exception)")
-        statement("return %T.failedForInternalUse(exception)", MUTATION_RESULT)
     }
 
 internal class CreateGenerator(
@@ -648,9 +562,8 @@ internal fun hookListType(paramType: ClassName) =
 /**
  * Emit inline validation checks for a single field's validators.
  * When [nullable] is true, the checks are wrapped in `if (prop != null) { ... }`.
- * Update validation returns through its generated `_validationFailed` helper.
- * Create preparation supplies [invalidPreparationType] so the runtime executor
- * can classify and record the failure at the shared lifecycle boundary.
+ * The caller supplies [invalidPreparationType] so the runtime executor can
+ * classify and record the preparation failure at the shared lifecycle boundary.
  */
 internal fun emitFieldValidation(
     builder: FunSpec.Builder,
@@ -658,7 +571,7 @@ internal fun emitFieldValidation(
     fieldName: String,
     validators: List<entkt.schema.Validator>,
     nullable: Boolean,
-    invalidPreparationType: ClassName? = null,
+    invalidPreparationType: ClassName,
 ) {
     if (nullable) {
         builder.beginControlFlow("if (%L != null)", prop)
@@ -686,24 +599,15 @@ private fun emitValidatorCheck(
     fieldName: String,
     message: String,
     spec: ValidatorSpec,
-    invalidPreparationType: ClassName?,
+    invalidPreparationType: ClassName,
 ) {
-    val failure = if (invalidPreparationType == null) {
-        CodeBlock.of(
-            "_validationFailed(listOf(%T(%S, field = %S)))",
-            MUTATION_VALIDATION_VIOLATION,
-            message,
-            fieldName,
-        )
-    } else {
-        CodeBlock.of(
-            "%T.Invalid(listOf(%T(%S, field = %S)))",
-            invalidPreparationType,
-            MUTATION_VALIDATION_VIOLATION,
-            message,
-            fieldName,
-        )
-    }
+    val failure = CodeBlock.of(
+        "%T.Invalid(listOf(%T(%S, field = %S)))",
+        invalidPreparationType,
+        MUTATION_VALIDATION_VIOLATION,
+        message,
+        fieldName,
+    )
     when (spec) {
         is ValidatorSpec.MinLength -> builder.addStatement(
             "if (%L.length < %L) return·%L",

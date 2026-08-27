@@ -17,7 +17,6 @@ import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
-import entkt.codegen.lifecyclePatchSnapshot
 import entkt.codegen.lifecycleValueSnapshot
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.anonymousType
@@ -33,8 +32,6 @@ import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.setter
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.computeEdgeFks
-import entkt.codegen.metadata.HelperEligibleM2M
-import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
@@ -67,17 +64,12 @@ private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateCons
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val ENT_CLIENT_NAME = "EntClient"
 private val PRIVACY_RULE_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyRuleContext")
-private val VALIDATION_RULE_CONTEXT = ClassName("entkt.runtime.validation", "ValidationRuleContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val ENTITY_KEY = ClassName("entkt.runtime.result", "EntityKey")
 private val PRIVACY_DECISION = ClassName("entkt.runtime.privacy", "PrivacyDecision")
-private val VALIDATION_DECISION = ClassName("entkt.runtime.validation", "ValidationDecision")
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val EVALUATE_BATCH_PRIVACY_RULES =
     MemberName("entkt.runtime.privacy", "evaluateBatchPrivacyRulesForInternalUse")
-private val EVALUATE_BATCH_VALIDATION_RULES =
-    MemberName("entkt.runtime.validation", "evaluateBatchValidationRulesForInternalUse")
-private val TO_VALIDATION_VIOLATION = MemberName("entkt.runtime.result", "toValidationViolation")
 private val TRANSACTION_RESULT = ClassName("entkt.runtime.result", "TransactionResult")
 private val TRANSACTION_FAILURE_STATE = ClassName("entkt.runtime.result", "TransactionFailureState")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
@@ -101,8 +93,6 @@ private val WITH_PRIVACY_FALLBACK =
 private val CREATE_MUTATION = ClassName("entkt.runtime.mutation", "CreateMutation")
 private val CREATE_MUTATION_REPOSITORY =
     ClassName("entkt.runtime.mutation", "CreateMutationRepository")
-private val SNAPSHOT_EDGE_CHANGES =
-    MemberName("entkt.runtime.mutation", "snapshotEdgeChangesForInternalUse")
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -143,7 +133,6 @@ internal class RepoGenerator(
         val idType = schema.id().type.toTypeName()
         val fields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
-        val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
 
         val createLambda = LambdaTypeName.get(
             receiver = createDraftClass,
@@ -314,25 +303,7 @@ internal class RepoGenerator(
             addFunction(buildHasPrivacy("hasDeletePrivacy"))
             addFunction(buildLoadDenials(schemaName, entityClass, loadItemClass, fields))
             addFunction(buildLoadDenialOrNull(entityClass))
-            addFunction(
-                buildUpdateDenialReasonOrNull(
-                    schemaName,
-                    entityClass,
-                    candidateClass,
-                    fields,
-                    helperEligibleEdges,
-                ),
-            )
             addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
-            addFunction(
-                buildEvaluateUpdateValidation(
-                    schemaName,
-                    entityClass,
-                    candidateClass,
-                    fields,
-                    helperEligibleEdges,
-                ),
-            )
         }
 
         // The repo class implements the `@EntktInternal`-guarded
@@ -756,102 +727,6 @@ internal class RepoGenerator(
             parameter("entity", entityClass)
             statement("return loadDenials(viewerContext, listOf(entity)).single()")
         }
-
-    // ── Write-side privacy evaluators ─────────────────────────────
-    // DECISION-RETURNING (String? denial reason; null = allowed), so
-    // the mutation terminals can distinguish a rule-RETURNED Deny /
-    // fail-closed end-of-list (→ typed EntMutationPrivacyDeniedException
-    // constructed at the call site) from a rule-THROWN exception —
-    // there is deliberately no catch inside these helpers: a thrown
-    // exception escapes to the terminal's capture boundary as a
-    // foreign failure. Privacy stays fail-closed: with no explicit
-    // Allow, the helper returns the "no <op> rule allowed access"
-    // reason.
-
-    /**
-     * Build a fresh per-rule edge-change sidecar. A Kotlin `Set` is only
-     * read-only at compile time, so each runtime EdgeChanges value also wraps
-     * detached sets whose mutators fail on the JVM.
-     */
-    private fun edgeChangesSnapshot(
-        source: String,
-        helperEligibleEdges: List<HelperEligibleM2M>,
-    ): CodeBlock {
-        if (helperEligibleEdges.isEmpty()) return CodeBlock.of("%L", source)
-
-        return codeBlock {
-            add("%L.copy(\n", source)
-                for (edge in helperEligibleEdges) {
-                    add(
-                        "  %L = %M(%L.%L),\n",
-                        edge.mutatorPropertyName,
-                        SNAPSHOT_EDGE_CHANGES,
-                        source,
-                        edge.mutatorPropertyName,
-                    )
-                }
-            add(")")
-        }
-    }
-
-    private fun buildUpdateDenialReasonOrNull(
-        schemaName: String,
-        entityClass: ClassName,
-        candidateClass: ClassName,
-        fields: List<Field>,
-        helperEligibleEdges: List<HelperEligibleM2M>,
-    ): FunSpec {
-        val updateItemClass = ClassName(packageName, "${schemaName}UpdatePrivacyItem")
-        val createItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem")
-        val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
-        val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
-        return function("updateDenialReasonOrNull", String::class.asClassName().copy(nullable = true)) {
-            addModifiers(KModifier.INTERNAL)
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("before", entityClass)
-            parameter("requestedPatch", patchClass)
-            parameter("effectivePatch", patchClass)
-            parameter("candidate", candidateClass)
-            parameter("edgeChanges", edgeChangesViewClass)
-            addCode(codeBlock {
-                addStatement("if (viewerContext.viewer is %T.PrivacyBypass) return null", VIEWER)
-                .addStatement("val rules = privacyConfig.updateRules")
-                .addStatement("val ruleContext = %T(viewerContext, client.readOnlyClient)", PRIVACY_RULE_CONTEXT)
-                .addStatement(
-                    "var decision = %M(%S, listOf(candidate), rules, ruleContext) { item ->\n" +
-                    "  %T(%L, %L, %L, %L, %L)\n" +
-                        "}.single()",
-                    EVALUATE_BATCH_PRIVACY_RULES,
-                    "$schemaName UPDATE privacy",
-                    updateItemClass,
-                    lifecycleValueSnapshot("before", fields, entityClass),
-                    lifecyclePatchSnapshot("requestedPatch", fields, entityClass),
-                    lifecyclePatchSnapshot("effectivePatch", fields, entityClass),
-                    lifecycleValueSnapshot("item", fields, entityClass),
-                    edgeChangesSnapshot("edgeChanges", helperEligibleEdges),
-                )
-                .beginControlFlow(
-                    "if (decision is %T.Continue && privacyConfig.updateDerivesFromCreate)",
-                    PRIVACY_DECISION,
-                )
-                .addStatement(
-                    "decision = %M(%S, listOf(candidate), privacyConfig.createRules, ruleContext) { item ->\n" +
-                        "  %T(%L)\n" +
-                        "}.single()",
-                    EVALUATE_BATCH_PRIVACY_RULES,
-                    "$schemaName UPDATE privacy",
-                    createItemClass,
-                    lifecycleValueSnapshot("item", fields, entityClass),
-                )
-                .endControlFlow()
-                .beginControlFlow("return when (decision)")
-                .addStatement("is %T.Allow -> null", PRIVACY_DECISION)
-                .addStatement("is %T.Deny -> decision.reason", PRIVACY_DECISION)
-                .addStatement("is %T.Continue -> %S", PRIVACY_DECISION, "no update rule allowed access")
-                .endControlFlow()
-            })
-        }
-    }
 
     private fun buildBuildDeleteCandidate(
         schemaName: String,
@@ -1422,66 +1297,6 @@ internal class RepoGenerator(
     ): PropertySpec = property(name, type) {
         addModifiers(KModifier.PRIVATE)
         initializer("configuredHooks.%LHooks.toList()", name.removeSuffix("Hooks"))
-    }
-
-    // ── Write-side validation evaluators ──────────────────────────
-    // DECISION-RETURNING (List<ValidationViolation>; empty = valid),
-    // so the mutation terminals construct the typed
-    // EntValidationException at their own classification point. A
-    // rule-RETURNED Invalid is mapped through toValidationViolation();
-    // a rule-THROWN exception escapes (no catch here) to the
-    // terminal's capture boundary as a foreign failure — even when the
-    // rule threw an EntValidationException itself.
-
-    private fun buildEvaluateUpdateValidation(
-        schemaName: String,
-        entityClass: ClassName,
-        candidateClass: ClassName,
-        fields: List<Field>,
-        helperEligibleEdges: List<HelperEligibleM2M>,
-    ): FunSpec {
-        val updateItemClass = ClassName(packageName, "${schemaName}UpdateValidationItem")
-        val createItemClass = ClassName(packageName, "${schemaName}CreateValidationItem")
-        val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
-        val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
-        return function("evaluateUpdateValidation", LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION)) {
-            addModifiers(KModifier.INTERNAL)
-            parameter("before", entityClass)
-            parameter("requestedPatch", patchClass)
-            parameter("effectivePatch", patchClass)
-            parameter("candidate", candidateClass)
-            parameter("edgeChanges", edgeChangesViewClass)
-            addCode(codeBlock {
-                addStatement("val rules = validationConfig.updateRules")
-                .addStatement("if (rules.isEmpty() && !validationConfig.updateDerivesFromCreate) return emptyList()")
-                .addStatement("val ruleContext = %T(client.readOnlyClient)", VALIDATION_RULE_CONTEXT)
-                .addStatement(
-                    "val invalids = %M(%S, listOf(candidate), rules, ruleContext) { item ->\n" +
-                    "  %T(%L, %L, %L, %L, %L)\n" +
-                        "}.single().toMutableList()",
-                    EVALUATE_BATCH_VALIDATION_RULES,
-                    "$schemaName UPDATE validation",
-                    updateItemClass,
-                    lifecycleValueSnapshot("before", fields, entityClass),
-                    lifecyclePatchSnapshot("requestedPatch", fields, entityClass),
-                    lifecyclePatchSnapshot("effectivePatch", fields, entityClass),
-                    lifecycleValueSnapshot("item", fields, entityClass),
-                    edgeChangesSnapshot("edgeChanges", helperEligibleEdges),
-                )
-                .beginControlFlow("if (validationConfig.updateDerivesFromCreate)")
-                .addStatement(
-                    "invalids += %M(%S, listOf(candidate), validationConfig.createRules, ruleContext) { item ->\n" +
-                        "  %T(%L)\n" +
-                        "}.single()",
-                    EVALUATE_BATCH_VALIDATION_RULES,
-                    "$schemaName UPDATE validation",
-                    createItemClass,
-                    lifecycleValueSnapshot("item", fields, entityClass),
-                )
-                .endControlFlow()
-                .addStatement("return invalids.map { it.%M() }", TO_VALIDATION_VIOLATION)
-            })
-        }
     }
 
 }

@@ -1079,10 +1079,10 @@ class EdgeCodegenTest {
         assert(
             output.contains(
                 "if (ownerId_eff is FieldPatch.Set) { val ownerId_v = ownerId_eff.value " +
-                    "if (ownerId_v <= 0) return _validationFailed(listOf(ValidationViolation(\"value must be positive\", field = \"ownerId\"))) }",
+                    "if (ownerId_v <= 0) return UpdatePreparation.Invalid(listOf(ValidationViolation(\"value must be positive\", field = \"ownerId\"))) }",
             ),
         ) {
-            "Update should return a validation Failed for Set entries failing the .positive() FK validator\n$output"
+            "Update preparation should return Invalid for Set entries failing the .positive() FK validator\n$output"
         }
     }
 

@@ -125,3 +125,19 @@ fun <RuleClient, Candidate, Item> mutationValidationPhaseForInternalUse(
         )
     }
 }
+
+/** Append every violation from [additional] to the corresponding candidate. */
+@EntktInternal
+fun <RuleClient, Candidate> MutationValidationPhase<RuleClient, Candidate>.plusValidationForInternalUse(
+    additional: MutationValidationPhase<RuleClient, Candidate>?,
+): MutationValidationPhase<RuleClient, Candidate> {
+    if (additional == null) return this
+    return MutationValidationPhase { ruleClient, candidates ->
+        val primary = evaluate(ruleClient, candidates)
+        val secondary = additional.evaluate(ruleClient, candidates)
+        check(primary.size == candidates.size && secondary.size == candidates.size) {
+            "composed validation phases must return one result per candidate"
+        }
+        primary.indices.map { index -> primary[index] + secondary[index] }
+    }
+}

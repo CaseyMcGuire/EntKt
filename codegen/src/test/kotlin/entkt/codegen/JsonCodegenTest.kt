@@ -114,13 +114,13 @@ class JsonCodegenTest {
             """metadata = driver.copyJsonValue(JsonArticle.TABLE, "metadata", item.metadata)""" in repo,
             repo,
         )
-        assertTrue(
-            """FieldPatch.Set(driver.copyJsonValue(JsonArticle.TABLE, "metadata", entry.value))""" in repo,
-            repo,
-        )
         assertFalse("copyJsonValue(JsonArticle.TABLE, \"metadata\", item.metadata) as Meta?" in repo, repo)
 
         val update = gen().getValue("JsonArticleUpdate")
+        assertTrue(
+            """FieldPatch.Set(driver.copyJsonValue(JsonArticle.TABLE, "metadata", entry.value))""" in update,
+            update,
+        )
         assertTrue("val snapshot = JsonArticleUpdatePatch(" in update, update)
         assertTrue("metadata = when (val entry = snapshot.metadata)" in update, update)
         assertTrue(

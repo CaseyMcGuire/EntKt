@@ -43,6 +43,8 @@ private val CREATE_MUTATION_EXECUTOR =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationExecutor")
 private val DELETE_MUTATION_EXECUTOR =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationExecutor")
+private val UPDATE_MUTATION_EXECUTOR =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationExecutor")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "TransactionRequirement")
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime.mutation", "TransactionRequiredException")
@@ -343,6 +345,24 @@ internal class ClientGenerator(
                         "  ruleClient = readOnlyClient,\n" +
                         ") }",
                     DELETE_MUTATION_EXECUTOR,
+                )
+            }
+            property(
+                "updateMutations",
+                UPDATE_MUTATION_EXECUTOR.parameterizedBy(
+                    ClassName(packageName, "ReadOnlyEntClient"),
+                ),
+            ) {
+                addKdoc("Update lifecycles shared by this client's generated builders.")
+                addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                addModifiers(KModifier.INTERNAL)
+                delegate(
+                    "lazy { %T(\n" +
+                        "  driver = driver,\n" +
+                        "  mutationRuntime = this,\n" +
+                        "  ruleClient = readOnlyClient,\n" +
+                        ") }",
+                    UPDATE_MUTATION_EXECUTOR,
                 )
             }
             function("checkReadExecution") {

@@ -164,9 +164,11 @@ class ClientGeneratorTest {
         assert(output.contains("ReadOnlyEntClientImpl("))
         assert(output.contains("CreateMutationExecutor<ReadOnlyEntClient>"))
         assert(output.contains("DeleteMutationExecutor<ReadOnlyEntClient>"))
+        assert(output.contains("UpdateMutationExecutor<ReadOnlyEntClient>"))
         assert(output.contains("internal val createMutations:"))
         assert(output.contains("internal val deleteMutations:"))
-        assert(Regex("ruleClient = readOnlyClient").findAll(output).count() == 2)
+        assert(output.contains("internal val updateMutations:"))
+        assert(Regex("ruleClient = readOnlyClient").findAll(output).count() == 3)
         assert(!output.contains("privacyReadClient") && !output.contains("validationReadClient"))
         assert(!output.contains("privacyRuleClient(") && !output.contains("validationRuleClient("))
         assert(!output.contains("evaluateCreatePrivacy") && !output.contains("evaluateCreateValidation")) {

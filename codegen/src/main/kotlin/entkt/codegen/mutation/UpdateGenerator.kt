@@ -98,6 +98,15 @@ internal class UpdateGenerator(
         // hook-facing `${schemaName}UpdateMutationView` — hooks see
         // pending edge ops through a read-only sidecar.
         val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
+        val saveArtifacts = UpdateSaveEmitter(
+            packageName = packageName,
+            schemaName = schemaName,
+            clientName = schema.clientName,
+            allFields = allFields,
+            edgeFks = edgeFks,
+            allEdgeFks = allEdgeFks,
+            helperEligibleEdges = helperEligibleEdges,
+        ).build()
 
         // The Update builder implements only the shared Mutation
         // interface, not UpdateMutationView. The view (and its
@@ -260,11 +269,11 @@ internal class UpdateGenerator(
                     addFunction(buildCheckLinkTableM2MMixedModeFunction(helperEligibleEdges))
                 }
             }
-            addFunction(buildExecuteSaveFunction(schemaName, schema.clientName, allFields, edgeFks, allEdgeFks, helperEligibleEdges))
+            addType(saveArtifacts.preparedStateType)
+            addProperty(saveArtifacts.specProperty)
+            saveArtifacts.functions.forEach(::addFunction)
             addFunction(buildSaveWrapperFunction())
             addFunction(buildSaveAndLoadWrapperFunction(schemaName))
-            addFunction(buildValidationFailedHelper(schemaName, "UPDATE"))
-            addFunction(buildClassifyDriverFailureHelper(schemaName, "UPDATE"))
             // Nested mutator class declarations. Nested
             // inside the Update builder so two entities with the same
             // edge name don't collide on the mutator class symbol.
@@ -620,9 +629,9 @@ internal class UpdateGenerator(
      * that has been assigned `null` and not repaired (empty list =
      * all required shapes hold). Called from the save pipeline after
      * all `beforeUpdate` hooks complete, before the canonical
-     * requested patch is built; a non-empty result becomes a typed
-     * `EntValidationException` via the builder's `_validationFailed`
-     * helper. A hook can clear the bad assignment via
+     * requested patch is built; a non-empty result becomes
+     * `UpdatePreparation.Invalid`, which the runtime executor turns into a
+     * typed `EntValidationException`. A hook can clear the bad assignment via
      * `mutation.unsetFoo()` (removes the entry from `dirtyFields`) or
      * by reassigning a non-null value. Short-circuits on the first
      * failure (matches the existing single-violation shape;
@@ -1028,81 +1037,6 @@ internal class UpdateGenerator(
             addCode(body)
         }
     }
-
-    /**
-     * The single update execution pipeline (private
-     * `executeSave(applyLoadPrivacy)`) both public terminals project.
-     * The pipeline (emitted by [UpdateSaveEmitter], whose phase order
-     * IS the generated semantics):
-     *
-     * **Preflights.** Transaction requirement, Pessimistic / M2M
-     * capability checks, mixed-mode defense-in-depth, canonical
-     * relationship locks. Their throws are captured by the terminal
-     * boundary as `EntUnexpectedMutationException(NotPersisted)`.
-     *
-     * **Internal current-row load.** Every save — including an
-     * assignment-free one — loads the current owner row before any
-     * hook runs, so target absence is an authoritative
-     * `Failed(EntTargetAbsentException)`. The path branches on the
-     * per-save `consistency` parameter (transaction locking):
-     *
-     * - `UpdateConsistency.ReadCurrent` (the default) reads the row
-     *   via `driver.byId(id)` — no lock; another transaction may
-     *   change or delete the row between this read and the write.
-     * - `UpdateConsistency.Pessimistic` reads the row via
-     *   `driver.readRowForUpdate(id)` — held under a true row lock
-     *   until the surrounding transaction commits or rolls back,
-     *   so the checked owner state stays stable through the write.
-     *
-     * Either path bypasses LOAD privacy. The loaded row is the
-     * privacy/validation `before` and the fallback for untouched
-     * fields in the after-state candidate.
-     *
-     * **Patch lowering.** The builder's `dirtyFields` are lowered into
-     * a `${schemaName}UpdatePatch` (the requested patch). The same
-     * helper builds a fresh per-hook snapshot before each
-     * `beforeUpdate` invocation, then once more after the hook loop
-     * for the canonical patch. Required-field/FK null checks run
-     * after the hook loop so a hook can repair an explicit
-     * `name = null` via `unsetName()` or by reassigning a value.
-     *
-     * **No-op updates.** An update whose patch has no assignments
-     * after hooks (syntactically empty or hook-cleared) still runs
-     * UPDATE privacy and validation against the unchanged candidate,
-     * then completes as `Success` WITHOUT persisting: update defaults,
-     * the driver write, and post-persist callbacks are skipped so a
-     * default-only "real" write is never synthesized. There is no
-     * NoChanges outcome.
-     *
-     * **Defaults and write set.** On the non-empty path, update
-     * defaults (e.g. `updatedAt = updateDefaultNow()`) are applied to
-     * the canonical requested patch to produce the effective patch.
-     * Only the effective patch's `Set` entries are sent to
-     * `driver.update(...)`; untouched columns are not round-tripped,
-     * but explicitly assigned values are written even when equal to
-     * the current row.
-     *
-     * **Rule visibility.** Privacy and validation rules see the loaded
-     * `before`, the requested patch, the effective patch, and a full
-     * after-state write candidate built by folding the effective
-     * patch onto `before`.
-     */
-    private fun buildExecuteSaveFunction(
-        schemaName: String,
-        clientName: String,
-        allFields: List<Field>,
-        // Mutable-only — the update builder's writable surface. Used
-        // everywhere except candidate construction.
-        edgeFks: List<EdgeFk>,
-        // All FKs including immutable. Used by candidate construction so
-        // immutable FK values come from `entity.before` unchanged.
-        allEdgeFks: List<EdgeFk>,
-        // Helper-eligible link-table M2M edges. When
-        // non-empty, the pipeline emits an M2M preflight block (tx +
-        // capability + defense-in-depth mixed-mode) before the
-        // owner-row read, plus the junction write phase.
-        helperEligibleEdges: List<HelperEligibleM2M>,
-    ): FunSpec = UpdateSaveEmitter(packageName, schemaName, clientName, allFields, edgeFks, allEdgeFks, helperEligibleEdges).build()
 
     /**
      * `save(): MutationResult<Unit>` — acknowledgement-only projection
