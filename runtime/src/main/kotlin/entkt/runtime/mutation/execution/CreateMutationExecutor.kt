@@ -17,6 +17,8 @@ import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.PrivacyDenial
+import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.toValidationViolation
 import java.util.concurrent.CancellationException
 
@@ -34,6 +36,56 @@ class CreateMutationExecutor<RuleClient>(
     private val ruleClient: RuleClient,
 ) {
     private val execution = MutationExecutionSupport(mutationRuntime)
+
+    /** Bind an entity specification whose generated API exposes only scalar create. */
+    fun <Draft, Candidate, Entity : EntEntity<*>> operationForInternalUse(
+        spec: CreateMutationSpec<Draft, Candidate, Entity, RuleClient>,
+    ): CreateOperation<Draft, Entity> = buildOperation(
+        spec = spec,
+        newDraft = null,
+        ownedTransaction = null,
+    )
+
+    /** Bind one generated entity specification to the reusable create operation. */
+    fun <Draft, Candidate, Entity : EntEntity<*>> operationForInternalUse(
+        spec: CreateMutationSpec<Draft, Candidate, Entity, RuleClient>,
+        newDraft: () -> Draft,
+        ownedTransaction: (
+            ViewerContext,
+            List<Draft.() -> Unit>,
+            CreateManyDisclosureCapture,
+        ) -> TransactionResult<CreateManyDisclosure<Entity>>,
+    ): CreateOperation<Draft, Entity> = buildOperation(
+        spec = spec,
+        newDraft = newDraft,
+        ownedTransaction = ownedTransaction,
+    )
+
+    /** Construct the bound operation after selecting its optional bulk capability. */
+    private fun <Draft, Candidate, Entity : EntEntity<*>> buildOperation(
+        spec: CreateMutationSpec<Draft, Candidate, Entity, RuleClient>,
+        newDraft: (() -> Draft)?,
+        ownedTransaction: ((
+            ViewerContext,
+            List<Draft.() -> Unit>,
+            CreateManyDisclosureCapture,
+        ) -> TransactionResult<CreateManyDisclosure<Entity>>)?,
+    ): CreateOperation<Draft, Entity> = CreateOperation(
+        driver = driver,
+        mutationRuntime = mutationRuntime,
+        entityName = spec.entity.entityName,
+        newDraft = newDraft,
+        executeOne = { vc, draft, checkReturnedEntityPrivacy ->
+            create(vc, draft, spec, checkReturnedEntityPrivacy)
+        },
+        executeMany = { vc, drafts, promoteDriverNotPersisted ->
+            createMany(vc, drafts, spec, promoteDriverNotPersisted)
+        },
+        returnedEntityDenial = { vc, entities ->
+            returnedEntityDenial(vc, entities, spec.entity)
+        },
+        ownedTransaction = ownedTransaction,
+    )
 
     /** Execute one create lifecycle and optionally authorize the returned entity. */
     fun <
@@ -68,14 +120,6 @@ class CreateMutationExecutor<RuleClient>(
             evaluateReturnedEntityPrivacy(attempt, viewerContext, created, spec.entity)
         }
         created.single()
-    }
-
-    /** Enforce transaction policy before createMany chooses or opens its transaction. */
-    fun checkCreateManyTransactionRequirement(entityName: String, numberOfBuilders: Int) {
-        mutationRuntime.checkTransactionRequirement(
-            operation = "$entityName createMany",
-            multiWrite = numberOfBuilders > 1,
-        )
     }
 
     /** Execute the phase-major create lifecycle for inputs in an active transaction. */
@@ -304,16 +348,7 @@ class CreateMutationExecutor<RuleClient>(
         created: List<Entity>,
         entity: EntityMapping<Entity>,
     ) {
-        val evaluations = mutationRuntime.evaluate(
-            entity = entity,
-            viewerContext = viewerContext,
-            entities = created,
-        )
-        check(evaluations.size == created.size) {
-            "LOAD privacy returned ${evaluations.size} decisions for " +
-                "${created.size} created entities"
-        }
-        evaluations.firstNotNullOfOrNull { it.denialOrNull() }?.let { denial ->
+        returnedEntityDenial(viewerContext, created, entity)?.let { denial ->
             attempt.reject(
                 EntMutationPrivacyDeniedException(
                     writeState = attempt.writeState,
@@ -324,6 +359,24 @@ class CreateMutationExecutor<RuleClient>(
                 ),
             )
         }
+    }
+
+    /** Return the first LOAD denial without assigning a mutation write state. */
+    private fun <Entity : EntEntity<*>> returnedEntityDenial(
+        viewerContext: ViewerContext,
+        created: List<Entity>,
+        entity: EntityMapping<Entity>,
+    ): PrivacyDenial? {
+        val evaluations = mutationRuntime.evaluate(
+            entity = entity,
+            viewerContext = viewerContext,
+            entities = created,
+        )
+        check(evaluations.size == created.size) {
+            "LOAD privacy returned ${evaluations.size} decisions for " +
+                "${created.size} created entities"
+        }
+        return evaluations.firstNotNullOfOrNull { it.denialOrNull() }
     }
 }
 

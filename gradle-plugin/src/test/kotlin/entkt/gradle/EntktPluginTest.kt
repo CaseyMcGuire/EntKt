@@ -164,13 +164,14 @@ class EntktPluginTest {
 
             val queryContent = generatedDir.resolve("PetQuery.kt").readText()
             assertTrue(queryContent.contains("@EntktDsl"), "Query class should be annotated @EntktDsl")
+            val queryFlat = queryContent.replace("\\s+".toRegex(), " ")
             assertTrue(
-                queryContent.contains("`where`(predicate: Predicate<Pet>)"),
-                "Query class should have where(Predicate<Pet>)",
+                queryFlat.contains("EntityQueryBuilder<Pet, PetQuery>"),
+                "Query class should inherit its common builder API from EntityQueryBuilder",
             )
             assertTrue(
-                queryContent.contains("fun orderBy(`field`: OrderField<Pet>)"),
-                "Query class should have orderBy(OrderField<Pet>)",
+                !queryContent.contains("fun `where`") && !queryContent.contains("fun orderBy"),
+                "Query class should not duplicate runtime-owned builder methods",
             )
             // Per-field predicate methods are gone — predicates go through column refs
             assertTrue(!queryContent.contains("whereHasOwner"), "Should not emit old whereHasOwner alias")
@@ -211,12 +212,23 @@ class EntktPluginTest {
             val clientContent = generatedDir.resolve("EntClient.kt").readText()
             assertTrue(clientContent.contains("class EntClient"), "Should generate EntClient class")
             assertTrue(clientContent.contains("driver: DatabaseDriver"), "Client should take DatabaseDriver")
+            val clientFlat = clientContent.replace("\\s+".toRegex(), " ")
             assertTrue(
-                clientContent.contains("val pets: PetRepo = PetRepo(driver)"),
+                clientFlat.contains(
+                    "override val pets: PetRepo = PetRepo( driver = driver, client = this, " +
+                        "configuredHooks = configuration.hooksConfig.pets, " +
+                        "configuredPrivacy = configuration.policiesConfig.petsPrivacyConfig, " +
+                        "configuredValidation = configuration.policiesConfig.petsValidationConfig, )",
+                ),
                 "Client should expose pets: PetRepo",
             )
             assertTrue(
-                clientContent.contains("val owners: OwnerRepo = OwnerRepo(driver)"),
+                clientFlat.contains(
+                    "override val owners: OwnerRepo = OwnerRepo( driver = driver, client = this, " +
+                        "configuredHooks = configuration.hooksConfig.owners, " +
+                        "configuredPrivacy = configuration.policiesConfig.ownersPrivacyConfig, " +
+                        "configuredValidation = configuration.policiesConfig.ownersValidationConfig, )",
+                ),
                 "Client should expose owners: OwnerRepo",
             )
         } finally {

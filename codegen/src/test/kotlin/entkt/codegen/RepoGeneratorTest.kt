@@ -257,7 +257,7 @@ class RepoGeneratorTest {
             "delete *OrThrow / *OrError variants should be gone (delete/deleteById are canonical)\n$output"
         }
         assert(!output.contains("createManyOrError") && !output.contains("saveOrError")) {
-            "createManyOrError / saveOrError should be gone (createMany + executeSaveForInternalUse are canonical)\n$output"
+            "createManyOrError / saveOrError should be gone (createMany and save/saveAndLoad are canonical)\n$output"
         }
         assert(!output.contains("EntResult") && !output.contains("EntError")) {
             "The EntResult / EntError types should not be referenced anywhere\n$output"
@@ -409,15 +409,44 @@ class RepoGeneratorTest {
     }
 
     @Test
+    fun `scalar create terminals delegate to the same bound operation`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("private val createOperation: CreateOperation<CarCreateDraft, Car> by lazy({")) {
+            "the repo should retain one stable lazily bound create operation\n$output"
+        }
+        assert(
+            output.contains(
+                "createOperation.create( vc = viewerContext, draft = draft, " +
+                    "checkReturnedEntityPrivacy = false, )",
+            ),
+        ) {
+            "save should use the bound operation without returned LOAD disclosure\n$output"
+        }
+        assert(
+            output.contains(
+                "createOperation.create(viewerContext, draft, checkReturnedEntityPrivacy = true)",
+            ),
+        ) {
+            "saveAndLoad should use the same bound operation with returned LOAD disclosure\n$output"
+        }
+        assert(!output.contains("client.createMutations.create(")) {
+            "generated scalar terminals should not bypass the bound operation\n$output"
+        }
+    }
+
+    @Test
     fun `repo exposes canonical createMany with vararg blocks`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
         // Canonical createMany IS the surface: one MutationResult for
-        // the whole atomic batch. The multi-write preflight classifies
-        // against the caller's transaction posture; zero blocks are
-        // Success(emptyList()) with no transaction work.
+        // the whole atomic batch. The bound runtime operation owns its
+        // transaction preflight and empty-input behavior.
         assert(
             Regex(
                 "public fun createMany\\(\\s*viewerContext: ViewerContext,\\s*" +
@@ -426,11 +455,8 @@ class RepoGeneratorTest {
         ) {
             "Should have createMany with vararg blocks returning MutationResult<List<Car>>\n$output"
         }
-        assert(output.contains("client.createMutations.checkCreateManyTransactionRequirement(\"Car\", blocks.size)")) {
-            "createMany should run the multi-write transaction-requirement preflight\n$output"
-        }
-        assert(output.contains("if (blocks.isEmpty()) return MutationResult.Success(emptyList())")) {
-            "createMany should return Success(emptyList()) for zero blocks\n$output"
+        assert(output.contains("createOperation.createMany(viewerContext, blocks.asList())")) {
+            "createMany should delegate transaction and empty-input behavior to the bound operation\n$output"
         }
     }
 
@@ -441,24 +467,23 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(
-            output.contains(
-                "val drafts = ArrayList<CarCreateDraft>(blocks.size) for (block in blocks) { " +
-                    "drafts += CarCreateDraft().apply(block)",
-            ),
-        ) {
-            "createMany should instantiate and configure every draft in input order\n$output"
+        assert(output.contains("private val createOperation: CreateOperation<CarCreateDraft, Car>")) {
+            "the repo should bind one typed create operation\n$output"
         }
         assert(
             output.contains(
-                "return client.createMutations.createMany( viewerContext = viewerContext, drafts = drafts, " +
-                    "spec = createSpec, " +
-                    "promoteDriverNotPersisted = promoteDriverNotPersisted, )",
+                "client.createMutations.operationForInternalUse( spec = createSpec, " +
+                    "newDraft = { CarCreateDraft() }",
             ),
         ) {
-            "createMany should delegate its shared lifecycle after configuring builders\n$output"
+            "the bound operation should capture the spec and draft factory\n$output"
         }
-        assert(!output.contains("driver.insertMany(Car.TABLE") && !output.contains("val candidates = prepared.map")) {
+        assert(
+            !output.contains("ArrayList<CarCreateDraft>") &&
+                !output.contains("client.createMutations.createMany(") &&
+                !output.contains("driver.insertMany(Car.TABLE") &&
+                !output.contains("val candidates = prepared.map"),
+        ) {
             "The generated repo should not duplicate the runtime create lifecycle\n$output"
         }
     }
@@ -470,21 +495,24 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Atomicity is EntKt-owned when no caller transaction exists;
-        // all phases run through the transaction-scoped repo helper.
-        assert(output.contains("if (driver.inTransaction) {")) {
-            "createMany should branch on driver.inTransaction\n$output"
-        }
-        assert(output.contains("val txResult = client.withTransaction { tx ->")) {
-            "createMany should open an EntKt-owned transaction outside a caller-owned one\n$output"
+        // Runtime owns the posture branch; generated wiring only selects the
+        // corresponding transaction-bound operation.
+        assert(output.contains("ownedTransaction = { vc, blocks, disclosureCapture -> client.withTransaction { tx ->")) {
+            "the bound operation should be given an EntKt-owned transaction adapter\n$output"
         }
         assert(
             output.contains(
-                "val completion = tx.cars._executeCreateManyWritePhases(" +
-                    "viewerContext, blockSnapshot, promoteDriverNotPersisted = false).orRollback()",
+                "tx.cars.createOperation.createManyInOwnedTransactionForInternalUse( " +
+                    "vc = vc, blocks = blocks, disclosureCapture = disclosureCapture, ).orRollback()",
             ),
         ) {
-            "the EntKt-owned batch should run the phase-major write helper through the tx-scoped repo\n$output"
+            "the EntKt-owned batch should use the transaction repo's bound operation\n$output"
+        }
+        assert(
+            !output.contains("_executeCreateManyWritePhases") &&
+                !output.contains("checkCreateManyTransactionRequirement"),
+        ) {
+            "the generated createMany surface should not duplicate runtime transaction coordination\n$output"
         }
     }
 
@@ -495,34 +523,18 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("loadDenials(viewerContext, completion).filterNotNull().firstOrNull()")) {
-            "caller-owned createMany should batch LOAD disclosure with the terminal context\n$output"
+        assert(output.contains("createOperation.createMany(viewerContext, blocks.asList())")) {
+            "the terminal should pass its exact ViewerContext to the runtime operation\n$output"
         }
-        assert(output.contains("tx.cars.loadDenials(viewerContext, completion).filterNotNull().firstOrNull()")) {
-            "owned createMany should batch LOAD disclosure through the transaction repo with the terminal context\n$output"
-        }
-        assert(
-            output.contains(
-                "val exception = EntMutationPrivacyDeniedException(MutationWriteState.TransactionPending, \"Car\", EntOperation.LOAD, denial.entityKey, denial.reason)",
-            ),
-        ) {
-            "a caller-owned-tx disclosure denial should be LOAD + TransactionPending with the entity key\n$output"
+        assert(output.contains("vc = vc, blocks = blocks, disclosureCapture = disclosureCapture")) {
+            "the owned transaction adapter should preserve the same context and disclosure capture\n$output"
         }
         assert(
-            output.contains(
-                "EntMutationPrivacyDeniedException(MutationWriteState.Committed, \"Car\", EntOperation.LOAD, disclosure.denial.entityKey, disclosure.denial.reason)",
-            ),
+            !output.contains("loadDenials(viewerContext, completion)") &&
+                !output.contains("disclosureFailure") &&
+                !output.contains("disclosureDenial"),
         ) {
-            "an EntKt-owned-tx disclosure denial should report Committed — the batch is not rolled back\n$output"
-        }
-        assert(output.contains("var disclosureFailure: Exception? = null")) { output }
-        assert(output.contains("disclosureFailure = e")) { output }
-        assert(output.contains("EntUnexpectedMutationException(MutationWriteState.NotPersisted, disclosure)")) {
-            "a LOAD exception that aborts the owned transaction should remain the confirmed-rollback cause\n$output"
-        }
-        assert(output.contains("rolledBack.addSuppressed(stored)")) { output }
-        assert(output.contains("unknown.addSuppressed(disclosure)")) {
-            "an unknown transaction outcome must remain primary while retaining the LOAD failure\n$output"
+            "returned LOAD disclosure and failure precedence should live only in runtime\n$output"
         }
     }
 
@@ -887,9 +899,21 @@ class RepoGeneratorTest {
         val session = Session()
         finalize(session)
         val output = generator.generate("Session", session).toString()
+        val normalized = output.replace("\\s+".toRegex(), " ")
 
         assert(!output.contains("fun createMany")) {
             "Should not generate createMany for EXPLICIT id strategy\n$output"
+        }
+        assert(
+            normalized.contains(
+                "private val createOperation: CreateOperation<SessionCreateDraft, Session> by " +
+                    "lazy({ client.createMutations.operationForInternalUse( spec = createSpec, ) })",
+            ),
+        ) {
+            "explicit-id repositories should bind only the scalar create capability\n$output"
+        }
+        assert(!normalized.contains("ownedTransaction =") && !normalized.contains("newDraft =")) {
+            "explicit-id repositories should not emit unreachable createMany wiring\n$output"
         }
     }
 

@@ -14,7 +14,6 @@ import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STAR
-import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.lifecycleValueSnapshot
@@ -24,7 +23,6 @@ import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.getter
-import entkt.codegen.kotlinpoet.interfaceType
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
@@ -39,18 +37,14 @@ import entkt.codegen.metadata.toTypeName
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.mutation.MUTATION_CANCELLATION_EXCEPTION
 import entkt.codegen.mutation.MUTATION_ENTITY_KEY
-import entkt.codegen.mutation.MUTATION_ENT_OPERATION
 import entkt.codegen.mutation.MUTATION_RESULT
 import entkt.codegen.mutation.MUTATION_VALIDATION_VIOLATION
 import entkt.codegen.mutation.MUTATION_WRITE_STATE
 import entkt.codegen.mutation.ENT_MUTATION_EXCEPTION
-import entkt.codegen.mutation.ENT_MUTATION_PRIVACY_DENIED_EXCEPTION
 import entkt.codegen.mutation.ENT_UNEXPECTED_MUTATION_EXCEPTION
 import entkt.codegen.mutation.KOTLIN_EXCEPTION
 import entkt.codegen.mutation.CreateGenerator
 import entkt.codegen.mutation.indented
-import entkt.codegen.mutation.privacyDeniedFailure
-import entkt.codegen.mutation.recordAndReturnFailure
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 import entkt.schema.Field
@@ -76,6 +70,8 @@ private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val CREATE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationSpec")
+private val CREATE_OPERATION =
+    ClassName("entkt.runtime.mutation.execution", "CreateOperation")
 private val DELETE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationSpec")
 private val DELETE_RULE_CANDIDATE =
@@ -218,6 +214,14 @@ internal class RepoGenerator(
                 ),
             )
             addProperty(
+                buildCreateOperation(
+                    schema = schema,
+                    clientName = schema.clientName,
+                    createDraftClass = createDraftClass,
+                    entityClass = entityClass,
+                ),
+            )
+            addProperty(
                 buildDeleteMutationSpec(
                     schemaName = schemaName,
                     queryClass = queryClass,
@@ -284,15 +288,7 @@ internal class RepoGenerator(
             addFunction(buildDelete(entityClass))
             addFunction(buildDeleteById(entityClass, idType))
             if (idStrategyName(schema) != "EXPLICIT") {
-                    addType(buildCreateManyDisclosureType(entityClass))
-                    addFunction(
-                        buildExecuteCreateManyWritePhases(
-                            schemaName = schemaName,
-                            entityClass = entityClass,
-                            createLambda = createLambda,
-                        ),
-                    )
-                    addFunction(buildCreateMany(schemaName, schema.clientName, entityClass, createLambda))
+                    addFunction(buildCreateMany(entityClass, createLambda))
             }
             addFunction(buildSelectDeleteCandidates(entityClass))
             addFunction(buildExecuteDeleteManyPhases(entityClass))
@@ -525,108 +521,6 @@ internal class RepoGenerator(
         }
 
     /**
-     * Create-many returned LOAD failures normally become `Committed` after a
-     * successful owned transaction. A LOAD rule may instead execute SQL that
-     * aborts PostgreSQL; the transaction driver then rolls back and reports its
-     * generic aborted-state marker. Preserve the actual disclosure exception
-     * as the confirmed-rollback cause unless the transaction coordinator had
-     * already recorded an earlier mutation failure; encounter-order precedence
-     * keeps that failure primary and attaches disclosure diagnostically. An
-     * unknown transaction outcome always stays primary.
-     */
-    private fun createManyTxFailureConversion(schemaName: String): CodeBlock =
-        codeBlock {
-            add("val stored = txResult.exception\n")
-            .add("val disclosure = disclosureFailure\n")
-            .add("val denial = disclosureDenial\n")
-            .add(
-                "val exception = if (txResult.transactionState == %T.OutcomeUnknown) {\n",
-                TRANSACTION_FAILURE_STATE,
-            )
-            .add(
-                "  val unknown = %T(%T.PersistenceUnknown, stored)\n",
-                ENT_UNEXPECTED_MUTATION_EXCEPTION,
-                MUTATION_WRITE_STATE,
-            )
-            .add("  if (denial != null) {\n")
-            .add(
-                "    unknown.addSuppressed(%T(%T.PersistenceUnknown, %S, %T.LOAD, " +
-                    "denial.entityKey, denial.reason))\n",
-                ENT_MUTATION_PRIVACY_DENIED_EXCEPTION,
-                MUTATION_WRITE_STATE,
-                schemaName,
-                MUTATION_ENT_OPERATION,
-            )
-            .add("  }\n")
-            .add("  if (disclosure != null && disclosure !== stored) unknown.addSuppressed(disclosure)\n")
-            .add("  unknown\n")
-            .add("} else if (stored is %T) {\n", ENT_MUTATION_EXCEPTION)
-            .add("  val primary = if (stored.writeState == %T.NotPersisted) {\n", MUTATION_WRITE_STATE)
-            .add("    stored\n")
-            .add("  } else {\n")
-            .add(
-                "    %T(%T.NotPersisted, ((stored as? %T)?.cause as? %T) ?: stored)\n",
-                ENT_UNEXPECTED_MUTATION_EXCEPTION,
-                MUTATION_WRITE_STATE,
-                ENT_UNEXPECTED_MUTATION_EXCEPTION,
-                KOTLIN_EXCEPTION,
-            )
-            .add("  }\n")
-            .add("  if (primary !== stored) {\n")
-            .add("    stored.suppressed.forEach { suppressed ->\n")
-            .add("      if (suppressed !== primary && primary.suppressed.none { it === suppressed }) {\n")
-            .add("        primary.addSuppressed(suppressed)\n")
-            .add("      }\n")
-            .add("    }\n")
-            .add("  }\n")
-            .add("  if (denial != null) {\n")
-            .add(
-                "    primary.addSuppressed(%T(%T.NotPersisted, %S, %T.LOAD, " +
-                    "denial.entityKey, denial.reason))\n",
-                ENT_MUTATION_PRIVACY_DENIED_EXCEPTION,
-                MUTATION_WRITE_STATE,
-                schemaName,
-                MUTATION_ENT_OPERATION,
-            )
-            .add("  }\n")
-            .add(
-                "  if (disclosure != null && disclosure !== primary && " +
-                    "primary.suppressed.none { it === disclosure }) primary.addSuppressed(disclosure)\n",
-            )
-            .add("  primary\n")
-            .add("} else if (denial != null) {\n")
-            .add(
-                "  val rolledBack = %T(%T.NotPersisted, %S, %T.LOAD, " +
-                    "denial.entityKey, denial.reason)\n",
-                ENT_MUTATION_PRIVACY_DENIED_EXCEPTION,
-                MUTATION_WRITE_STATE,
-                schemaName,
-                MUTATION_ENT_OPERATION,
-            )
-            .add("  if (stored !== rolledBack) rolledBack.addSuppressed(stored)\n")
-            .add("  rolledBack\n")
-            .add("} else if (disclosure != null) {\n")
-            .add(
-                "  val rolledBack = %T(%T.NotPersisted, disclosure)\n",
-                ENT_UNEXPECTED_MUTATION_EXCEPTION,
-                MUTATION_WRITE_STATE,
-            )
-            .add("  if (stored !== disclosure) rolledBack.addSuppressed(stored)\n")
-            .add("  rolledBack\n")
-            .add("} else {\n")
-            .add(
-                "  %T(%T.NotPersisted, ((stored as? %T)?.cause as? %T) ?: stored)\n",
-                ENT_UNEXPECTED_MUTATION_EXCEPTION,
-                MUTATION_WRITE_STATE,
-                ENT_UNEXPECTED_MUTATION_EXCEPTION,
-                KOTLIN_EXCEPTION,
-            )
-            .add("}\n")
-            .add("client.recordTransactionMutationFailure(exception)\n")
-            .add("%T.failedForInternalUse(exception)\n", MUTATION_RESULT)
-        }
-
-    /**
      * The expression-style terminal capture boundary shared by the
      * repo mutation terminals: rethrow cancellation, then wrap any
      * other ordinary exception as foreign with the pre-write
@@ -809,6 +703,48 @@ internal class RepoGenerator(
         }
     }
 
+    /** Bind the generated create adapters once to the runtime create operation. */
+    private fun buildCreateOperation(
+        schema: EntSchema,
+        clientName: String,
+        createDraftClass: ClassName,
+        entityClass: ClassName,
+    ): PropertySpec {
+        val operationType = CREATE_OPERATION.parameterizedBy(createDraftClass, entityClass)
+        return property("createOperation", operationType) {
+            addModifiers(KModifier.PRIVATE)
+            delegate(codeBlock {
+                add("lazy({\n")
+                indent()
+                add("client.createMutations.operationForInternalUse(\n")
+                indent()
+                add("spec = createSpec,\n")
+                if (idStrategyName(schema) != "EXPLICIT") {
+                    add("newDraft = { %T() },\n", createDraftClass)
+                    add("ownedTransaction = { vc, blocks, disclosureCapture ->\n")
+                    indent()
+                    add("client.withTransaction { tx ->\n")
+                    indent()
+                    add("tx.%L.createOperation.createManyInOwnedTransactionForInternalUse(\n", clientName)
+                    indent()
+                    add("vc = vc,\n")
+                    add("blocks = blocks,\n")
+                    add("disclosureCapture = disclosureCapture,\n")
+                    unindent()
+                    add(").orRollback()\n")
+                    unindent()
+                    add("}\n")
+                    unindent()
+                    add("},\n")
+                }
+                unindent()
+                add(")\n")
+                unindent()
+                add("})")
+            })
+        }
+    }
+
     /** Capture schema-specific DELETE adapters while runtime owns lifecycle ordering. */
     private fun buildDeleteMutationSpec(
         schemaName: String,
@@ -917,11 +853,10 @@ internal class RepoGenerator(
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("draft", createDraftClass)
             addCode(codeBlock {
-                    add("return when (val result = client.createMutations.create(\n")
+                    add("return when (val result = createOperation.create(\n")
                     .indent()
-                    .add("viewerContext = viewerContext,\n")
+                    .add("vc = viewerContext,\n")
                     .add("draft = draft,\n")
-                    .add("spec = createSpec,\n")
                     .add("checkReturnedEntityPrivacy = false,\n")
                     .unindent()
                     .add(")) {\n")
@@ -941,7 +876,7 @@ internal class RepoGenerator(
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("draft", createDraftClass)
             statement(
-                "return client.createMutations.create(viewerContext, draft, createSpec, checkReturnedEntityPrivacy = true)",
+                "return createOperation.create(viewerContext, draft, checkReturnedEntityPrivacy = true)",
             )
         }
 
@@ -1059,88 +994,6 @@ internal class RepoGenerator(
     }
 
     /**
-     * Neutral returned-disclosure outcome. In an EntKt-owned transaction a
-     * denial or ordinary LOAD failure must leave the block normally so commit
-     * can be attempted; only a confirmed successful commit may later classify
-     * it as `Committed`.
-     */
-    private fun buildCreateManyDisclosureType(entityClass: ClassName): TypeSpec {
-        val repoClass = ClassName(packageName, "${entityClass.simpleName}Repo")
-        val disclosureClass = repoClass.nestedClass("CreateManyDisclosure")
-        return interfaceType("CreateManyDisclosure") {
-            addModifiers(KModifier.PRIVATE, KModifier.SEALED)
-            addType(disclosureCase("Allowed", "entities", LIST.parameterizedBy(entityClass), disclosureClass))
-            addType(disclosureCase("Denied", "denial", PRIVACY_DENIAL, disclosureClass))
-            addType(disclosureCase("Failed", "exception", KOTLIN_EXCEPTION, disclosureClass))
-        }
-    }
-
-    /** One typed outcome in the private create-many disclosure protocol. */
-    private fun disclosureCase(
-        name: String,
-        propertyName: String,
-        propertyType: com.squareup.kotlinpoet.TypeName,
-        disclosureClass: ClassName,
-    ): TypeSpec = classType(name) {
-        addModifiers(KModifier.DATA)
-        addSuperinterface(disclosureClass)
-        primaryConstructor { parameter(propertyName, propertyType) }
-        property(propertyName, propertyType) { initializer(propertyName) }
-    }
-
-    /**
-     * Execute every pre-completion create-many phase on an already
-     * transaction-scoped repo. All hooks and rules are phase-major; the sole
-     * persistence call is `insertMany`.
-     */
-    private fun buildExecuteCreateManyWritePhases(
-        schemaName: String,
-        entityClass: ClassName,
-        createLambda: LambdaTypeName,
-    ): FunSpec {
-        val createDraftClass = ClassName(packageName, "${schemaName}CreateDraft")
-        val completionType = LIST.parameterizedBy(entityClass)
-        return function(
-            "_executeCreateManyWritePhases",
-            MUTATION_RESULT.parameterizedBy(completionType),
-        ) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("blocks", LIST.parameterizedBy(createLambda))
-            parameter("promoteDriverNotPersisted", BOOLEAN)
-            addCode(codeBlock {
-                    add("try {\n")
-                    .add("  check(driver.inTransaction) { %S }\n", "createMany write phases require a transaction-scoped driver")
-                    .add("  val drafts = %T<%T>(blocks.size)\n", ArrayList::class, createDraftClass)
-                    .add("  for (block in blocks) {\n")
-                    .add("    drafts += %T().apply(block)\n", createDraftClass)
-                    .add("  }\n")
-                    .add(
-                            "  return client.createMutations.createMany(\n" +
-                            "    viewerContext = viewerContext,\n" +
-                            "    drafts = drafts,\n" +
-                            "    spec = createSpec,\n" +
-                            "    promoteDriverNotPersisted = promoteDriverNotPersisted,\n" +
-                            "  )\n",
-                    )
-                    .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
-                    .add("  throw e\n")
-                    .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
-                    .add(
-                        recordAndReturnFailure(
-                            CodeBlock.of(
-                                "%T(%T.NotPersisted, e)",
-                                ENT_UNEXPECTED_MUTATION_EXCEPTION,
-                                MUTATION_WRITE_STATE,
-                            ),
-                        ).indented(),
-                    )
-                    .add("}\n")
-            })
-        }
-    }
-
-    /**
      * `createMany(*blocks): MutationResult<List<T>>` — strict, atomic,
      * phase-major bulk create. Every draft and before-hook phase completes,
      * then CREATE privacy and validation evaluate the complete candidate list,
@@ -1154,14 +1007,9 @@ internal class RepoGenerator(
      * only after commit is confirmed.
      */
     private fun buildCreateMany(
-        schemaName: String,
-        clientName: String,
         entityClass: ClassName,
         createLambda: LambdaTypeName,
     ): FunSpec {
-        val repoPropName = clientName
-        val repoClass = ClassName(packageName, "${schemaName}Repo")
-        val disclosureClass = repoClass.nestedClass("CreateManyDisclosure")
         val resultType = MUTATION_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))
         return function("createMany", resultType) {
             parameter("viewerContext", VIEWER_CONTEXT)
@@ -1181,113 +1029,7 @@ internal class RepoGenerator(
                     "There is no `orNull()` projection — use `getOrThrow()` or match on\n" +
                     "the result.",
             )
-            addCode(codeBlock {
-                    add("var writeState = %T.NotPersisted\n", MUTATION_WRITE_STATE)
-                    .add("try {\n")
-                    .add(
-                        "  client.createMutations.checkCreateManyTransactionRequirement(%S, blocks.size)\n",
-                        schemaName,
-                    )
-                    .add("  if (blocks.isEmpty()) return %T.Success(emptyList())\n", MUTATION_RESULT)
-                    .add("  val blockSnapshot = blocks.toList()\n")
-                    .add("  if (driver.inTransaction) {\n")
-                    .add(
-                        "    val completion = when (val result = " +
-                            "_executeCreateManyWritePhases(viewerContext, blockSnapshot, promoteDriverNotPersisted = true)) {\n",
-                    )
-                    .add("      is %T.Success -> result.value\n", MUTATION_RESULT)
-                    .add("      is %T.Failed -> return result\n", MUTATION_RESULT)
-                    .add("    }\n")
-                    .add("    writeState = %T.TransactionPending\n", MUTATION_WRITE_STATE)
-                    .add("    val denial = try {\n")
-                    .add(
-                        "      loadDenials(viewerContext, completion)" +
-                            ".filterNotNull().firstOrNull()\n",
-                    )
-                    .add("    } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
-                    .add("      throw e\n")
-                    .add("    } catch (e: %T) {\n", KOTLIN_EXCEPTION)
-                    .add("      throw e\n")
-                    .add("    }\n")
-                    .add("    if (denial != null) {\n")
-                    .add(
-                        privacyDeniedFailure(
-                            writeStateExpr = CodeBlock.of("%T.TransactionPending", MUTATION_WRITE_STATE),
-                            schemaName = schemaName,
-                            operationName = "LOAD",
-                            entityKeyExpr = CodeBlock.of("denial.entityKey"),
-                            reasonExpr = "denial.reason",
-                        ).indented(),
-                    )
-                    .add("    }\n")
-                    .add("    return %T.Success(completion)\n", MUTATION_RESULT)
-                    .add("  }\n")
-                    .add("  var disclosureFailure: %T? = null\n", KOTLIN_EXCEPTION)
-                    .add("  var disclosureDenial: %T? = null\n", PRIVACY_DENIAL)
-                    .add("  val txResult = client.withTransaction { tx ->\n")
-                    .add(
-                        "    val completion = tx.%L._executeCreateManyWritePhases(" +
-                            "viewerContext, blockSnapshot, promoteDriverNotPersisted = false).orRollback()\n",
-                        repoPropName,
-                    )
-                    .add("    try {\n")
-                    .add(
-                        "      val denial = tx.%L.loadDenials(viewerContext, completion)" +
-                            ".filterNotNull().firstOrNull()\n",
-                        repoPropName,
-                    )
-                    .add("      if (denial == null) {\n")
-                    .add("        %T.Allowed(completion)\n", disclosureClass)
-                    .add("      } else {\n")
-                    .add("        disclosureDenial = denial\n")
-                    .add("        %T.Denied(denial)\n", disclosureClass)
-                    .add("      }\n")
-                    .add("    } catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
-                    .add("      throw e\n")
-                    .add("    } catch (e: %T) {\n", KOTLIN_EXCEPTION)
-                    .add("      disclosureFailure = e\n")
-                    .add("      %T.Failed(e)\n", disclosureClass)
-                    .add("    }\n")
-                    .add("  }\n")
-                    .add("  return when (txResult) {\n")
-                    .add("    is %T.Success -> when (val disclosure = txResult.value) {\n", TRANSACTION_RESULT)
-                    .add("      is %T.Allowed -> %T.Success(disclosure.entities)\n", disclosureClass, MUTATION_RESULT)
-                    .add("      is %T.Denied -> {\n", disclosureClass)
-                    .add(
-                        "        val exception = %T(%T.Committed, %S, %T.LOAD, " +
-                            "disclosure.denial.entityKey, disclosure.denial.reason)\n",
-                        ENT_MUTATION_PRIVACY_DENIED_EXCEPTION,
-                        MUTATION_WRITE_STATE,
-                        schemaName,
-                        MUTATION_ENT_OPERATION,
-                    )
-                    .add("        client.recordTransactionMutationFailure(exception)\n")
-                    .add("        %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
-                    .add("      }\n")
-                    .add("      is %T.Failed -> {\n", disclosureClass)
-                    .add(
-                        "        val exception = %T(%T.Committed, disclosure.exception)\n",
-                        ENT_UNEXPECTED_MUTATION_EXCEPTION,
-                        MUTATION_WRITE_STATE,
-                    )
-                    .add("        client.recordTransactionMutationFailure(exception)\n")
-                    .add("        %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
-                    .add("      }\n")
-                    .add("    }\n")
-                    .add("    is %T.Failed -> {\n", TRANSACTION_RESULT)
-                    .add(createManyTxFailureConversion(schemaName).indented().indented().indented())
-                    .add("    }\n")
-                    .add("  }\n")
-                    .add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
-                    .add("  throw e\n")
-                    .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
-                    .add(
-                        recordAndReturnFailure(
-                            CodeBlock.of("%T(writeState, e)", ENT_UNEXPECTED_MUTATION_EXCEPTION),
-                        ).indented(),
-                    )
-                    .add("}\n")
-            })
+            statement("return createOperation.createMany(viewerContext, blocks.asList())")
         }
     }
 
