@@ -277,7 +277,6 @@ internal class RepoGenerator(
                     schemaNames,
                 ),
             )
-            addFunction(createGenerator.buildPrepareDraftFunction(schemaName))
             addFunction(buildSnapshotCreateCandidate(entityClass, candidateClass, fields))
                 // Per-save UpdateConsistency override (transaction locking). Defaults
                 // to the client's `defaultUpdateConsistency` so callers
@@ -553,7 +552,8 @@ internal class RepoGenerator(
                 indent()
                 add("entity = %T.GeneratedEntityMapping,\n", queryClass)
                 add("requiredInputViolations = ::requiredInputViolations,\n")
-                add("resolveDraft = ::prepareDraft,\n")
+                add("resolveDraft = ::resolve,\n")
+                add("fieldViolations = ::createFieldViolations,\n")
                 add("beforeSave = %M(beforeSaveHooks) { _, draft -> createBeforeSaveView(draft) },\n", MUTATION_HOOK_PHASE)
                 add("beforeCreate = %M(beforeCreateHooks, ::createBeforeCreateContext),\n", MUTATION_HOOK_PHASE)
                 add("afterCreate = afterCreateHooks,\n")

@@ -4,7 +4,7 @@ import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.BatchHook
-import entkt.runtime.mutation.CreatePreparation
+import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.result.ValidationViolation
 
 /** Immutable entity-specific inputs used by the generic create lifecycle. */
@@ -31,7 +31,10 @@ class CreateMutationSpec<
     val requiredInputViolations: (Draft) -> List<ValidationViolation>,
 
     /** Resolve the post-hook draft into stable storage values and a write candidate. */
-    val resolveDraft: (Draft) -> CreatePreparation<Candidate>,
+    val resolveDraft: (Draft) -> PreparedCreate<Candidate>,
+
+    /** Report schema-field violations on a stable resolved write candidate. */
+    val fieldViolations: (Candidate) -> List<ValidationViolation>,
 
     /** CREATE-privacy rules evaluated against the resolved write candidates. */
     val privacy: MutationPrivacyPhase<RuleClient, Candidate>,

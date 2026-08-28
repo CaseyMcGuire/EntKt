@@ -60,7 +60,6 @@ internal val MUTATION_ENT_OPERATION = ClassName("entkt.runtime.result", "EntOper
 internal val MUTATION_CANCELLATION_EXCEPTION = ClassName("java.util.concurrent", "CancellationException")
 internal val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 internal val PREPARED_CREATE = ClassName("entkt.runtime.mutation", "PreparedCreate")
-internal val CREATE_PREPARATION = ClassName("entkt.runtime.mutation", "CreatePreparation")
 internal val RUN_BATCH_HOOKS_FOR_INTERNAL_USE =
     MemberName("entkt.runtime.hook", "runBatchHooksForInternalUse")
 
@@ -308,7 +307,7 @@ internal class CreateGenerator(
             addModifiers(KModifier.PRIVATE)
             parameter("draft", draftClass)
             beginControlFlow("return draft.run")
-            emitCreatePreparation(this, schemaName, schema, allFields, edgeFks)
+            emitResolvedCreate(this, schemaName, schema, allFields, edgeFks)
             val candidateArgs = buildCandidateArgs(allFields, edgeFks)
             addStatement("val candidate = %T(${candidateArgs.joinToString(", ")})", candidateClass)
             addCode(codeBlock {
@@ -389,33 +388,13 @@ internal class CreateGenerator(
         }
     }
 
-    /** Adapt the separated resolver and field checks to the current runtime carrier. */
-    fun buildPrepareDraftFunction(schemaName: String): FunSpec {
-        val draftClass = ClassName(packageName, "${schemaName}CreateDraft")
-        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
-        return function(
-            "prepareDraft",
-            returnType = CREATE_PREPARATION.parameterizedBy(candidateClass),
-        ) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("draft", draftClass)
-            addStatement("val prepared = resolve(draft)")
-            addStatement("val violations = createFieldViolations(prepared.candidate)")
-            addStatement(
-                "return if (violations.isEmpty()) %T.Ready(prepared) else %T.Invalid(violations)",
-                CREATE_PREPARATION,
-                CREATE_PREPARATION,
-            )
-        }
-    }
-
     /**
      * Emit the pure preparation body shared by scalar and batch create:
      * field extraction with defaults, FK resolution, and the driver
      * `values` map. Hooks, validation, entity rules, privacy, and I/O are
      * deliberately absent.
      */
-    private fun emitCreatePreparation(
+    private fun emitResolvedCreate(
         builder: FunSpec.Builder,
         schemaName: String,
         schema: EntSchema,

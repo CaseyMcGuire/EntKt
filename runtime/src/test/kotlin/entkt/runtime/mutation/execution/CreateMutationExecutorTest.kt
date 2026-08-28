@@ -7,7 +7,6 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
-import entkt.runtime.mutation.CreatePreparation
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -115,6 +114,7 @@ class CreateMutationExecutorTest {
         entity: EntityMapping<Widget>,
     ) {
         var createDecision: PrivacyDecision = PrivacyDecision.Allow
+        var schemaFieldViolations: List<ValidationViolation> = emptyList()
         var validationViolations: List<ValidationViolation> = emptyList()
         var loadDenial: PrivacyDenial? = null
         var beforeCreateAction: () -> Unit = {}
@@ -131,6 +131,10 @@ class CreateMutationExecutorTest {
             entity = entity,
             requiredInputViolations = RecordingInput::requiredInputViolations,
             resolveDraft = RecordingInput::resolve,
+            fieldViolations = {
+                events += "field-validation"
+                schemaFieldViolations
+            },
             beforeSave = mutationHookPhaseForInternalUse(
                 hooks = listOf(Hook { value: String -> events += "before-save:$value" }),
                 value = { _, input -> input.beforeSaveHookValue() },
@@ -186,11 +190,9 @@ class CreateMutationExecutorTest {
         private val events: MutableList<String>,
     ) {
         var requiredViolations: List<ValidationViolation> = emptyList()
-        var preparation: CreatePreparation<Candidate> = CreatePreparation.Ready(
-            PreparedCreate(
-                values = mapOf("name" to "Ada"),
-                candidate = Candidate("Ada"),
-            ),
+        var prepared: PreparedCreate<Candidate> = PreparedCreate(
+            values = mapOf("name" to "Ada"),
+            candidate = Candidate("Ada"),
         )
 
         fun beforeSaveHookValue(): String {
@@ -208,9 +210,9 @@ class CreateMutationExecutorTest {
             return requiredViolations
         }
 
-        fun resolve(): CreatePreparation<Candidate> {
+        fun resolve(): PreparedCreate<Candidate> {
             events += "prepare"
-            return preparation
+            return prepared
         }
     }
 
@@ -238,6 +240,7 @@ class CreateMutationExecutorTest {
                 "before-create:create",
                 "required-input",
                 "prepare",
+                "field-validation",
                 "create-privacy",
                 "validate",
                 "insert",
@@ -278,10 +281,10 @@ class CreateMutationExecutorTest {
     }
 
     @Test
-    fun `preparation violations fail before privacy and persistence`() {
+    fun `field violations fail after resolution and before privacy and persistence`() {
         val fixture = fixture()
-        fixture.input.preparation = CreatePreparation.Invalid(
-            listOf(ValidationViolation("name is required", field = "name")),
+        fixture.spec.schemaFieldViolations = listOf(
+            ValidationViolation("name must not be empty", field = "name"),
         )
 
         val result = fixture.executor.create(
@@ -295,6 +298,8 @@ class CreateMutationExecutorTest {
         val validation = assertIs<EntValidationException>(failure)
         assertEquals(EntOperation.CREATE, validation.operation)
         assertEquals("name", validation.violations.single().field)
+        assertTrue("prepare" in fixture.events)
+        assertFalse("create-privacy" in fixture.events)
         assertFalse("insert" in fixture.events)
         assertSame(failure, fixture.recordedFailures.single())
     }
@@ -467,11 +472,9 @@ class CreateMutationExecutorTest {
         val secondInput = RecordingInput(
             fixture.events,
         ).apply {
-            preparation = CreatePreparation.Ready(
-                PreparedCreate(
-                    values = mapOf("name" to "Grace"),
-                    candidate = Candidate("Grace"),
-                ),
+            prepared = PreparedCreate(
+                values = mapOf("name" to "Grace"),
+                candidate = Candidate("Grace"),
             )
         }
 
@@ -506,6 +509,8 @@ class CreateMutationExecutorTest {
                 "required-input",
                 "prepare",
                 "prepare",
+                "field-validation",
+                "field-validation",
                 "create-privacy",
                 "validate",
                 "insert-many",

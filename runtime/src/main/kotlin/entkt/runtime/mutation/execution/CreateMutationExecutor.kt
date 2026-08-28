@@ -7,7 +7,6 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.runBatchHooksForInternalUse
-import entkt.runtime.mutation.CreatePreparation
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.ViewerContext
@@ -27,9 +26,9 @@ import java.util.concurrent.CancellationException
  * Runs create lifecycles for generated drafts and entity specifications.
  *
  * A create runs before hooks, validates required inputs, resolves every draft,
- * evaluates CREATE privacy, evaluates CREATE validation, persists the rows,
- * runs after hooks, and then applies returned-entity LOAD privacy when the
- * terminal exposes entities.
+ * validates resolved fields, evaluates CREATE privacy, evaluates CREATE
+ * validation, persists the rows, runs after hooks, and then applies
+ * returned-entity LOAD privacy when the terminal exposes entities.
  */
 @EntktInternal
 class CreateMutationExecutor<RuleClient>(
@@ -178,10 +177,14 @@ class CreateMutationExecutor<RuleClient>(
             requiredInputViolations = spec.requiredInputViolations,
         )
         val resolvedCreates = resolveDrafts(
-            attempt = attempt,
             drafts = drafts,
-            entityName = entityName,
             resolveDraft = spec.resolveDraft,
+        )
+        rejectFieldViolations(
+            attempt = attempt,
+            entityName = entityName,
+            prepared = resolvedCreates,
+            fieldViolations = spec.fieldViolations,
         )
         evaluateCreatePrivacy(
             attempt = attempt,
@@ -230,20 +233,27 @@ class CreateMutationExecutor<RuleClient>(
         }
     }
 
-    /** Resolve every draft before any privacy or entity-level validation runs. */
+    /** Resolve every draft before any field, privacy, or rule validation runs. */
     private fun <Draft, Candidate> resolveDrafts(
-        attempt: MutationAttempt,
         drafts: List<Draft>,
+        resolveDraft: (Draft) -> PreparedCreate<Candidate>,
+    ): List<PreparedCreate<Candidate>> = drafts.map(resolveDraft)
+
+    /** Reject schema-field violations before CREATE privacy sees candidates. */
+    private fun <Candidate> rejectFieldViolations(
+        attempt: MutationAttempt,
         entityName: String,
-        resolveDraft: (Draft) -> CreatePreparation<Candidate>,
-    ): List<PreparedCreate<Candidate>> = drafts.map { draft ->
-        when (val preparation = resolveDraft(draft)) {
-            is CreatePreparation.Ready -> preparation.value
-            is CreatePreparation.Invalid -> attempt.reject(
+        prepared: List<PreparedCreate<Candidate>>,
+        fieldViolations: (Candidate) -> List<ValidationViolation>,
+    ) {
+        prepared.firstNotNullOfOrNull { create ->
+            fieldViolations(create.candidate).takeIf { it.isNotEmpty() }
+        }?.let { violations ->
+            attempt.reject(
                 EntValidationException(
                     entityType = entityName,
                     operation = EntOperation.CREATE,
-                    violations = preparation.violations,
+                    violations = violations,
                 ),
             )
         }

@@ -95,6 +95,7 @@ class CreateGeneratorTest {
         assertTrue(output.contains("val _entktValueName = checkNotNull(this.name)"), output)
         assertTrue(!output.contains("\"name is required\", field = \"name\""), output)
         assertTrue(!output.contains("ValidationViolation"), output)
+        assertTrue(!output.contains("CreatePreparation"), output)
         assertTrue(output.contains("PreparedCreate<"), output)
         assertTrue(fieldValidation.contains("candidate.name.length < 3"), fieldValidation)
         assertTrue(fieldValidation.contains("candidate.name.length > 100"), fieldValidation)
