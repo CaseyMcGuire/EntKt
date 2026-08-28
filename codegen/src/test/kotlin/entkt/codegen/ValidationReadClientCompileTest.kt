@@ -102,8 +102,6 @@ class ValidationReadClientCompileTest {
             generatedSources() + validatorSnippet(
                 """
                 val concrete: ReadOnlyEntClient = ctx.client
-                ctx.client.cars.query { }.rawCount(ctx.readViewerContext).getOrThrow()
-                ctx.client.cars.query { }.rawExists(ctx.readViewerContext)
                 ctx.client.cars.query { }.all(ctx.readViewerContext)
                 ctx.client.cars.query { }.firstOrNull(ctx.readViewerContext)
                 ctx.client.users.findById(ctx.readViewerContext, UUID.randomUUID()).getOrThrow()

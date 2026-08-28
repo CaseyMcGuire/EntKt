@@ -98,14 +98,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         )
     }
 
-    // ---- limit(0) is honored by every terminal family ----
-    //
-    // The first-row terminals used to send a hardwired `limit = 1` and
-    // discard the caller's bound, so `query { limit(0) }.firstOrNull(testViewerContext)`
-    // returned a row while `query { limit(0) }.rawExists(testViewerContext)` — same
-    // query, same rows — answered false. Interceptor limit mutators are
-    // silent no-ops at FIRST (see limitOpsApply), so the
-    // discarded value was always the caller's own.
+    // ---- limit(0) is honored by every entity terminal family ----
 
     private fun seededClient(): EntClient = freshClient().also { client ->
         run {
@@ -135,7 +128,6 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
         // The consistency the fix is really about: one bound, one
         // answer, from every terminal that actually reads rows.
         assertNull(client.articles.query { limit(0) }.firstOrNull(testViewerContext).getOrThrow())
-        assertEquals(false, client.articles.query { limit(0) }.rawExists(testViewerContext).getOrThrow())
         assertEquals(emptyList(), client.articles.query { limit(0) }.all(testViewerContext).getOrThrow())
     }
 
@@ -639,17 +631,6 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
             counting.queriedTables.contains("users"),
             "an empty IN can't match anything; queried: ${counting.queriedTables}",
         )
-    }
-
-    @Test
-    fun `limit does not apply to terminals that never materialize rows`() {
-        val client = seededClient()
-
-        // rawCount and the raw aggregates lower to COUNT(*) / an
-        // aggregate function and never receive a limit, which is the
-        // documented contract — pin the boundary so "limit(0) means no
-        // rows" isn't mistaken for a universal rule.
-        assertEquals(2L, client.articles.query { limit(0) }.rawCount(testViewerContext).getOrThrow())
     }
 
     @Test

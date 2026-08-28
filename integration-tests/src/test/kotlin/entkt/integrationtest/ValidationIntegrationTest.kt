@@ -412,7 +412,7 @@ class ValidationIntegrationTest {
         val ex = assertIs<EntValidationException>(failed.exception)
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
 
-        val count = client.articles.query().rawCount(viewerContext).getOrThrow()
+        val count = client.articles.query().all(viewerContext).getOrThrow().size.toLong()
         assertEquals(0L, count)
     }
 

@@ -36,7 +36,6 @@ class ReadQueryExecutorTest {
 
     private class RecordingDriver : DatabaseDriver by NoopDriver {
         var queryCalls = 0
-        var countCalls = 0
 
         override fun query(
             table: String,
@@ -49,10 +48,6 @@ class ReadQueryExecutorTest {
             return listOf(mapOf("id" to 1L))
         }
 
-        override fun count(table: String, predicates: List<Predicate<*>>): Long {
-            countCalls++
-            return 3L
-        }
     }
 
     private val viewerContext = ViewerContext(Viewer.User(7L))
@@ -68,7 +63,7 @@ class ReadQueryExecutorTest {
     )
 
     @Test
-    fun `one read query executor owns entity and raw query execution`() {
+    fun `one read query executor owns entity query execution`() {
         val driver = RecordingDriver()
         var interceptorRuns = 0
         val interceptors = EntInterceptorsConfig().apply {
@@ -99,12 +94,8 @@ class ReadQueryExecutorTest {
                 maximumRows = null,
             ),
         )
-        val count = assertIs<ReadResult.Success<Long>>(executor.rawCount(viewerContext, ::query))
-
         assertEquals(listOf(Item(1L)), entities.value)
-        assertEquals(3L, count.value)
-        assertEquals(2, interceptorRuns)
+        assertEquals(1, interceptorRuns)
         assertEquals(1, driver.queryCalls)
-        assertEquals(1, driver.countCalls)
     }
 }

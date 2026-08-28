@@ -158,7 +158,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         run {
             val sys = client
             val viewerContext = testBypassContext("test")
-            sys.users.query().rawCount(viewerContext).getOrThrow()
+            sys.users.query().all(viewerContext).getOrThrow().size.toLong()
         }
 
     // ---- Success ----
@@ -197,7 +197,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
         val success = assertIs<MutationResult.Success<List<User>>>(result)
         assertEquals(listOf("A", "B", "C"), success.value.map { it.name })
-        assertEquals(3L, client.users.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(3L, client.users.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -213,7 +213,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
         val success = assertIs<TransactionResult.Success<List<User>>>(txResult)
         assertEquals(listOf("A", "B"), success.value.map { it.name })
-        assertEquals(2L, client.users.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(2L, client.users.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -314,7 +314,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         assertEquals("email", ex.violations.single().field)
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
 
-        assertEquals(0L, client.users.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(0L, client.users.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -338,7 +338,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
 
         // No row reached the set-based insert.
-        assertEquals(0L, client.users.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(0L, client.users.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -370,7 +370,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         assertEquals(1, recording.callCount("insertMany:users"))
         assertEquals(0, recording.callCount("insert:users"))
         // Atomicity: only the pre-existing row survives.
-        assertEquals(1L, client.users.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(1L, client.users.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -753,7 +753,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                     load(batchPrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem> { context, batch ->
                         context.client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
-                        }.rawExists(context.viewerContext).getOrThrow()
+                        }.firstOrNull(context.viewerContext).getOrThrow()
                         batch.decideEach { PrivacyDecision.Allow }
                     })
                 }
@@ -787,7 +787,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                         // aborted, so the owned boundary confirms rollback.
                         context.client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
-                        }.rawExists(context.viewerContext)
+                        }.firstOrNull(context.viewerContext)
                         batch.decideEach { PrivacyDecision.Deny("LOAD dependency unavailable") }
                     })
                 }

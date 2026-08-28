@@ -30,11 +30,21 @@ above it.
 
 ## Unreleased
 
+- **Remove generated raw query terminals** (`codegen`)
+  Generated query builders no longer expose `rawCount`, `rawExists`,
+  `rawMin` / `rawMax` / `rawSum` / `rawAvg`, or their grouped `*By`
+  variants. Generated reads now have one entity-materializing privacy model.
+  _Migration:_ use `firstOrNull(viewerContext)` for existence and
+  `all(viewerContext)` plus Kotlin collection operations for counts and
+  aggregates. When the calculation intentionally includes rows hidden from
+  the application viewer, pass
+  `ViewerContext.privacyBypass_DANGEROUS(reason)` to that entity terminal.
+
 - **Pass `ViewerContext` explicitly to every entity operation** (`runtime`, `codegen`, `ent-viewer`)
   Ambient `PrivacyContext` lookup and generated client-scoping APIs have been
   removed. Generated clients, transaction clients, executors, and rule-read
-  clients are now long-lived and contextless; every read, raw read, aggregate,
-  create/update save, delete, and bulk terminal takes a context-first
+  clients are now long-lived and contextless; every read, create/update save,
+  delete, and bulk terminal takes a context-first
   `ViewerContext`. The exact supplied instance flows through interceptors,
   privacy rules, hooks, eager loads, transactions, and returned-entity LOAD
   checks. Validation rules expose a separate privacy-bypassing

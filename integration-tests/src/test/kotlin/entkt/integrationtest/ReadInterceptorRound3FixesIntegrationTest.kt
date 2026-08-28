@@ -157,7 +157,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `traversal-source rejection surfaces as Failed on chained firstOrNull and rawCount`() {
+    fun `traversal-source rejection surfaces as Failed on chained firstOrNull`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
 
@@ -167,8 +167,6 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         }
         val first = assertIs<ReadResult.Failed>(client.users.query().queryArticles().firstOrNull(testViewerContext))
         assertIs<EntQueryRejectedException>(first.exception)
-        val count = assertIs<ReadResult.Failed>(client.users.query().queryArticles().rawCount(testViewerContext))
-        assertIs<EntQueryRejectedException>(count.exception)
     }
 
     @Test

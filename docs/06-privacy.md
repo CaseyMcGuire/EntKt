@@ -359,9 +359,8 @@ targets, never one batch per group.
 
 `.getOrThrow()` throws the stored exception; `.visibleOrNull()` maps a
 singular *root* denial to `Success(null)` for explicit
-privacy-as-absence handling. `rawCount()` / `rawExists()` and the raw
-aggregates do not materialize entities and are **not** subject to LOAD
-privacy.
+privacy-as-absence handling. An entity terminal supplied with
+`ViewerContext.privacyBypass_DANGEROUS(reason)` skips LOAD privacy explicitly.
 
 ### Write operations (CREATE, UPDATE, DELETE)
 
@@ -419,15 +418,13 @@ posture: the `ViewerContext` supplied to each terminal determines that read's
 behavior. Helpers accept `ReadOnlyEntClient` and should also take or document
 the context they expect.
 
-The raw terminals (`rawCount` / `rawExists` and the raw aggregates) are
-available on every read client and have one explicit meaning: they query
-storage without materializing entities or evaluating LOAD privacy. They still
-run read interceptors under the operation's supplied viewer context. Privacy
-rules are trusted authorization code and may use raw terminals for facts such
-as ACL membership or existence; doing so can also avoid recursive LOAD-policy
-evaluation. Use `findById`, `firstOrNull`, or `all` instead when the referenced
-entity's visibility must participate in the decision. Raw results must not be
-mistaken for proof that the viewer could load the matching entities.
+Generated clients do not expose privacy-skipping count, existence, or aggregate
+terminals. Privacy rules that deliberately need storage-wide facts may supply
+`ViewerContext.privacyBypass_DANGEROUS(reason)` to `findById`, `firstOrNull`, or
+`all`, then calculate over the returned entity or collection in Kotlin. The
+bypass is explicit at the operation boundary, and read interceptors still run.
+Use `context.viewerContext` instead when the referenced entity's visibility
+must participate in the decision.
 
 LOAD privacy applies to returned entities, not related entities used only to
 filter a query. That holds for both application queries and rule reads: a rule
@@ -613,9 +610,10 @@ interceptors. A row that stops matching before the write is not deleted or
 counted; a row that starts matching after selection was never approved and is
 also not deleted.
 
-For aggregate reads, `rawCount()` deliberately skips LOAD privacy.
-There is no privacy-filtered count terminal — a viewer-scoped count is
-a strict `all()` over predicates that only match visible rows.
+Generated queries have no count or aggregate terminals. Read entities with
+`all(viewerContext)` and calculate in Kotlin; supply an explicit bypass context
+only when the calculation intentionally includes rows the application viewer
+cannot load.
 
 ## Limitations
 

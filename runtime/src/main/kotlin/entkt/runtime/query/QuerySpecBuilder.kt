@@ -333,10 +333,6 @@ public data class StorageQuerySpec<E : Any> public constructor(
  *   narrows an `ALL` read.
  * - `BY_ID`, `FIRST`: intrinsic single-row result shape; clamping
  *   has no observable effect (limit is hard-coded to 1 / pk-lookup).
- * - `RAW_COUNT`, `RAW_EXISTS`: aggregates / existence checks; the
- *   row limit either has no meaning (aggregates that don't
- *   materialize rows) or would silently corrupt the answer (counting
- *   "first N scanned rows" rather than all matching rows).
  * - `EAGER_LOAD`: per-parent-vs-batched semantics are ambiguous;
  *   the runtime fetches with null limit and paginates per-group
  *   in Kotlin.
@@ -348,22 +344,15 @@ public data class StorageQuerySpec<E : Any> public constructor(
  * Used by [InterceptScopeImpl] / [GlobalInterceptScopeImpl] to
  * gate `requireLimitAtMost` / `setDefaultLimitIfAbsent` /
  * `rejectIfLimitGreaterThan` — so a `global { requireLimitAtMost(100) }`
- * doesn't corrupt `rawCount` (which would otherwise count the
- * first 100 scanned rows rather than all matching rows), and a
- * `rejectIfLimitGreaterThan(10)` doesn't reject every `findById` /
- * `rawCount` / `rawExists` call just because they have null
- * effective limits.
+ * doesn't corrupt framework-owned relationship queries, and a
+ * `rejectIfLimitGreaterThan(10)` doesn't reject every `findById`
+ * call just because it has a null effective limit.
  */
 internal fun limitOpsApply(operation: ReadOperation): Boolean = when (operation) {
     ReadOperation.ALL,
     ReadOperation.EDGE_TRAVERSAL -> true
     ReadOperation.BY_ID,
     ReadOperation.FIRST,
-    ReadOperation.RAW_COUNT,
-    ReadOperation.RAW_EXISTS,
-    // RAW_AGGREGATE: aggregates ignore limit/offset, so a MaxLimitInterceptor
-    // must never silently cap them (same reasoning as RAW_COUNT above).
-    ReadOperation.RAW_AGGREGATE,
     ReadOperation.EAGER_LOAD,
     ReadOperation.EAGER_JUNCTION,
     ReadOperation.EDGE_PREDICATE,

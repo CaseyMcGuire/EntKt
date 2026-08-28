@@ -140,8 +140,7 @@ private val AllowSelfOnly = UserLoadPrivacyRule { context, item ->
  * denied eager-load target. A mutation privacy denial is
  * `MutationResult.Failed(EntMutationPrivacyDeniedException(...))`
  * carrying the denied operation and `writeState = NotPersisted` for
- * pre-write rejections. Raw terminals (`rawCount` / `rawExists`) skip
- * LOAD privacy and return their answer as `ReadResult`.
+ * pre-write rejections. Storage-wide reads use an explicit bypass context.
  */
 @Testcontainers
 class PrivacyIntegrationTest {
@@ -376,42 +375,43 @@ class PrivacyIntegrationTest {
         client.articles.delete(viewerContext, article).getOrThrow()
     }
 
-    // ---- rawCount() ----
+    // ---- Explicit bypass reads ----
 
     @Test
-    fun `rawCount reports all rows regardless of privacy`() {
+    fun `bypass all reports all rows regardless of privacy`() {
         val client = freshClient(Viewer.Anonymous)
         seedData(client)
 
-        val count = client.articles.query().rawCount(viewerContext).getOrThrow()
+        val count = client.articles.query()
+            .all(testBypassContext("count all articles"))
+            .getOrThrow()
+            .size
+            .toLong()
         assertEquals(4L, count)
     }
 
     @Test
-    fun `rawCount with predicate counts matching rows`() {
+    fun `bypass all with predicate counts matching rows`() {
         val client = freshClient(Viewer.Anonymous)
         seedData(client)
 
         val count = client.articles.query {
             where(Article.published eq true)
-        }.rawCount(viewerContext).getOrThrow()
+        }.all(testBypassContext("count published articles")).getOrThrow().size.toLong()
         assertEquals(2L, count)
     }
 
-    // ---- rawExists() ----
-
     @Test
-    fun `rawExists ignores LOAD privacy and returns true if any storage row matches`() {
-        // The drafts are LOAD-denied to Anonymous, but rawExists doesn't
-        // evaluate privacy: it sees the existing-in-storage row and
-        // returns Success(true).
+    fun `bypass firstOrNull can check storage existence regardless of privacy`() {
+        // Drafts are LOAD-denied to Anonymous, so the explicit bypass is what
+        // authorizes this storage-wide existence check.
         val client = freshClient(Viewer.Anonymous)
         seedData(client)
 
         val result = client.articles.query {
             where(Article.published eq false)
-        }.rawExists(viewerContext).getOrThrow()
-        assertTrue(result)
+        }.firstOrNull(testBypassContext("check for draft articles")).getOrThrow()
+        assertNotNull(result)
     }
 
     // ---- CREATE privacy ----
@@ -881,7 +881,14 @@ class PrivacyIntegrationTest {
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
         assertEquals(EntOperation.CREATE, ex.operation)
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
-        assertEquals(0L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(
+            0L,
+            client.articles.query()
+                .all(testBypassContext("verify createMany rollback"))
+                .getOrThrow()
+                .size
+                .toLong(),
+        )
     }
 
     @Test

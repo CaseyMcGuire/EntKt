@@ -9,10 +9,7 @@ import entkt.query.EntktInternal
  *  - a singular entity lookup declares `ReadResult<Entity?>`, where
  *    `Success(null)` is authoritative absence;
  *  - a collection read declares `ReadResult<List<Entity>>`, where the
- *    list may be empty but is never null;
- *  - a SQL aggregate that naturally produces `NULL` declares a
- *    nullable scalar payload, where null means the aggregate's
- *    documented SQL-null result, not entity absence.
+ *    list may be empty but is never null.
  *
  * [Failed] means the read produced neither a value nor an
  * authoritative absence. LOAD denial is
@@ -91,11 +88,6 @@ sealed interface ReadResult<out T> {
  *
  * Defined for nullable singular results only: collection reads have no
  * nullable success state and never silently discard denied root rows.
- * Erasure caveat: the `ReadResult<T?>` receiver cannot distinguish an
- * entity lookup from a nullable SQL aggregate, so a call like
- * `rawMin(...).visibleOrNull()` type-checks — it is inert there, since
- * raw aggregates bypass LOAD privacy and can never produce the
- * root-denial failure this projection maps.
  */
 fun <T : Any> ReadResult<T?>.visibleOrNull(): ReadResult<T?> = when (this) {
     is ReadResult.Success -> this

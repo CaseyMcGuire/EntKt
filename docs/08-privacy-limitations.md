@@ -5,27 +5,22 @@ can combine application reads, but EntKt does not rewrite arbitrary scalar
 callbacks or infer a set-based query. The following limitations are part of the
 current contract.
 
-## Aggregate Reads
+## Counts and Aggregate Calculations
 
-`query.rawCount(viewerContext)` does not evaluate LOAD privacy. This means it can reveal
-how many rows match a predicate, even if those rows would make
-`query.all(viewerContext)` fail with `Failed(EntPrivacyDeniedException)`. The same
-holds for `rawExists()` and the raw aggregates.
+Generated queries do not expose count, existence, or aggregate terminals.
+Callers read entities with `all(viewerContext)` and calculate over the returned
+collection in Kotlin; an existence check can use
+`firstOrNull(viewerContext) != null`. These reads materialize entities and run
+LOAD privacy under the supplied context.
 
-This behavior is also available inside privacy rules. Rules are trusted
-authorization code and may deliberately use raw storage facts for ACL,
-membership, or similar control-plane decisions without materializing the
-matching entities. Use a materializing terminal when the matching entity's
-LOAD visibility must affect the decision. The `raw` prefix is the warning that
-visibility is not evaluated; the framework does not infer which posture the
-application intended.
-
-There is no privacy-aware count or existence terminal: the former
-`visible*` scanning family was removed with the operation-result
-algebra, and privacy-skipping scans are an explicit non-goal. A
-viewer-visible count is a strict `all()` (which fails if any selected
-row is denied) counted in Kotlin, over predicates that only match rows
-the viewer may see.
+An intentional storage-wide calculation therefore requires an explicit
+`ViewerContext.privacyBypass_DANGEROUS(reason)`. This is available inside
+privacy rules as well, because rules are trusted authorization code, but it
+must be visible at the entity terminal that performs the read. Read
+interceptors still run. Because the generated API materializes the matching
+entities, applications should use an application-owned storage query with a
+documented authorization boundary when a large aggregate cannot reasonably be
+calculated in memory.
 
 ## Strict Read Model
 

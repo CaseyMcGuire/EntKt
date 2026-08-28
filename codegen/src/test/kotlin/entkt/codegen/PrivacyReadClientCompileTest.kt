@@ -86,19 +86,15 @@ class PrivacyReadClientCompileTest {
 
     @Test
     fun `privacy rule can read - LOAD-checked terminals, byId family, and index helpers`() {
-        // The positive twin: the viewer-scoped read surface the RFC
-        // promises rules. Raw terminals (rawCount / rawExists / raw
-        // aggregates) compile as explicit storage-level operations that
-        // skip LOAD privacy; PrivacyReadClientIntegrationTest pins their
-        // runtime behavior. If this test stops compiling, the negatives
-        // below prove nothing.
+        // The positive twin: the viewer-scoped read surface promised to
+        // rules. If this test stops compiling, the negatives below prove
+        // nothing.
         val result = compile(
             generatedSources() + ruleSnippet(
                 """
                 val concrete: ReadOnlyEntClient = ctx.client
                 ctx.client.cars.query { }.firstOrNull(ctx.viewerContext)
                 ctx.client.cars.query { }.all(ctx.viewerContext).getOrThrow()
-                ctx.client.cars.query { }.rawExists(ctx.viewerContext)
                 ctx.client.users.findById(ctx.viewerContext, UUID.randomUUID()).getOrThrow()
                 ctx.client.users.findById(ctx.viewerContext, UUID.randomUUID()).visibleOrNull()
                 ctx.client.users.indexes.email("a@b.c").find(ctx.viewerContext)

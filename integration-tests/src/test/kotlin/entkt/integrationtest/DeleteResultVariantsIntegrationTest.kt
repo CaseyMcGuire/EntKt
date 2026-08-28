@@ -110,7 +110,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val result = client.articles.delete(viewerContext, article)
 
         assertEquals(MutationResult.Success(Unit), result)
-        assertEquals(0L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(0L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -158,7 +158,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         assertEquals(article.id, ex.entityKey?.value)
 
         // Row still present.
-        assertEquals(1L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(1L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -186,7 +186,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val result = client.articles.deleteById(viewerContext, article.id)
         val success = assertIs<MutationResult.Success<Boolean>>(result)
         assertTrue(success.value)
-        assertEquals(0L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(0L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -208,7 +208,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
         assertEquals(EntOperation.DELETE, ex.operation)
         // Row still there.
-        assertEquals(1L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(1L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     // ---- deleteMany atomicity ----
@@ -223,7 +223,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val result = client.articles.deleteMany(viewerContext, Article.published.eq(true))
         // All three match published = true.
         assertEquals(MutationResult.Success(3), result)
-        assertEquals(0L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(0L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -246,7 +246,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
 
         assertEquals(MutationResult.Success(1), result)
         assertEquals(1, beforeDeletes)
-        assertEquals(0L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(0L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -268,7 +268,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         assertEquals("delete denied", ex.reason)
 
         // No committed subset, no silent skipping.
-        assertEquals(3L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(3L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -303,6 +303,6 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         assertEquals("second candidate blocked", ex.reason)
 
         // Every candidate remains because the denial preceded persistence.
-        assertEquals(3L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(3L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 }

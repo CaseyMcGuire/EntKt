@@ -122,11 +122,9 @@ Important behavior:
   absence. It does not hide query, driver, or edge-load failures.
 - A selected edge is strict unless its `EdgeLoad` handle opts into
   `filterVisible()`.
-- Raw terminals such as `rawCount()` and `rawExists()` run read interceptors but
-  do not materialize entities and therefore do not run LOAD privacy. A query
-  with selected edge loads fails those terminals with
-  `EntQueryConfigurationException` before interceptor or driver work — they
-  cannot expose loaded edges, so the selection is rejected, never ignored.
+- Generated queries expose only entity terminals. Counts, existence checks,
+  and aggregate calculations operate on materialized results in Kotlin; an
+  explicit privacy-bypass context is required for a storage-wide calculation.
 - Reads do not run mutation hooks or validators.
 
 See [Queries](04-queries.md) for query construction, traversal, edge loading,

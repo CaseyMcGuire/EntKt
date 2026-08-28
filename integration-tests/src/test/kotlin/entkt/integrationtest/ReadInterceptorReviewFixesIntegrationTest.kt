@@ -27,11 +27,9 @@ import kotlin.test.assertTrue
  * Regression coverage for fixes identified post-contract review:
  *
  * - **P1** limit interceptor methods are no-ops on read shapes where
- *   row limits have no meaning (BY_ID / FIRST / aggregates / EAGER /
- *   EDGE_PREDICATE) — so `global { rejectIfLimitGreaterThan(10) }`
- *   no longer rejects `findById` / `rawCount` / `rawExists`, and
- *   `setDefaultLimitIfAbsent` / `requireLimitAtMost` never silently
- *   clamp the no-limit shapes.
+ *   row limits have no meaning (BY_ID / FIRST / EAGER / EDGE_PREDICATE),
+ *   so `global { rejectIfLimitGreaterThan(10) }` no longer rejects
+ *   `findById`, and limit mutators never silently clamp those shapes.
  *
  * - **P2b** by-id reads route through the *Query's
  *   `runReadInterceptors` so `Edge.has { ... }` predicates added by
@@ -43,26 +41,6 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
     private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     // ---------- Limit ops scoped by ReadOperation ----------
-
-    @Test
-    fun `rejectIfLimitGreaterThan is a silent no-op for rawCount`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-
-            interceptors {
-                global(
-                    GlobalQueryInterceptor { scope, _ ->
-                        scope.rejectIfLimitGreaterThan(10) { "no broad scans" }
-                    },
-                    name = "max-limit",
-                )
-            }
-        }
-        client.posts.create { title = "x" }.saveAndLoad(testViewerContext).getOrThrow()
-        // rawCount has no row limit semantics; the gate should
-        // NOT trigger even though effective limit is null.
-        assertEquals(1L, client.posts.query().rawCount(testViewerContext).getOrThrow())
-    }
 
     @Test
     fun `rejectIfLimitGreaterThan is a silent no-op for findById`() {
@@ -105,25 +83,6 @@ class ReadInterceptorReviewFixesIntegrationTest : PostgresTestBase() {
         // FIRST is a no-limit-ops shape: only the caller's own bound
         // may shrink the single-row fetch.
         assertNotNull(client.posts.query().firstOrNull(testViewerContext).getOrThrow())
-    }
-
-    @Test
-    fun `requireLimitAtMost(0) is a silent no-op for rawExists`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-
-            interceptors {
-                // Without the P1 fix this would clamp spec.limit to 0,
-                // and rawExists' driver call would fetch 0 rows
-                // and always return false.
-                global(
-                    GlobalQueryInterceptor { scope, _ -> scope.requireLimitAtMost(0) },
-                    name = "clamp-zero",
-                )
-            }
-        }
-        client.posts.create { title = "x" }.saveAndLoad(testViewerContext).getOrThrow()
-        assertTrue(client.posts.query().rawExists(testViewerContext).getOrThrow())
     }
 
     @Test

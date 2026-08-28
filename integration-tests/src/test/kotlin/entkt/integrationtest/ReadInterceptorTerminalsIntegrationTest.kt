@@ -15,23 +15,20 @@ import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
-import kotlin.test.assertTrue
 
 /**
  * coverage: every core read terminal runs the per-entity +
  * global interceptor chain and honors the post-interceptor spec when
  * calling the driver. Pins:
  *
- *  - Interceptor predicates flow into the driver call (rawCount /
- *    rawExists / firstOrNull / all / findById see the narrowed
- *    result set).
+ *  - Interceptor predicates flow into the driver call (`firstOrNull`,
+ *    `all`, and `findById` see the narrowed result set).
  *  - QueryContext carries the right operation per terminal (BY_ID
- *    vs FIRST vs ALL vs RAW_COUNT vs RAW_EXISTS vs RAW_AGGREGATE).
+ *    vs FIRST vs ALL).
  *  - reject() short-circuits the chain and surfaces as
  *    `ReadResult.Failed(EntQueryRejectedException)` on every data
  *    terminal; `getOrThrow()` throws the stored exception instance.
@@ -108,47 +105,6 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         val post = client.posts.query().firstOrNull(testViewerContext).getOrThrow()
         assertNotNull(post)
         assertEquals("match", post.title)
-    }
-
-    @Test
-    fun `rawCount honors interceptor predicate`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ ->
-                        scope.addPredicate(Predicate.Leaf("title", Op.EQ, "yes"))
-                    },
-                    name = "yes-only",
-                )
-            }
-        }
-        seedPosts(client, listOf("yes", "yes", "no"))
-
-        assertEquals(2L, client.posts.query().rawCount(testViewerContext).getOrThrow())
-    }
-
-    @Test
-    fun `rawExists honors interceptor predicate`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ ->
-                        scope.addPredicate(Predicate.Leaf("title", Op.EQ, "needle"))
-                    },
-                    name = "needle-only",
-                )
-            }
-        }
-        seedPosts(client, listOf("haystack", "haystack"))
-
-        assertFalse(client.posts.query().rawExists(testViewerContext).getOrThrow())
-
-        seedPosts(client, listOf("needle"))
-        assertTrue(client.posts.query().rawExists(testViewerContext).getOrThrow())
     }
 
     @Test
@@ -245,22 +201,6 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `interceptor reject surfaces as Failed(EntQueryRejectedException) on rawCount`() {
-        val driver = freshDriver()
-        val client = EntClient(driver) {
-
-            interceptors {
-                posts(
-                    QueryInterceptor { scope, _ -> scope.reject("nope") },
-                    name = "rej",
-                )
-            }
-        }
-        val failed = assertIs<ReadResult.Failed>(client.posts.query().rawCount(testViewerContext))
-        assertIs<EntQueryRejectedException>(failed.exception)
-    }
-
-    @Test
     fun `interceptor reject surfaces as Failed(EntQueryRejectedException) on findById`() {
         val driver = freshDriver()
         val client = EntClient(driver) {
@@ -319,18 +259,12 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
 
         client.posts.query().all(testViewerContext).getOrThrow()
         client.posts.query().firstOrNull(testViewerContext).getOrThrow()
-        client.posts.query().rawCount(testViewerContext).getOrThrow()
-        client.posts.query().rawExists(testViewerContext).getOrThrow()
-        client.posts.query().rawSum(testViewerContext, Post.id).getOrThrow()
         client.posts.findById(testViewerContext, 1L).getOrThrow()
 
         assertEquals(
             listOf(
                 ReadOperation.ALL,
                 ReadOperation.FIRST,
-                ReadOperation.RAW_COUNT,
-                ReadOperation.RAW_EXISTS,
-                ReadOperation.RAW_AGGREGATE,
                 ReadOperation.BY_ID,
             ),
             seen,
@@ -414,8 +348,6 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         seedPosts(client, listOf("a", "b", "c"))
 
         assertEquals(3, client.posts.query().all(testViewerContext).getOrThrow().size)
-        assertEquals(3L, client.posts.query().rawCount(testViewerContext).getOrThrow())
-        assertTrue(client.posts.query().rawExists(testViewerContext).getOrThrow())
         assertNotNull(client.posts.query().firstOrNull(testViewerContext).getOrThrow())
     }
 }

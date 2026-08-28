@@ -246,7 +246,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         val count = run {
             val sys = client
             val viewerContext = testBypassContext("test")
-            sys.articles.query().rawCount(viewerContext).getOrThrow()
+            sys.articles.query().all(viewerContext).getOrThrow().size.toLong()
         }
         assertEquals(0L, count)
     }
@@ -293,7 +293,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         val count = run {
             val sys = client
             val viewerContext = testBypassContext("test")
-            sys.articles.query().rawCount(viewerContext).getOrThrow()
+            sys.articles.query().all(viewerContext).getOrThrow().size.toLong()
         }
         assertEquals(0L, count)
         assertTrue(ex.entityKey == null, "pre-write create denial has no usable key; got ${ex.entityKey}")

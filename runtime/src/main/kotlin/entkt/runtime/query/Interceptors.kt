@@ -252,9 +252,6 @@ data class EdgeStep(
  */
 enum class ReadOperation {
     BY_ID, FIRST, ALL,
-    RAW_COUNT,
-    RAW_EXISTS,
-    RAW_AGGREGATE,
     EDGE_TRAVERSAL, EDGE_PREDICATE, EAGER_LOAD,
 
     /**

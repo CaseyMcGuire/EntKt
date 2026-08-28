@@ -53,7 +53,7 @@ class ReadOnlyEntClientCompileTest {
                 import entkt.runtime.validation.ValidationDecision
 
                 fun anyCarExists(client: ReadOnlyEntClient, viewerContext: ViewerContext): Boolean =
-                    client.cars.query { }.rawExists(viewerContext).getOrThrow()
+                    client.cars.query { }.firstOrNull(viewerContext).getOrThrow() != null
 
                 val validation = CarCreateValidationRule { ctx, _ ->
                     val client: ReadOnlyEntClient = ctx.client

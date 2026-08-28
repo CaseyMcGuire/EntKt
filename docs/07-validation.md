@@ -432,9 +432,8 @@ passing `context.readViewerContext`.
 
 **Validators are read-only — by type, not by convention.** The context
 exposes `ReadOnlyEntClient`, whose per-entity repos carry
-`findById`, the full `query { }` DSL with every terminal
-(`all` / `firstOrNull`, `rawCount` / `rawExists`, and the raw aggregates),
-and the generated index helpers — and nothing else.
+`findById`, the full `query { }` DSL with `all` / `firstOrNull`, and the
+generated index helpers — and nothing else.
 `create`, `update`, `save`, the `delete*` family, edge mutators, and
 `withTransaction` do not exist on it, so a validator that tries to
 mutate fails to compile. Validators answer "is this state valid?", not
@@ -456,10 +455,10 @@ class UniqueSlug : PostCreateValidationRule {
         context: ValidationRuleContext<ReadOnlyEntClient>,
         item: PostCreateValidationItem,
     ): ValidationDecision {
-        val exists = context.client.posts.query {
+        val existing = context.client.posts.query {
             where(Post.slug eq item.candidate.slug)
-        }.rawExists(context.readViewerContext).getOrThrow()
-        return if (exists) ValidationDecision.Invalid("slug already taken")
+        }.firstOrNull(context.readViewerContext).getOrThrow()
+        return if (existing != null) ValidationDecision.Invalid("slug already taken")
         else ValidationDecision.Valid
     }
 }
@@ -635,7 +634,7 @@ class CannotDeleteWithOpenInvoices : UserDeleteValidationRule {
     ): ValidationDecision {
         val openCount = context.client.invoices.query {
             where(Invoice.userId eq item.entity.id and (Invoice.status eq Status.OPEN))
-        }.rawCount(context.readViewerContext).getOrThrow()
+        }.all(context.readViewerContext).getOrThrow().size
         return if (openCount > 0) {
             ValidationDecision.Invalid("user has $openCount open invoice(s)")
         } else {

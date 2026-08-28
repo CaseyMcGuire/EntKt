@@ -3,7 +3,6 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.ArticleQuery
 import entkt.integrationtest.ent.EntClient
-import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserQuery
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
@@ -13,39 +12,25 @@ import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.isLoaded
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntQueryConfigurationException
-import entkt.runtime.result.ReadResult
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
  * Pins the edge-load configuration contract from the generated
  * edge-loading API RFC: selecting one edge twice throws
  * [EntQueryConfigurationException] at the second `load{Name}` call;
- * non-entity terminals (raw count / existence / aggregates) capture
- * the same exception as `ReadResult.Failed` before any interceptor or
- * driver work; `query{Name}` traversal throws it directly; and none
- * of this restricts entity terminals —
+ * `query{Name}` traversal rejects a source query carrying selected edges;
+ * and none of this restricts entity terminals —
  * a fully configured query stays executable any number of times.
  */
 class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
 
-    private fun recordingClient(interceptorFires: AtomicInteger = AtomicInteger()): Pair<EntClient, RecordingDriver> {
+    private fun recordingClient(): Pair<EntClient, RecordingDriver> {
         val recording = RecordingDriver(resetAndDriver())
-        val client = EntClient(recording) {
-
-            interceptors {
-                users(
-                    QueryInterceptor { _, _ -> interceptorFires.incrementAndGet() },
-                    name = "count-fires",
-                )
-            }
-        }
+        val client = EntClient(recording)
         return client to recording
     }
 
@@ -65,47 +50,6 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         assertContains(ex.reason, "loadArticles()")
         // Thrown while configuring — before any terminal, interceptor,
         // or driver work.
-        assertEquals(0, recording.callCount())
-    }
-
-    @Test
-    fun `rawCount captures the configuration exception before interceptor and driver work`() {
-        val fires = AtomicInteger()
-        val (client, recording) = recordingClient(fires)
-        val query = client.users.query { loadArticles() }
-        recording.reset()
-
-        val result = query.rawCount(testViewerContext)
-
-        val failed = assertIs<ReadResult.Failed>(result)
-        val ex = assertIs<EntQueryConfigurationException>(failed.exception)
-        assertEquals("User", ex.entityType)
-        assertContains(ex.reason, "rawCount()")
-        assertContains(ex.reason, "User.articles")
-        assertEquals(0, recording.callCount(), "no driver call may precede the failure")
-        assertEquals(0, fires.get(), "no interceptor may fire before the failure")
-        // The result-bearing boundary preserves the exact exception.
-        val thrown = assertFailsWith<EntQueryConfigurationException> { result.getOrThrow() }
-        assertSame(ex, thrown)
-    }
-
-    @Test
-    fun `existence and aggregate terminals reject a selected graph the same way`() {
-        val (client, recording) = recordingClient()
-        val query = client.users.query { loadGroups() }
-        recording.reset()
-
-        val results = mapOf(
-            "rawExists()" to query.rawExists(testViewerContext),
-            "rawMin()" to query.rawMin(testViewerContext, User.name),
-            "rawCountBy()" to query.rawCountBy(testViewerContext, User.name),
-        )
-        for ((operation, result) in results) {
-            val failed = assertIs<ReadResult.Failed>(result, "expected $operation to fail")
-            val ex = assertIs<EntQueryConfigurationException>(failed.exception)
-            assertContains(ex.reason, operation)
-            assertContains(ex.reason, "User.groups")
-        }
         assertEquals(0, recording.callCount())
     }
 
@@ -183,10 +127,8 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
 
         assertFailsWith<IllegalStateException> { query.loadArticles { error("boom") } }
 
-        // Nothing was installed: a non-entity terminal accepts the
-        // query, and the edge can still be selected cleanly.
+        // Nothing was installed, so the edge can still be selected cleanly.
         client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
-        assertIs<ReadResult.Success<Long>>(query.rawCount(testViewerContext))
         query.loadArticles()
         assertTrue(query.all(testViewerContext).getOrThrow().single().edges.articles.isLoaded)
     }

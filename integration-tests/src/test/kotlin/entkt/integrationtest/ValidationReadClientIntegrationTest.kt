@@ -39,12 +39,13 @@ import kotlin.test.assertTrue
  * The canonical read-validator: uniqueness via the query DSL. The
  * explicit `ReadOnlyEntClient` type pins the context's client
  * property — this file stops compiling if contexts regress to the full
- * `EntClient` or another capability surface. The raw terminal answers as
- * `ReadResult` like every read terminal.
+ * `EntClient` or another capability surface.
  */
 private val UniqueEmailViaQuery = UserCreateValidationRule { context, item ->
     val client: ReadOnlyEntClient = context.client
-    val taken = client.users.query { where(User.email.eq(item.candidate.email)) }.rawExists(context.readViewerContext).getOrThrow()
+    val taken = client.users.query { where(User.email.eq(item.candidate.email)) }
+        .firstOrNull(context.readViewerContext)
+        .getOrThrow() != null
     if (taken) ValidationDecision.Invalid("email already taken", field = "email")
     else ValidationDecision.Valid
 }

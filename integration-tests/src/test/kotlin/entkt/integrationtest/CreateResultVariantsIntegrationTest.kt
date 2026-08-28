@@ -368,7 +368,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         assertIs<MutationResult.Failed>(client.users.create { name = "K" }.save(viewerContext))
 
         // DatabaseDriver count must be zero — nothing reached insert().
-        assertEquals(0L, client.users.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(0L, client.users.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
@@ -382,6 +382,6 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
 
         // Still one row — the conflicting insert rolled back at the
         // driver's row-level uniqueness check.
-        assertEquals(1L, client.users.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(1L, client.users.query().all(viewerContext).getOrThrow().size.toLong())
     }
 }

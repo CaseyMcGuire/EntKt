@@ -159,9 +159,6 @@ internal class QueryGenerator(
             addFunction(buildCompileEntityQuery(entityClass))
             addFunction(buildAll(entityClass))
             addFunction(buildFirstOrNull(entityClass))
-            addFunction(buildRawCount())
-            addFunctions(buildAggregateTerminals(entityClass))
-            addFunction(buildRawExists())
             addFunctions(traversalMethods)
         }
 

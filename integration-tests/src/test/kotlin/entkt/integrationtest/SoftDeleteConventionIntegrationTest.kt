@@ -95,7 +95,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `filtered client rawCount and rawExists ignore soft-deleted rows`() {
+    fun `filtered client entity reads ignore soft-deleted rows`() {
         val driver = resetAndDriver()
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
@@ -105,11 +105,11 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         filtered.memos.update(gone.id) { deletedAt = Instant.now() }.save(testViewerContext).getOrThrow()
 
         // Filtered: 1 visible row.
-        assertEquals(1L, filtered.memos.query().rawCount(testViewerContext).getOrThrow())
-        assertTrue(filtered.memos.query().rawExists(testViewerContext).getOrThrow())
+        assertEquals(1L, filtered.memos.query().all(testViewerContext).getOrThrow().size.toLong())
+        assertNotNull(filtered.memos.query().firstOrNull(testViewerContext).getOrThrow())
 
         // Unfiltered: 2 rows in storage.
-        assertEquals(2L, unfiltered.memos.query().rawCount(testViewerContext).getOrThrow())
+        assertEquals(2L, unfiltered.memos.query().all(testViewerContext).getOrThrow().size.toLong())
     }
 
     // ---- Restore needs the unfiltered client ----
@@ -182,8 +182,8 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
 
         // Both clients see zero rows — physical removal, not a
         // soft delete masquerading.
-        assertEquals(0L, filtered.memos.query().rawCount(testViewerContext).getOrThrow())
-        assertEquals(0L, unfiltered.memos.query().rawCount(testViewerContext).getOrThrow())
+        assertEquals(0L, filtered.memos.query().all(testViewerContext).getOrThrow().size.toLong())
+        assertEquals(0L, unfiltered.memos.query().all(testViewerContext).getOrThrow().size.toLong())
         assertNull(unfiltered.memos.findById(testViewerContext, memo.id).getOrThrow())
     }
 
@@ -199,7 +199,7 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
         val ok = assertIs<MutationResult.Success<Boolean>>(result)
         assertTrue(ok.value, "deleteById must report true when this call deleted the row")
 
-        assertEquals(0L, unfiltered.memos.query().rawCount(testViewerContext).getOrThrow())
+        assertEquals(0L, unfiltered.memos.query().all(testViewerContext).getOrThrow().size.toLong())
     }
 
     @Test

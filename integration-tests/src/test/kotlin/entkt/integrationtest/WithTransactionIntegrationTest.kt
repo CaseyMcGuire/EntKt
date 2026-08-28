@@ -87,7 +87,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         run {
             val sys = client
             val viewerContext = testBypassContext("test")
-            sys.users.query().rawCount(viewerContext).getOrThrow()
+            sys.users.query().all(viewerContext).getOrThrow().size.toLong()
         }
 
     // ---- Success ----
@@ -110,8 +110,8 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         assertEquals("Hello", success.value.title)
 
         // Both rows survived the commit.
-        assertEquals(1L, client.users.query().rawCount(viewerContext).getOrThrow())
-        assertEquals(1L, client.articles.query().rawCount(viewerContext).getOrThrow())
+        assertEquals(1L, client.users.query().all(viewerContext).getOrThrow().size.toLong())
+        assertEquals(1L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test

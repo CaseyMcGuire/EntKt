@@ -13,7 +13,8 @@ interface ColumnReference<E : Any> {
 }
 
 /**
- * Marker for a column usable as an aggregate group key (the `raw…By` terminals).
+ * Marker for a column usable as an aggregate group key by a typed adapter over
+ * the low-level driver aggregate API.
  * Carries the column [name] and a [decodeKey] that turns the driver's raw group
  * value into the typed key [K] — identity for most columns, enum-name → enum for
  * [EnumColumn]. Implemented by string/text, numeric, time, bool, UUID, and enum
@@ -26,10 +27,8 @@ interface GroupableColumn<E : Any, K> {
 }
 
 /**
- * A nullable group column. Extends [GroupableColumn] so that, by overload
- * specificity, the grouped terminals' `NullableGroupableColumn` overload (which
- * yields `AggregateBucket<K?, …>`) is chosen for a nullable column — its NULLs
- * fold into the single `key == null` bucket.
+ * A nullable group column. Extends [GroupableColumn] so a typed adapter can
+ * preserve nullable group keys; NULLs fold into one `key == null` bucket.
  */
 interface NullableGroupableColumn<E : Any, K> : GroupableColumn<E, K>
 
@@ -113,21 +112,19 @@ open class StringColumn<E : Any>(name: String) : ComparableColumn<E, String>(nam
 }
 
 /**
- * A numeric column (INT / LONG / FLOAT / DOUBLE). Gates `sum` / `avg`; split into
- * [IntegralColumn] and [FloatingColumn] so `sum` resolves to `Long?` vs `Double?`.
+ * A numeric column (INT / LONG / FLOAT / DOUBLE). Retains numeric kind metadata
+ * for typed adapters over low-level driver operations.
  */
 open class NumericColumn<E : Any, T : Comparable<T>>(name: String) : ComparableColumn<E, T>(name)
 
-/** An integer-typed numeric column (INT, LONG). `sum` over it returns `Long?`. */
+/** An integer-typed numeric column (INT, LONG). */
 open class IntegralColumn<E : Any, T : Comparable<T>>(name: String) : NumericColumn<E, T>(name)
 
-/** A floating-typed numeric column (FLOAT, DOUBLE). `sum` over it returns `Double?`. */
+/** A floating-typed numeric column (FLOAT, DOUBLE). */
 open class FloatingColumn<E : Any, T : Comparable<T>>(name: String) : NumericColumn<E, T>(name)
 
 /**
- * A groupable but non-comparable scalar column (BOOL, UUID). Usable as an
- * aggregate group key, but not for min/max/sum/avg — it is not a
- * [ComparableColumn].
+ * A groupable but non-comparable scalar column (BOOL, UUID).
  */
 open class GroupableScalarColumn<E : Any, T>(name: String) : Column<E, T>(name), GroupableColumn<E, T> {
     @Suppress("UNCHECKED_CAST")
@@ -153,10 +150,9 @@ open class GroupableScalarColumn<E : Any, T>(name: String) : Column<E, T>(name),
 open class EnumColumn<E : Any, T : Enum<T>>(
     name: String,
     /**
-     * Maps a stored enum-name `String` back to the enum constant — used to decode
-     * an enum **group key** ([decodeKey]). codegen always supplies
-     * `{ MyEnum.valueOf(it) }`; the throwing default only guards a hand-built
-     * column that was never wired for aggregate grouping.
+     * Maps a stored enum-name `String` back to the enum constant for typed
+     * low-level aggregate adapters. Codegen always supplies
+     * `{ MyEnum.valueOf(it) }`.
      */
     private val fromName: (String) -> T = {
         error("EnumColumn '$name' has no enum-decode metadata; build it via codegen to group by it")

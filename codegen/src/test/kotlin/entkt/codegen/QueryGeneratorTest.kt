@@ -27,49 +27,23 @@ class QueryGeneratorTest {
     private val generator = QueryGenerator("com.example.ent")
 
     @Test
-    fun `raw aggregate terminals return ReadResult and share one execution path`() {
-        // Car has year (Int → IntegralColumn), price (Float? → FloatingColumn).
+    fun `does not generate storage aggregate terminals`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
+        val output = generator.generate("Car", car).toString()
 
-        // Every overload delegates terminal intent and typed result decoding
-        // to the shared runtime executor.
-        assert(output.contains("_readQueryExecutor.rawAggregate(")) {
-            "aggregate terminals should delegate to ReadQueryExecutor\n$output"
+        for (removed in listOf(
+            "rawCount",
+            "rawExists",
+            "rawMin",
+            "rawMax",
+            "rawSum",
+            "rawAvg",
+        )) {
+            assert(!output.contains(removed)) {
+                "removed storage terminal '$removed' must not be generated\n$output"
+            }
         }
-        assert(output.contains("function = AggregateFunction.SUM")) {
-            "aggregate terminals should pass their operation explicitly\n$output"
-        }
-        assert(!output.contains("driver.aggregate(Car.TABLE,")) {
-            "generated queries should not own aggregate execution\n$output"
-        }
-        assert(!output.contains("checkPrivacyBypassingRead")) {
-            "raw aggregates should be available in every read posture\n$output"
-        }
-
-        // Ungrouped scalar terminals, typed by the column marker, wrapped in ReadResult.
-        assert(output.contains("rawSum(viewerContext: ViewerContext, column: IntegralColumn<Car, *>): ReadResult<Long?>")) { "rawSum on integral → ReadResult<Long?>\n$output" }
-        assert(output.contains("rawSum(viewerContext: ViewerContext, column: FloatingColumn<Car, *>): ReadResult<Double?>")) { "rawSum on floating → ReadResult<Double?>\n$output" }
-        assert(output.contains("rawAvg(viewerContext: ViewerContext, column: NumericColumn<Car, *>): ReadResult<Double?>")) { "rawAvg → ReadResult<Double?>\n$output" }
-        assert(output.contains("rawMin(viewerContext: ViewerContext, column: ComparableColumn<Car, T>): ReadResult<T?>")) { "rawMin takes ComparableColumn → ReadResult<T?>\n$output" }
-        assert(output.contains("rawMax(viewerContext: ViewerContext, column: ComparableColumn<Car, T>): ReadResult<T?>")) { "rawMax takes ComparableColumn → ReadResult<T?>\n$output" }
-
-        // Grouped terminals: non-null key → K, nullable key → K?; bucket lists in ReadResult.
-        assert(output.contains("rawCountBy(viewerContext: ViewerContext, groupBy: GroupableColumn<Car, K>): ReadResult<List<AggregateBucket<K, Long>>>")) {
-            "rawCountBy non-null key overload → ReadResult of buckets\n$output"
-        }
-        assert(output.contains("rawCountBy(viewerContext: ViewerContext, groupBy: NullableGroupableColumn<Car, K>): ReadResult<List<AggregateBucket<K?, Long>>>")) {
-            "rawCountBy nullable key overload → ReadResult of nullable-key buckets\n$output"
-        }
-
-        // Group keys are decoded via the column (enum-safe), not a raw cast.
-        assert(output.contains("groupBy.decodeKey(row.key)")) { "group keys decode via the column\n$output" }
-
-        // Grouped value terminals exist; the *OrError twins are gone —
-        // ReadResult is the single return shape, projections live on it.
-        assert(output.contains("rawAvgBy")) { "rawAvgBy grouped terminal exists\n$output" }
-        assert(!output.contains("OrError")) { "no aggregate *OrError twins survive\n$output" }
     }
 
     @Test
@@ -538,7 +512,7 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `selected-edge guard protects non-entity terminals and traversal`() {
+    fun `selected-edge guard protects traversal`() {
         val car = Car()
         val user = User()
         finalize(car, user)
@@ -547,12 +521,6 @@ class QueryGeneratorTest {
 
         assert(!output.contains("private fun requireNoSelectedEdges")) {
             "selected-edge validation should live in runtime, not each generated query\n$output"
-        }
-        assert(output.contains("_readQueryExecutor.rawCount(viewerContext) { captureEntityQuery() }")) {
-            "rawCount should delegate its selected-edge validation to runtime\n$output"
-        }
-        assert(output.contains("_readQueryExecutor.rawExists(viewerContext) { captureEntityQuery() }")) {
-            "rawExists should delegate its selected-edge validation to runtime\n$output"
         }
         // Traversal captures the source once, validates that captured graph,
         // and then gives the immutable source to the target query.
@@ -635,7 +603,7 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `visible scanning terminals and result-variant twins are gone from the query surface`() {
+    fun `scanning aggregate and result-variant terminals are gone from the query surface`() {
         // The visible* family (visibleCount / visibleExists / visibleAll /
         // firstVisibleOrNull) scanned rows under LOAD privacy with an
         // overfetch cap; the operation-result algebra deletes the whole
@@ -653,53 +621,18 @@ class QueryGeneratorTest {
             "firstVisibleOrNull",
             "visibleOverfetchLimit",
             "evaluateLoadPrivacy",
+            "rawCount",
+            "rawExists",
+            "rawMin",
+            "rawMax",
+            "rawSum",
+            "rawAvg",
             "OrError",
             "OrThrow",
         )) {
             assert(!output.contains(legacy)) {
                 "removed legacy surface '$legacy' must not be emitted\n$output"
             }
-        }
-        // The storage-level raw family is available in every read posture.
-        assert(!output.contains("checkPrivacyBypassingRead")) {
-            "raw terminals should not carry a posture gate\n$output"
-        }
-    }
-
-    @Test
-    fun `generates rawCount terminal method`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("public fun rawCount(viewerContext: ViewerContext): ReadResult<Long>")) {
-            "Should generate rawCount(ViewerContext): ReadResult<Long>\n$output"
-        }
-        assert(output.contains("= _readQueryExecutor.rawCount(viewerContext) { captureEntityQuery() }")) {
-            "rawCount execution and failure capture should be runtime-owned\n$output"
-        }
-    }
-
-    @Test
-    fun `rawExists is the only existence terminal — legacy exists() and visibleExists removed`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
-
-        // The legacy `exists()` that fetched the first row and threw
-        // PrivacyDeniedException if it was denied is gone, and the
-        // visible-scanning twin was deleted with the visible* family.
-        assert(!output.contains("fun exists(")) {
-            "Legacy exists() should be removed in favor of rawExists\n$output"
-        }
-        assert(!output.contains("visibleExists")) {
-            "visibleExists is deleted with the visible* family\n$output"
-        }
-        assert(output.contains("public fun rawExists(viewerContext: ViewerContext): ReadResult<Boolean>")) {
-            "Should generate rawExists(ViewerContext): ReadResult<Boolean>\n$output"
-        }
-        assert(output.contains("= _readQueryExecutor.rawExists(viewerContext) { captureEntityQuery() }")) {
-            "rawExists probe shape and failure capture should be runtime-owned\n$output"
         }
     }
 

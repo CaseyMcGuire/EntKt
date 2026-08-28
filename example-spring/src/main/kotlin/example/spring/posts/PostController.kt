@@ -1,5 +1,6 @@
 package example.spring.posts
 
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.requireLoaded
 import example.ent.EntClient
 import example.ent.Post
@@ -118,7 +119,9 @@ class PostController(
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Tag not found")
         val alreadyLinked = client.postTags.query {
             where((PostTag.postId eq id) and (PostTag.tagId eq req.tagId))
-        }.rawExists(viewerContext).getOrThrow()
+        }.firstOrNull(
+            ViewerContext.privacyBypass_DANGEROUS("check existing post-tag link"),
+        ).getOrThrow() != null
         if (!alreadyLinked) {
             client.postTags.create {
                 this.postId = post.id

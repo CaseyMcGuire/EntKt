@@ -24,9 +24,10 @@ val users = client.users.query {
 
 `.all(viewerContext)` returns `ReadResult<List<User>>` — the canonical exhaustive
 result of every read terminal. Use `.firstOrNull(viewerContext)`
-(`ReadResult<User?>`) for single results, `.rawCount(viewerContext)` for a fast
-aggregate count, or `.rawExists(viewerContext)` to check whether a match exists
-(the `raw` prefix means the terminal skips LOAD privacy).
+(`ReadResult<User?>`) for single results. Counts, existence checks, and
+aggregates are ordinary Kotlin collection operations over those entity reads;
+use an explicit privacy-bypass context when the calculation must include rows
+the application viewer cannot load.
 
 A `ReadResult` is either `Success(value)` or `Failed(exception)`.
 `Success(null)` on a singular lookup is authoritative absence;
@@ -292,157 +293,56 @@ the single-result ones:
 
 ```kotlin
 client.users.query { limit(0) }.firstOrNull(viewerContext).getOrThrow()  // → null
-client.users.query { limit(0) }.rawExists(viewerContext).getOrThrow()    // → false
 client.users.query { limit(0) }.all(viewerContext).getOrThrow()          // → []
 ```
 
 Note that `limit(n)` above 1 doesn't change what a first-row terminal
 returns — it already fetches a single row.
 
-The exceptions are the terminals that never materialize rows in the
-first place: `rawCount()` and the raw aggregates ignore `orderBy`,
-`limit`, and `offset` entirely, so `limit(0)` doesn't apply to them
-either.
+## Aggregations
 
-## Count and Exists
-
-### `rawCount()` -- fast aggregate count
-
-Uses `SELECT COUNT(*)` without materializing rows. Does **not** evaluate
-LOAD privacy, so it may count rows the viewer cannot read. Ignores
-`orderBy`, `limit`, and `offset`. Returns `ReadResult<Long>`. A query
-with selected edge loads is rejected, not silently ignored — see
-[Terminals That Cannot Load Edges](#terminals-that-cannot-load-edges).
-
-The raw family has the same storage-level contract on every read client,
-including `ReadOnlyEntClient`: it runs read interceptors but does not
-materialize entities or evaluate LOAD privacy. Privacy rules may deliberately
-use raw facts for ACL membership, existence, or other control-plane decisions,
-including to avoid recursive LOAD-policy evaluation. Use `findById`,
-`firstOrNull`, or `all` instead when the referenced entity's visibility must
-participate in authorization. A raw result proves only that matching storage
-exists; it does not prove the viewer could load the matching entities. See
-[Privacy → Operation Contexts](06-privacy.md#operation-contexts).
+Generated queries expose only entity terminals. Calculate collection facts in
+Kotlin after the read:
 
 ```kotlin
-val totalActiveUsers = client.users.query {
+val activeUsers = client.users.query {
     where(User.active eq true)
-}.rawCount(viewerContext).getOrThrow()  // → Long
+}.all(viewerContext).getOrThrow()
+
+val activeCount = activeUsers.size
+val anyActive = activeUsers.isNotEmpty()
 ```
 
-### `rawExists()` -- fast existence check, skips privacy
-
-`Success(true)` iff at least one storage row matches the predicate. Skips
-LOAD privacy entirely — useful for "does this row exist at all?" checks
-(uniqueness checks before insert, idempotency keys, etc.) where privacy
-of the caller is not the relevant question. Returns `ReadResult<Boolean>`.
+Use `firstOrNull()` when only existence matters and you do not need the full
+collection:
 
 ```kotlin
 val emailTaken = client.users.query {
     where(User.email eq "alice@example.com")
-}.rawExists(viewerContext).getOrThrow()  // → Boolean
+}.firstOrNull(viewerContext).getOrThrow() != null
 ```
 
-There is deliberately no privacy-aware count or existence terminal.
-The former `visibleCount()` / `visibleExists()` (and the wider
-`visible*` scanning family) were removed with the operation-result
-algebra: they silently skipped denied rows and scanned storage under an
-overfetch cap, which made their cost and their answer unpredictable.
-Under the strict model a read either returns every selected row or
-fails with the keyed denials — a viewer-visible count is `all()` over a
-deliberately privacy-safe predicate, and a singular visibility question
-is `firstOrNull().visibleOrNull()`.
-
-### Structured failure handling
-
-There are no `*OrError` twins — the terminal itself is the structured
-result. Match on it when you want exhaustive handling instead of
-throwing:
+Both forms materialize entities and therefore run LOAD privacy. For an
+intentional storage-wide calculation, supply an explicit bypass context:
 
 ```kotlin
-when (val result = client.posts.query().rawCount(viewerContext)) {
-    is ReadResult.Success -> println("count: ${result.value}")
-    is ReadResult.Failed -> when (val e = result.exception) {
-        is EntQueryRejectedException -> println("rejected by ${e.interceptor}")
-        else -> println("read failed: $e")
-    }
-}
+val systemVc = ViewerContext.privacyBypass_DANGEROUS("billing report")
+val orders = client.orders.query {
+    where(Order.status eq Status.SHIPPED)
+}.all(systemVc).getOrThrow()
+
+val units = orders.sumOf { it.quantity }
+val latest = orders.maxOfOrNull { it.placedAt }
+val countByStatus = orders.groupingBy { it.status }.eachCount()
 ```
 
-Typed failures are ordinary exceptions stored in `Failed`:
-`EntQueryRejectedException` for interceptor rejection (direct
-`entityType` / `reason` / `code` / `interceptor` properties),
-`EntPrivacyDeniedException` for LOAD denial (with `origin` and keyed
-`denials`), and the original driver or materialization exception for
-everything else. The raw terminals intentionally bypass LOAD privacy
-and never surface a privacy denial.
-
-## Aggregations
-
-Beyond count, each query exposes single-metric **raw** aggregate terminals —
-`min`, `max`, `sum`, `avg` — computed in the database over the query's
-predicates. Like `rawCount`, they bypass LOAD privacy (hence the `raw` prefix)
-and ignore `orderBy` / `limit` / `offset`. Each terminal computes one metric,
-optionally grouped by one column.
-
-### Ungrouped — a typed scalar
-
-The success payload follows the column you pass; each terminal returns
-`ReadResult` of that scalar:
-
-```kotlin
-val orders = client.orders.query { where(Order.status eq Status.SHIPPED) }
-
-val latest:  Instant? = orders.rawMax(viewerContext, Order.placedAt).getOrThrow()  // min/max → the column's type
-val units:   Long?    = orders.rawSum(viewerContext, Order.quantity).getOrThrow()  // sum of an integer column → Long?
-val revenue: Double?  = orders.rawSum(viewerContext, Order.price).getOrThrow()     // sum of a floating column → Double?
-val avgLine: Double?  = orders.rawAvg(Order.price).getOrThrow()     // avg is always Double?
-```
-
-`min`/`max` accept any comparable column; `sum`/`avg` accept only numeric
-columns — both are enforced at compile time. An ungrouped metric over an empty
-match is `Success(null)` — the aggregate's documented SQL-null result, not
-entity absence (only `rawCount()` returns `Success(0)`).
-
-### Grouped — a list of buckets
-
-`raw…By(groupColumn[, metricColumn])` returns
-`ReadResult<List<AggregateBucket<K, V>>>`, one bucket per distinct key:
-
-```kotlin
-val perStatus: List<AggregateBucket<Status, Long>> =
-    client.orders.query().rawCountBy(Order.status).getOrThrow()  // key is the decoded enum
-
-val unitsByStatus: List<AggregateBucket<Status, Long?>> =
-    client.orders.query().rawSumBy(Order.status, Order.quantity).getOrThrow()
-
-for (b in perStatus) println("${b.key}: ${b.value}")
-```
-
-The group key is typed by the column handle (an enum column yields the decoded
-enum, not its stored string). Grouping by a **nullable** column types the key as
-`K?` and folds its NULLs into a single `key == null` bucket. You can group by
-string/text, numeric, time, bool, UUID, or enum columns; bytes, JSON, and
-pgvector columns are rejected at compile time. Bucket order is unspecified —
-sort in Kotlin if you need a stable order.
-
-### Structured failure handling
-
-Aggregate terminals return `ReadResult` directly — there are no
-`…OrError` twins. Interceptor rejection and driver failure land in
-`Failed` exactly as for `rawCount()` (raw aggregates never surface a
-privacy denial):
-
-```kotlin
-when (val r = client.orders.query().rawSum(viewerContext, Order.quantity)) {
-    is ReadResult.Success -> println("units: ${r.value}")
-    is ReadResult.Failed  -> println("failed: ${r.exception}")
-}
-```
-
-V1 is Postgres-only and raw-only; privacy-aware aggregates,
-multi-metric selection, and multi-column or expression grouping are not
-supported.
+The bypass is visible at the operation boundary and applies to the complete
+entity read; read interceptors still run. These calculations honor the query's
+ordering, limit, offset, and selected edge loads because they operate on the
+materialized result. Generated clients do not expose database-native count,
+existence, or aggregate terminals. For a large set where materialization is
+inappropriate, use an application-owned storage query with an explicitly
+documented authorization boundary.
 
 ## Edge Traversal
 
@@ -656,26 +556,11 @@ in-flight read; it is visible only to a later terminal on the same builder.
 Query builders remain non-thread-safe, so this does not make concurrent
 mutation and execution safe.
 
-### Terminals That Cannot Load Edges
+### Traversal Cannot Carry Selected Source Edges
 
-`load{Edge}` is meaningful on terminals that return entities (`all()`,
-`firstOrNull()`), and every result projection of those terminals
-preserves the selected graph. Raw count, existence, and aggregate
-terminals do not return entities, so they refuse a selected graph
-rather than silently ignoring it:
-
-```kotlin
-val query = client.users.query { loadPosts() }
-
-query.rawCount(viewerContext)        // ReadResult.Failed(EntQueryConfigurationException)
-```
-
-The failure happens before any interceptor or driver work, and the
-message names the terminal and the selected edge declarations.
-`query{Edge}` traversal rejects a source query with selected edges the
-same way — a traversal changes the result root, so there is no
-coherent graph to carry across. Traverse first, then select loads on
-the target query:
+`query{Edge}` traversal rejects a source query with selected edges: a
+traversal changes the result root, so there is no coherent graph to carry
+across. Traverse first, then select loads on the target query:
 
 ```kotlin
 client.users.query { loadPosts() }.queryPosts()   // throws
@@ -839,8 +724,7 @@ Each interceptor's `intercept(scope, context)` runs once per terminal
 read. The `context` carries:
 
 - `context.operation: ReadOperation` — which read fired
-  (`BY_ID`, `FIRST`, `ALL`, `RAW_COUNT`, `RAW_EXISTS`,
-  `RAW_AGGREGATE`, `EDGE_TRAVERSAL`, `EDGE_PREDICATE`,
+  (`BY_ID`, `FIRST`, `ALL`, `EDGE_TRAVERSAL`, `EDGE_PREDICATE`,
   `EAGER_LOAD`, `EAGER_JUNCTION`, `DELETE_CANDIDATES`)
 - `context.viewerContext` — the active `ViewerContext` (viewer, etc.)
 - `context.rootEntity` / `context.currentEntity` /
@@ -873,7 +757,7 @@ limits, change ordering, or swap the table. That property —
 
 | Terminal shape | On rejection |
 |---|---|
-| Result-bearing reads (`findById`, `firstOrNull`, `all`, `find`, `rawCount`, `rawExists`, raw aggregates) | `ReadResult.Failed(EntQueryRejectedException)` — never collapsed to `null` / `false` / `0`; `.getOrThrow()` throws it, `.visibleOrNull()` leaves it unchanged |
+| Result-bearing reads (`findById`, `firstOrNull`, `all`, `find`) | `ReadResult.Failed(EntQueryRejectedException)` — never collapsed to `null` or an empty list; `.getOrThrow()` throws it, `.visibleOrNull()` leaves it unchanged |
 
 `EntQueryRejectedException` exposes direct properties — `entityType`,
 `reason`, optional `code`, and the rejecting interceptor's
@@ -883,10 +767,8 @@ parsing the message.
 `EntQueryConfigurationException` is a different failure family:
 deterministic application misuse discovered by the query DSL itself —
 selecting one edge twice, or a selected edge-load graph reaching a
-non-entity terminal or a `query{Edge}` traversal. Configuration
-operations throw it immediately; result-bearing terminals capture it
-as `ReadResult.Failed` before any interceptor or driver work. It carries
-`entityType` and `reason`.
+`query{Edge}` traversal. Configuration operations throw it immediately.
+It carries `entityType` and `reason`.
 
 ### Ordering and traversal
 

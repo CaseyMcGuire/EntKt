@@ -100,11 +100,14 @@ private val MembersReachableViaEdgesUnlockArticles = ArticleLoadPrivacyRule { co
 
 /**
  * A rule that deliberately uses a storage-level existence fact. The
- * raw terminal does not materialize users or evaluate their LOAD
- * policy, which also avoids recursively entering user LOAD rules.
+ * explicit bypass context skips user LOAD privacy, which also avoids
+ * recursively entering user LOAD rules.
  */
-private val RawUserExistsRule = ArticleLoadPrivacyRule { context, _ ->
-    if (context.client.users.query { }.rawExists(context.viewerContext).getOrThrow()) PrivacyDecision.Allow
+private val BypassUserExistsRule = ArticleLoadPrivacyRule { context, _ ->
+    val user = context.client.users.query { }
+        .firstOrNull(testBypassContext("privacy rule user existence"))
+        .getOrThrow()
+    if (user != null) PrivacyDecision.Allow
     else PrivacyDecision.Continue
 }
 
@@ -146,9 +149,9 @@ private object MemberGateArticlePolicy : EntityPolicy<Article, ArticlePolicyScop
     }
 }
 
-private object RawUserExistsArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
+private object BypassUserExistsArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
     override fun configure(scope: ArticlePolicyScope) = scope.run {
-        privacy { load(RawUserExistsRule) }
+        privacy { load(BypassUserExistsRule) }
     }
 }
 
@@ -189,11 +192,10 @@ private object SecretMemberGateArticlePolicy : EntityPolicy<Article, ArticlePoli
  * explicitly viewer-scoped with `context.viewerContext` (asserted on
  * both denial projections — the rethrowing `getOrThrow` and the
  * null-collapsing `visibleOrNull`), transaction-scoped, and still pass
- * through read interceptors under the caller's viewer. Raw terminals
- * (`rawCount` / `rawExists` / raw aggregates) are explicit
- * storage-level reads: they remain available and skip LOAD privacy and
- * entity materialization. The compile-time no-writes and opt-in-gate
- * guarantees are pinned in `codegen`'s `PrivacyReadClientCompileTest`.
+ * through read interceptors under the caller's viewer. Rules that need
+ * storage-wide facts must explicitly supply a bypass context to an entity
+ * terminal. The compile-time no-writes guarantees are pinned in `codegen`'s
+ * `PrivacyReadClientCompileTest`.
  */
 class PrivacyReadClientIntegrationTest : PostgresTestBase() {
     private val anonymousViewerContext = ViewerContext(Viewer.Anonymous)
@@ -339,32 +341,35 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         assertNotNull(article)
     }
 
-    // ---- Raw terminals are storage-level in privacy rules ----
+    // ---- Explicit bypass reads in privacy rules ----
 
     @Test
-    fun `raw terminals can provide storage facts without evaluating LOAD privacy`() {
+    fun `bypass entity reads can provide storage facts without evaluating LOAD privacy`() {
         val client = freshClient {
 
             policies {
                 users(AuthenticatedReadersUserPolicy)
-                articles(RawUserExistsArticlePolicy)
+                articles(BypassUserExistsArticlePolicy)
             }
         }
         val (_, article) = seedAuthorAndArticle(client)
 
         // Anonymous cannot materialize the user row, but the article
         // rule may deliberately use its storage-level existence as an
-        // authorization input. No User entity is returned from the raw
-        // terminal, so User LOAD privacy is never evaluated.
+        // authorization input by supplying a bypass context.
         val loaded = client.articles.findById(anonymousViewerContext, article.id).getOrThrow()
         assertNotNull(loaded)
     }
 
     @Test
-    fun `raw aggregates are available inside privacy rules`() {
+    fun `privacy rules can aggregate bypass-loaded entities in Kotlin`() {
         val captured = mutableListOf<ReadResult<String?>>()
         val storageAggregateRule = ArticleLoadPrivacyRule { context, _ ->
-            captured.add(context.client.users.query { }.rawMin(context.viewerContext, User.email))
+            val minimumEmail = context.client.users.query { }
+                .all(testBypassContext("privacy rule minimum user email"))
+                .getOrThrow()
+                .minOfOrNull(User::email)
+            captured.add(ReadResult.Success(minimumEmail))
             PrivacyDecision.Allow
         }
         val storageAggregatePolicy = object : EntityPolicy<Article, ArticlePolicyScope> {

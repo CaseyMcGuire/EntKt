@@ -1,5 +1,7 @@
 package entkt.runtime.query
 
+import entkt.runtime.driver.DatabaseDriver
+
 /**
  * The aggregate function computed by [DatabaseDriver.aggregate]. V1 supports a single
  * metric per call.
@@ -12,15 +14,13 @@ enum class AggregateFunction { COUNT, SUM, AVG, MIN, MAX }
  * group column); [value] is the metric — already decoded to its Kotlin type
  * (`Long` for COUNT and integral SUM, `Double` for floating SUM / AVG, the
  * column's own type for MIN / MAX), or null per SQL NULL. Enum group keys come
- * back as their stored `String`; the generated terminal decodes them to the
- * enum via the column's metadata.
+ * back as their stored `String`; a typed adapter can decode them through the
+ * column's metadata.
  */
 data class AggregateResultRow(val key: Any?, val value: Any?)
 
 /**
- * One bucket of a grouped aggregate, returned by the generated `raw…By`
- * terminals. [key] is the (typed) group value and [value] the metric. Generic
- * over [K] / [V] so typing flows from the `Column` handle the caller passed —
- * no per-call result class is generated.
+ * A typed bucket for adapters built over [DatabaseDriver.aggregate]. [key] is
+ * the group value and [value] the metric.
  */
 data class AggregateBucket<K, V>(val key: K, val value: V)
