@@ -34,7 +34,6 @@ import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.metadata.VIEWER_CONTEXT
-import entkt.codegen.mutation.MUTATION_ENTITY_KEY
 import entkt.codegen.mutation.MUTATION_RESULT
 import entkt.codegen.mutation.MUTATION_VALIDATION_VIOLATION
 import entkt.codegen.mutation.CreateGenerator
@@ -50,15 +49,12 @@ private val INT = Int::class.asClassName()
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_RULE_CONTEXT = ClassName("entkt.runtime.privacy", "PrivacyRuleContext")
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
-private val ENTITY_KEY = ClassName("entkt.runtime.result", "EntityKey")
-private val PRIVACY_DECISION = ClassName("entkt.runtime.privacy", "PrivacyDecision")
-private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
-private val EVALUATE_BATCH_PRIVACY_RULES =
-    MemberName("entkt.runtime.privacy", "evaluateBatchPrivacyRulesForInternalUse")
-private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
+private val LOAD_PRIVACY_PHASE =
+    ClassName("entkt.runtime.query.execution", "LoadPrivacyPhase")
+private val LOAD_PRIVACY_PHASE_FACTORY =
+    MemberName("entkt.runtime.query.execution", "loadPrivacyPhaseForInternalUse")
 private val CREATE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationSpec")
 private val CREATE_OPERATION =
@@ -69,8 +65,6 @@ private val DELETE_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "DeleteOperation")
 private val DELETE_RULE_CANDIDATE =
     ClassName("entkt.runtime.mutation.execution", "DeleteRuleCandidate")
-private val DELETE_SELECTION =
-    ClassName("entkt.runtime.mutation.execution", "DeleteSelection")
 private val MUTATION_HOOK_PHASE =
     MemberName("entkt.runtime.mutation.execution", "mutationHookPhaseForInternalUse")
 private val MUTATION_PRIVACY_PHASE =
@@ -197,6 +191,14 @@ internal class RepoGenerator(
                 initializer("configuredValidation")
             }
             addProperty(
+                buildLoadPrivacyPhase(
+                    queryClass = queryClass,
+                    entityClass = entityClass,
+                    loadItemClass = loadItemClass,
+                    fields = fields,
+                ),
+            )
+            addProperty(
                 buildCreateMutationSpec(
                     queryClass = queryClass,
                     createDraftClass = createDraftClass,
@@ -289,13 +291,12 @@ internal class RepoGenerator(
             if (idStrategyName(schema) != "EXPLICIT") {
                     addFunction(buildCreateMany(entityClass, createLambda))
             }
-            addFunction(buildSelectDeleteCandidates(entityClass))
             addFunction(buildDeleteMany(entityClass))
             addFunction(buildHasPrivacy("hasLoadPrivacy", readSurfaceOverride = true))
             addFunction(buildHasPrivacy("hasCreatePrivacy"))
             addFunction(buildHasPrivacy("hasUpdatePrivacy"))
             addFunction(buildHasPrivacy("hasDeletePrivacy"))
-            addFunction(buildLoadDenials(schemaName, entityClass, loadItemClass, fields))
+            addFunction(buildLoadDenials(entityClass))
             addFunction(buildLoadDenialOrNull(entityClass))
             addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
         }
@@ -434,62 +435,39 @@ internal class RepoGenerator(
             statement("return true")
         }
 
-    private fun buildLoadDenials(
-        schemaName: String,
+    /** Bind schema-specific LOAD rules and item snapshots to the reusable runtime phase. */
+    private fun buildLoadPrivacyPhase(
+        queryClass: ClassName,
         entityClass: ClassName,
         loadItemClass: ClassName,
         fields: List<Field>,
-    ): FunSpec {
-        // Overrides `${Entity}ReadSurface` (public, was internal): the
-        // LOAD evaluation is what validation read repos delegate to, so
-        // privacy behavior through either client is this exact body.
-        //
-        // Decision-returning rather than throwing so read terminals can
-        // aggregate keyed denials (strict all() reports every denied
-        // root row) and so a rule-RETURNED Deny is positionally
-        // distinguishable from a rule-THROWN exception: the former
-        // becomes a typed PrivacyDenial here, the latter escapes to the
-        // terminal's capture boundary as an operational failure.
-        return function("loadDenials", LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true))) {
+    ): PropertySpec = property("loadPrivacyPhase", LOAD_PRIVACY_PHASE.parameterizedBy(entityClass)) {
+        addModifiers(KModifier.PRIVATE)
+        initializer(codeBlock {
+            add("%M(\n", LOAD_PRIVACY_PHASE_FACTORY)
+            indent()
+            add("entity = %T.GeneratedEntityMapping,\n", queryClass)
+            add("rules = privacyConfig.loadRules,\n")
+            add("ruleClientProvider = { client.readOnlyClient },\n")
+            add(
+                "freshItem = { item -> %T(%L) },\n",
+                loadItemClass,
+                lifecycleValueSnapshot("item", fields, entityClass),
+            )
+            unindent()
+            add(")")
+        })
+    }
+
+    private fun buildLoadDenials(
+        entityClass: ClassName,
+    ): FunSpec =
+        function("loadDenials", LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true))) {
             addModifiers(KModifier.OVERRIDE)
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entities", LIST.parameterizedBy(entityClass))
-            addCode(codeBlock {
-                addStatement("if (entities.isEmpty()) return emptyList()")
-                .addStatement("val entitySnapshot = entities.toList()")
-                .addStatement(
-                    "if (viewerContext.viewer is %T.PrivacyBypass) return %T(entitySnapshot.size) { null }",
-                    VIEWER,
-                    LIST,
-                )
-                .addStatement("val rules = privacyConfig.loadRules")
-                .addStatement("val ruleContext = %T(viewerContext, client.readOnlyClient)", PRIVACY_RULE_CONTEXT)
-                .addStatement(
-                    "val decisions = %M(%S, entitySnapshot, rules, ruleContext) { item ->\n" +
-                        "  %T(%L)\n" +
-                        "}",
-                    EVALUATE_BATCH_PRIVACY_RULES,
-                    "$schemaName LOAD privacy",
-                    loadItemClass,
-                    lifecycleValueSnapshot("item", fields, entityClass),
-                )
-                .beginControlFlow("return entitySnapshot.mapIndexed { index, entity ->")
-                .beginControlFlow("when (val decision = decisions[index])")
-                .addStatement("is %T.Allow -> null", PRIVACY_DECISION)
-                .addStatement(
-                    "is %T.Deny -> %T(%S, %T(%S, entity.id), decision.reason)",
-                    PRIVACY_DECISION, PRIVACY_DENIAL, schemaName, ENTITY_KEY, "id",
-                )
-                .addStatement(
-                    "is %T.Continue -> %T(%S, %T(%S, entity.id), %S)",
-                    PRIVACY_DECISION,
-                    PRIVACY_DENIAL, schemaName, ENTITY_KEY, "id", "no load rule allowed access",
-                )
-                .endControlFlow()
-                .endControlFlow()
-            })
+            statement("return loadPrivacyPhase.denials(viewerContext, entities)")
         }
-    }
 
     private fun buildLoadDenialOrNull(entityClass: ClassName): FunSpec =
         function("loadDenialOrNull", PRIVACY_DENIAL.copy(nullable = true)) {
@@ -648,7 +626,7 @@ internal class RepoGenerator(
                 indent()
                 add("entity = %T.GeneratedEntityMapping,\n", queryClass)
                 add("idColumn = %T.SCHEMA.idColumn,\n", entityClass)
-                add("selectMany = ::selectDeleteCandidates,\n")
+                add("newQuery = { %T(driver, client) },\n", queryClass)
                 add("candidate = ::buildDeleteCandidate,\n")
                 add("privacy = %M(\n", MUTATION_PRIVACY_PHASE)
                 indent()
@@ -792,29 +770,6 @@ internal class RepoGenerator(
                 "return createOperation.create(viewerContext, draft, checkReturnedEntityPrivacy = true)",
             )
         }
-
-    /** Compile DELETE_CANDIDATES through the generated query and freeze its effective predicates. */
-    private fun buildSelectDeleteCandidates(entityClass: ClassName): FunSpec {
-        val queryClass = ClassName(entityClass.packageName, "${entityClass.simpleName}Query")
-        val predicateType = PREDICATE.parameterizedBy(entityClass)
-        return function("selectDeleteCandidates", DELETE_SELECTION.parameterizedBy(entityClass)) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("predicates", LIST.parameterizedBy(predicateType))
-            addCode(codeBlock {
-                add("val query = %T(driver, client).apply {\n", queryClass)
-                add("  for (predicate in predicates) where(predicate)\n")
-                add("}\n")
-                add("val querySpec = query.compileEntityQuery(viewerContext, %T.DELETE_CANDIDATES)\n", READ_OPERATION)
-                add("val effectivePredicates = querySpec.predicates.toList()\n")
-                add("val rows = driver.query(%T.TABLE, effectivePredicates, emptyList(), null, null)\n", entityClass)
-                add("return %T(\n", DELETE_SELECTION)
-                add("  entities = rows.map { %T.fromRow(it) },\n", entityClass)
-                add("  effectivePredicates = effectivePredicates,\n")
-                add(")\n")
-            })
-        }
-    }
 
     private fun buildCreateBeforeSaveView(
         createDraftClass: ClassName,

@@ -56,8 +56,8 @@ class RepoGeneratorTest {
         val viewerContexts = Regex(
             Regex.escape("val ruleContext = PrivacyRuleContext(viewerContext, client.readOnlyClient)"),
         ).findAll(output).count()
-        assert(viewerContexts == 1) {
-            "Only the generated LOAD evaluator should construct rule context directly; found $viewerContexts\n$output"
+        assert(viewerContexts == 0) {
+            "Privacy rule-context construction belongs to runtime phases; found $viewerContexts\n$output"
         }
         val validationContexts = Regex(
             Regex.escape("val ruleContext = ValidationRuleContext(client.readOnlyClient)"),
@@ -656,38 +656,33 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has positional LOAD evaluators and mutation specifications`() {
+    fun `repo binds positional LOAD evaluation and mutation specifications`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // LOAD evaluates the immutable entity snapshot in one batch and
-        // maps decisions back by position. This preserves duplicate IDs
-        // and caller order; the singleton API is only a projection of the
-        // plural contract.
         assert(output.contains("override fun loadDenials(viewerContext: ViewerContext, entities: List<Car>): List<PrivacyDenial?>")) {
             "Should expose the plural LOAD evaluator through the read surface\n$output"
         }
-        assert(output.contains("if (entities.isEmpty()) return emptyList() val entitySnapshot = entities.toList()")) {
-            "Plural LOAD evaluation should skip empty batches and snapshot non-empty input\n$output"
-        }
         assert(
             output.contains(
-                "val decisions = evaluateBatchPrivacyRulesForInternalUse(\"Car LOAD privacy\", entitySnapshot, rules, ruleContext) { item -> CarLoadPrivacyItem(item) }",
+                "private val loadPrivacyPhase: LoadPrivacyPhase<Car> = loadPrivacyPhaseForInternalUse( " +
+                    "entity = CarQuery.GeneratedEntityMapping, rules = privacyConfig.loadRules, " +
+                    "ruleClientProvider = { client.readOnlyClient }, freshItem = { item -> CarLoadPrivacyItem(item) }, )",
             ),
         ) {
-            "Plural LOAD evaluation should submit the complete ordered snapshot to the batch engine\n$output"
+            "LOAD should bind only its generated mapping, rules, stable client, and typed item adapter\n$output"
         }
-        assert(output.contains("return entitySnapshot.mapIndexed { index, entity -> when (val decision = decisions[index])")) {
-            "Plural LOAD decisions should remain positionally aligned with their entities\n$output"
+        assert(output.contains("loadPrivacyPhase.denials(viewerContext, entities)")) {
+            "The read-surface method should delegate to its bound runtime phase\n$output"
         }
         assert(
-            output.contains(
-                "is PrivacyDecision.Deny -> PrivacyDenial(\"Car\", EntityKey(\"id\", entity.id), decision.reason)",
-            ),
+            !output.contains("evaluateBatchPrivacyRulesForInternalUse") &&
+                !output.contains("entitySnapshot.mapIndexed") &&
+                !output.contains("PrivacyDecision.Deny"),
         ) {
-            "Each positional LOAD denial should be keyed from the corresponding entity\n$output"
+            "LOAD batch evaluation and denial correlation should not be generated\n$output"
         }
         assert(output.contains("override fun loadDenialOrNull(viewerContext: ViewerContext, entity: Car): PrivacyDenial?")) {
             "Should have loadDenialOrNull overriding the read surface\n$output"
@@ -708,34 +703,24 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `generated LOAD is fail-closed while write phases delegate fail-closed decisions`() {
+    fun `generated privacy delegates fail-closed evaluation to runtime phases`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(
-            output.contains(
-                "is PrivacyDecision.Continue -> PrivacyDenial(\"Car\", EntityKey(\"id\", entity.id), \"no load rule allowed access\")",
-            ),
-        ) {
-            "loadDenials should map a continued decision to the fail-closed keyed denial\n$output"
+        assert(output.contains("loadPrivacyPhaseForInternalUse(")) {
+            "LOAD privacy should delegate through its runtime phase\n$output"
         }
         assert(output.contains("privacy = mutationPrivacyPhaseForInternalUse(")) {
             "write privacy should delegate decisions through runtime phases\n$output"
         }
         assert(
-            output.contains(
-                "if (viewerContext.viewer is Viewer.PrivacyBypass) return List(entitySnapshot.size) { null }",
-            ),
+            !output.contains("Viewer.PrivacyBypass") &&
+                !output.contains("PrivacyDecision.Continue") &&
+                !output.contains("no load rule allowed access"),
         ) {
-            "Plural LOAD bypass should retain one null slot per snapshotted entity\n$output"
-        }
-        val entityBatchBypasses = Regex(
-            Regex.escape("if (viewerContext.viewer is Viewer.PrivacyBypass) return List(entitySnapshot.size) { null }")
-        ).findAll(output).count()
-        assert(entityBatchBypasses == 1) {
-            "Only LOAD remains a generated positional evaluator; found $entityBatchBypasses\n$output"
+            "LOAD bypass and fail-closed decision mapping should live only in runtime\n$output"
         }
     }
 
@@ -777,42 +762,27 @@ class RepoGeneratorTest {
         assert(output.contains("candidate = ::buildDeleteCandidate")) {
             "deleteSpec should provide normalized candidates\n$output"
         }
+        assert(output.contains("newQuery = { CarQuery(driver, client) }")) {
+            "deleteSpec should provide only the schema-specific candidate query factory\n$output"
+        }
         assert(output.contains("rules = privacyConfig.deleteRules")) {
             "deleteSpec should capture DELETE privacy rules\n$output"
         }
     }
 
     @Test
-    fun `deleteMany routes candidate selection through DELETE_CANDIDATES interceptor chain`() {
+    fun `deleteMany emits no candidate-selection algorithm`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // deleteMany candidate selection fires interceptors with
-        // operation = DELETE_CANDIDATES so tenant-scoping /
-        // soft-delete predicate-shaping interceptors apply uniformly
-        // to bulk deletes. The chain takes no entOperation parameter
-        // anymore. The generated query's `predicates` backing field is
-        // private, so deleteMany seeds it via the public `where()` DSL.
-        assert(output.contains("CarQuery(driver, client).apply { for (predicate in predicates) where(predicate) }")) {
-            "deleteMany should construct a transient CarQuery from caller predicates via the public DSL\n$output"
-        }
-        assert(!output.contains("currentViewerContext")) {
-            "deleteMany should not read ambient viewer state\n$output"
-        }
-        assert(output.contains("compileEntityQuery(viewerContext, ReadOperation.DELETE_CANDIDATES)")) {
-            "deleteMany should delegate DELETE_CANDIDATES preparation to the runtime pipeline\n$output"
-        }
-        assert(output.contains("val effectivePredicates = querySpec.predicates.toList()")) {
-            "deleteMany should freeze the intercepted predicate list once\n$output"
-        }
-        assert(output.contains("driver.query(Car.TABLE, effectivePredicates, emptyList(), null, null)")) {
-            "deleteMany should pass the post-interceptor spec.predicates to driver.query\n$output"
-        }
-        // Negative guard: the pre-fix raw shape must not reappear.
-        assert(!output.contains("driver.query(Car.TABLE, predicates.toList()")) {
-            "deleteMany must NOT pass raw caller predicates to driver.query (skips interceptors)\n$output"
+        assert(
+            !output.contains("selectDeleteCandidates") &&
+                !output.contains("ReadOperation.DELETE_CANDIDATES") &&
+                !output.contains("driver.query(Car.TABLE"),
+        ) {
+            "candidate compilation, raw loading, and predicate freezing belong to runtime\n$output"
         }
     }
 
@@ -984,16 +954,19 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `generated LOAD evaluator reuses the stable read-only client with the caller context`() {
+    fun `generated LOAD phase resolves the stable read-only client lazily`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
         val uses = Regex(
-            Regex.escape("PrivacyRuleContext(viewerContext, client.readOnlyClient)")
+            Regex.escape("ruleClientProvider = { client.readOnlyClient }")
         ).findAll(output).count()
         assert(uses == 1) {
-            "only LOAD remains generated and should reuse the stable client; found $uses\n$output"
+            "LOAD should resolve the stable client through one lazy provider; found $uses\n$output"
+        }
+        assert(!output.contains("PrivacyRuleContext(")) {
+            "ViewerContext and rule-client binding should happen inside the runtime phase\n$output"
         }
         assert(!output.contains("asPrivacyReadClientForInternalUse"))
     }

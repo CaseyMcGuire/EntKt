@@ -3,6 +3,7 @@
 package entkt.runtime.mutation.execution
 
 import entkt.query.Op
+import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
@@ -13,7 +14,13 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EdgeMapping
+import entkt.runtime.query.EntInterceptorsConfig
+import entkt.runtime.query.EntityQuery
+import entkt.runtime.query.EntityQueryBuilder
+import entkt.runtime.query.QuerySource
+import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
+import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -67,6 +74,11 @@ class DeleteMutationExecutorTest {
         var classifiedFailure: EntMutationException? = null
         var acknowledgedIds: List<Any> = listOf(1L, 2L)
         var receivedPredicates: List<Predicate<*>>? = null
+        var receivedQueryPredicates: List<Predicate<*>>? = null
+        var queryRows: List<Map<String, Any?>> = listOf(
+            mapOf("id" to 1L, "name" to "one"),
+            mapOf("id" to 2L, "name" to "two"),
+        )
 
         override val inTransaction: Boolean
             get() {
@@ -97,6 +109,18 @@ class DeleteMutationExecutorTest {
             return acknowledgedIds
         }
 
+        override fun query(
+            table: String,
+            predicates: List<Predicate<*>>,
+            orderBy: List<OrderField<*>>,
+            limit: Int?,
+            offset: Int?,
+        ): List<Map<String, Any?>> {
+            events += "query"
+            receivedQueryPredicates = predicates
+            return queryRows
+        }
+
         override fun classifyMutationException(
             exception: Exception,
             entity: String,
@@ -105,6 +129,32 @@ class DeleteMutationExecutorTest {
             events += "classify:$entity:$operation"
             return classifiedFailure
         }
+    }
+
+    private class WidgetQuery(
+        driver: DatabaseDriver,
+        executionHost: ReadQueryExecutionHost,
+        private val mapping: EntityMapping<Widget>,
+    ) : EntityQueryBuilder<Widget, WidgetQuery>(
+        driver = driver,
+        executionHost = executionHost,
+        entityName = mapping.entityName,
+    ) {
+        override val self: WidgetQuery
+            get() = this
+
+        override fun captureEntityQuery(
+            structuralPredicates: List<Predicate<Widget>>,
+        ): EntityQuery<Widget> = EntityQuery(
+            entity = mapping,
+            source = QuerySource.Root(),
+            predicates = predicates,
+            orderBy = orderFields,
+            limit = queryLimit,
+            offset = queryOffset,
+            edges = emptyList(),
+            structuralPredicates = structuralPredicates,
+        )
     }
 
     private class Fixture(
@@ -118,20 +168,40 @@ class DeleteMutationExecutorTest {
         val failures = mutableListOf<EntMutationException>()
         var privacyDecisions: List<PrivacyDecision> = emptyList()
         var validationDecisions: List<List<ValidationDecision.Invalid>> = emptyList()
-        var selectedEntities = listOf(Widget(1L, "one"), Widget(2L, "two"))
         var effectivePredicates: List<Predicate<Widget>> = emptyList()
         val receivedViewerContexts = mutableListOf<ViewerContext>()
+        val receivedReadOperations = mutableListOf<ReadOperation>()
         val receivedRuleClients = mutableListOf<Any>()
         val mapping = RecordingMapping(events)
+        val queryHost = object : ReadQueryExecutionHost {
+            override val entityInterceptors: EntInterceptorsConfig = EntInterceptorsConfig().apply {
+                addEntity<Widget>(mapping.clientName, "delete-selection") { scope, context ->
+                    events += "select"
+                    receivedViewerContexts += context.viewerContext
+                    receivedReadOperations += context.operation
+                    effectivePredicates.forEach(scope::addPredicate)
+                }
+            }
+
+            override fun checkReadExecution() {
+                events += "read-guard"
+            }
+
+            override fun isConfigured(entity: EntityMapping<*>): Boolean =
+                error("DELETE candidate selection never evaluates LOAD privacy")
+
+            override fun <Entity : EntEntity<*>> evaluate(
+                entity: EntityMapping<Entity>,
+                viewerContext: ViewerContext,
+                entities: List<Entity>,
+            ): List<LoadPrivacyEvaluation<Entity>> =
+                error("DELETE candidate selection never evaluates LOAD privacy")
+        }
 
         val spec: DeleteMutationSpec<Widget, Candidate, Any> = DeleteMutationSpec(
             entity = mapping,
             idColumn = "id",
-            selectMany = DeleteSelectionPhase { context, predicates ->
-                events += "select"
-                receivedViewerContexts += context
-                DeleteSelection(selectedEntities, effectivePredicates.ifEmpty { predicates })
-            },
+            newQuery = { WidgetQuery(driver, queryHost, mapping) },
             candidate = { entity ->
                 events += "candidate:${entity.id}"
                 Candidate(entity.name)
@@ -271,7 +341,7 @@ class DeleteMutationExecutorTest {
             val failingSpec: DeleteMutationSpec<Widget, Candidate, Any> = DeleteMutationSpec(
                 entity = fixture.mapping,
                 idColumn = "id",
-                selectMany = fixture.spec.selectMany,
+                newQuery = fixture.spec.newQuery,
                 candidate = fixture.spec.candidate,
                 privacy = fixture.spec.privacy,
                 validation = fixture.spec.validation,
@@ -308,7 +378,11 @@ class DeleteMutationExecutorTest {
         assertEquals(
             listOf(
                 "transaction-state",
+                "read-guard",
                 "select",
+                "query",
+                "decode",
+                "decode",
                 "candidate:1",
                 "candidate:2",
                 "privacy:1, 2",
@@ -320,7 +394,9 @@ class DeleteMutationExecutorTest {
             ),
             fixture.events,
         )
-        assertSame(effective, fixture.driver.receivedPredicates!!.single())
+        assertEquals(listOf(requested, effective), fixture.driver.receivedQueryPredicates)
+        assertEquals(listOf(requested, effective), fixture.driver.receivedPredicates)
+        assertEquals(listOf(ReadOperation.DELETE_CANDIDATES), fixture.receivedReadOperations)
         assertTrue(fixture.receivedViewerContexts.all { it === fixture.viewerContext })
         assertTrue(fixture.receivedRuleClients.all { it === fixture.ruleClient })
     }

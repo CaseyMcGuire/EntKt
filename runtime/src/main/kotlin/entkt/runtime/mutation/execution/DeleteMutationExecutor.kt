@@ -9,6 +9,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.hook.runBatchHooksForInternalUse
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.ViewerContext
+import entkt.runtime.query.ReadOperation
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntUnexpectedMutationException
@@ -92,7 +93,7 @@ class DeleteMutationExecutor<RuleClient>(
         promoteDriverNotPersisted: Boolean,
     ): MutationResult<Int> = execution.execute { attempt ->
         check(driver.inTransaction) { "deleteMany phases require a transaction-scoped driver" }
-        val selection = spec.selectMany.select(viewerContext, predicates)
+        val selection = selectMany(viewerContext, predicates, spec)
         val entities = selection.entities.toList()
         if (entities.isEmpty()) return@execute 0
 
@@ -147,6 +148,32 @@ class DeleteMutationExecutor<RuleClient>(
         }
         runBatchHooksForInternalUse(deletedEntities, spec.afterDelete)
         deletedIdSnapshot.size
+    }
+
+    /** Compile and execute one raw DELETE_CANDIDATES query without applying LOAD privacy. */
+    private fun <Entity : EntEntity<*>, Candidate> selectMany(
+        viewerContext: ViewerContext,
+        predicates: List<Predicate<Entity>>,
+        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+    ): DeleteSelection<Entity> {
+        val query = spec.newQuery()
+        for (predicate in predicates) query.where(predicate)
+        val querySpec = query.compileEntityQuery(
+            viewerContext,
+            ReadOperation.DELETE_CANDIDATES,
+        )
+        val effectivePredicates = querySpec.predicates.toList()
+        val rows = driver.query(
+            spec.entity.table,
+            effectivePredicates,
+            emptyList(),
+            null,
+            null,
+        )
+        return DeleteSelection(
+            entities = rows.map(spec.entity::decode),
+            effectivePredicates = effectivePredicates,
+        )
     }
 
     private fun <Entity : EntEntity<*>, Candidate> deleteLoaded(
