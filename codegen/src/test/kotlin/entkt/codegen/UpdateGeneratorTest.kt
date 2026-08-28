@@ -13,6 +13,14 @@ private class UpdateDefaultEntity : EntSchema("update_default_entities", clientN
     val updatedAt by time("updated_at").updateDefaultNow()
 }
 
+private class LongUpdateAssignmentEntity : EntSchema(
+    "long_update_assignment_entities",
+    clientName = "longUpdateAssignmentEntities",
+) {
+    override fun id() = EntId.int()
+    val allowExternalSources by bool("allow_external_sources")
+}
+
 private fun finalize(vararg schemas: EntSchema) {
     val registry = schemas.associateBy { it::class }
     schemas.forEach { it.finalize(registry) }
@@ -21,6 +29,21 @@ private fun finalize(vararg schemas: EntSchema) {
 class UpdateGeneratorTest {
 
     private val generator = UpdateGenerator("com.example.ent")
+
+    @Test
+    fun `long owner value assignment never wraps before equals`() {
+        val schema = LongUpdateAssignmentEntity()
+        finalize(schema)
+        val output = generator.generate("LongUpdateAssignmentEntity", schema).toString()
+
+        assert(
+            output.contains(
+                "values[\"allow_external_sources\"] = it.value",
+            ),
+        ) {
+            "Generated assignment must keep its equals operator with the statement\n$output"
+        }
+    }
 
     @Test
     fun `generates update builder with mutable properties for mutable fields`() {

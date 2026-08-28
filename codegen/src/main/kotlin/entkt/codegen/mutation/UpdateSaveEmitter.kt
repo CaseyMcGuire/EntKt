@@ -432,13 +432,13 @@ internal class UpdateSaveEmitter(
             val column = field.columnName
             when {
                 field.type == FieldType.ENUM && field.nullable -> builder.addCode(
-                    "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value?.name }\n",
+                    "(effectivePatch.%L as? %T.Set)?.let { values[%S]·=·it.value?.name }\n",
                     property,
                     FIELD_PATCH,
                     column,
                 )
                 field.type == FieldType.ENUM -> builder.addCode(
-                    "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value.name }\n",
+                    "(effectivePatch.%L as? %T.Set)?.let { values[%S]·=·it.value.name }\n",
                     property,
                     FIELD_PATCH,
                     column,
@@ -448,7 +448,7 @@ internal class UpdateSaveEmitter(
                         ?: error("pgvector field '${field.apiName}' missing dimensions metadata")
                     val nullableAccess = if (field.nullable) "?" else ""
                     builder.addCode(
-                        "(effectivePatch.%L as? %T.Set)?.let { values[%S] = " +
+                        "(effectivePatch.%L as? %T.Set)?.let { values[%S]·=·" +
                             "it.value$nullableAccess.also { vec -> require(vec.dimensions == %L) { %S } } }\n",
                         property,
                         FIELD_PATCH,
@@ -458,7 +458,7 @@ internal class UpdateSaveEmitter(
                     )
                 }
                 else -> builder.addCode(
-                    "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value }\n",
+                    "(effectivePatch.%L as? %T.Set)?.let { values[%S]·=·it.value }\n",
                     property,
                     FIELD_PATCH,
                     column,
@@ -467,7 +467,7 @@ internal class UpdateSaveEmitter(
         }
         for (fk in edgeFks) {
             builder.addCode(
-                "(effectivePatch.%L as? %T.Set)?.let { values[%S] = it.value }\n",
+                "(effectivePatch.%L as? %T.Set)?.let { values[%S]·=·it.value }\n",
                 fk.propertyName,
                 FIELD_PATCH,
                 fk.columnName,
