@@ -130,12 +130,14 @@ class ReadClientGeneratorTest {
 
         assert(
             output.contains(
-                "public interface EntReadRuntime : LoadPrivacyEvaluator",
+                "public interface EntReadRuntime : ReadQueryExecutionHost",
             ),
         ) {
             "the runtime host should provide explicit read guards and LOAD evaluation\n$output"
         }
-        assert(output.contains("public fun checkReadExecution()"))
+        assert(!output.contains("public fun checkReadExecution()")) {
+            "the generated runtime should inherit the reusable execution-host contract\n$output"
+        }
         assert(!output.contains("currentViewerContext") && !output.contains("ViewerContextProvider"))
         assert(
             output.contains(

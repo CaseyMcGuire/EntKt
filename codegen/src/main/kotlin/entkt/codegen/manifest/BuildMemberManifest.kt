@@ -221,15 +221,17 @@ private fun addEdgesClassMembers(
 // ── Query class ──────────────────────────────────────────────────
 
 /**
- * Members `QueryGenerator` always emits on `${name}Query`, public and
- * private alike. Private members count because Kotlin does not allow a
- * private and generated public member to share a name on one class.
+ * Members present on `${name}Query` after combining the thin generated
+ * subclass with [entkt.runtime.query.EntityQueryBuilder]. Generated and
+ * inherited members both count: an edge-derived declaration cannot hide
+ * a final inherited member any more than it can duplicate a declaration
+ * emitted directly on the subclass.
  *
- * Hand-maintained mirror of `QueryGenerator` — the same contract the
- * other artifact lists in this file follow.
+ * Hand-maintained mirror of `QueryGenerator` plus the runtime base's
+ * visible member surface — the same contract the other artifact lists
+ * in this file follow.
  */
 private val FIXED_QUERY_PROPERTIES: List<String> = listOf(
-    "_readQueryExecutor",
     "client",
     "driver",
     "entityQuerySource",
@@ -237,6 +239,7 @@ private val FIXED_QUERY_PROPERTIES: List<String> = listOf(
     "predicates",
     "queryLimit",
     "queryOffset",
+    "self",
 )
 
 private val FIXED_QUERY_FUNCTIONS: List<String> = listOf(
@@ -249,7 +252,6 @@ private val FIXED_QUERY_FUNCTIONS: List<String> = listOf(
     "offset",
     "orderBy",
     "readRootQuery",
-    "requireClient",
     "setEntityQuerySource",
     "where",
 )

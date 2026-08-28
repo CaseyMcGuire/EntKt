@@ -429,7 +429,7 @@ private class LoadClashOwner : EntSchema("load_clash_owners", clientName = "load
 }
 
 // Query-artifact collision fixture. An edge declared `limit` generates
-// `queryLimit`, which collides with the query's fixed bounds property.
+// `queryLimit`, which collides with the runtime base's inherited bounds property.
 private class QueryClashTarget : EntSchema("query_clash_targets", clientName = "queryClashTargets") {
     override fun id() = EntId.long()
     val owner by belongsTo<QueryClashOwner>("owner").inverse(QueryClashOwner::limit)

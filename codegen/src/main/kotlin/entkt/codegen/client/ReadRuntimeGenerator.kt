@@ -24,12 +24,11 @@ import entkt.codegen.metadata.VIEWER_CONTEXT
 
 private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
 private val LIST = ClassName("kotlin.collections", "List")
-private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val ENT_ENTITY = ClassName("entkt.runtime.entity", "EntEntity")
 private val ENTITY_MAPPING = ClassName("entkt.runtime.entity", "EntityMapping")
-private val LOAD_PRIVACY_EVALUATOR =
-    ClassName("entkt.runtime.query.execution", "LoadPrivacyEvaluator")
+private val READ_QUERY_EXECUTION_HOST =
+    ClassName("entkt.runtime.query.execution", "ReadQueryExecutionHost")
 private val LOAD_PRIVACY_EVALUATION =
     ClassName("entkt.runtime.query.execution", "LoadPrivacyEvaluation")
 private val CORRELATE_LOAD_PRIVACY_EVALUATIONS = MemberName(
@@ -121,7 +120,7 @@ internal class ReadRuntimeGenerator(
     private fun buildReadRuntime(sorted: List<SchemaInput>): TypeSpec {
         return interfaceType("EntReadRuntime") {
             addAnnotation(ENTKT_INTERNAL)
-            addSuperinterface(LOAD_PRIVACY_EVALUATOR)
+            addSuperinterface(READ_QUERY_EXECUTION_HOST)
             addKdoc(
                 "The read-runtime contract generated queries and index stages depend\n" +
                     "on, instead of the full `EntClient`. Implemented by `EntClient` and\n" +
@@ -131,24 +130,6 @@ internal class ReadRuntimeGenerator(
                     "on the read path (operation-supplied viewer context, LOAD privacy, read\n" +
                     "interceptors).",
             )
-            function("checkReadExecution") {
-                addModifiers(KModifier.ABSTRACT)
-            }
-            property(
-                // Keeps the concrete property's `@EntktInternal` guard:
-                // interface members can't be `internal`, so the opt-in
-                // marker is what stops application code from reaching the
-                // raw EntInterceptorsConfig (whose scope-key-keyed
-                // `addEntity` permits wrong-entity registration via an
-                // unchecked cast). Generated queries read it through
-                // their files' `@file:OptIn`.
-                "entityInterceptors",
-                ENT_INTERCEPTORS_CONFIG,
-            ) {
-                addAnnotation(ENTKT_INTERNAL)
-                addModifiers(KModifier.ABSTRACT)
-            }
-
             addFunction(buildIsLoadPrivacyConfigured(sorted))
             addFunction(buildEvaluateLoadPrivacy(sorted))
 

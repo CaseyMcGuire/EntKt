@@ -119,13 +119,11 @@ internal fun buildCaptureEntityQuery(resolved: ResolvedQuerySchema): FunSpec {
         returnType = ENTITY_QUERY.parameterizedBy(entityClass),
     ) {
         addAnnotation(ENTKT_INTERNAL)
-        addModifiers(KModifier.INTERNAL)
+        addModifiers(KModifier.OVERRIDE)
         parameter(
             "structuralPredicates",
             List::class.asClassName().parameterizedBy(predicateType),
-        ) {
-            defaultValue("emptyList()")
-        }
+        )
         addCode(body)
     }
 }

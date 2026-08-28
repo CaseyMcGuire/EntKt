@@ -64,7 +64,6 @@ class BuildMemberManifestTest {
 
         assertEquals(
             mapOf(
-                "_readQueryExecutor" to GeneratedMemberKind.PROPERTY,
                 "client" to GeneratedMemberKind.PROPERTY,
                 "driver" to GeneratedMemberKind.PROPERTY,
                 "entityQuerySource" to GeneratedMemberKind.PROPERTY,
@@ -72,6 +71,7 @@ class BuildMemberManifestTest {
                 "predicates" to GeneratedMemberKind.PROPERTY,
                 "queryLimit" to GeneratedMemberKind.PROPERTY,
                 "queryOffset" to GeneratedMemberKind.PROPERTY,
+                "self" to GeneratedMemberKind.PROPERTY,
                 "all" to GeneratedMemberKind.FUNCTION,
                 "captureEntityQuery" to GeneratedMemberKind.FUNCTION,
                 "combinedPredicate" to GeneratedMemberKind.FUNCTION,
@@ -81,7 +81,6 @@ class BuildMemberManifestTest {
                 "offset" to GeneratedMemberKind.FUNCTION,
                 "orderBy" to GeneratedMemberKind.FUNCTION,
                 "readRootQuery" to GeneratedMemberKind.FUNCTION,
-                "requireClient" to GeneratedMemberKind.FUNCTION,
                 "setEntityQuerySource" to GeneratedMemberKind.FUNCTION,
                 "where" to GeneratedMemberKind.FUNCTION,
                 "GeneratedEntityMapping" to GeneratedMemberKind.NESTED_TYPE,

@@ -62,6 +62,39 @@ class QueryGeneratorTest {
     }
 
     @Test
+    fun `query inherits reusable state and terminals from runtime base`() {
+        val car = Car()
+        finalize(car, User())
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains(") : EntityQueryBuilder<Car, CarQuery>(")) {
+            "generated queries should wire schema-specific values into EntityQueryBuilder\n$output"
+        }
+        assert(
+            output.contains(
+                "driver = driver, executionHost = client, entityName = \"Car\"",
+            ),
+        ) {
+            "the base should receive the query's driver, contextless host, and entity name\n$output"
+        }
+        assert(output.contains("protected override val self: CarQuery get() = this")) {
+            "the generated self type should preserve concrete fluent return types\n$output"
+        }
+        assert(
+            output.contains(
+                "override fun captureEntityQuery(structuralPredicates: List<Predicate<Car>>): " +
+                    "EntityQuery<Car>",
+            ),
+        ) {
+            "generated capture should implement the base's schema-specific adapter\n$output"
+        }
+        assert(!output.contains("private val _readQueryExecutor")) {
+            "query execution belongs to the runtime base\n$output"
+        }
+    }
+
+    @Test
     fun `query builder is annotated as DSL scope`() {
         val car = Car()
         finalize(car, User())
@@ -71,83 +104,30 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `generates where that takes a Predicate`() {
+    fun `runtime-owned query DSL and execution members are not re-emitted`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("`where`(predicate: Predicate<Car>)")) {
-            "Should have where(Predicate<Car>)\n$output"
-        }
-    }
-
-    @Test
-    fun `generates orderBy that takes an OrderField`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-
-        assert(output.contains("fun orderBy(`field`: OrderField<Car>)")) {
-            "Should have orderBy(OrderField<Car>)\n$output"
-        }
-    }
-
-    @Test
-    fun `generates limit and offset`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-
-        assert(output.contains("fun limit(n: Int)")) { "Should have limit\n$output" }
-        assert(output.contains("fun offset(n: Int)")) { "Should have offset\n$output" }
-    }
-
-    @Test
-    fun `root terminals pass captured query data to an instance-configured entity loader`() {
-        val car = Car()
-        finalize(car, User())
-        // KotlinPoet wraps long driver.query(...) calls mid-argument-list,
-        // so match against a whitespace-normalized rendering.
-        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
-
-        assert(
-            output.contains(
-                "readRootQuery(viewerContext, ReadOperation.FIRST, maximumRows = 1)",
-            ),
-        ) {
-            "firstOrNull should retain its public result type and delegate to runtime\n$output"
-        }
-        assert(
-            output.contains(
-                "internal fun readRootQuery( viewerContext: ViewerContext, operation: ReadOperation, maximumRows: Int?, " +
-                    "structuralPredicates: List<Predicate<Car>> = emptyList(), ): " +
-                    "ReadResult<List<Car>> = _readQueryExecutor.readRootQuery(",
-            ),
-        ) {
-            "the query should delegate root reads to its configured entity loader\n$output"
-        }
-        assert(
-            output.contains(
-                "readRootQuery( viewerContext = viewerContext, captureQuery = { captureEntityQuery(structuralPredicates) }, operation = operation, " +
-                    "maximumRows = maximumRows, )",
-            ),
-        ) {
-            "the loader should receive captured query data and terminal intent directly\n$output"
+        for (runtimeOwned in listOf(
+            "fun `where`(",
+            "fun orderBy(",
+            "fun limit(",
+            "fun offset(",
+            "override fun combinedPredicate(",
+            "fun all(",
+            "fun firstOrNull(",
+            "fun readRootQuery(",
+            "fun compileEntityQuery(",
+            "_readQueryExecutor",
+            "requireClient(",
+        )) {
+            assert(!output.contains(runtimeOwned)) {
+                "runtime-owned member '$runtimeOwned' must not be emitted per entity\n$output"
+            }
         }
         assert(!output.contains("RootQueryRequest")) {
             "root reads should not allocate an argument-bundling request object\n$output"
-        }
-        assert(
-            output.contains(
-                    "private val _readQueryExecutor: ReadQueryExecutor<Car> by " +
-                    "lazy(LazyThreadSafetyMode.NONE) { ReadQueryExecutor( " +
-                    "driver = driver, " +
-                    "readExecutionGuard = { requireClient().checkReadExecution() }, " +
-                    "registeredInterceptorsProvider = { requireClient().entityInterceptors }, " +
-                    "loadPrivacyEvaluatorProvider = { requireClient() }, ) }",
-            ),
-        ) {
-            "generated queries should configure one deferred runtime read executor\n$output"
         }
         assert(!output.contains("private val _queryCompiler")) {
             "generated queries should not assemble query-compilation dependencies\n$output"
@@ -172,9 +152,6 @@ class QueryGeneratorTest {
         }
         assert(!output.contains("override fun freezeQuery(")) {
             "freezing must not conceal interceptor execution behind its name\n$output"
-        }
-        assert(!output.contains("fun firstOrNull(): ReadResult<Car?> = try {")) {
-            "the generated terminal must not retain a second execution algorithm\n$output"
         }
     }
 
@@ -270,45 +247,11 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // All predicate construction is now done via typed column refs on
-        // the entity's companion object — the query class should only
-        // carry where/orderBy/limit/offset.
+        // All predicate construction is done via typed column refs on
+        // the entity's companion object; the reusable builder DSL is inherited.
         assert(!output.contains("whereModelEq")) { "Should not have whereModelEq\n$output" }
         assert(!output.contains("whereYearGt")) { "Should not have whereYearGt\n$output" }
         assert(!output.contains("whereModelContains")) { "Should not have whereModelContains\n$output" }
-    }
-
-    @Test
-    fun `query implements EdgeQuery`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-
-        assert(output.contains("import entkt.query.EdgeQuery")) {
-            "Should import EdgeQuery\n$output"
-        }
-        // The generated class takes a DatabaseDriver in its primary constructor
-        // now, so the EdgeQuery supertype moves to after the closing paren.
-        assert(output.contains(": EdgeQuery") && output.contains("class CarQuery")) {
-            "Query class should implement EdgeQuery\n$output"
-        }
-    }
-
-    @Test
-    fun `query implements combinedPredicate by ANDing accumulated wheres`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-
-        assert(output.contains("override fun combinedPredicate(): Predicate<Car>?")) {
-            "Should override combinedPredicate with typed return\n$output"
-        }
-        assert(output.contains("predicates.reduceOrNull")) {
-            "Should fold predicates with reduceOrNull\n$output"
-        }
-        assert(output.contains("Predicate.And(acc, p)")) {
-            "Should AND consecutive predicates\n$output"
-        }
     }
 
     @Test
@@ -538,7 +481,7 @@ class QueryGeneratorTest {
     }
 
     @Test
-    fun `entity terminals execute an immutable captured topology`() {
+    fun `generated query retains no mutable execution topology`() {
         val car = Car()
         val user = User()
         finalize(car, user)
@@ -554,11 +497,8 @@ class QueryGeneratorTest {
         assert(!output.contains("releaseEdgeTopology")) {
             "there should be no generated topology release phase\n$output"
         }
-        assert(output.contains("fun all(viewerContext: ViewerContext): ReadResult<List<Car>> = readRootQuery(viewerContext, ReadOperation.ALL, maximumRows = null)")) {
-            "all() should delegate its complete root boundary to runtime\n$output"
-        }
-        assert(output.contains("readRootQuery(viewerContext, ReadOperation.FIRST, maximumRows = 1)")) {
-            "firstOrNull() should delegate its complete root boundary to runtime\n$output"
+        assert(!output.contains("fun all(") && !output.contains("fun firstOrNull(")) {
+            "row terminals should be inherited from EntityQueryBuilder\n$output"
         }
     }
 
@@ -645,31 +585,6 @@ class QueryGeneratorTest {
         val explainMethods = Regex("public fun explain\\w*\\(").findAll(output).count()
         assert(explainMethods == 0) {
             "generated query builders should not expose explain methods; found $explainMethods\n$output"
-        }
-    }
-
-    @Test
-    fun `row terminals delegate privacy and selected-edge completion through loader dependencies`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
-
-        assert(
-            output.contains(
-                "fun all(viewerContext: ViewerContext): ReadResult<List<Car>> = " +
-                    "readRootQuery(viewerContext, ReadOperation.ALL, maximumRows = null)",
-            ),
-        ) {
-            "all() should preserve its public type while delegating to runtime\n$output"
-        }
-        assert(output.contains("loadPrivacyEvaluatorProvider = { requireClient() }")) {
-            "the read executor should lazily obtain the runtime-wide typed privacy evaluator\n$output"
-        }
-        assert(!output.contains("query.loadEdges(entities, viewerContext)")) {
-            "generated queries should not retain a second graph-loading algorithm\n$output"
-        }
-        assert(!output.contains("catch (e: CancellationException)")) {
-            "all generated read-terminal failure boundaries should now be runtime-owned\n$output"
         }
     }
 
