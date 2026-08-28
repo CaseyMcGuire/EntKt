@@ -99,26 +99,6 @@ internal fun stagingFieldName(propertyName: String): String = "_${propertyName}S
 internal fun assignedFieldName(propertyName: String): String = "_${propertyName}Assigned"
 
 /**
- * Baseline KDoc applied to every generated FK property (entity data
- * class, create/update builders, mutation interface). Documents the
- * relationship-write contract the contract mandates: id-only surface, no
- * target row load, no target LOAD privacy evaluation. If the schema
- * declared a user comment via `.comment(...)`, that appears first and
- * the contract notes follow underneath.
- */
-internal fun fkPropertyKdoc(fk: EdgeFk): String {
-    val baseline = """
-        |Resolved FK for the `${fk.edgeApiName}` relationship → `${fk.targetTable}` row.
-        |
-        |This is an id-only surface: target rows are not auto-loaded, and target LOAD
-        |privacy is not evaluated when the value is read or written. Relationship-write
-        |authorization belongs in owner write privacy or validation.
-        |""".trimMargin().trimEnd()
-    val userComment = fk.comment
-    return if (userComment != null) "$userComment\n\n$baseline" else baseline
-}
-
-/**
  * Compute the FK surfaces for a schema's `belongsTo` edges — implicit
  * and field-backed alike. Other edge kinds keep their FK on the
  * opposite side or in a junction table.

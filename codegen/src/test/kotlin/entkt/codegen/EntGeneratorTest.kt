@@ -120,6 +120,23 @@ class EntGeneratorTest {
     }
 
     @Test
+    fun `generated files omit framework comments when schemas have no comments`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+        val commentStart = Regex("(?m)^\\s*(?://|/\\*)")
+
+        val commentedFiles = generator.generate(listOf(SchemaInput(car), SchemaInput(user)))
+            .filter { commentStart.containsMatchIn(it.toString()) }
+            .map { it.name }
+
+        assertTrue(
+            commentedFiles.isEmpty(),
+            "Generated files contain framework comments: $commentedFiles",
+        )
+    }
+
+    @Test
     fun `schema name colliding with a derived artifact name is rejected`() {
         val base = Account()
         val suffixed = AccountCreateDraft()

@@ -65,6 +65,21 @@ class ViewerCodegenTest {
     }
 
     @Test
+    fun `viewer files omit framework comments`() {
+        val files = gen(viewer = true, normalizeWhitespace = false)
+        val commentStart = Regex("(?m)^\\s*(?://|/\\*)")
+        val commentedFiles = files
+            .filterKeys { it.endsWith("ViewerEntity") || it == "GeneratedEntViewerRegistry" }
+            .filterValues(commentStart::containsMatchIn)
+            .keys
+
+        assertTrue(
+            commentedFiles.isEmpty(),
+            "Generated viewer files contain framework comments: $commentedFiles",
+        )
+    }
+
+    @Test
     fun `adapter carries column metadata with sensitivity and filterability`() {
         val adapter = gen(viewer = true).getValue("ViewerUserViewerEntity")
         assertTrue(

@@ -339,21 +339,6 @@ internal class RepoGenerator(
         return function("delete", resultType) {
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entity", entityClass)
-            addKdoc(
-                "Delete [entity]'s row. The passed entity is an **id handle\n" +
-                    "only**: the current row is reloaded (bypassing LOAD privacy — the\n" +
-                    "delete-side privacy rule is the authoritative check) and DELETE\n" +
-                    "privacy / validation / lifecycle hooks all run against that fresh\n" +
-                    "state, never the caller's copy. `Success(Unit)` means the row is\n" +
-                    "absent afterward — whether this call deleted it or it was already\n" +
-                    "absent (an absent row runs no callbacks; the Boolean affected-row\n" +
-                    "signal lives on [deleteById]). Absence is never\n" +
-                    "`EntTargetAbsentException`. `Failed` carries a typed\n" +
-                    "[entkt.runtime.result.EntMutationException] whose `writeState`\n" +
-                    "records the database effect; `Failed` does NOT imply the delete\n" +
-                    "rolled back. There is no `orNull()` projection — project with\n" +
-                    "`getOrThrow()` or match on the result.",
-            )
             addCode(codeBlock {
                 add("return deleteOperation.delete(viewerContext, entity)\n")
             })
@@ -372,21 +357,6 @@ internal class RepoGenerator(
         return function("deleteById", resultType) {
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("id", idType)
-            addKdoc(
-                "Delete the row with [id] through the same reload-then-delete\n" +
-                    "pipeline as [delete], preserving the affected-row signal:\n" +
-                    "`Success(true)` only when this call deleted the row,\n" +
-                    "`Success(false)` when the row was absent at reload time or\n" +
-                    "disappeared before the final delete — never\n" +
-                    "`EntTargetAbsentException`. An absent row runs no DELETE privacy,\n" +
-                    "validation, or lifecycle callbacks. The reload bypasses LOAD\n" +
-                    "privacy — the delete-side privacy rule is the authoritative check.\n" +
-                    "`Failed` carries a typed\n" +
-                    "[entkt.runtime.result.EntMutationException] whose `writeState`\n" +
-                    "records the database effect; `Failed` does NOT imply the delete\n" +
-                    "rolled back. There is no `orNull()` projection — project with\n" +
-                    "`getOrThrow()` or match on the result.",
-            )
             addCode(codeBlock {
                 add("return deleteOperation.deleteById(viewerContext, id)\n")
             })
@@ -416,22 +386,6 @@ internal class RepoGenerator(
                 "predicates",
                 PREDICATE.parameterizedBy(entityClass),
             ) { addModifiers(KModifier.VARARG) }
-            addKdoc(
-                "Atomically delete every row matching [predicates].\n" +
-                    "`Success(n)` is the number of rows removed; the whole operation\n" +
-                    "shares one transaction (the caller's, or an EntKt-owned one), so\n" +
-                    "DELETE privacy, validation, and lifecycle hooks run phase-major\n" +
-                    "over all selected candidates. The final write reasserts the\n" +
-                    "approved IDs and effective predicates, and afterDelete runs only\n" +
-                    "for rows actually removed. A failure leaves no committed subset\n" +
-                    "after a confirmed rollback; no denied or invalid candidate is\n" +
-                    "silently skipped. `Failed` carries\n" +
-                    "a typed [entkt.runtime.result.EntMutationException] whose\n" +
-                    "`writeState` records the database effect; inside a caller-owned\n" +
-                    "transaction `Failed` marks the scope rollback-only rather than\n" +
-                    "implying an immediate rollback. There is no `orNull()`\n" +
-                    "projection — project with `getOrThrow()` or match on the result.",
-            )
             statement("return deleteOperation.deleteMany(viewerContext, predicates.asList())")
         }
     }
@@ -899,21 +853,6 @@ internal class RepoGenerator(
         return function("createMany", resultType) {
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("blocks", createLambda) { addModifiers(KModifier.VARARG) }
-            addKdoc(
-                "Atomically create one row per block. Lifecycle work is phase-major:\n" +
-                    "all before-hooks, CREATE privacy, and validation finish before one\n" +
-                    "set-based insert. `Success` carries the complete hydrated list in\n" +
-                    "input order; a partial list is never returned. Returned LOAD\n" +
-                    "privacy is batch-evaluated after every row is hydrated and after\n" +
-                    "the full afterCreate phase. In a caller-owned transaction a\n" +
-                    "disclosure failure is `TransactionPending` and marks rollback-only;\n" +
-                    "in an EntKt-owned transaction a confirmed commit reports it as\n" +
-                    "`Committed`, a confirmed rollback as `NotPersisted`, and an uncertain\n" +
-                    "boundary as `PersistenceUnknown`. `Failed` therefore\n" +
-                    "does not by itself imply rollback; inspect `exception.writeState`.\n" +
-                    "There is no `orNull()` projection — use `getOrThrow()` or match on\n" +
-                    "the result.",
-            )
             statement("return createOperation.createMany(viewerContext, blocks.asList())")
         }
     }

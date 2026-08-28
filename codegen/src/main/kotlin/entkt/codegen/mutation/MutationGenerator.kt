@@ -12,7 +12,6 @@ import entkt.codegen.kotlinpoet.interfaceType
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.metadata.computeEdgeFks
-import entkt.codegen.metadata.fkPropertyKdoc
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
@@ -118,7 +117,7 @@ internal class MutationGenerator(
                     mutableMutationProperty(
                         fk.propertyName,
                         fk.idType.toTypeName().copy(nullable = !fk.required),
-                        fkPropertyKdoc(fk),
+                        fk.comment,
                     ),
                 )
             }
@@ -146,7 +145,7 @@ internal class MutationGenerator(
                     mutableMutationProperty(
                         fk.propertyName,
                         fk.idType.toTypeName().copy(nullable = !fk.required),
-                        fkPropertyKdoc(fk),
+                        fk.comment,
                     ),
                 )
             }

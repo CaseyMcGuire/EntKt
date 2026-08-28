@@ -21,7 +21,6 @@ import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
-import entkt.codegen.metadata.fkPropertyKdoc
 import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
@@ -372,7 +371,7 @@ internal class UpdateGenerator(
                     statement("%L = value", stagingName)
                     statement("dirtyFields.add(%S)", fk.propertyName)
                 }
-                addKdoc("%L", fkPropertyKdoc(fk))
+                fk.comment?.let { addKdoc("%L", it) }
             }
         }
         val typeName = fk.idType.toTypeName().copy(nullable = true)
@@ -393,7 +392,7 @@ internal class UpdateGenerator(
                 statement("field = value")
                 statement("dirtyFields.add(%S)", fk.propertyName)
             }
-            addKdoc("%L", fkPropertyKdoc(fk))
+            fk.comment?.let { addKdoc("%L", it) }
         }
     }
 
@@ -743,19 +742,6 @@ internal class UpdateGenerator(
             "one or more ids — `add(x)` and `remove(x)` for the same x must not coexist"
 
         return classType(edge.mutatorClassSimpleName) {
-            addKdoc(
-                "Link-table M2M mutator for `%L`. Public DSL surface\n" +
-                    "is `add(id)` / `remove(id)` / `set(ids)`. Two mixed-mode rules\n" +
-                    "fire fail-fast at the call site: replacement-vs-delta (`set` and\n" +
-                    "`add`/`remove` are mutually exclusive) and same-id mixed-direction\n" +
-                    "(`add(x)` after `remove(x)` and the reverse are rejected). Both\n" +
-                    "throw `IllegalStateException`.\n\n" +
-                    "Op-log fields are `private` to prevent same-module bypass; downstream\n" +
-                    "codegen uses the `internal` accessor methods (`hasOps`,\n" +
-                    "`snapshotOps`, `validateInvariants`) instead of reaching into the\n" +
-                    "raw lists.",
-                edge.mutatorPropertyName,
-            )
             primaryConstructor { addModifiers(KModifier.INTERNAL) }
             // Op log — `private`. Same-module application code can't
             // bypass the per-call invariants by reaching into these
@@ -1050,21 +1036,6 @@ internal class UpdateGenerator(
                 "viewerContext",
                 VIEWER_CONTEXT,
             )
-            addKdoc(
-                "Persist this builder's changes. `Success(Unit)` means the update\n" +
-                    "completed — staged when executed through a transaction-scoped\n" +
-                    "client, committed otherwise; an assignment-free update that finds\n" +
-                    "its target succeeds without writing. `Failed` carries a typed\n" +
-                    "[entkt.runtime.result.EntMutationException] whose `writeState`\n" +
-                    "records what EntKt knows about the database effect; `Failed` does\n" +
-                    "NOT imply the write rolled back. A missing or vanished target is\n" +
-                    "`Failed(EntTargetAbsentException)`. `save()` does not apply\n" +
-                    "returned-entity LOAD privacy because it discloses no entity — use\n" +
-                    "[saveAndLoad] for the refreshed row. There is deliberately no\n" +
-                    "`orNull()` projection (null cannot distinguish absence, rejection,\n" +
-                    "committed failure, and unknown write state); project with\n" +
-                    "`getOrThrow()` or match on the result.",
-            )
             addCode(codeBlock {
                 add("return when (val result = executeSave(viewerContext, applyLoadPrivacy = false)) {\n")
                 add("  is %T.Success -> %T.Success(Unit)\n", MUTATION_RESULT, MUTATION_RESULT)
@@ -1086,24 +1057,6 @@ internal class UpdateGenerator(
             parameter(
                 "viewerContext",
                 VIEWER_CONTEXT,
-            )
-            addKdoc(
-                "Persist this builder's changes and return the refreshed entity\n" +
-                    "under the ordinary LOAD contract (for an assignment-free no-op\n" +
-                    "update, the current row). `Success` always carries a non-null\n" +
-                    "entity; a missing or vanished target is\n" +
-                    "`Failed(EntTargetAbsentException)`. A LOAD denial of the returned\n" +
-                    "entity is `Failed(EntMutationPrivacyDeniedException)` with\n" +
-                    "`operation = LOAD` and the current `writeState` (`NotPersisted`\n" +
-                    "only for the no-op case, where nothing was written). The denial\n" +
-                    "itself does not undo the write: outside a transaction it is\n" +
-                    "already committed (`Committed`); inside a caller-owned\n" +
-                    "transaction the failure is `TransactionPending` and marks the\n" +
-                    "scope rollback-only, so the enclosing transaction normally rolls\n" +
-                    "the write back at its boundary. As with\n" +
-                    "[save], `Failed` does not imply rollback (inspect\n" +
-                    "`exception.writeState`), and there is no `orNull()` projection;\n" +
-                    "project with `getOrThrow()` or match on the result.",
             )
             statement("return executeSave(viewerContext, applyLoadPrivacy = true)")
         }

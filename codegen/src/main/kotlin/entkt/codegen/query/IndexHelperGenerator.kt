@@ -420,13 +420,6 @@ internal class IndexHelperGenerator(
         val emitter = Emitter(entityClass, queryClass, indexesClass, clientClass)
 
         val indexesType = classType(indexesClass) {
-            addKdoc(
-                "Staged index-helper namespace for `%L`, reached via " +
-                    "`client.<repo>.indexes`. Each stage records the bound index " +
-                    "prefix and delegates to `%LQuery`, preserving privacy and " +
-                    "read interceptors.",
-                schemaName, schemaName,
-            )
             primaryConstructor {
                 addModifiers(KModifier.INTERNAL)
                 parameter("driver", DRIVER)

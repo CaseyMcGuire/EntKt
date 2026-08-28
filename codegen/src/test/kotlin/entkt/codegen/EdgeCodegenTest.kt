@@ -958,36 +958,31 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `every generated FK property carries the baseline relationship-write KDoc`() {
-        //  "Generated resolved FK properties must include KDoc
-        // explaining the relationship-write semantics. FK properties
-        // write only target ids, do not load the target row, and do not
-        // evaluate target LOAD privacy."
+    fun `uncommented generated FK properties omit framework KDoc`() {
         val (_, names, byName) = createAllSchemas()
-        val baseline = "id-only surface: target rows are not auto-loaded"
 
         val entityOutput = EntityGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
-        assert(entityOutput.contains(baseline)) {
-            "Entity FK property should carry the baseline KDoc\n$entityOutput"
+        assert(!entityOutput.contains("/**")) {
+            "Entity FK property should not carry framework KDoc\n$entityOutput"
         }
 
         val createOutput = CreateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
-        assert(createOutput.contains(baseline)) {
-            "Create builder FK property should carry the baseline KDoc\n$createOutput"
+        assert(!createOutput.contains("/**")) {
+            "Create builder FK property should not carry framework KDoc\n$createOutput"
         }
 
         val updateOutput = UpdateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
-        assert(updateOutput.contains(baseline)) {
-            "Update builder FK property should carry the baseline KDoc\n$updateOutput"
+        assert(!updateOutput.contains("/**")) {
+            "Update builder FK property should not carry framework KDoc\n$updateOutput"
         }
 
         val mutationOutput = MutationGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
-        assert(mutationOutput.contains(baseline)) {
-            "Mutation interface FK property should carry the baseline KDoc\n$mutationOutput"
+        assert(!mutationOutput.contains("/**")) {
+            "Mutation interface FK property should not carry framework KDoc\n$mutationOutput"
         }
     }
 

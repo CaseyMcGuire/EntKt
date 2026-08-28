@@ -78,11 +78,6 @@ internal class ViewerGenerator(private val packageName: String) {
 
         val type = objectType(objectName) {
             addSuperinterface(VIEWER_ENTITY.parameterizedBy(clientClass))
-            addKdoc(
-                "Generated viewer adapter for [%T]. Reads go through the generated\n" +
-                    "typed repo, so privacy, interceptors, and soft-delete filters apply.\n",
-                entityClass,
-            )
             property("schema", ClassName("entkt.runtime.driver", "EntitySchema")) {
                 addModifiers(KModifier.OVERRIDE)
                 initializer("%T.SCHEMA", entityClass)
@@ -98,7 +93,7 @@ internal class ViewerGenerator(private val packageName: String) {
             }
             addProperty(buildColumnsProperty(columns, schema))
             addProperty(buildEdgesProperty(schema, schemaNames))
-            property(
+                property(
                 "columnsByName",
                 ClassName("kotlin.collections", "Map").parameterizedBy(
                     ClassName("kotlin", "String"), VIEWER_COLUMN,
@@ -398,10 +393,6 @@ internal class ViewerGenerator(private val packageName: String) {
                     ClassName("kotlin.collections", "List")
                         .parameterizedBy(VIEWER_ENTITY.parameterizedBy(clientClass)),
                 ) {
-                addKdoc(
-                    "Every generated viewer entity, in schema order.\n" +
-                        "Pass to `EntViewer(client, GeneratedEntViewerRegistry) { ... }`.\n",
-                )
                 initializer("listOf(%L)", entityList)
             }
         }

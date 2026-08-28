@@ -458,10 +458,12 @@ hook mutation view. The hook-facing mutation view is FK-only, exposing
 relationships by writing the target id into the FK property directly:
 `ctx.mutation.authorId = alice.id`.
 
-Generated resolved FK properties must include KDoc explaining the
-relationship-write semantics. FK properties write only target ids, do not load
-the target row, and do not evaluate target LOAD privacy. Relationship-write
-authorization belongs in owner write privacy or validation.
+Generated resolved FK properties do not repeat framework-authored KDoc. The
+relationship-write semantics live in this guide: FK properties write only
+target ids, do not load the target row, and do not evaluate target LOAD
+privacy. Relationship-write authorization belongs in owner write privacy or
+validation. A schema-authored `.comment(...)` still propagates to the generated
+FK property.
 
 ## Explicit Backing Fields
 
@@ -998,8 +1000,8 @@ and are annotated as such.
 The implementation should be covered by tests for:
 
 - to-one id assignment sets the FK without loading the target entity
-- generated resolved FK KDoc documents that to-one writes use only target ids, do
-  not load target rows, and do not evaluate target LOAD privacy
+- uncommented generated FK properties omit framework-authored KDoc, while
+  schema-authored comments still propagate to every FK surface
 - `belongsTo(...)` is required/non-null by default, while `.nullable()` makes a
   to-one edge nullable
 - `belongsTo(...).field(handle)` rejects mismatches between relationship

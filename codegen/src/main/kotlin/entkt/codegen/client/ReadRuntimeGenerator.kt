@@ -88,16 +88,6 @@ internal class ReadRuntimeGenerator(
         val entityClass = ClassName(packageName, input.name)
         return interfaceType("${input.name}ReadSurface") {
             addAnnotation(ENTKT_INTERNAL)
-            addKdoc(
-                "Narrow per-entity read surface of `%LRepo`: the only repo members\n" +
-                    "generated query terminals call. `%LReadRepo` implements it by\n" +
-                    "delegating to the host repo, so LOAD-privacy behavior is identical\n" +
-                    "through either client. `loadDenials` returns one positionally aligned\n" +
-                    "keyed denial (or null) per entity; `loadDenialOrNull` is its singleton\n" +
-                    "projection. A rule-thrown exception escapes so the terminal's capture\n" +
-                    "boundary stores it as an operational failure.",
-                input.name, input.name,
-            )
             function("hasLoadPrivacy", returnType = BOOLEAN) {
                 addModifiers(KModifier.ABSTRACT)
             }
@@ -121,15 +111,6 @@ internal class ReadRuntimeGenerator(
         return interfaceType("EntReadRuntime") {
             addAnnotation(ENTKT_INTERNAL)
             addSuperinterface(READ_QUERY_EXECUTION_HOST)
-            addKdoc(
-                "The read-runtime contract generated queries and index stages depend\n" +
-                    "on, instead of the full `EntClient`. Implemented by `EntClient` and\n" +
-                    "by `ReadOnlyEntClientImpl` — the public\n" +
-                    "`ReadOnlyEntClient` interface deliberately does not extend this\n" +
-                    "contract); a query constructed with either host behaves identically\n" +
-                    "on the read path (operation-supplied viewer context, LOAD privacy, read\n" +
-                    "interceptors).",
-            )
             addFunction(buildIsLoadPrivacyConfigured(sorted))
             addFunction(buildEvaluateLoadPrivacy(sorted))
 

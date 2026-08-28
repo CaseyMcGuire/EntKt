@@ -317,7 +317,6 @@ internal class ClientGenerator(
                     ClassName(packageName, "ReadOnlyEntClient"),
                 ),
             ) {
-                addKdoc("Mutation lifecycles shared by this client's generated repositories.")
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.INTERNAL)
                 delegate(
@@ -335,7 +334,6 @@ internal class ClientGenerator(
                     ClassName(packageName, "ReadOnlyEntClient"),
                 ),
             ) {
-                addKdoc("Delete lifecycles shared by this client's generated repositories.")
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.INTERNAL)
                 delegate(
@@ -353,7 +351,6 @@ internal class ClientGenerator(
                     ClassName(packageName, "ReadOnlyEntClient"),
                 ),
             ) {
-                addKdoc("Update lifecycles shared by this client's generated builders.")
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.INTERNAL)
                 delegate(
@@ -665,17 +662,6 @@ internal class ClientGenerator(
         }
 
         return function("withTransaction", transactionResult.parameterizedBy(t)) {
-            addKdoc(
-                    "The canonical transaction entry point. The block receives a\n" +
-                    "transaction-scoped client. Use that client for every operation in\n" +
-                    "the block: using this root client there throws before callbacks or\n" +
-                    "database I/O, because it would otherwise use another connection.\n" +
-                    "`orRollback()` on a read or mutation result extracts success or\n" +
-                    "stops the block; a mutation failure produced through the\n" +
-                    "transaction client marks the scope rollback-only even when its\n" +
-                    "result is ignored. Returns the exhaustive [TransactionResult];\n" +
-                    "project with `getOrThrow()` for throwing behavior.",
-            )
             addTypeVariable(t)
             parameter(
                 "block",
@@ -702,12 +688,6 @@ internal class ClientGenerator(
         schemas: List<SchemaInput>,
     ): TypeSpec {
         return classType(transactionClientClass) {
-            addKdoc(
-                "Transaction-scoped EntKt client supplied to `withTransaction` blocks.\n" +
-                    "It exposes the ordinary generated repository surface but deliberately has no\n" +
-                    "`withTransaction` entry point: nested client transactions are not a\n" +
-                    "supported operation and therefore do not compile.",
-            )
             addSuperinterface(clientScopeClass)
             primaryConstructor {
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
@@ -741,12 +721,6 @@ internal class ClientGenerator(
         schemas: List<SchemaInput>,
     ): TypeSpec {
         return interfaceType(clientScopeClass) {
-            addKdoc(
-                "Common generated repository surface implemented by [EntClient] and\n" +
-                    "[EntTransactionClient]. Accept this type in helpers that should work\n" +
-                    "with either client. It intentionally omits transaction entry and\n" +
-                    "client configuration APIs.\n",
-            )
             for (input in schemas) {
                 property(input.clientName, ClassName(packageName, "${input.name}Repo")) {
                     addModifiers(KModifier.ABSTRACT)

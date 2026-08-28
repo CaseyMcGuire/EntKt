@@ -53,11 +53,8 @@ class QueryGeneratorTest {
         val output = generator.generate("Car", car).toString()
 
         assert(output.contains("class CarQuery")) { "Should generate CarQuery\n$output" }
-        assert(output.contains("query builders are not thread-safe")) {
-            "Generated query KDoc should state the mutable builder's concurrency contract\n$output"
-        }
-        assert(output.contains("a separate query builder for each concurrent operation")) {
-            "Generated query KDoc should give callers an actionable concurrent-use alternative\n$output"
+        assert(!output.contains("/**")) {
+            "Generated query builders should not emit framework KDoc\n$output"
         }
     }
 
@@ -363,12 +360,8 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(
-            output.contains(
-                "// This is a conservative lower bound, not the final rendered bind count.",
-            ),
-        ) {
-            "the generated preflight should explain why the minimum is checked early\n$output"
+        assert(!output.contains("// This is a conservative lower bound")) {
+            "generated query implementation should not emit framework comments\n$output"
         }
         val capacityCheck = output.indexOf(
             "driver.requireBindCapacity(minimumRequiredBindParameters, Car.TABLE)",

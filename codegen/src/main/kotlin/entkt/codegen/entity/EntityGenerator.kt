@@ -29,7 +29,6 @@ import entkt.codegen.metadata.ENTITY_SCHEMA
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.entitySchemaCodeBlock
-import entkt.codegen.metadata.fkPropertyKdoc
 import entkt.codegen.metadata.kotlinxJsonSerializerOptIns
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
@@ -269,7 +268,7 @@ internal class EntityGenerator(
         val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
         return property(fk.propertyName, typeName) {
             initializer(fk.propertyName)
-            addKdoc("%L", fkPropertyKdoc(fk))
+            fk.comment?.let { addKdoc("%L", it) }
         }
     }
 

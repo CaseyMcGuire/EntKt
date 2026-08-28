@@ -67,11 +67,6 @@ internal fun buildCaptureEntityQuery(resolved: ResolvedQuerySchema): FunSpec {
     val selectedEdgeType = EDGE_SELECTION.parameterizedBy(entityClass, STAR)
     val body = codeBlock {
         add(
-            "// This is a conservative lower bound, not the final rendered bind count.\n" +
-                "// Checking it first rejects oversized collection operands from their O(1) size\n" +
-                "// before EntityQuery snapshots can iterate or copy their elements.\n",
-        )
-        add(
             "val minimumRequiredBindParameters = %M(predicates) +\n" +
                 "  %M(structuralPredicates)\n",
             MINIMUM_BIND_PARAMETERS,

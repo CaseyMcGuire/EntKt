@@ -112,14 +112,6 @@ internal class ReadClientGenerator(
         val idType = input.schema.id().type.toTypeName()
 
         return classType("${schemaName}ReadRepo") {
-            addKdoc(
-                "Read-only `%L` repository handed to validators and privacy rules via\n" +
-                    "`ReadOnlyEntClient`. Reads behave exactly like the full repo's (same query\n" +
-                    "machinery, read interceptors, LOAD-privacy delegation) under each\n" +
-                    "terminal-supplied context; the write surface does not exist here, so\n" +
-                    "rule writes fail to compile.",
-                schemaName,
-            )
             addSuperinterface(readSurfaceClass)
             primaryConstructor {
                 addAnnotation(ENTKT_INTERNAL)
@@ -185,16 +177,6 @@ internal class ReadClientGenerator(
 
     private fun buildClientInterface(sorted: List<SchemaInput>): TypeSpec {
         return interfaceType("ReadOnlyEntClient") {
-            addKdoc(
-                "Read-only repository surface exposed in validation and privacy rule\n" +
-                    "contexts. Every terminal requires an explicit `ViewerContext`; the\n" +
-                    "supplied context determines LOAD privacy and interceptor behavior.\n" +
-                    "Raw terminals always skip LOAD privacy, regardless of context, and\n" +
-                    "should be used only when storage-level facts are intended. Write-side state\n" +
-                    "(`transactionRequirement`, hooks, validation config) is deliberately\n" +
-                    "absent from the whole surface — its absence is part of the\n" +
-                    "no-writes guarantee.",
-            )
             for (input in sorted) {
                 property(input.clientName, ClassName(packageName, "${input.name}ReadRepo")) {
                     addModifiers(KModifier.ABSTRACT)
@@ -205,16 +187,6 @@ internal class ReadClientGenerator(
 
     private fun buildClientImpl(sorted: List<SchemaInput>): TypeSpec {
         return classType("ReadOnlyEntClientImpl") {
-            addKdoc(
-                "Contextless implementation of [ReadOnlyEntClient]. Constructed once by\n" +
-                    "`EntClient`: same driver instance\n" +
-                    "(a transaction-scoped client yields a transaction-scoped read\n" +
-                    "client), same transaction execution authorization, same read\n" +
-                    "interceptors, and same per-repo LOAD-privacy behavior. Every terminal\n" +
-                    "receives its `ViewerContext` explicitly. Owns repository construction and the [EntReadRuntime]\n" +
-                    "contract; no public generated\n" +
-                    "signature exposes this type.",
-            )
             addAnnotation(ENTKT_INTERNAL)
             addModifiers(KModifier.INTERNAL)
             addSuperinterface(ClassName(packageName, "ReadOnlyEntClient"))

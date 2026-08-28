@@ -25,7 +25,6 @@ import entkt.codegen.kotlinpoet.setter
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.computeEdgeFks
-import entkt.codegen.metadata.fkPropertyKdoc
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
@@ -209,7 +208,7 @@ internal class CreateGenerator(
         return property(fk.propertyName, type) {
             mutable(true)
             initializer("null")
-            addKdoc("%L", fkPropertyKdoc(fk))
+            fk.comment?.let { addKdoc("%L", it) }
             setter {
                 parameter("value", type)
                 statement("field = value")
@@ -220,7 +219,6 @@ internal class CreateGenerator(
 
     private fun buildIsSetFunction(entityClass: ClassName): FunSpec =
         function("isSet", returnType = BOOLEAN) {
-            addKdoc("Return whether [column] was explicitly assigned, including assignment to null.\n")
             parameter(
                 "column",
                 ClassName("entkt.query", "ColumnReference").parameterizedBy(entityClass),

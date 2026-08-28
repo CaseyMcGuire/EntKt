@@ -57,14 +57,6 @@ internal class QueryGenerator(
         val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
 
         val typeSpec = classType(className) {
-            addKdoc(
-                "Mutable query builder for [%T]. Configure and execute this instance from one " +
-                    "thread at a time; query builders are not thread-safe. Do not mutate or " +
-                    "execute the same instance concurrently. Create a separate query builder " +
-                    "for each concurrent operation. A fully configured instance may be " +
-                    "executed repeatedly when those executions are sequential.\n",
-                entityClass,
-            )
             addAnnotation(annotation(ENTKT_DSL))
             superclass(ENTITY_QUERY_BUILDER.parameterizedBy(entityClass, queryClass))
             primaryConstructor {
