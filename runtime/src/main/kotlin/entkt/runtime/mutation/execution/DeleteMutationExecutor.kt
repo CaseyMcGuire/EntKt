@@ -16,6 +16,7 @@ import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.EntityKey
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
+import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.toValidationViolation
 import java.util.concurrent.CancellationException
 
@@ -27,6 +28,25 @@ class DeleteMutationExecutor<RuleClient>(
     private val ruleClient: RuleClient,
 ) {
     private val execution = MutationExecutionSupport(mutationRuntime)
+
+    /** Bind one generated entity specification to the reusable delete operation. */
+    fun <Entity : EntEntity<*>, Candidate> operationForInternalUse(
+        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+        ownedTransaction: (
+            ViewerContext,
+            List<Predicate<Entity>>,
+        ) -> TransactionResult<Int>,
+    ): DeleteOperation<Entity> = DeleteOperation(
+        driver = driver,
+        mutationRuntime = mutationRuntime,
+        entityName = spec.entity.entityName,
+        executeEntity = { vc, entity -> delete(vc, entity, spec) },
+        executeId = { vc, id -> deleteById(vc, id, spec) },
+        executeMany = { vc, predicates, promoteDriverNotPersisted ->
+            deleteMany(vc, predicates, spec, promoteDriverNotPersisted)
+        },
+        ownedTransaction = ownedTransaction,
+    )
 
     /** Delete by an entity handle, projecting the affected-row signal to Unit. */
     fun <Entity : EntEntity<*>, Candidate> delete(
@@ -61,14 +81,6 @@ class DeleteMutationExecutor<RuleClient>(
             viewerContext = viewerContext,
             entity = spec.entity.decode(row),
             spec = spec,
-        )
-    }
-
-    /** Enforce transaction policy before deleteMany chooses or opens its transaction. */
-    fun checkDeleteManyTransactionRequirement(entityName: String) {
-        mutationRuntime.checkTransactionRequirement(
-            operation = "$entityName deleteMany",
-            multiWrite = true,
         )
     }
 

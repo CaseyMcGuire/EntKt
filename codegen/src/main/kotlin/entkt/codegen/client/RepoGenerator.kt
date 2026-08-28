@@ -2,7 +2,6 @@ package entkt.codegen.client
 
 import entkt.codegen.apiName
 import com.squareup.kotlinpoet.AnnotationSpec
-import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
@@ -35,16 +34,10 @@ import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.metadata.VIEWER_CONTEXT
-import entkt.codegen.mutation.MUTATION_CANCELLATION_EXCEPTION
 import entkt.codegen.mutation.MUTATION_ENTITY_KEY
 import entkt.codegen.mutation.MUTATION_RESULT
 import entkt.codegen.mutation.MUTATION_VALIDATION_VIOLATION
-import entkt.codegen.mutation.MUTATION_WRITE_STATE
-import entkt.codegen.mutation.ENT_MUTATION_EXCEPTION
-import entkt.codegen.mutation.ENT_UNEXPECTED_MUTATION_EXCEPTION
-import entkt.codegen.mutation.KOTLIN_EXCEPTION
 import entkt.codegen.mutation.CreateGenerator
-import entkt.codegen.mutation.indented
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 import entkt.schema.Field
@@ -64,8 +57,6 @@ private val PRIVACY_DECISION = ClassName("entkt.runtime.privacy", "PrivacyDecisi
 private val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
 private val EVALUATE_BATCH_PRIVACY_RULES =
     MemberName("entkt.runtime.privacy", "evaluateBatchPrivacyRulesForInternalUse")
-private val TRANSACTION_RESULT = ClassName("entkt.runtime.result", "TransactionResult")
-private val TRANSACTION_FAILURE_STATE = ClassName("entkt.runtime.result", "TransactionFailureState")
 private val READ_OPERATION = ClassName("entkt.runtime.query", "ReadOperation")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val CREATE_MUTATION_SPEC =
@@ -74,6 +65,8 @@ private val CREATE_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "CreateOperation")
 private val DELETE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationSpec")
+private val DELETE_OPERATION =
+    ClassName("entkt.runtime.mutation.execution", "DeleteOperation")
 private val DELETE_RULE_CANDIDATE =
     ClassName("entkt.runtime.mutation.execution", "DeleteRuleCandidate")
 private val DELETE_SELECTION =
@@ -230,6 +223,12 @@ internal class RepoGenerator(
                     fields = fields,
                 ),
             )
+            addProperty(
+                buildDeleteOperation(
+                    clientName = schema.clientName,
+                    entityClass = entityClass,
+                ),
+            )
             addInitializerBlock(
                 CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
             )
@@ -291,8 +290,7 @@ internal class RepoGenerator(
                     addFunction(buildCreateMany(entityClass, createLambda))
             }
             addFunction(buildSelectDeleteCandidates(entityClass))
-            addFunction(buildExecuteDeleteManyPhases(entityClass))
-            addFunction(buildDeleteMany(schemaName, schema.clientName, entityClass))
+            addFunction(buildDeleteMany(entityClass))
             addFunction(buildHasPrivacy("hasLoadPrivacy", readSurfaceOverride = true))
             addFunction(buildHasPrivacy("hasCreatePrivacy"))
             addFunction(buildHasPrivacy("hasUpdatePrivacy"))
@@ -341,7 +339,7 @@ internal class RepoGenerator(
                     "`getOrThrow()` or match on the result.",
             )
             addCode(codeBlock {
-                add("return client.deleteMutations.delete(viewerContext, entity, deleteSpec)\n")
+                add("return deleteOperation.delete(viewerContext, entity)\n")
             })
         }
     }
@@ -374,30 +372,7 @@ internal class RepoGenerator(
                     "`getOrThrow()` or match on the result.",
             )
             addCode(codeBlock {
-                add("return client.deleteMutations.deleteById(viewerContext, id, deleteSpec)\n")
-            })
-        }
-    }
-
-    /** Execute the phase-major delete-many pipeline on a transaction-scoped repo. */
-    private fun buildExecuteDeleteManyPhases(
-        entityClass: ClassName,
-    ): FunSpec {
-        val predicateType = PREDICATE.parameterizedBy(entityClass)
-        return function("_executeDeleteManyPhases", MUTATION_RESULT.parameterizedBy(INT)) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("predicates", LIST.parameterizedBy(predicateType))
-            parameter("promoteDriverNotPersisted", BOOLEAN)
-            addCode(codeBlock {
-                add("return client.deleteMutations.deleteMany(\n")
-                    .indent()
-                    .add("viewerContext = viewerContext,\n")
-                    .add("predicates = predicates,\n")
-                    .add("spec = deleteSpec,\n")
-                    .add("promoteDriverNotPersisted = promoteDriverNotPersisted,\n")
-                    .unindent()
-                    .add(")\n")
+                add("return deleteOperation.deleteById(viewerContext, id)\n")
             })
         }
     }
@@ -412,11 +387,8 @@ internal class RepoGenerator(
      * receives only rows the driver confirms it removed.
      */
     private fun buildDeleteMany(
-        schemaName: String,
-        clientName: String,
         entityClass: ClassName,
     ): FunSpec {
-        val repoPropName = clientName
         val resultType = MUTATION_RESULT.parameterizedBy(INT)
         return function("deleteMany", resultType) {
             parameter("viewerContext", VIEWER_CONTEXT)
@@ -444,104 +416,9 @@ internal class RepoGenerator(
                     "implying an immediate rollback. There is no `orNull()`\n" +
                     "projection — project with `getOrThrow()` or match on the result.",
             )
-            addCode(codeBlock {
-                    add("return try {\n")
-                    .add(
-                        "  client.deleteMutations.checkDeleteManyTransactionRequirement(%S)\n",
-                        schemaName,
-                    )
-                    .add("  val predicateSnapshot = predicates.toList()\n")
-                    .add("  if (driver.inTransaction) {\n")
-                    .add("    _executeDeleteManyPhases(viewerContext, predicateSnapshot, promoteDriverNotPersisted = true)\n")
-                    .add("  } else {\n")
-                    .add("    val txResult = client.withTransaction { tx ->\n")
-                    .add(
-                        "      tx.%L._executeDeleteManyPhases(" +
-                            "viewerContext, predicateSnapshot, promoteDriverNotPersisted = false).orRollback()\n",
-                        repoPropName,
-                    )
-                    .add("    }\n")
-                    .add("    when (txResult) {\n")
-                    .add("      is %T.Success -> %T.Success(txResult.value)\n", TRANSACTION_RESULT, MUTATION_RESULT)
-                    .add("      is %T.Failed -> {\n", TRANSACTION_RESULT)
-                    .add(txFailureConversion().indented().indented().indented())
-                    .add("      }\n")
-                    .add("    }\n")
-                    .add("  }\n")
-                    .add(terminalBoundaryTailExpression())
-            })
+            statement("return deleteOperation.deleteMany(viewerContext, predicates.asList())")
         }
     }
-
-    /**
-     * Shared conversion of a `TransactionResult.Failed` from an
-     * EntKt-owned self-delegated bulk transaction into a
-     * `MutationResult` failure. After a confirmed rollback
-     * (`NotCommitted`), the RFC requires the bulk result to carry
-     * `NotPersisted`: a stored `EntMutationException` that already
-     * hardcodes `NotPersisted` (validation, privacy, target-absence,
-     * recognized constraints/conflicts — the common cases) passes
-     * through unchanged so typed catches keep working, while a stored
-     * exception carrying a mid-transaction state
-     * (`TransactionPending`/`PersistenceUnknown`) is re-reported as
-     * `EntUnexpectedMutationException(NotPersisted, stored)` — the
-     * rollback made `NotPersisted` the accurate batch state, and the
-     * original typed failure stays reachable as the cause. Any other
-     * confirmed-rollback exception wraps with NotPersisted, and an
-     * unknown outcome wraps with PersistenceUnknown. The record call
-     * is a no-op here (this path only runs outside a caller-owned
-     * transaction) but keeps every Failed construction site uniform.
-     */
-    private fun txFailureConversion(): CodeBlock =
-        codeBlock {
-            add("val stored = txResult.exception\n")
-            .add(
-                "val exception = if (txResult.transactionState == %T.OutcomeUnknown) {\n",
-                TRANSACTION_FAILURE_STATE,
-            )
-            .add("  %T(%T.PersistenceUnknown, stored)\n", ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE)
-            .add(
-                "} else if (stored is %T && stored.writeState == %T.NotPersisted) {\n",
-                ENT_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
-            )
-            .add("  stored\n")
-            .add("} else {\n")
-            // Re-report as NotPersisted (rollback confirmed). When the
-            // stored exception is itself an unexpected-failure wrapper,
-            // wrap its CAUSE instead so the typed row failure stays one
-            // level away rather than two.
-            .add(
-                "  %T(%T.NotPersisted, ((stored as? %T)?.cause as? %T) ?: stored)\n",
-                ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
-                ENT_UNEXPECTED_MUTATION_EXCEPTION, KOTLIN_EXCEPTION,
-            )
-            .add("}\n")
-            .add("client.recordTransactionMutationFailure(exception)\n")
-            .add("%T.failedForInternalUse(exception)\n", MUTATION_RESULT)
-        }
-
-    /**
-     * The expression-style terminal capture boundary shared by the
-     * repo mutation terminals: rethrow cancellation, then wrap any
-     * other ordinary exception as foreign with the pre-write
-     * NotPersisted state (each repo terminal's own write phase is
-     * classified inside `deleteLoaded` / the per-row create pipeline,
-     * so only pre-write work can throw here). Closes the `return try {`
-     * opened by the caller.
-     */
-    private fun terminalBoundaryTailExpression(): CodeBlock =
-        codeBlock {
-            add("} catch (e: %T) {\n", MUTATION_CANCELLATION_EXCEPTION)
-            .add("  throw e\n")
-            .add("} catch (e: %T) {\n", KOTLIN_EXCEPTION)
-            .add(
-                "  val exception = %T(%T.NotPersisted, e)\n",
-                ENT_UNEXPECTED_MUTATION_EXCEPTION, MUTATION_WRITE_STATE,
-            )
-            .add("  client.recordTransactionMutationFailure(exception)\n")
-            .add("  %T.failedForInternalUse(exception)\n", MUTATION_RESULT)
-            .add("}\n")
-        }
 
     // Privacy is fail-closed: every operation requires an explicit Allow, so
     // every entity is privacy-enforced regardless of which rules are declared.
@@ -824,6 +701,42 @@ internal class RepoGenerator(
                 add("afterDelete = afterDeleteHooks,\n")
                 unindent()
                 add(")")
+            })
+        }
+    }
+
+    /** Bind the generated delete adapters once to the runtime delete operation. */
+    private fun buildDeleteOperation(
+        clientName: String,
+        entityClass: ClassName,
+    ): PropertySpec {
+        val operationType = DELETE_OPERATION.parameterizedBy(entityClass)
+        return property("deleteOperation", operationType) {
+            addModifiers(KModifier.PRIVATE)
+            delegate(codeBlock {
+                add("lazy({\n")
+                indent()
+                add("client.deleteMutations.operationForInternalUse(\n")
+                indent()
+                add("spec = deleteSpec,\n")
+                add("ownedTransaction = { vc, predicates ->\n")
+                indent()
+                add("client.withTransaction { tx ->\n")
+                indent()
+                add("tx.%L.deleteOperation.deleteManyInOwnedTransactionForInternalUse(\n", clientName)
+                indent()
+                add("vc = vc,\n")
+                add("predicates = predicates,\n")
+                unindent()
+                add(").orRollback()\n")
+                unindent()
+                add("}\n")
+                unindent()
+                add("},\n")
+                unindent()
+                add(")\n")
+                unindent()
+                add("})")
             })
         }
     }

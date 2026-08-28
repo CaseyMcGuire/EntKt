@@ -271,14 +271,14 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `delete delegates entity handles to DeleteMutationExecutor`() {
+    fun `delete delegates entity handles to the bound delete operation`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("client.deleteMutations.delete(viewerContext, entity, deleteSpec)")) {
-            "delete should pass the handle and typed spec to the runtime executor\n$output"
+        assert(output.contains("deleteOperation.delete(viewerContext, entity)")) {
+            "delete should pass the handle to the bound runtime operation\n$output"
         }
     }
 
@@ -295,14 +295,14 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `deleteById delegates idempotent semantics to DeleteMutationExecutor`() {
+    fun `deleteById delegates idempotent semantics to the bound delete operation`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("client.deleteMutations.deleteById(viewerContext, id, deleteSpec)")) {
-            "deleteById should pass the id and typed spec to the runtime executor\n$output"
+        assert(output.contains("deleteOperation.deleteById(viewerContext, id)")) {
+            "deleteById should pass the id to the bound runtime operation\n$output"
         }
     }
 
@@ -552,38 +552,31 @@ class RepoGeneratorTest {
         ) {
             "Should have deleteMany with vararg typed Predicate<Car> returning MutationResult<Int>\n$output"
         }
-        assert(output.contains("client.deleteMutations.checkDeleteManyTransactionRequirement(\"Car\")")) {
-            "deleteMany should delegate its multi-write transaction preflight\n$output"
+        assert(output.contains("deleteOperation.deleteMany(viewerContext, predicates.asList())")) {
+            "deleteMany should delegate its typed predicates to the bound runtime operation\n$output"
         }
     }
 
     @Test
-    fun `deleteMany private phases delegate to the runtime executor`() {
+    fun `repo binds one delete operation to its typed runtime specification`() {
         val car = Car()
         finalize(car, User())
-        val raw = generator.generate("Car", car).toString()
-        val output = raw.replace("\\s+".toRegex(), " ")
+        val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private fun _executeDeleteManyPhases(")) {
-            "deleteMany should isolate its transaction-scoped phase-major pipeline\n$output"
+        assert(output.contains("private val deleteOperation: DeleteOperation<Car> by lazy({")) {
+            "the repository should retain one lazily bound delete operation\n$output"
         }
-        assert(output.contains("client.deleteMutations.deleteMany(")) {
-            "the transaction-scoped adapter should call DeleteMutationExecutor\n$output"
+        assert(output.contains("client.deleteMutations.operationForInternalUse( spec = deleteSpec,")) {
+            "the bound operation should capture the repository's typed specification\n$output"
         }
-        assert(output.contains("viewerContext = viewerContext") && output.contains("spec = deleteSpec")) {
-            "the exact operation context and immutable spec should cross the adapter\n$output"
-        }
-        val phases = raw.substring(
-            raw.indexOf("fun _executeDeleteManyPhases("),
-            raw.indexOf("fun deleteMany("),
-        )
-        assert(!phases.contains("driver.") && !phases.contains("runBatchHooksForInternalUse")) {
-            "generated deleteMany phases should contain no lifecycle or storage algorithm\n$phases"
+        assert(!output.contains("private fun _executeDeleteManyPhases(")) {
+            "deleteMany transaction and failure coordination should live only in runtime\n$output"
         }
     }
 
     @Test
-    fun `deleteMany delegates its private phases through one owned transaction`() {
+    fun `delete operation delegates owned work through the transaction repository`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
@@ -591,24 +584,23 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "if (driver.inTransaction) { _executeDeleteManyPhases(viewerContext, predicateSnapshot, promoteDriverNotPersisted = true)",
+                "ownedTransaction = { vc, predicates -> client.withTransaction { tx ->",
             ),
         ) {
-            "caller-owned deleteMany should run the private phases in place\n$output"
+            "the bound operation should receive an EntKt-owned transaction adapter\n$output"
         }
         assert(
             output.contains(
-                "tx.cars._executeDeleteManyPhases(viewerContext, predicateSnapshot, promoteDriverNotPersisted = false).orRollback()",
+                "tx.cars.deleteOperation.deleteManyInOwnedTransactionForInternalUse( vc = vc, predicates = predicates, ).orRollback()",
             ),
         ) {
-            "deleteMany should run the same private phases once in its owned transaction\n$output"
+            "owned deleteMany work should use the transaction repository's bound operation\n$output"
         }
         assert(
-            output.contains(
-                "val exception = if (txResult.transactionState == TransactionFailureState.OutcomeUnknown) { EntUnexpectedMutationException(MutationWriteState.PersistenceUnknown, stored) } else if (stored is EntMutationException && stored.writeState == MutationWriteState.NotPersisted) { stored } else { EntUnexpectedMutationException(MutationWriteState.NotPersisted, ((stored as? EntUnexpectedMutationException)?.cause as? Exception) ?: stored) }",
-            ),
+            !output.contains("txResult.transactionState") &&
+                !output.contains("promoteDriverNotPersisted"),
         ) {
-            "deleteMany should convert TransactionResult.Failed with the shared write-state mapping\n$output"
+            "deleteMany transaction posture and failure conversion should not be generated\n$output"
         }
     }
 
@@ -825,35 +817,28 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `every mutation failure construction site records on the transaction coordinator`() {
+    fun `repo emits no mutation failure coordination`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        // Inside a caller-owned transaction a Failed must mark the
-        // scope rollback-only; outside one the record call is a no-op.
-        // The invariant is structural: every Failed construction site
-        // pairs with a coordinator record call.
-        val failed = Regex(Regex.escape("MutationResult.failedForInternalUse(")).findAll(output).count()
-        val recorded = Regex(Regex.escape("client.recordTransactionMutationFailure(")).findAll(output).count()
-        assert(failed > 0) { "Expected MutationResult.Failed construction sites\n$output" }
-        assert(failed == recorded) {
-            "Every MutationResult.failedForInternalUse site should pair with a coordinator notification; found $failed vs $recorded\n$output"
+        assert(
+            !output.contains("MutationResult.failedForInternalUse(") &&
+                !output.contains("client.recordTransactionMutationFailure("),
+        ) {
+            "mutation failure construction and coordinator recording belong to runtime operations\n$output"
         }
     }
 
     @Test
-    fun `terminals rethrow cancellation at every capture boundary`() {
+    fun `repo emits no mutation capture boundaries`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        val catches = Regex(Regex.escape("catch (e: CancellationException)")).findAll(output).count()
-        val rethrows = Regex(Regex.escape("catch (e: CancellationException) { throw e }")).findAll(output).count()
-        assert(catches > 0) { "Expected cancellation catch clauses\n$output" }
-        assert(catches == rethrows) {
-            "Every CancellationException catch should immediately rethrow; found $catches catches vs $rethrows rethrows\n$output"
+        assert(!output.contains("catch (e: CancellationException)")) {
+            "mutation capture and cancellation handling belong to runtime operations\n$output"
         }
     }
 
@@ -912,7 +897,9 @@ class RepoGeneratorTest {
         ) {
             "explicit-id repositories should bind only the scalar create capability\n$output"
         }
-        assert(!normalized.contains("ownedTransaction =") && !normalized.contains("newDraft =")) {
+        val createBinding = normalized.substringAfter("private val createOperation:")
+            .substringBefore("private val deleteSpec:")
+        assert(!createBinding.contains("ownedTransaction =") && !createBinding.contains("newDraft =")) {
             "explicit-id repositories should not emit unreachable createMany wiring\n$output"
         }
     }
