@@ -5,6 +5,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.BatchHook
 import entkt.runtime.mutation.CreatePreparation
+import entkt.runtime.result.ValidationViolation
 
 /** Immutable entity-specific inputs used by the generic create lifecycle. */
 @EntktInternal
@@ -25,6 +26,9 @@ class CreateMutationSpec<
 
     /** Hooks applied to the entities returned by a successful database write. */
     val afterCreate: List<BatchHook<Entity>>,
+
+    /** Report missing required draft inputs before values are resolved. */
+    val requiredInputViolations: (Draft) -> List<ValidationViolation>,
 
     /** Resolve the post-hook draft into stable storage values and a write candidate. */
     val resolveDraft: (Draft) -> CreatePreparation<Candidate>,

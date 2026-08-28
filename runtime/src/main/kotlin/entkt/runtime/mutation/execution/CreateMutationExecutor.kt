@@ -19,15 +19,17 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.TransactionResult
+import entkt.runtime.result.ValidationViolation
 import entkt.runtime.result.toValidationViolation
 import java.util.concurrent.CancellationException
 
 /**
  * Runs create lifecycles for generated drafts and entity specifications.
  *
- * A create runs before hooks, resolves every draft, evaluates CREATE privacy,
- * evaluates CREATE validation, persists the rows, runs after hooks, and then
- * applies returned-entity LOAD privacy when the terminal exposes entities.
+ * A create runs before hooks, validates required inputs, resolves every draft,
+ * evaluates CREATE privacy, evaluates CREATE validation, persists the rows,
+ * runs after hooks, and then applies returned-entity LOAD privacy when the
+ * terminal exposes entities.
  */
 @EntktInternal
 class CreateMutationExecutor<RuleClient>(
@@ -169,6 +171,12 @@ class CreateMutationExecutor<RuleClient>(
         spec.beforeCreate.run(viewerContext, drafts)
 
         val entityName = spec.entity.entityName
+        rejectRequiredInputViolations(
+            attempt = attempt,
+            drafts = drafts,
+            entityName = entityName,
+            requiredInputViolations = spec.requiredInputViolations,
+        )
         val resolvedCreates = resolveDrafts(
             attempt = attempt,
             drafts = drafts,
@@ -200,6 +208,26 @@ class CreateMutationExecutor<RuleClient>(
         runBatchHooksForInternalUse(createdEntities, spec.afterCreate)
 
         return createdEntities
+    }
+
+    /** Reject missing required inputs before resolution evaluates defaults. */
+    private fun <Draft> rejectRequiredInputViolations(
+        attempt: MutationAttempt,
+        drafts: List<Draft>,
+        entityName: String,
+        requiredInputViolations: (Draft) -> List<ValidationViolation>,
+    ) {
+        drafts.firstNotNullOfOrNull { draft ->
+            requiredInputViolations(draft).takeIf { it.isNotEmpty() }
+        }?.let { violations ->
+            attempt.reject(
+                EntValidationException(
+                    entityType = entityName,
+                    operation = EntOperation.CREATE,
+                    violations = violations,
+                ),
+            )
+        }
     }
 
     /** Resolve every draft before any privacy or entity-level validation runs. */

@@ -229,6 +229,68 @@ internal class CreateGenerator(
             statement("return column in assignedFields")
         }
 
+    /** Build the repo-owned required-input check run before draft resolution. */
+    fun buildRequiredInputViolationsFunction(
+        schemaName: String,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): FunSpec {
+        val draftClass = ClassName(packageName, "${schemaName}CreateDraft")
+        val entityClass = ClassName(packageName, schemaName)
+        val allFields = scalarFields(schema)
+        val edgeFks = computeEdgeFks(schema, schemaNames)
+        return function(
+            "requiredInputViolations",
+            returnType = List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION),
+        ) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("draft", draftClass)
+            for (field in allFields) {
+                if (field.nullable) continue
+                val prop = field.apiName
+                val condition = if (field.default == null) {
+                    CodeBlock.of("draft.%L == null", prop)
+                } else {
+                    CodeBlock.of(
+                        "draft.isSet(%T.%L) && draft.%L == null",
+                        entityClass,
+                        prop,
+                        prop,
+                    )
+                }
+                addStatement(
+                    "if (%L) return·listOf(%T(%S, field = %S))",
+                    condition,
+                    MUTATION_VALIDATION_VIOLATION,
+                    "$prop is required",
+                    prop,
+                )
+            }
+            for (fk in edgeFks) {
+                if (!fk.required) continue
+                val prop = fk.propertyName
+                val condition = if (fk.default == null) {
+                    CodeBlock.of("draft.%L == null", prop)
+                } else {
+                    CodeBlock.of(
+                        "draft.isSet(%T.%L) && draft.%L == null",
+                        entityClass,
+                        prop,
+                        prop,
+                    )
+                }
+                addStatement(
+                    "if (%L) return·listOf(%T(%S, field = %S))",
+                    condition,
+                    MUTATION_VALIDATION_VIOLATION,
+                    "$prop is required",
+                    prop,
+                )
+            }
+            addStatement("return emptyList()")
+        }
+    }
+
     /** Build the repo-owned draft resolver used by scalar and batch create. */
     fun buildResolveFunction(
         schemaName: String,
@@ -263,9 +325,9 @@ internal class CreateGenerator(
 
     /**
      * Emit the pure preparation body shared by scalar and batch create:
-     * field extraction with defaults, required / inline field
-     * validation, FK resolution, and the driver `values` map. Hooks,
-     * entity rules, privacy, and I/O are deliberately absent.
+     * field extraction with defaults, inline field validation, FK
+     * resolution, and the driver `values` map. Hooks, required-input
+     * validation, entity rules, privacy, and I/O are deliberately absent.
      */
     private fun emitCreatePreparation(
         builder: FunSpec.Builder,
@@ -277,23 +339,19 @@ internal class CreateGenerator(
         val idStrategy = idStrategyName(schema)
         val preparedValueNames = preparedCreateValueNames(allFields, edgeFks)
 
-        // ---- Validate and bind each property to a local. ----
-        // Required fields produce an invalid preparation result. Short-circuits on
-        // the first missing required field — collecting all violations
-        // across required + validator rules is left as a future
-        // improvement.
+        // ---- Bind each property to a local. ----
+        // Required inputs have already passed the executor-owned validation phase.
+        // checkNotNull therefore asserts an internal lifecycle invariant rather than
+        // reporting user input validation from resolution.
         for (field in allFields) {
             val prop = field.apiName
             val required = !field.nullable && field.default == null
             when {
                 required -> builder.addStatement(
-                    "val %L = this.%L ?: return·%T.Invalid(listOf(%T(%S, field = %S)))",
+                    "val %L = checkNotNull(this.%L) { %S }",
                     preparationLocal(prop),
                     prop,
-                    CREATE_PREPARATION,
-                    MUTATION_VALIDATION_VIOLATION,
-                    "$prop is required",
-                    prop,
+                    "$prop missing after required-input validation",
                 )
                 field.default != null && field.nullable -> builder.addStatement(
                     "val %L = if (isSet(%T.%L)) this.%L else %L",
@@ -305,16 +363,12 @@ internal class CreateGenerator(
                 )
                 field.default != null -> {
                     builder.addStatement(
-                        "val %L = if (isSet(%T.%L)) this.%L " +
-                            "?: return·%T.Invalid(listOf(%T(%S, field = %S))) else %L",
+                        "val %L = if (isSet(%T.%L)) checkNotNull(this.%L) { %S } else %L",
                         preparationLocal(prop),
                         ClassName(packageName, schemaName),
                         prop,
                         prop,
-                        CREATE_PREPARATION,
-                        MUTATION_VALIDATION_VIOLATION,
-                        "$prop is required",
-                        prop,
+                        "$prop missing after required-input validation",
                         defaultCodeBlock(field),
                     )
                 }
@@ -340,16 +394,12 @@ internal class CreateGenerator(
         for (fk in edgeFks) {
             when {
                 fk.required && fk.default != null -> builder.addStatement(
-                    "val %L = if (isSet(%T.%L)) this.%L " +
-                        "?: return·%T.Invalid(listOf(%T(%S, field = %S))) else %L",
+                    "val %L = if (isSet(%T.%L)) checkNotNull(this.%L) { %S } else %L",
                     preparationLocal(fk.propertyName),
                     ClassName(packageName, schemaName),
                     fk.propertyName,
                     fk.propertyName,
-                    CREATE_PREPARATION,
-                    MUTATION_VALIDATION_VIOLATION,
-                    "${fk.propertyName} is required",
-                    fk.propertyName,
+                    "${fk.propertyName} missing after required-input validation",
                     fkDefaultCodeBlock(fk),
                 )
                 !fk.required && fk.default != null -> builder.addStatement(
@@ -361,13 +411,10 @@ internal class CreateGenerator(
                     fkDefaultCodeBlock(fk),
                 )
                 fk.required -> builder.addStatement(
-                    "val %L = this.%L ?: return·%T.Invalid(listOf(%T(%S, field = %S)))",
+                    "val %L = checkNotNull(this.%L) { %S }",
                     preparationLocal(fk.propertyName),
                     fk.propertyName,
-                    CREATE_PREPARATION,
-                    MUTATION_VALIDATION_VIOLATION,
-                    "${fk.propertyName} is required",
-                    fk.propertyName,
+                    "${fk.propertyName} missing after required-input validation",
                 )
                 // Nullable + no default: pass through, may be null.
                 else -> builder.addStatement(

@@ -788,6 +788,14 @@ class EdgeCodegenTest {
         .buildResolveFunction(schemaName, schema, schemaNames)
         .toString()
 
+    private fun createRequiredInputViolations(
+        schemaName: String,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): String = CreateGenerator("com.example.ent")
+        .buildRequiredInputViolationsFunction(schemaName, schema, schemaNames)
+        .toString()
+
     private fun createAllSchemas(): Triple<
         List<EntSchema>,
         Map<EntSchema, String>,
@@ -859,12 +867,12 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create resolution validates required edge`() {
+    fun `create validates required edge before resolution`() {
         val (_, names, byName) = createAllSchemas()
-        val output = createResolution("RequiredPet", byName["RequiredPet"]!!, names)
+        val output = createRequiredInputViolations("RequiredPet", byName["RequiredPet"]!!, names)
 
         assert(output.contains("\"ownerId is required\"")) {
-            "Should validate the required edge while resolving the draft\n$output"
+            "Should validate the required edge before resolving the draft\n$output"
         }
     }
 
@@ -1196,7 +1204,7 @@ class EdgeCodegenTest {
         assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetWriteCandidate, Pet, ReadOnlyEntClient>")) {
             "the repo should pass a compact immutable specification to CreateMutationExecutor\n$output"
         }
-        assert(output.contains("resolveDraft = ::resolve, beforeSave = mutationHookPhaseForInternalUse(beforeSaveHooks) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(beforeCreateHooks, ::createBeforeCreateContext), afterCreate = afterCreateHooks, privacy = mutationPrivacyPhaseForInternalUse(\"Pet CREATE privacy\", privacyConfig.createRules)")) {
+        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::resolve, beforeSave = mutationHookPhaseForInternalUse(beforeSaveHooks) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(beforeCreateHooks, ::createBeforeCreateContext), afterCreate = afterCreateHooks, privacy = mutationPrivacyPhaseForInternalUse(\"Pet CREATE privacy\", privacyConfig.createRules)")) {
             "phase-local hook and rule types should remain captured by typed adapters\n$output"
         }
         assert(!output.contains("CreateMutationInput") && !output.contains("createMutationInput(")) {
@@ -1234,7 +1242,7 @@ class EdgeCodegenTest {
 
         // Save body reads staging directly so unset falls back to the
         // default instead of throwing via the public non-null getter.
-        assert(output.contains("if (isSet(com.example.ent.RequiredFkWithDefaultChild.ownerId)) this.ownerId")) {
+        assert(output.contains("if (isSet(com.example.ent.RequiredFkWithDefaultChild.ownerId)) checkNotNull(this.ownerId)")) {
             "Required field-backed FK should distinguish explicit assignment from omission\n$output"
         }
         assert(output.contains("else 42")) { output }
@@ -1298,21 +1306,19 @@ class EdgeCodegenTest {
     @Test
     fun `create save returns validation Failed for missing required FK`() {
         val (_, names, byName) = createAllSchemas()
-        val output = createResolution("RequiredPet", byName["RequiredPet"]!!, names)
+        val output = createRequiredInputViolations("RequiredPet", byName["RequiredPet"]!!, names)
             .replace("\\s+".toRegex(), " ")
 
         // RequiredPet has `val owner = belongsTo<Owner>("owner")` (no
-        // .field(...), no default). The save body must read the
-        // staging field directly so the missing-input failure is a
-        // typed invalid preparation, not the property getter's
-        // IllegalStateException. The runtime executor maps it to the
-        // mutation result.
+        // .field(...), no default). The repo must report the missing
+        // input before resolution so the runtime executor maps it to a
+        // typed mutation result.
         assert(
             output.contains(
-                "val _entktValueOwnerId = this.ownerId ?: return entkt.runtime.mutation.CreatePreparation.Invalid",
+                "if (draft.ownerId == null) return listOf(entkt.runtime.result.ValidationViolation(\"ownerId is required\", field = \"ownerId\"))",
             ),
         ) {
-            "Required FK without default should return a validation Failed from save body\n$output"
+            "Required FK without default should fail required-input validation\n$output"
         }
     }
 

@@ -74,16 +74,24 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `required values and validation are resolved by the repo specification`() {
+    fun `required inputs are validated before repo resolution`() {
         val schema = ValidatedEntity()
         finalizeCreateSchemas(schema)
 
+        val requiredInputValidation = requiredInputViolations("ValidatedEntity", schema)
+            .replace("\\s+".toRegex(), " ")
         val generatedResolver = resolve("ValidatedEntity", schema)
         val output = generatedResolver
             .replace("\\s+".toRegex(), " ")
 
-        assertTrue(output.contains("val _entktValueName = this.name ?: return"), output)
-        assertTrue(output.contains("\"name is required\", field = \"name\""), output)
+        assertTrue(
+            requiredInputValidation.contains(
+                "if (draft.name == null) return listOf(entkt.runtime.result.ValidationViolation(\"name is required\", field = \"name\"))",
+            ),
+            requiredInputValidation,
+        )
+        assertTrue(output.contains("val _entktValueName = checkNotNull(this.name)"), output)
+        assertTrue(!output.contains("\"name is required\", field = \"name\""), output)
         assertTrue(output.contains("_entktValueName.length < 3"), output)
         assertTrue(output.contains("_entktValueName.length > 100"), output)
         assertTrue(output.contains("_entktValueAge <= 0"), output)
@@ -103,7 +111,7 @@ class CreateGeneratorTest {
 
         assertTrue(
             output.contains(
-                "val _entktValueActive = if (isSet(com.example.ent.User.active)) this.active ?: return",
+                "val _entktValueActive = if (isSet(com.example.ent.User.active)) checkNotNull(this.active)",
             ),
             output,
         )
@@ -151,6 +159,13 @@ class CreateGeneratorTest {
 
     private fun resolve(schemaName: String, schema: EntSchema): String =
         generator.buildResolveFunction(
+            schemaName = schemaName,
+            schema = schema,
+            schemaNames = mapOf(schema to schemaName),
+        ).toString()
+
+    private fun requiredInputViolations(schemaName: String, schema: EntSchema): String =
+        generator.buildRequiredInputViolationsFunction(
             schemaName = schemaName,
             schema = schema,
             schemaNames = mapOf(schema to schemaName),

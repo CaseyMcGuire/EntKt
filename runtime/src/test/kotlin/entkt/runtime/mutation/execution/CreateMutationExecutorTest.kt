@@ -129,6 +129,7 @@ class CreateMutationExecutorTest {
             > =
             CreateMutationSpec(
             entity = entity,
+            requiredInputViolations = RecordingInput::requiredInputViolations,
             resolveDraft = RecordingInput::resolve,
             beforeSave = mutationHookPhaseForInternalUse(
                 hooks = listOf(Hook { value: String -> events += "before-save:$value" }),
@@ -184,6 +185,7 @@ class CreateMutationExecutorTest {
     private class RecordingInput(
         private val events: MutableList<String>,
     ) {
+        var requiredViolations: List<ValidationViolation> = emptyList()
         var preparation: CreatePreparation<Candidate> = CreatePreparation.Ready(
             PreparedCreate(
                 values = mapOf("name" to "Ada"),
@@ -199,6 +201,11 @@ class CreateMutationExecutorTest {
         fun beforeCreateHookValue(): String {
             events += "before-create-value"
             return "create"
+        }
+
+        fun requiredInputViolations(): List<ValidationViolation> {
+            events += "required-input"
+            return requiredViolations
         }
 
         fun resolve(): CreatePreparation<Candidate> {
@@ -229,6 +236,7 @@ class CreateMutationExecutorTest {
                 "before-save:save",
                 "before-create-value",
                 "before-create:create",
+                "required-input",
                 "prepare",
                 "create-privacy",
                 "validate",
@@ -244,6 +252,29 @@ class CreateMutationExecutorTest {
             assertSame(fixture.viewerContext, it)
         }
         assertTrue(fixture.recordedFailures.isEmpty())
+    }
+
+    @Test
+    fun `required input violations fail before resolution privacy and persistence`() {
+        val fixture = fixture()
+        fixture.input.requiredViolations = listOf(
+            ValidationViolation("name is required", field = "name"),
+        )
+
+        val result = fixture.executor.create(
+            fixture.viewerContext,
+            fixture.input,
+            fixture.spec.value,
+            checkReturnedEntityPrivacy = true,
+        )
+
+        val failure = assertIs<MutationResult.Failed>(result).exception
+        val validation = assertIs<EntValidationException>(failure)
+        assertEquals(EntOperation.CREATE, validation.operation)
+        assertEquals("name", validation.violations.single().field)
+        assertFalse("prepare" in fixture.events)
+        assertFalse("insert" in fixture.events)
+        assertSame(failure, fixture.recordedFailures.single())
     }
 
     @Test
@@ -471,6 +502,8 @@ class CreateMutationExecutorTest {
                 "before-create-value",
                 "before-create:create",
                 "before-create:create",
+                "required-input",
+                "required-input",
                 "prepare",
                 "prepare",
                 "create-privacy",
