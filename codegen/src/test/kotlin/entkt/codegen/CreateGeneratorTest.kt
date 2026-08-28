@@ -74,7 +74,7 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `required inputs are validated before repo resolution`() {
+    fun `required inputs resolution and field validation are separate`() {
         val schema = ValidatedEntity()
         finalizeCreateSchemas(schema)
 
@@ -82,6 +82,8 @@ class CreateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
         val generatedResolver = resolve("ValidatedEntity", schema)
         val output = generatedResolver
+            .replace("\\s+".toRegex(), " ")
+        val fieldValidation = fieldViolations("ValidatedEntity", schema)
             .replace("\\s+".toRegex(), " ")
 
         assertTrue(
@@ -92,11 +94,16 @@ class CreateGeneratorTest {
         )
         assertTrue(output.contains("val _entktValueName = checkNotNull(this.name)"), output)
         assertTrue(!output.contains("\"name is required\", field = \"name\""), output)
-        assertTrue(output.contains("_entktValueName.length < 3"), output)
-        assertTrue(output.contains("_entktValueName.length > 100"), output)
-        assertTrue(output.contains("_entktValueAge <= 0"), output)
-        assertTrue(output.contains("if (_entktValueNickname != null)"), output)
-        assertTrue(output.contains("setOf(kotlin.text.RegexOption.IGNORE_CASE)"), output)
+        assertTrue(!output.contains("ValidationViolation"), output)
+        assertTrue(output.contains("PreparedCreate<"), output)
+        assertTrue(fieldValidation.contains("candidate.name.length < 3"), fieldValidation)
+        assertTrue(fieldValidation.contains("candidate.name.length > 100"), fieldValidation)
+        assertTrue(fieldValidation.contains("candidate.age <= 0"), fieldValidation)
+        assertTrue(fieldValidation.contains("if (candidate.nickname != null)"), fieldValidation)
+        assertTrue(
+            fieldValidation.contains("setOf(kotlin.text.RegexOption.IGNORE_CASE)"),
+            fieldValidation,
+        )
         assertTrue(output.indexOf("val _entktValueName") < output.indexOf("val values:"), output)
         assertTrue(!generatedResolver.contains(Regex("return\\s*\\n")), generatedResolver)
     }
@@ -166,6 +173,13 @@ class CreateGeneratorTest {
 
     private fun requiredInputViolations(schemaName: String, schema: EntSchema): String =
         generator.buildRequiredInputViolationsFunction(
+            schemaName = schemaName,
+            schema = schema,
+            schemaNames = mapOf(schema to schemaName),
+        ).toString()
+
+    private fun fieldViolations(schemaName: String, schema: EntSchema): String =
+        generator.buildCreateFieldViolationsFunction(
             schemaName = schemaName,
             schema = schema,
             schemaNames = mapOf(schema to schemaName),

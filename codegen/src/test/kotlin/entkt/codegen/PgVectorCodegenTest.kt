@@ -62,10 +62,10 @@ class PgVectorCodegenTest {
     }
 
     @Test
-    fun `create write-map validates the vector dimension`() {
-        val create = gen().getValue("VecArticleRepo")
+    fun `create field validation checks the vector dimension`() {
+        val create = gen().getValue("VecArticleRepo").replace("\\s+".toRegex(), " ")
         assertTrue(
-            """"embedding" to _entktValueEmbedding?.also { require(it.dimensions == 1_536) { "embedding expects vector(1536)" } }""" in create,
+            "if (candidate.embedding != null && candidate.embedding.dimensions != 1_536) return listOf(ValidationViolation(\"embedding expects vector(1536)\", field = \"embedding\"))" in create,
             create,
         )
     }

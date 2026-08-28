@@ -796,6 +796,14 @@ class EdgeCodegenTest {
         .buildRequiredInputViolationsFunction(schemaName, schema, schemaNames)
         .toString()
 
+    private fun createFieldViolations(
+        schemaName: String,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): String = CreateGenerator("com.example.ent")
+        .buildCreateFieldViolationsFunction(schemaName, schema, schemaNames)
+        .toString()
+
     private fun createAllSchemas(): Triple<
         List<EntSchema>,
         Map<EntSchema, String>,
@@ -1054,15 +1062,14 @@ class EdgeCodegenTest {
         val child = ValidatedFkChild()
         finalize(parent, child)
         val names = mapOf<EntSchema, String>(parent to "ValidatedFkParent", child to "ValidatedFkChild")
-        val output = createResolution("ValidatedFkChild", child, names)
+        val output = createFieldViolations("ValidatedFkChild", child, names)
             .replace("\\s+".toRegex(), " ")
 
-        // The `.positive()` check should appear in create preparation keyed
-        // off the FK property name. The shared evaluator turns the invalid
-        // preparation into the typed mutation failure.
+        // The `.positive()` check runs against the stable resolved candidate,
+        // keyed off the FK property name.
         assert(
             output.contains(
-                "if (_entktValueOwnerId <= 0) return entkt.runtime.mutation.CreatePreparation.Invalid",
+                "if (candidate.ownerId <= 0) return listOf(entkt.runtime.result.ValidationViolation",
             ),
         ) {
             "Create should return a validation Failed for the .positive() FK validator\n$output"
@@ -1204,7 +1211,7 @@ class EdgeCodegenTest {
         assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetWriteCandidate, Pet, ReadOnlyEntClient>")) {
             "the repo should pass a compact immutable specification to CreateMutationExecutor\n$output"
         }
-        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::resolve, beforeSave = mutationHookPhaseForInternalUse(beforeSaveHooks) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(beforeCreateHooks, ::createBeforeCreateContext), afterCreate = afterCreateHooks, privacy = mutationPrivacyPhaseForInternalUse(\"Pet CREATE privacy\", privacyConfig.createRules)")) {
+        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::prepareDraft, beforeSave = mutationHookPhaseForInternalUse(beforeSaveHooks) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(beforeCreateHooks, ::createBeforeCreateContext), afterCreate = afterCreateHooks, privacy = mutationPrivacyPhaseForInternalUse(\"Pet CREATE privacy\", privacyConfig.createRules)")) {
             "phase-local hook and rule types should remain captured by typed adapters\n$output"
         }
         assert(!output.contains("CreateMutationInput") && !output.contains("createMutationInput(")) {

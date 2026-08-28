@@ -303,7 +303,7 @@ internal class CreateGenerator(
         val edgeFks = computeEdgeFks(schema, schemaNames)
         return function(
             "resolve",
-            returnType = CREATE_PREPARATION.parameterizedBy(candidateClass),
+            returnType = PREPARED_CREATE.parameterizedBy(candidateClass),
         ) {
             addModifiers(KModifier.PRIVATE)
             parameter("draft", draftClass)
@@ -312,22 +312,108 @@ internal class CreateGenerator(
             val candidateArgs = buildCandidateArgs(allFields, edgeFks)
             addStatement("val candidate = %T(${candidateArgs.joinToString(", ")})", candidateClass)
             addCode(codeBlock {
-                add("%T.Ready(\n", CREATE_PREPARATION)
-                add("  %T(\n", PREPARED_CREATE)
-                add("    values = values,\n")
-                add("    candidate = candidate,\n")
-                add("  ),\n")
+                add("%T(\n", PREPARED_CREATE)
+                add("  values = values,\n")
+                add("  candidate = candidate,\n")
                 add(")\n")
             })
             endControlFlow()
         }
     }
 
+    /** Build schema-field checks over the stable candidate produced by [resolve]. */
+    fun buildCreateFieldViolationsFunction(
+        schemaName: String,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): FunSpec {
+        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
+        val allFields = scalarFields(schema)
+        val edgeFks = computeEdgeFks(schema, schemaNames)
+        return function(
+            "createFieldViolations",
+            returnType = List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION),
+        ) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("candidate", candidateClass)
+            for (field in allFields) {
+                if (field.validators.isNotEmpty()) {
+                    emitFieldViolationChecks(
+                        builder = this,
+                        prop = "candidate.${field.apiName}",
+                        fieldName = field.apiName,
+                        validators = field.validators,
+                        nullable = field.nullable,
+                    )
+                }
+                if (field.type == FieldType.PGVECTOR) {
+                    val dimensions =
+                        (field.storage as? entkt.schema.ColumnStorage.Native)?.dimensions
+                            ?: error(
+                                "pgvector field '${field.apiName}' missing dimensions metadata",
+                            )
+                    val condition = if (field.nullable) {
+                        CodeBlock.of(
+                            "candidate.%L != null && candidate.%L.dimensions != %L",
+                            field.apiName,
+                            field.apiName,
+                            dimensions,
+                        )
+                    } else {
+                        CodeBlock.of(
+                            "candidate.%L.dimensions != %L",
+                            field.apiName,
+                            dimensions,
+                        )
+                    }
+                    addStatement(
+                        "if (%L) return·listOf(%T(%S, field = %S))",
+                        condition,
+                        MUTATION_VALIDATION_VIOLATION,
+                        "${field.apiName} expects vector($dimensions)",
+                        field.apiName,
+                    )
+                }
+            }
+            for (fk in edgeFks) {
+                if (fk.validators.isEmpty()) continue
+                emitFieldViolationChecks(
+                    builder = this,
+                    prop = "candidate.${fk.propertyName}",
+                    fieldName = fk.propertyName,
+                    validators = fk.validators,
+                    nullable = !fk.required,
+                )
+            }
+            addStatement("return emptyList()")
+        }
+    }
+
+    /** Adapt the separated resolver and field checks to the current runtime carrier. */
+    fun buildPrepareDraftFunction(schemaName: String): FunSpec {
+        val draftClass = ClassName(packageName, "${schemaName}CreateDraft")
+        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
+        return function(
+            "prepareDraft",
+            returnType = CREATE_PREPARATION.parameterizedBy(candidateClass),
+        ) {
+            addModifiers(KModifier.PRIVATE)
+            parameter("draft", draftClass)
+            addStatement("val prepared = resolve(draft)")
+            addStatement("val violations = createFieldViolations(prepared.candidate)")
+            addStatement(
+                "return if (violations.isEmpty()) %T.Ready(prepared) else %T.Invalid(violations)",
+                CREATE_PREPARATION,
+                CREATE_PREPARATION,
+            )
+        }
+    }
+
     /**
      * Emit the pure preparation body shared by scalar and batch create:
-     * field extraction with defaults, inline field validation, FK
-     * resolution, and the driver `values` map. Hooks, required-input
-     * validation, entity rules, privacy, and I/O are deliberately absent.
+     * field extraction with defaults, FK resolution, and the driver
+     * `values` map. Hooks, validation, entity rules, privacy, and I/O are
+     * deliberately absent.
      */
     private fun emitCreatePreparation(
         builder: FunSpec.Builder,
@@ -376,21 +462,6 @@ internal class CreateGenerator(
             }
         }
 
-        // ---- Field-level validation. ----
-        for (field in allFields) {
-            if (field.validators.isEmpty()) continue
-            val prop = field.apiName
-            val nullable = field.nullable
-            emitFieldValidation(
-                builder = builder,
-                prop = preparationLocal(prop),
-                fieldName = prop,
-                validators = field.validators,
-                nullable = nullable,
-                invalidPreparationType = CREATE_PREPARATION,
-            )
-        }
-
         for (fk in edgeFks) {
             when {
                 fk.required && fk.default != null -> builder.addStatement(
@@ -419,19 +490,6 @@ internal class CreateGenerator(
                 // Nullable + no default: pass through, may be null.
                 else -> builder.addStatement(
                     "val %L = this.%L", preparationLocal(fk.propertyName), fk.propertyName,
-                )
-            }
-            // Field-level validators carried from the backing field of
-            // a field-backed edge run on the resolved FK value, the
-            // same way scalar field validators do above.
-            if (fk.validators.isNotEmpty()) {
-                emitFieldValidation(
-                    builder,
-                    prop = preparationLocal(fk.propertyName),
-                    fieldName = fk.propertyName,
-                    validators = fk.validators,
-                    nullable = !fk.required,
-                    invalidPreparationType = CREATE_PREPARATION,
                 )
             }
         }
@@ -483,15 +541,7 @@ internal class CreateGenerator(
                         add("  %S to %L.name,\n", col, preparationLocal(prop))
                     }
                 } else if (field.type == FieldType.PGVECTOR) {
-                    // Validate the vector's dimension at save() build time, with a
-                    // field-named error (the driver re-checks defensively at bind).
-                    val dims = (field.storage as? entkt.schema.ColumnStorage.Native)?.dimensions
-                        ?: error("pgvector field '${field.apiName}' missing dimensions metadata")
-                    val opt = if (field.nullable) "?" else ""
-                    add(
-                        "  %S to %L$opt.also { require(it.dimensions == %L) { %S } },\n",
-                        col, preparationLocal(prop), dims, "$prop expects vector($dims)",
-                    )
+                    add("  %S to %L,\n", col, preparationLocal(prop))
                 } else {
                     add("  %S to %L,\n", col, preparedProp)
                 }
@@ -626,14 +676,46 @@ internal fun emitFieldValidation(
     for (validator in validators) {
         val spec = validator.spec
             ?: error("Validator '${validator.name}' on field '$fieldName' has no spec — codegen cannot emit it")
+        val failure = CodeBlock.of(
+            "%T.Invalid(listOf(%T(%S, field = %S)))",
+            invalidPreparationType,
+            MUTATION_VALIDATION_VIOLATION,
+            validator.message,
+            fieldName,
+        )
         emitValidatorCheck(
             builder,
             prop,
-            fieldName,
-            validator.message,
             spec,
-            invalidPreparationType,
+            failure,
         )
+    }
+    if (nullable) {
+        builder.endControlFlow()
+    }
+}
+
+/** Emit field checks whose failure returns validation violations directly. */
+private fun emitFieldViolationChecks(
+    builder: FunSpec.Builder,
+    prop: String,
+    fieldName: String,
+    validators: List<entkt.schema.Validator>,
+    nullable: Boolean,
+) {
+    if (nullable) {
+        builder.beginControlFlow("if (%L != null)", prop)
+    }
+    for (validator in validators) {
+        val spec = validator.spec
+            ?: error("Validator '${validator.name}' on field '$fieldName' has no spec — codegen cannot emit it")
+        val failure = CodeBlock.of(
+            "listOf(%T(%S, field = %S))",
+            MUTATION_VALIDATION_VIOLATION,
+            validator.message,
+            fieldName,
+        )
+        emitValidatorCheck(builder, prop, spec, failure)
     }
     if (nullable) {
         builder.endControlFlow()
@@ -643,18 +725,9 @@ internal fun emitFieldValidation(
 private fun emitValidatorCheck(
     builder: FunSpec.Builder,
     prop: String,
-    fieldName: String,
-    message: String,
     spec: ValidatorSpec,
-    invalidPreparationType: ClassName,
+    failure: CodeBlock,
 ) {
-    val failure = CodeBlock.of(
-        "%T.Invalid(listOf(%T(%S, field = %S)))",
-        invalidPreparationType,
-        MUTATION_VALIDATION_VIOLATION,
-        message,
-        fieldName,
-    )
     when (spec) {
         is ValidatorSpec.MinLength -> builder.addStatement(
             "if (%L.length < %L) return·%L",
