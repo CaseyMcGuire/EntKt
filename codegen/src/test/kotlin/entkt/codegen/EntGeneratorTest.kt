@@ -108,8 +108,8 @@ class EntGeneratorTest {
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
-                "Car", "CarMutation", "CarCreateDraft", "CarUpdate", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
-                "User", "UserMutation", "UserCreateDraft", "UserUpdate", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
+                "Car", "CarMutation", "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
+                "User", "UserMutation", "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
                 "UserIndexes",
                 "EntReadRuntime",
                 "ReadOnlyEntClient",
@@ -290,7 +290,7 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("Car.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarMutation.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarCreateDraft.kt")))
-            assertTrue(Files.exists(packageDir.resolve("CarUpdate.kt")))
+            assertTrue(Files.exists(packageDir.resolve("CarUpdateDraft.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarQuery.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarRepo.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarPrivacy.kt")))
@@ -298,7 +298,7 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("User.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserMutation.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserCreateDraft.kt")))
-            assertTrue(Files.exists(packageDir.resolve("UserUpdate.kt")))
+            assertTrue(Files.exists(packageDir.resolve("UserUpdateDraft.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserQuery.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserRepo.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserPrivacy.kt")))

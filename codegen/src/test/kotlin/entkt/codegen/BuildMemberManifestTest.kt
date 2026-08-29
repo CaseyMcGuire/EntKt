@@ -106,22 +106,14 @@ class BuildMemberManifestTest {
             byArtifact["NotebookCreateDraft"],
         )
 
-        // Update builder — title setter + fixed members including id +
-        // consistency, the canonical save/saveAndLoad pair, and the
-        // private execution member executeSave. NOT unsetTitle — that
-        // lives only on NotebookUpdateMutationView (the hook-facing
-        // interface), never on the public builder.
-        assertNotNull(byArtifact["NotebookUpdate"])
-        assertTrue("title" in byArtifact["NotebookUpdate"]!!)
-        assertTrue("id" in byArtifact["NotebookUpdate"]!!)
-        assertTrue("save" in byArtifact["NotebookUpdate"]!!)
-        assertTrue("saveAndLoad" in byArtifact["NotebookUpdate"]!!)
-        assertTrue("executeSave" in byArtifact["NotebookUpdate"]!!)
-        assertTrue("consistency" in byArtifact["NotebookUpdate"]!!)
-        assertTrue("dirtyFields" in byArtifact["NotebookUpdate"]!!)
+        // Update drafts contain only caller-configurable mutation state.
+        // Execution settings and terminals live on the generic runtime
+        // UpdateMutation wrapper; unsetTitle remains hook-facing only.
+        assertNotNull(byArtifact["NotebookUpdateDraft"])
+        assertEquals(setOf("title", "dirtyFields"), byArtifact["NotebookUpdateDraft"])
         assertTrue(
-            "unsetTitle" !in byArtifact["NotebookUpdate"]!!,
-            "unset methods must NOT appear on the public Update builder; they live on UpdateMutationView only",
+            "unsetTitle" !in byArtifact["NotebookUpdateDraft"]!!,
+            "unset methods must NOT appear on the public update draft; they live on UpdateMutationView only",
         )
 
         // Update mutation view — title + unsetTitle + pendingEdges.

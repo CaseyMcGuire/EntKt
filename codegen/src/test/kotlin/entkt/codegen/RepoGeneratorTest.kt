@@ -125,8 +125,8 @@ class RepoGeneratorTest {
             output.contains("CreateMutation<CarCreateDraft, Car>")) {
             "Should have create taking DSL block\n$output"
         }
-        assert(output.contains("fun update(\n    id: Int,\n    consistency: UpdateConsistency = client.defaultUpdateConsistency,\n    relationshipLocking: RelationshipLocking = client.defaultRelationshipLocking,\n    block: CarUpdate.() -> Unit,\n  ): CarUpdate")) {
-            "Should have update(id, consistency, relationshipLocking, block) — update is rooted by id, with per-save UpdateConsistency + RelationshipLocking overrides\n$output"
+        assert(output.contains("fun update(\n    id: Int,\n    consistency: UpdateConsistency = client.defaultUpdateConsistency,\n    relationshipLocking: RelationshipLocking = client.defaultRelationshipLocking,\n    block: CarUpdateDraft.() -> Unit,\n  ): UpdateMutation<CarUpdateDraft, Car>")) {
+            "Should return a generic UpdateMutation configured through CarUpdateDraft\n$output"
         }
     }
 
@@ -332,13 +332,22 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `update passes client, consistency, relationshipLocking, and hook lists to the builder`() {
+    fun `update captures a draft request and delegates execution to the stable adapter`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("CarUpdate(driver, client, id, consistency, relationshipLocking, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
-            "update should pass client, consistency, relationshipLocking, and hook lists to CarUpdate\n$output"
+        assert(output.contains("private val updateAdapter: CarUpdateAdapter = CarUpdateAdapter(driver, client, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
+            "repo should construct one stable schema-specific update adapter\n$output"
+        }
+        assert(output.contains("val draft = CarUpdateDraft().apply(block)") &&
+            output.contains("val request = UpdateMutationRequest(id, draft, consistency, relationshipLocking)") &&
+            output.contains("return UpdateMutation(request, this)")) {
+            "update should capture only per-operation state in the draft and request\n$output"
+        }
+        assert(output.contains("override fun executeUpdate(") &&
+            output.contains("updateAdapter.execute( viewerContext = viewerContext, request = request, applyLoadPrivacy = applyLoadPrivacy,")) {
+            "repository execution should delegate to the stable update adapter\n$output"
         }
     }
 

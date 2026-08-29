@@ -276,8 +276,8 @@ produces types such as:
 UserAccount
 UserAccountQuery
 UserAccountRepo
-UserAccountCreate
-UserAccountUpdate
+UserAccountCreateDraft
+UserAccountUpdateDraft
 ```
 
 Neither `legacy_usr_acct` nor `accounts` may rename those types.
@@ -957,7 +957,7 @@ Assert declaration/client names across:
 
 - entity fields and companion references;
 - repositories and every client/read/configuration surface;
-- create/update builders, patches, candidates, lifecycle items, and hooks;
+- create/update drafts, patches, candidates, lifecycle items, and hooks;
 - entity `Edges`, query traversal, current eager loading, and future explicit
   loading;
 - implicit and explicit FK properties;

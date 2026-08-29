@@ -28,7 +28,7 @@ import kotlin.test.assertTrue
  * broken harness.
  *
  * Edge mutators need no separate probe: they exist only inside the
- * create/update builders (`update(id) { user.set(...) }`), so with
+ * create/update drafts (`update(id) { user.set(...) }`), so with
  * `update`/`create` unresolved the edge-mutation surface is
  * transitively unreachable from a validator.
  */

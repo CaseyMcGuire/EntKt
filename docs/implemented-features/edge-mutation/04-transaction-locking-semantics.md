@@ -41,7 +41,7 @@ with [RFC #5 Link-Table M2M Mutation Helpers](05-link-table-helpers.md).
   `UnsupportedDriverCapabilityException`. EntClient exposes
   `defaultUpdateConsistency`; the generated `update(id, consistency =
   client.defaultUpdateConsistency, block)` factory takes an optional
-  per-save override. The Update builder's `save()` runs two preflights
+  per-save override. `UpdateMutation.save()` runs two preflights
   for `Pessimistic` (no transaction → `TransactionRequiredException`,
   driver without `supportsReadRowForUpdate` →
   `UnsupportedDriverCapabilityException`) and routes the internal
@@ -62,7 +62,7 @@ with [RFC #5 Link-Table M2M Mutation Helpers](05-link-table-helpers.md).
 
 ### M2M-specific RFC #4 semantics (implemented with RFC #5)
 
-Generated update builders for helper-eligible `throughLink(...)`
+Generated update drafts for helper-eligible `throughLink(...)`
 edges now emit the pieces this RFC requires:
 
 - link-table M2M write helpers (`tags.add(...)`, `tags.remove(...)`,

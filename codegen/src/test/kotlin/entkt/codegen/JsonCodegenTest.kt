@@ -116,7 +116,7 @@ class JsonCodegenTest {
         )
         assertFalse("copyJsonValue(JsonArticle.TABLE, \"metadata\", item.metadata) as Meta?" in repo, repo)
 
-        val update = gen().getValue("JsonArticleUpdate")
+        val update = gen().getValue("JsonArticleUpdateDraft")
         assertTrue(
             """FieldPatch.Set(driver.copyJsonValue(JsonArticle.TABLE, "metadata", entry.value))""" in update,
             update,

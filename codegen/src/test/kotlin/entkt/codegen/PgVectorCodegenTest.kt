@@ -72,7 +72,7 @@ class PgVectorCodegenTest {
 
     @Test
     fun `update write-map validates the vector dimension`() {
-        val update = gen().getValue("VecArticleUpdate")
+        val update = gen().getValue("VecArticleUpdateDraft")
         assertTrue("require(vec.dimensions == 1_536)" in update, update)
         assertTrue("""values["embedding"] = it.value?.also""" in update, update)
     }

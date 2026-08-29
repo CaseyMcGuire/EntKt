@@ -76,6 +76,11 @@ private val WITH_PRIVACY_FALLBACK =
 private val CREATE_MUTATION = ClassName("entkt.runtime.mutation", "CreateMutation")
 private val CREATE_MUTATION_REPOSITORY =
     ClassName("entkt.runtime.mutation", "CreateMutationRepository")
+private val UPDATE_MUTATION = ClassName("entkt.runtime.mutation", "UpdateMutation")
+private val UPDATE_MUTATION_REQUEST =
+    ClassName("entkt.runtime.mutation", "UpdateMutationRequest")
+private val UPDATE_MUTATION_REPOSITORY =
+    ClassName("entkt.runtime.mutation", "UpdateMutationRepository")
 
 /**
  * Emits a per-schema repository class. The repo is the only entry point
@@ -102,7 +107,8 @@ internal class RepoGenerator(
         val className = "${schemaName}Repo"
         val entityClass = ClassName(packageName, schemaName)
         val createDraftClass = ClassName(packageName, "${schemaName}CreateDraft")
-        val updateClass = ClassName(packageName, "${schemaName}Update")
+        val updateDraftClass = ClassName(packageName, "${schemaName}UpdateDraft")
+        val updateAdapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val indexesClass = ClassName(packageName, "${schemaName}Indexes")
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
@@ -122,7 +128,7 @@ internal class RepoGenerator(
             returnType = UNIT,
         )
         val updateLambda = LambdaTypeName.get(
-            receiver = updateClass,
+            receiver = updateDraftClass,
             returnType = UNIT,
         )
         val queryLambda = LambdaTypeName.get(
@@ -153,6 +159,9 @@ internal class RepoGenerator(
             addSuperinterface(
                 CREATE_MUTATION_REPOSITORY.parameterizedBy(createDraftClass, entityClass),
             )
+            addSuperinterface(
+                UPDATE_MUTATION_REPOSITORY.parameterizedBy(updateDraftClass, entityClass),
+            )
             primaryConstructor {
                 addModifiers(KModifier.INTERNAL)
                 parameter("driver", DRIVER)
@@ -180,6 +189,13 @@ internal class RepoGenerator(
             addProperty(hookListProperty("afterUpdateHooks", hookList(afterUpdateHookType)))
             addProperty(hookListProperty("beforeDeleteHooks", hookList(beforeDeleteHookType)))
             addProperty(hookListProperty("afterDeleteHooks", hookList(afterDeleteHookType)))
+            property("updateAdapter", updateAdapterClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer(
+                    "%T(driver, client, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)",
+                    updateAdapterClass,
+                )
+            }
             // Privacy config
             property("privacyConfig", privacyConfigClass) {
                 addModifiers(KModifier.INTERNAL)
@@ -278,33 +294,39 @@ internal class RepoGenerator(
                 ),
             )
             addFunction(buildSnapshotCreateCandidate(entityClass, candidateClass, fields))
-                // Per-save UpdateConsistency override (transaction locking). Defaults
-                // to the client's `defaultUpdateConsistency` so callers
-                // who don't pass `consistency =` get the configured
-                // baseline (`ReadCurrent` unless the EntClientConfig
-                // sets otherwise).
-            function("update", updateClass) {
+            // Per-operation UpdateConsistency override (transaction locking). Defaults
+            // to the client's `defaultUpdateConsistency` so callers
+            // who don't pass `consistency =` get the configured
+            // baseline (`ReadCurrent` unless the EntClientConfig
+            // sets otherwise).
+            function(
+                "update",
+                UPDATE_MUTATION.parameterizedBy(updateDraftClass, entityClass),
+            ) {
                 parameter("id", idType)
                 parameter("consistency", UPDATE_CONSISTENCY) {
                     defaultValue("client.defaultUpdateConsistency")
                 }
-                    // Per-save RelationshipLocking override.
-                    // Defaults to the client's `defaultRelationshipLocking`
-                    // (OwnerOnly unless the EntClientConfig sets otherwise).
+                // Per-operation RelationshipLocking override.
+                // Defaults to the client's `defaultRelationshipLocking`
+                // (OwnerOnly unless the EntClientConfig sets otherwise).
                 parameter("relationshipLocking", RELATIONSHIP_LOCKING) {
                     defaultValue("client.defaultRelationshipLocking")
                 }
                 parameter("block", updateLambda)
+                statement("val draft = %T().apply(block)", updateDraftClass)
                 statement(
-                        "return %T(driver, client, id, consistency, relationshipLocking, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks).apply(block)",
-                        updateClass,
-                    )
+                    "val request = %T(id, draft, consistency, relationshipLocking)",
+                    UPDATE_MUTATION_REQUEST,
+                )
+                statement("return %T(request, this)", UPDATE_MUTATION)
             }
+            addFunction(buildExecuteUpdate(updateDraftClass, entityClass))
             addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "client"))
             addFunction(buildDelete(entityClass))
             addFunction(buildDeleteById(entityClass, idType))
             if (idStrategyName(schema) != "EXPLICIT") {
-                    addFunction(buildCreateMany(entityClass, createLambda))
+                addFunction(buildCreateMany(entityClass, createLambda))
             }
             addFunction(buildDeleteMany(entityClass))
             addFunction(buildHasPrivacy("hasLoadPrivacy", readSurfaceOverride = true))
@@ -327,6 +349,32 @@ internal class RepoGenerator(
             })
             addType(typeSpec)
         }
+    }
+
+    private fun buildExecuteUpdate(
+        updateDraftClass: ClassName,
+        entityClass: ClassName,
+    ): FunSpec = function(
+        "executeUpdate",
+        MUTATION_RESULT.parameterizedBy(entityClass),
+    ) {
+        addAnnotation(ENTKT_INTERNAL)
+        addModifiers(KModifier.OVERRIDE)
+        parameter("viewerContext", VIEWER_CONTEXT)
+        parameter(
+            "request",
+            UPDATE_MUTATION_REQUEST.parameterizedBy(updateDraftClass),
+        )
+        parameter("applyLoadPrivacy", Boolean::class.asClassName())
+        addCode(codeBlock {
+            add("return updateAdapter.execute(\n")
+            indent()
+            add("viewerContext = viewerContext,\n")
+            add("request = request,\n")
+            add("applyLoadPrivacy = applyLoadPrivacy,\n")
+            unindent()
+            add(")\n")
+        })
     }
 
     /**

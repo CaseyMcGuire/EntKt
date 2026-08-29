@@ -3,7 +3,7 @@
 ## Status
 
 **V1 landed in commits `a0483a8..b3646c5` (7 phases).** Generated
-update builders for helper-eligible `throughLink` edges now expose
+update drafts for helper-eligible `throughLink` edges now expose
 `add(id)` / `remove(id)` / `set(ids)`, with the full pipeline
 (transaction + capability preflight, mixed-mode defense, three-way
 owner-row read primitive choice, junction reads, EdgeChanges through
@@ -34,7 +34,7 @@ phase plan):
   `TagsEdgeMutator` (not `TagEdgeMutator`). Two M2M edges to the
   same target type on one source schema don't collide.
 - **Decision D** — public nested class with `internal` constructor.
-  `PostUpdate.TagsEdgeMutator` is reachable as
+  `PostUpdateDraft.TagsEdgeMutator` is reachable as
   `update { tags.add(...) }`, but the constructor is module-private.
 - **Decision E** — generated `_hasPendingLinkTableM2MOps()` helper
   on the update class, ORing each mutator's `hasOps()` flag.
@@ -224,7 +224,7 @@ For link-table many-to-many edges, generated builders should expose an edge
 mutator property:
 
 ```kotlin
-class PostUpdate {
+class PostUpdateDraft {
     val tags: TagEdgeMutator = TagEdgeMutator()
 }
 

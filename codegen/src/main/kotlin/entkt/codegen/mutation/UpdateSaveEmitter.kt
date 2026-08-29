@@ -74,6 +74,7 @@ internal class UpdateSaveEmitter(
     private val packageName: String,
     private val schemaName: String,
     private val clientName: String,
+    private val preparedStateClass: ClassName,
     private val allFields: List<Field>,
     private val edgeFks: List<EdgeFk>,
     private val allEdgeFks: List<EdgeFk>,
@@ -85,7 +86,6 @@ internal class UpdateSaveEmitter(
     private val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
     private val edgeChangesClass = ClassName(packageName, "${schemaName}EdgeChangesView")
     private val updateHookContextClass = ClassName(packageName, "${schemaName}UpdateHookContext")
-    private val preparedStateClass = ClassName(packageName, "${schemaName}Update").nestedClass("PreparedState")
     private val mutableFields = allFields.filterNot { it.immutable }
 
     fun build(): UpdateSaveArtifacts = UpdateSaveArtifacts(
@@ -250,7 +250,7 @@ internal class UpdateSaveEmitter(
             endControlFlow()
 
             if (helperEligibleEdges.isNotEmpty()) {
-                beginControlFlow("if (_hasPendingLinkTableM2MOps())")
+                beginControlFlow("if (draft._hasPendingLinkTableM2MOps())")
                 beginControlFlow("if (!driver.inTransaction)")
                 addStatement(
                     "throw %T(%S)",
@@ -266,7 +266,7 @@ internal class UpdateSaveEmitter(
                         "supportsReadRowForUpdate or supportsOwnerEdgeSerialization",
                 )
                 endControlFlow()
-                beginControlFlow("if (_hasPendingLinkTableM2MInserts() && !driver.supportsInsertIgnore)")
+                beginControlFlow("if (draft._hasPendingLinkTableM2MInserts() && !driver.supportsInsertIgnore)")
                 addStatement(
                     "throw %T(%S)",
                     UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION,
@@ -284,10 +284,10 @@ internal class UpdateSaveEmitter(
                         "supportsRelationshipSerialization = true",
                 )
                 endControlFlow()
-                addStatement("_checkLinkTableM2MMixedMode()")
+                addStatement("draft._checkLinkTableM2MMixedMode()")
                 endControlFlow()
             }
-            emitCanonicalRelationshipLocks(this, helperEligibleEdges)
+            emitCanonicalRelationshipLocks(this, helperEligibleEdges, receiver = "draft")
         })
     }
 
@@ -299,9 +299,9 @@ internal class UpdateSaveEmitter(
                 addCode(codeBlock {
                     beginControlFlow("return if (consistency == %T.Pessimistic)", UPDATE_CONSISTENCY)
                     addStatement("driver.readRowForUpdate(%T.TABLE, id)", entityClass)
-                    nextControlFlow("else if (_hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate)")
+                    nextControlFlow("else if (draft._hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate)")
                     addStatement("driver.readRowForUpdate(%T.TABLE, id)", entityClass)
-                    nextControlFlow("else if (_hasPendingLinkTableM2MOps())")
+                    nextControlFlow("else if (draft._hasPendingLinkTableM2MOps())")
                     addStatement("driver.serializeOwnerEdgeAndRead(%T.TABLE, id)", entityClass)
                     nextControlFlow("else")
                     addStatement("driver.byId(%T.TABLE, id)", entityClass)
@@ -321,7 +321,7 @@ internal class UpdateSaveEmitter(
 
     private fun buildBeginFunction(): FunSpec = function("_beginUpdate") {
         addModifiers(KModifier.PRIVATE)
-        statement("_capturedPendingEdges = _buildPendingEdgeOps()")
+        statement("_capturedPendingEdges = draft._buildPendingEdgeOps()")
     }
 
     private fun buildEndFunction(): FunSpec = function("_endUpdate") {
@@ -340,7 +340,7 @@ internal class UpdateSaveEmitter(
         )
         statement("%M(listOf(_beforeSaveView), beforeSaveHooks)", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
         beginControlFlow("for (hook in beforeUpdateHooks)")
-        statement("val snapshot = _buildRequestedPatch()")
+        statement("val snapshot = draft._buildRequestedPatch(driver)")
         statement("val beforeSnapshot = %L", lifecycleValueSnapshot("entity", allFields, entityClass))
         statement(
             "val ctx = %T(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, _mutationView)",
@@ -362,12 +362,12 @@ internal class UpdateSaveEmitter(
             "val pendingEdges = checkNotNull(_capturedPendingEdges) { %S }",
             "update pending edges were not captured",
         )
-        statement("val requiredViolations = _checkRequiredNotNull()")
+        statement("val requiredViolations = draft._checkRequiredNotNull()")
         statement(
             "if (requiredViolations.isNotEmpty()) return·%T.Invalid(requiredViolations)",
             UPDATE_PREPARATION,
         )
-        statement("val requestedPatch = _buildRequestedPatch()")
+        statement("val requestedPatch = draft._buildRequestedPatch(driver)")
         if (helperEligibleEdges.isNotEmpty()) {
             statement("val edgeChanges = scope.driverRead { _buildEdgeChanges(pendingEdges) }")
         } else {
@@ -375,9 +375,9 @@ internal class UpdateSaveEmitter(
         }
 
         val emptyCondition = if (helperEligibleEdges.isEmpty()) {
-            "dirtyFields.isEmpty()"
+            "!draft._hasFieldAssignments()"
         } else {
-            "dirtyFields.isEmpty() && !_hasPendingLinkTableM2MOps()"
+            "!draft._hasFieldAssignments() && !draft._hasPendingLinkTableM2MOps()"
         }
         beginControlFlow("if ($emptyCondition)")
         statement("val effectivePatch = requestedPatch")
@@ -534,10 +534,9 @@ internal class UpdateSaveEmitter(
     }
 
     private fun buildExecuteFunction(): FunSpec = function(
-        "executeSave",
+        "execute",
         MUTATION_RESULT.parameterizedBy(entityClass),
     ) {
-        addModifiers(KModifier.PRIVATE)
         parameter("viewerContext", VIEWER_CONTEXT)
         parameter("applyLoadPrivacy", BOOLEAN)
         addCode(codeBlock {
@@ -572,6 +571,7 @@ internal class UpdateSaveEmitter(
 private fun emitCanonicalRelationshipLocks(
     builder: CodeBlock.Builder,
     helperEligibleEdges: List<HelperEligibleM2M>,
+    receiver: String,
 ) {
     val groups = helperEligibleEdges.groupBy { edge ->
         edge.junctionTable to listOf(edge.junctionSourceColumn, edge.junctionTargetColumn).sorted()
@@ -579,7 +579,7 @@ private fun emitCanonicalRelationshipLocks(
     val orderedKeys = groups.keys.sortedWith(compareBy({ it.first }, { it.second.joinToString(",") }))
     for (key in orderedKeys) {
         val edges = groups.getValue(key)
-        val guard = edges.joinToString(" || ") { "this.${it.mutatorPropertyName}.hasOps()" }
+        val guard = edges.joinToString(" || ") { "$receiver.${it.mutatorPropertyName}.hasOps()" }
         builder.beginControlFlow(
             "if (relationshipLocking == %T.Canonical && (%L))",
             RELATIONSHIP_LOCKING,

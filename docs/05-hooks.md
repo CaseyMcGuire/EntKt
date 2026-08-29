@@ -86,7 +86,7 @@ so there is no per-item result whose correlation must be protected.
 ## The Mutation Interface
 
 `beforeSave` receives a `{Entity}Mutation` interface, which is shared
-between create drafts and update builders. This means a single hook works
+between create and update drafts. This means a single hook works
 for both operations:
 
 ```kotlin

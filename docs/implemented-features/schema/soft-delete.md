@@ -53,7 +53,7 @@ applications decide whether and where to install them.
 - Do not generate `softDelete*`, `restore*`, or `hardDelete*`
   APIs.
 - Do not add framework-only fields or hide `deletedAt` from
-  generated create/update builders.
+  generated create/update drafts.
 - Do not make soft delete automatic for every schema.
 - Do not automatically rewrite unique indexes as partial unique
   indexes.
@@ -83,7 +83,7 @@ class Post : EntSchema("posts") {
 `deletedAt` is a normal nullable timestamp field:
 
 - it appears on the generated entity
-- it appears on create/update builders
+- it appears on create/update drafts
 - it appears in update privacy / validation patches
 - it participates in hooks exactly like any other mutable field
 
@@ -338,7 +338,7 @@ Before packaging the convention, add focused tests for:
 
 - `DeletedAt` mixin adds a nullable `deleted_at` field and the
   generated entity exposes `deletedAt`
-- generated create/update builders treat `deletedAt` like a
+- generated create/update drafts treat `deletedAt` like a
   normal mutable nullable timestamp field
 - `ExcludeDeleted` appends `Predicate.Leaf("deleted_at",
   Op.IS_NULL, null)`

@@ -299,8 +299,8 @@ internal class PrivacyGenerator(
      *
      * `mutation` is typed as `${schemaName}UpdateMutationView`, which
      * exposes only the field/FK setters and `unset{Field}()` methods.
-     * The full update builder's `save()`, the loaded `entity` lateinit,
-     * the owner `id`, and the private patch helpers are not visible to
+     * The update execution adapter's lifecycle state, including the loaded
+     * entity, owner `id`, and private patch helpers, is not visible to
      * hooks — that prevents reentrancy and other out-of-contract use.
      */
     private fun buildUpdateHookContext(

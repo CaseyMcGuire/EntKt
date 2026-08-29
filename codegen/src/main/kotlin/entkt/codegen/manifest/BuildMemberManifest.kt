@@ -36,10 +36,9 @@ import entkt.schema.EntSchema
  *   field properties, mutable FK properties.
  * - **create draft** (`${name}CreateDraft`) — every scalar and FK
  *   setter plus explicit-assignment inspection.
- * - **update builder** (`${name}Update`) — mutable scalar field
+ * - **update draft** (`${name}UpdateDraft`) — mutable scalar field
  *   setters, mutable FK setters, helper-eligible M2M mutator
- *   properties, fixed builder members (including `id`,
- *   `consistency`). **NOT `unset{X}()` methods** — those live
+ *   properties, and private assignment tracking. **NOT `unset{X}()` methods** — those live
  *   only on the private hook-facing adapter and are surfaced via
  *   `${name}UpdateMutationView`, never on the public builder.
  * - **create mutation view** (`${name}CreateMutationView`) —
@@ -51,7 +50,7 @@ import entkt.schema.EntSchema
  *   MutationGenerator, regardless of whether the schema has any
  *   helper-eligible M2M edge — so the manifest registers it
  *   unconditionally). **NOT M2M mutator properties** — those
- *   live on the public `${name}Update` builder, never on this
+ *   live on the public `${name}UpdateDraft`, never on this
  *   view.
  *
  * Storage names (DB column names, table names) are intentionally
@@ -82,7 +81,7 @@ internal fun buildMemberManifest(
     addEntityCompanionMembers(manifest, schemaName, scalars, fks, schema.edges())
     addMutationInterfaceMembers(manifest, schemaName, mutableScalars, mutableFks)
     addCreateDraftMembers(manifest, schemaName, scalars, fks)
-    addUpdateBuilderMembers(manifest, schemaName, mutableScalars, mutableFks, helperEligibleM2M)
+    addUpdateDraftMembers(manifest, schemaName, mutableScalars, mutableFks, helperEligibleM2M)
     addCreateMutationViewMembers(manifest, schemaName, immutableScalars, immutableFks)
     addUpdateMutationViewMembers(manifest, schemaName, mutableScalars, mutableFks, helperEligibleM2M)
 
@@ -97,7 +96,7 @@ private fun edgesArtifact(name: String): String = "$name.Edges"
 private fun queryArtifact(name: String): String = "${name}Query"
 private fun mutationInterfaceArtifact(name: String): String = "${name}Mutation"
 private fun createDraftArtifact(name: String): String = "${name}CreateDraft"
-private fun updateBuilderArtifact(name: String): String = "${name}Update"
+private fun updateDraftArtifact(name: String): String = "${name}UpdateDraft"
 private fun createViewArtifact(name: String): String = "${name}CreateMutationView"
 private fun updateViewArtifact(name: String): String = "${name}UpdateMutationView"
 
@@ -443,18 +442,23 @@ private fun addCreateDraftMembers(
     }
 }
 
-// ── Update builder ───────────────────────────────────────────────
+// ── Update draft ─────────────────────────────────────────────────
 
-private fun addUpdateBuilderMembers(
+private fun addUpdateDraftMembers(
     manifest: GeneratedMemberManifest,
     schemaName: String,
     mutableScalars: List<entkt.schema.Field>,
     mutableFks: List<EdgeFk>,
     helperEligibleM2M: List<HelperEligibleM2M>,
 ) {
-    val artifact = updateBuilderArtifact(schemaName)
+    val artifact = updateDraftArtifact(schemaName)
 
-    addFixedUpdateBuilderMembers(manifest, artifact)
+    manifest.add(
+        artifact,
+        "dirtyFields",
+        GeneratedMemberKind.PROPERTY,
+        "fixed update-draft assignment tracker",
+    )
 
     for (field in mutableScalars) {
         manifest.add(
@@ -474,7 +478,7 @@ private fun addUpdateBuilderMembers(
     }
 
     // Link-table M2M mutator properties live on
-    // the *public* update builder, not on the UpdateMutationView
+    // the *public* update draft, not on the UpdateMutationView
     // interface — hooks must not reach add/remove/set through
     // ctx.mutation.
     for (m2m in helperEligibleM2M) {
@@ -486,7 +490,7 @@ private fun addUpdateBuilderMembers(
         )
     }
 
-    // No `unset{X}()` here. The public update builder
+    // No `unset{X}()` here. The public update draft
     // intentionally does NOT expose unset methods — they live only
     // on the private hook-facing adapter (typed as
     // `${name}UpdateMutationView`), so callers can't write
@@ -578,8 +582,8 @@ private fun addUpdateMutationViewMembers(
     //
     // The per-edge mutator properties (`tags.add(...)` etc.)
     // intentionally do NOT land here — they live on the public
-    // `${name}Update` builder, not on UpdateMutationView. See
-    // [addUpdateBuilderMembers].
+    // `${name}UpdateDraft`, not on UpdateMutationView. See
+    // [addUpdateDraftMembers].
     @Suppress("UNUSED_PARAMETER") helperEligibleM2M
     manifest.add(
         artifact,
@@ -587,49 +591,4 @@ private fun addUpdateMutationViewMembers(
         GeneratedMemberKind.PROPERTY,
         "fixed update-mutation-view pendingEdges aggregator",
     )
-}
-
-// ── Fixed builder members ────────────────────────────────────────
-
-private fun addFixedUpdateBuilderMembers(
-    manifest: GeneratedMemberManifest,
-    artifact: String,
-) {
-    val shared = listOf(
-        "save" to GeneratedMemberKind.FUNCTION,
-        "saveAndLoad" to GeneratedMemberKind.FUNCTION,
-        "client" to GeneratedMemberKind.PROPERTY,
-    )
-    for ((n, kind) in shared) {
-        manifest.add(artifact, n, kind, "fixed builder member '$n'")
-    }
-    val updateOnly = listOf(
-            "id" to GeneratedMemberKind.PROPERTY,
-            "driver" to GeneratedMemberKind.PROPERTY,
-            "entity" to GeneratedMemberKind.PROPERTY,
-            "beforeSaveHooks" to GeneratedMemberKind.PROPERTY,
-            "consistency" to GeneratedMemberKind.PROPERTY,
-            "dirtyFields" to GeneratedMemberKind.PROPERTY,
-            "relationshipLocking" to GeneratedMemberKind.PROPERTY,
-            "beforeUpdateHooks" to GeneratedMemberKind.PROPERTY,
-            "afterUpdateHooks" to GeneratedMemberKind.PROPERTY,
-            // Private adapter and snapshot properties used by generated hooks.
-            // Schema field names can't start with `_` (the snake_case
-            // regex forbids it), but declaration capture picks
-            // up Kotlin val names verbatim — and Kotlin allows `val
-            // _foo`. A schema like `val _mutationView = uuid("x");
-            // val rel = belongsTo<X>("rel").field(_mutationView)`
-            // produces a generated FK property named `_mutationView`
-            // that would collide with the private adapter on the
-            // update builder. Manifest registers these so the generated-member collision checks
-            // collision check rejects the schema with the actionable
-            // diagnostic.
-            "_mutationView" to GeneratedMemberKind.PROPERTY,
-            "_beforeSaveView" to GeneratedMemberKind.PROPERTY,
-            "_capturedPendingEdges" to GeneratedMemberKind.PROPERTY,
-            "executeSave" to GeneratedMemberKind.FUNCTION,
-    )
-    for ((n, kind) in updateOnly) {
-        manifest.add(artifact, n, kind, "fixed update-builder member '$n'")
-    }
 }

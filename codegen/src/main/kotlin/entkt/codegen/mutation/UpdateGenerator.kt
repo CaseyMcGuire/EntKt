@@ -13,7 +13,6 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
 import entkt.codegen.lifecyclePatchSnapshot
@@ -55,6 +54,8 @@ private val IMMUTABLE_SET_SNAPSHOT =
     MemberName("entkt.runtime.mutation", "immutableSetSnapshotForInternalUse")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
+private val UPDATE_MUTATION_REQUEST =
+    ClassName("entkt.runtime.mutation", "UpdateMutationRequest")
 
 
 internal class UpdateGenerator(
@@ -66,13 +67,13 @@ internal class UpdateGenerator(
         schema: EntSchema,
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
-        val className = "${schemaName}Update"
+        val className = "${schemaName}UpdateDraft"
         // Backing FK columns are emitted via `edgeFks` so they pick up
         // relationship-FK semantics (non-null type, throw-on-untouched,
         // setter null-reject). Don't double-emit them as scalar fields.
         val allFields = scalarFields(schema)
         val mutableFields = allFields.filter { !it.immutable }
-        // Immutable FKs are create-only — the update builder, the
+        // Immutable FKs are create-only — the update draft, the
         // hook-facing view, and the patch must not expose a write path
         // for them. `allEdgeFks` is used only for candidate construction
         // (which carries the unchanged value from `entity.before`).
@@ -80,7 +81,9 @@ internal class UpdateGenerator(
         val edgeFks = allEdgeFks.filter { !it.immutable }
 
         val entityClass = ClassName(packageName, schemaName)
-        val updateClass = ClassName(packageName, className)
+        val draftClass = ClassName(packageName, className)
+        val adapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
+        val preparedStateClass = adapterClass.nestedClass("PreparedState")
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
         val updateMutationViewClass = ClassName(packageName, "${schemaName}UpdateMutationView")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
@@ -92,7 +95,7 @@ internal class UpdateGenerator(
         val afterUpdateHookType = hookListType(entityClass)
 
         // Helper-eligible link-table M2M edges. Each gets a
-        // nested mutator class on the Update builder and a public
+        // nested mutator class on the update draft and a public
         // property bound to it. The mutator is NOT propagated to the
         // hook-facing `${schemaName}UpdateMutationView` — hooks see
         // pending edge ops through a read-only sidecar.
@@ -101,31 +104,122 @@ internal class UpdateGenerator(
             packageName = packageName,
             schemaName = schemaName,
             clientName = schema.clientName,
+            preparedStateClass = preparedStateClass,
             allFields = allFields,
             edgeFks = edgeFks,
             allEdgeFks = allEdgeFks,
             helperEligibleEdges = helperEligibleEdges,
         ).build()
 
-        // The Update builder implements only the shared Mutation
-        // interface, not UpdateMutationView. The view (and its
-        // `unset{Field}()` methods) lives behind a private inner
-        // adapter so it can't be reached from the public DSL block:
-        //   client.posts.update(id) {
-        //     title = "x"
-        //     unsetTitle()  // <-- intentionally won't compile
-        //   }
-        // Hooks reach unset through `ctx.mutation`, which is typed as
-        // the view and constructed from the private adapter.
-        val typeSpec = classType(className) {
+        val draftType = classType(className) {
             addAnnotation(annotation(ENTKT_DSL))
             addSuperinterface(mutationClass)
             primaryConstructor {
+                addAnnotation(ENTKT_INTERNAL)
+            }
+            property(
+                "dirtyFields",
+                ClassName("kotlin.collections", "MutableSet").parameterizedBy(STRING),
+            ) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("mutableSetOf()")
+            }
+            addProperties(mutableFields.map { buildProperty(it) })
+            run {
+                for (fk in edgeFks) {
+                    if (fk.required) {
+                        addProperty(buildRequiredFkStagingProperty(fk))
+                    }
+                }
+            }
+            addProperties(edgeFks.map { buildEdgeFkProperty(it) })
+            run {
+                for (edge in helperEligibleEdges) {
+                    addProperty(buildEdgeMutatorProperty(edge, draftClass))
+                }
+            }
+            addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
+            addFunction(buildCheckRequiredNotNullFunction(schemaName, mutableFields, edgeFks))
+            addFunction(buildBuildPendingEdgeOpsFunction(schemaName, helperEligibleEdges))
+            addFunction(buildHasFieldAssignmentsFunction())
+            addFunction(buildUnsetFieldFunction())
+            run {
+                if (helperEligibleEdges.isNotEmpty()) {
+                    addFunction(buildHasPendingLinkTableM2MOpsFunction(helperEligibleEdges))
+                    addFunction(buildHasPendingLinkTableM2MInsertsFunction(helperEligibleEdges))
+                    addFunction(buildCheckLinkTableM2MMixedModeFunction(helperEligibleEdges))
+                }
+            }
+            run {
+                for (edge in helperEligibleEdges) {
+                    addType(buildEdgeMutatorType(edge))
+                }
+            }
+        }
+
+        val requestType = UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass)
+        val executionType = classType("Execution") {
+            addModifiers(KModifier.PRIVATE, KModifier.INNER)
+            primaryConstructor { parameter("request", requestType) }
+            property("request", requestType) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("request")
+            }
+            property("draft", draftClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("request.draft")
+            }
+            property("id", idType) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("request.id as %T", idType)
+            }
+            property("consistency", UPDATE_CONSISTENCY) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("request.consistency")
+            }
+            property("relationshipLocking", RELATIONSHIP_LOCKING) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("request.relationshipLocking")
+            }
+            property("entity", entityClass) {
+                addModifiers(KModifier.PRIVATE, KModifier.LATEINIT)
+                mutable(true)
+            }
+            property(
+                "_capturedPendingEdges",
+                ClassName(packageName, "${schemaName}PendingEdgeOps").copy(nullable = true),
+            ) {
+                addModifiers(KModifier.PRIVATE)
+                mutable(true)
+                initializer("null")
+            }
+            addProperty(
+                buildMutationViewProperty(
+                    outerClassName = "Execution",
+                    updateMutationViewClass = updateMutationViewClass,
+                    mutableFields = mutableFields,
+                    edgeFks = edgeFks,
+                    pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps"),
+                ),
+            )
+            addProperty(
+                buildBeforeSaveAdapterProperty(
+                    outerClassName = "Execution",
+                    mutationClass = mutationClass,
+                    mutableFields = mutableFields,
+                    edgeFks = edgeFks,
+                ),
+            )
+            addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
+            addProperty(saveArtifacts.specProperty)
+            saveArtifacts.functions.forEach(::addFunction)
+        }
+
+        val adapterType = classType(adapterClass.simpleName) {
+            addModifiers(KModifier.INTERNAL)
+            primaryConstructor {
                 parameter("driver", DRIVER)
                 parameter("client", clientClass)
-                parameter("id", idType)
-                parameter("consistency", UPDATE_CONSISTENCY)
-                parameter("relationshipLocking", RELATIONSHIP_LOCKING)
                 parameter("beforeSaveHooks", beforeSaveHookType)
                 parameter("beforeUpdateHooks", beforeUpdateHookType)
                 parameter("afterUpdateHooks", afterUpdateHookType)
@@ -134,40 +228,9 @@ internal class UpdateGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("driver")
             }
-            // `client` is private. Hooks reach EntClient via
-            // `ctx.client`; DSL callers already hold it in scope.
             property("client", clientClass) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("client")
-            }
-            property("id", idType) { initializer("id") }
-            // Per-save UpdateConsistency selected by the caller (or
-            // inherited from the client's `defaultUpdateConsistency`).
-            // Read by save() at the start to choose between the
-            // ReadCurrent unlocked byId path and the Pessimistic
-            // readRowForUpdate path.
-            property("consistency", UPDATE_CONSISTENCY) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("consistency")
-            }
-            // Per-save RelationshipLocking selected by the caller (or
-            // inherited from the client's `defaultRelationshipLocking`).
-            // Read by save() to decide whether to take the canonical
-            // cross-orientation relationship lock for symmetric link-table
-            // M2M writes.
-            property("relationshipLocking", RELATIONSHIP_LOCKING) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("relationshipLocking")
-            }
-            // Internal state: populated by save() from the byId(id) load.
-            // Hooks read the loaded `before` through the hook context
-            // (ctx.before), not by poking at the builder. Keeping this
-            // public would let direct callers either crash on
-            // uninitialized access or observe a stale (pre-update) row
-            // after save() completes.
-            property("entity", entityClass) {
-                addModifiers(KModifier.PRIVATE, KModifier.LATEINIT)
-                mutable(true)
             }
             property("beforeSaveHooks", beforeSaveHookType) {
                 addModifiers(KModifier.PRIVATE)
@@ -181,115 +244,21 @@ internal class UpdateGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("afterUpdateHooks")
             }
-            property(
-                "dirtyFields",
-                ClassName("kotlin.collections", "MutableSet").parameterizedBy(STRING),
-            ) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("mutableSetOf()")
-            }
-            // Captured pendingEdges snapshot. The
-            // adapter's `pendingEdges` getter routes through this field
-            // so that ctx.mutation.pendingEdges returns the *same*
-            // snapshot ctx.pendingEdges holds — not a freshly-rebuilt
-            // value off the live mutator. save() populates this once
-            // after the owner-row read and before any hook fires; the
-            // getter throws if accessed before then (adapter touched
-            // outside save context). Always emitted (even on schemas
-            // without helper-eligible M2M edges) because the adapter's
-            // pendingEdges getter is unconditional — UpdateMutationView
-            // always carries pendingEdges typed against the (possibly
-            // empty) per-entity aggregator.
-            property(
-                "_capturedPendingEdges",
-                ClassName(packageName, "${schemaName}PendingEdgeOps").copy(nullable = true),
-            ) {
-                addModifiers(KModifier.PRIVATE)
-                mutable(true)
-                initializer("null")
-            }
-            addProperties(mutableFields.map { buildProperty(it) })
-            run {
-                for (fk in edgeFks) {
-                    if (fk.required) {
-                        addProperty(buildRequiredFkStagingProperty(fk))
-                    }
-                }
-            }
-            addProperties(edgeFks.map { buildEdgeFkProperty(it) })
-            addProperty(
-                buildMutationViewProperty(
-                    schemaName = schemaName,
-                    updateMutationViewClass = updateMutationViewClass,
-                    mutationClass = mutationClass,
-                    mutableFields = mutableFields,
-                    edgeFks = edgeFks,
-                    pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps"),
-                ),
-            )
-            // Private `_beforeSaveView`
-            // adapter that implements ONLY the shared `${Schema}Mutation`
-            // interface — no `pendingEdges`, no `unsetX()`, none of the
-            // update-specific patch operations. Passed to beforeSave
-            // hooks so that even a `mutation as ${Schema}UpdateMutationView`
-            // cast attempt fails at runtime, not just the more obvious
-            // `mutation as ${Schema}Update`. beforeUpdate hooks
-            // continue to receive `_mutationView` (the full update view)
-            // via `ctx.mutation`.
-            addProperty(
-                buildBeforeSaveAdapterProperty(
-                    schemaName = schemaName,
-                    mutationClass = mutationClass,
-                    mutableFields = mutableFields,
-                    edgeFks = edgeFks,
-                ),
-            )
-            // Link-table M2M mutator properties. Public
-            // DSL surface — callers reach add/remove/set through
-            // `update(id) { tags.add(tagId) }`. Constructor is internal
-            // so only this builder instantiates the mutator.
-            run {
-                for (edge in helperEligibleEdges) {
-                    addProperty(buildEdgeMutatorProperty(edge, updateClass))
-                }
-            }
-            addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
-            addFunction(buildCheckRequiredNotNullFunction(schemaName, mutableFields, edgeFks))
-            addFunction(buildBuildPendingEdgeOpsFunction(schemaName, helperEligibleEdges))
-            addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
-            // M2M preflight helpers. Only emitted when
-            // the schema has at least one helper-eligible link-table
-            // M2M edge — schemas without M2M skip the helpers and the
-            // save-pipeline preflight block entirely.
-            run {
-                if (helperEligibleEdges.isNotEmpty()) {
-                    addFunction(buildHasPendingLinkTableM2MOpsFunction(helperEligibleEdges))
-                    addFunction(buildHasPendingLinkTableM2MInsertsFunction(helperEligibleEdges))
-                    addFunction(buildCheckLinkTableM2MMixedModeFunction(helperEligibleEdges))
-                }
+            function("execute", MUTATION_RESULT.parameterizedBy(entityClass)) {
+                addModifiers(KModifier.INTERNAL)
+                parameter("viewerContext", VIEWER_CONTEXT)
+                parameter("request", requestType)
+                parameter("applyLoadPrivacy", BOOLEAN)
+                statement("return Execution(request).execute(viewerContext, applyLoadPrivacy)")
             }
             addType(saveArtifacts.preparedStateType)
-            addProperty(saveArtifacts.specProperty)
-            saveArtifacts.functions.forEach(::addFunction)
-            addFunction(buildSaveWrapperFunction())
-            addFunction(buildSaveAndLoadWrapperFunction(schemaName))
-            // Nested mutator class declarations. Nested
-            // inside the Update builder so two entities with the same
-            // edge name don't collide on the mutator class symbol.
-            run {
-                for (edge in helperEligibleEdges) {
-                    addType(buildEdgeMutatorType(edge))
-                }
-            }
+            addType(executionType)
         }
 
-        // The generated builder constructs `MutationResult.Failed`
-        // through the `@EntktInternal`-guarded `failedForInternalUse`
-        // factory; the file-level OptIn consumes the requirement at the
-        // construction sites without propagating it to application code.
         return kotlinFile(packageName, className) {
             addAnnotation(entktInternalFileOptIn())
-            addType(typeSpec)
+            addType(draftType)
+            addType(adapterType)
         }
     }
 
@@ -301,7 +270,7 @@ internal class UpdateGenerator(
             mutable(true)
             initializer("null")
             // Reading an untouched update field must throw (by contract). The
-            // builder has no current-state value before save(); for nullable
+            // draft has no current-state value before save(); for nullable
             // fields, a default-null getter would also collapse Unset and
             // explicit Set(null) into the same observable value. Hooks that
             // need to inspect pending state should read from `ctx.patch`,
@@ -406,71 +375,50 @@ internal class UpdateGenerator(
     }
 
     /**
-     * Generate `unset{Prop}()` on the update builder. Hooks call this
-     * through the hook-facing mutation view to remove an entry from the
-     * requested patch — distinct from `Set(null)`, which is an explicit
-     * clear for nullable fields/FKs. Removing from `dirtyFields` is
-     * sufficient because patch construction reads `dirtyFields` to
-     * decide `Set` vs `Unset`.
-     */
-    /**
      * Build the private `_mutationView` adapter that hooks see as
      * `ctx.mutation`. The adapter implements [updateMutationViewClass]
      * by forwarding each [mutationClass] field/FK property to the
-     * outer builder (so reads go through the throw-on-untouched
+     * execution's draft (so reads go through the throw-on-untouched
      * getter and writes flow through the dirty-tracking setter) and
-     * declaring `unset{Field}()` overrides directly against the
-     * outer's `dirtyFields`. Keeping the view behind a private
+     * declaring `unset{Field}()` overrides that clear the corresponding
+     * draft assignment. Keeping the view behind a private
      * property keeps `unset` off the public DSL surface.
      */
     private fun buildMutationViewProperty(
-        schemaName: String,
+        outerClassName: String,
         updateMutationViewClass: ClassName,
-        mutationClass: ClassName,
         mutableFields: List<Field>,
         edgeFks: List<EdgeFk>,
         pendingEdgeOpsClass: ClassName,
     ): PropertySpec {
-        val updateClassName = "${schemaName}Update"
         val adapter = anonymousType {
             addSuperinterface(updateMutationViewClass)
-        // Forward each Mutation field/FK property to the outer builder.
-        for (field in mutableFields) {
-            val propName = field.apiName
-            val typeName = field.resolvedTypeName().copy(nullable = true)
-            addProperty(buildAdapterForwarderProperty(updateClassName, propName, typeName))
-        }
-        for (fk in edgeFks) {
-            // Forwarder property type matches the interface (required → non-null).
-            val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-            addProperty(buildAdapterForwarderProperty(updateClassName, fk.propertyName, typeName))
-        }
-        // unset{Field}() overrides — the whole point of the view.
-        for (field in mutableFields) {
-            addFunction(buildAdapterUnsetFunction(updateClassName, field.apiName))
-        }
-        for (fk in edgeFks) {
-            addFunction(buildAdapterUnsetFunction(updateClassName, fk.propertyName))
-        }
-        // Read-only `pendingEdges`
-        // forwarder routes through the captured snapshot on the
-        // enclosing Update class, so ctx.mutation.pendingEdges returns
-        // the SAME object ctx.pendingEdges holds. Rebuilding here
-        // from live mutator state would (a) be redundant — hooks
-        // can't mutate the underlying op log through documented
-        // surfaces — but more importantly (b) silently diverge if
-        // any future path (bulk-write codegen, reflection helpers,
-        // reused Update instances) ever did reach the mutator
-        // post-snapshot. The error path triggers only if the adapter
-        // is touched outside a save context (no save() has populated
-        // _capturedPendingEdges yet).
+            // Forward each mutation field/FK property to the operation draft.
+            for (field in mutableFields) {
+                val propName = field.apiName
+                val typeName = field.resolvedTypeName().copy(nullable = true)
+                addProperty(buildAdapterForwarderProperty(outerClassName, propName, typeName))
+            }
+            for (fk in edgeFks) {
+                // Forwarder property type matches the interface (required → non-null).
+                val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
+                addProperty(buildAdapterForwarderProperty(outerClassName, fk.propertyName, typeName))
+            }
+            for (field in mutableFields) {
+                addFunction(buildAdapterUnsetFunction(outerClassName, field.apiName))
+            }
+            for (fk in edgeFks) {
+                addFunction(buildAdapterUnsetFunction(outerClassName, fk.propertyName))
+            }
+            // Route pendingEdges through the execution's captured snapshot so the
+            // hook context and mutation view expose the same immutable value.
             property("pendingEdges", pendingEdgeOpsClass) {
                 addModifiers(KModifier.OVERRIDE)
                 getter {
                     statement(
                             "return this@%L._capturedPendingEdges " +
                                 "?: error(%S)",
-                            updateClassName,
+                            outerClassName,
                             "pendingEdges accessed outside a save() — the captured snapshot is " +
                                 "only populated during save() between the owner-row read and the " +
                                 "afterUpdate hook block",
@@ -494,26 +442,25 @@ internal class UpdateGenerator(
      * `mutation as ${Schema}UpdateMutationView` fails at runtime.
      *
      * The adapter forwards each mutable scalar field and mutable
-     * edge FK property to the outer Update builder, same as the
+     * edge FK property to the execution's update draft, same as the
      * `_mutationView` forwarders.
      */
     private fun buildBeforeSaveAdapterProperty(
-        schemaName: String,
+        outerClassName: String,
         mutationClass: ClassName,
         mutableFields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): PropertySpec {
-        val updateClassName = "${schemaName}Update"
         val adapter = anonymousType {
             addSuperinterface(mutationClass)
             for (field in mutableFields) {
                 val propName = field.apiName
                 val typeName = field.resolvedTypeName().copy(nullable = true)
-                addProperty(buildAdapterForwarderProperty(updateClassName, propName, typeName))
+                addProperty(buildAdapterForwarderProperty(outerClassName, propName, typeName))
             }
             for (fk in edgeFks) {
                 val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-                addProperty(buildAdapterForwarderProperty(updateClassName, fk.propertyName, typeName))
+                addProperty(buildAdapterForwarderProperty(outerClassName, fk.propertyName, typeName))
             }
         }
         return property("_beforeSaveView", mutationClass) {
@@ -523,31 +470,31 @@ internal class UpdateGenerator(
     }
 
     private fun buildAdapterForwarderProperty(
-        updateClassName: String,
+        outerClassName: String,
         prop: String,
         typeName: com.squareup.kotlinpoet.TypeName,
     ): PropertySpec {
         return property(prop, typeName) {
             addModifiers(KModifier.OVERRIDE)
             mutable(true)
-            getter { statement("return this@%L.%L", updateClassName, prop) }
+            getter { statement("return this@%L.draft.%L", outerClassName, prop) }
             setter {
                 parameter("value", typeName)
-                statement("this@%L.%L = value", updateClassName, prop)
+                statement("this@%L.draft.%L = value", outerClassName, prop)
             }
         }
     }
 
-    private fun buildAdapterUnsetFunction(updateClassName: String, prop: String): FunSpec {
+    private fun buildAdapterUnsetFunction(outerClassName: String, prop: String): FunSpec {
         val name = "unset${prop.replaceFirstChar { it.uppercaseChar() }}"
         return function(name) {
             addModifiers(KModifier.OVERRIDE)
-            statement("this@%L.dirtyFields.remove(%S)", updateClassName, prop)
+            statement("this@%L.draft._unsetFieldForInternalUse(%S)", outerClassName, prop)
         }
     }
 
     /**
-     * Generate a private `_buildRequestedPatch()` member that constructs
+     * Generate an internal `_buildRequestedPatch()` member that constructs
      * the requested patch from the current `dirtyFields` snapshot. Used
      * (a) before each beforeUpdate hook to capture the per-hook patch
      * snapshot, and (b) once after all hooks to capture the canonical
@@ -613,7 +560,8 @@ internal class UpdateGenerator(
             add(")\n")
         }
         return function("_buildRequestedPatch", patchClass) {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.INTERNAL)
+            parameter("driver", DRIVER)
             addCode(code)
             statement(
                 "return %L",
@@ -623,7 +571,7 @@ internal class UpdateGenerator(
     }
 
     /**
-     * Generate a private `_checkRequiredNotNull()` member that returns
+     * Generate an internal `_checkRequiredNotNull()` member that returns
      * the violation for any required field or required edge FK
      * that has been assigned `null` and not repaired (empty list =
      * all required shapes hold). Called from the save pipeline after
@@ -645,7 +593,7 @@ internal class UpdateGenerator(
             "_checkRequiredNotNull",
             LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION),
         ) {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.INTERNAL)
             for (field in mutableFields) {
                 if (field.nullable) continue
                 val prop = field.apiName
@@ -673,7 +621,7 @@ internal class UpdateGenerator(
 
     /**
      * Build the public `val ${edge}: ${Edge}EdgeMutator`
-     * property on the Update builder. The mutator's constructor is
+     * property on the update draft. The mutator's constructor is
      * `internal`, so only this builder instantiates it; the public DSL
      * surface is `update(id) { tags.add(tagId) }`.
      */
@@ -853,7 +801,7 @@ internal class UpdateGenerator(
         // helperEligibleEdges is non-empty (caller-side guard).
         val expr = helperEligibleEdges.joinToString(" || ") { "this.${it.mutatorPropertyName}.hasOps()" }
         return function("_hasPendingLinkTableM2MOps", BOOLEAN) {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.INTERNAL)
             statement("return %L", expr)
         }
     }
@@ -873,7 +821,7 @@ internal class UpdateGenerator(
         // helperEligibleEdges is non-empty (caller-side guard).
         val expr = helperEligibleEdges.joinToString(" || ") { "this.${it.mutatorPropertyName}.hasInserts()" }
         return function("_hasPendingLinkTableM2MInserts", BOOLEAN) {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.INTERNAL)
             statement("return %L", expr)
         }
     }
@@ -902,7 +850,7 @@ internal class UpdateGenerator(
         // guards (reflection or future bulk-write codegen that
         // sidestepped the per-call rule).
         return function("_checkLinkTableM2MMixedMode") {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.INTERNAL)
             for (edge in helperEligibleEdges) {
                 statement("this.%L.validateInvariants()", edge.mutatorPropertyName)
             }
@@ -934,7 +882,7 @@ internal class UpdateGenerator(
         val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
         if (helperEligibleEdges.isEmpty()) {
             return function("_buildPendingEdgeOps", pendingEdgeOpsClass) {
-                addModifiers(KModifier.PRIVATE)
+                addModifiers(KModifier.INTERNAL)
                 statement("return %T()", pendingEdgeOpsClass)
             }
         }
@@ -948,7 +896,7 @@ internal class UpdateGenerator(
             add(")\n")
         }
         return function("_buildPendingEdgeOps", pendingEdgeOpsClass) {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.INTERNAL)
             addCode(body)
         }
     }
@@ -996,8 +944,8 @@ internal class UpdateGenerator(
                 // Predicate.Leaf<Any> renders the same structural data
                 // (field/op/value) and erases at the driver boundary.
                 add(
-                    "val %L: Set<%T> = if (this.%L.hasOps()) {\n" +
-                        "  driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, this.id)), emptyList(), null, null)\n" +
+                    "val %L: Set<%T> = if (draft.%L.hasOps()) {\n" +
+                        "  driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, id)), emptyList(), null, null)\n" +
                         "    .map { it[%S] as %T }\n" +
                         "    .toSet()\n" +
                         "} else emptySet()\n",
@@ -1024,41 +972,16 @@ internal class UpdateGenerator(
         }
     }
 
-    /**
-     * `save(): MutationResult<Unit>` — acknowledgement-only projection
-     * of the shared update pipeline. No parallel implementation: the
-     * projection maps `executeSave`'s result and performs no I/O of
-     * its own.
-     */
-    private fun buildSaveWrapperFunction(): FunSpec {
-        return function("save", MUTATION_RESULT.parameterizedBy(UNIT)) {
-            parameter(
-                "viewerContext",
-                VIEWER_CONTEXT,
-            )
-            addCode(codeBlock {
-                add("return when (val result = executeSave(viewerContext, applyLoadPrivacy = false)) {\n")
-                add("  is %T.Success -> %T.Success(Unit)\n", MUTATION_RESULT, MUTATION_RESULT)
-                add("  is %T.Failed -> result\n", MUTATION_RESULT)
-                add("}\n")
-            })
+    private fun buildHasFieldAssignmentsFunction(): FunSpec =
+        function("_hasFieldAssignments", BOOLEAN) {
+            addModifiers(KModifier.INTERNAL)
+            statement("return dirtyFields.isNotEmpty()")
         }
+
+    private fun buildUnsetFieldFunction(): FunSpec = function("_unsetFieldForInternalUse") {
+        addModifiers(KModifier.INTERNAL)
+        parameter("field", STRING)
+        statement("dirtyFields.remove(field)")
     }
 
-    /**
-     * `saveAndLoad(): MutationResult<Entity>` — same single pipeline
-     * as [buildSaveWrapperFunction]'s `save()`, additionally
-     * materializing the refreshed entity and applying the ordinary
-     * post-write LOAD disclosure check.
-     */
-    private fun buildSaveAndLoadWrapperFunction(schemaName: String): FunSpec {
-        val entityClass = ClassName(packageName, schemaName)
-        return function("saveAndLoad", MUTATION_RESULT.parameterizedBy(entityClass)) {
-            parameter(
-                "viewerContext",
-                VIEWER_CONTEXT,
-            )
-            statement("return executeSave(viewerContext, applyLoadPrivacy = true)")
-        }
-    }
 }

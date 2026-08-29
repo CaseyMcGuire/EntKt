@@ -75,8 +75,8 @@ such as DB column names and table names, are not part of this RFC.
 Codegen should build generated-member manifests per schema and per artifact. A
 manifest entry should record:
 
-- the generated artifact, such as `Post`, `PostEdges`, `PostCreate`,
-  `PostUpdate`, `PostMutation`, `PostCreateMutationView`,
+- the generated artifact, such as `Post`, `PostEdges`, `PostCreateDraft`,
+  `PostUpdateDraft`, `PostMutation`, `PostCreateMutationView`,
   `PostUpdateMutationView`, `PostCreatePatch`, `PostUpdatePatch`,
   `PostCreateCandidate`, `PostUpdateCandidate`, `PostCreatePrivacyContext`,
   `PostUpdateValidationContext`, or `PostPendingEdgeOps`
@@ -136,8 +136,8 @@ RFC plus the user-facing surfaces where collisions are most likely:
 - entity data class
 - entity companion object
 - base mutation interface
-- create builder
-- update builder
+- create draft
+- update draft
 - create mutation view
 - update mutation view
 
@@ -174,14 +174,15 @@ V1 covers the following member kinds across the artifacts listed in
 - implicit FK properties
 - field-backed FK properties
 - `unset{Property}()` methods for mutable update fields and FKs (on
-  `${name}UpdateMutationView` only — the public update builder doesn't
+  `${name}UpdateMutationView` only — the public update draft doesn't
   expose them)
 - `pendingEdges` aggregator on `${name}UpdateMutationView` (unconditionally
   emitted, independent of whether the schema has any helper-eligible M2M edge)
 - helper-eligible M2M update mutator properties (on the public
-  `${name}Update` builder)
-- fixed builder members such as `save`, `saveOrError`, `saveOrThrow`, `client`,
-  `driver`, hook lists, `entity`, and `dirtyFields`
+  `${name}UpdateDraft`)
+- fixed draft state members such as create-draft `assignedFields` / `isSet`
+  and update-draft `dirtyFields`; save terminals and execution dependencies
+  live on ordinary runtime or internal adapter types, outside these artifacts
 - fixed entity instance members `id` and `edges`
 - fixed entity companion members `fromRow`, `TABLE`, `SCHEMA`, plus per-field
   column refs, per-FK column refs, and per-edge edge refs (the edge refs are
@@ -262,8 +263,8 @@ The diagnostic should include:
   `pendingEdges` member on `${name}UpdateMutationView` — note this fires
   regardless of whether the schema has any helper-eligible M2M edge, since
   MutationGenerator emits `pendingEdges` unconditionally
-- field named `save_or_error` colliding with `saveOrError` on `${name}Create`
-  and `${name}Update`
+- fields named `assigned_fields` or `dirty_fields` colliding with the
+  corresponding create/update draft assignment trackers
 - field named `edges` colliding with entity `edges`
 - field named `copy` colliding with data-class `copy` (framework-member hint
   appears in the diagnostic)

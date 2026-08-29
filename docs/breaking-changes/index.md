@@ -30,6 +30,17 @@ above it.
 
 ## Unreleased
 
+- **Separate update drafts from executable update mutations** (`codegen`, `runtime`)
+  Generated `${Entity}Update` classes are replaced by state-only
+  `${Entity}UpdateDraft` values. Repository `update(id) { ... }` now returns a
+  generic `UpdateMutation<Draft, Entity>` whose `configure { ... }`, `save()`,
+  and `saveAndLoad()` methods own the operation. The mutation is single-use,
+  matching `CreateMutation`; its first save terminal consumes it.
+  _Migration:_ replace explicit `${Entity}Update` type references with
+  `${Entity}UpdateDraft`, keep configuration inside `update { ... }` or
+  `.configure { ... }`, and invoke `save(viewerContext)` or
+  `saveAndLoad(viewerContext)` on the returned `UpdateMutation`.
+
 - **Remove generated raw query terminals** (`codegen`)
   Generated query builders no longer expose `rawCount`, `rawExists`,
   `rawMin` / `rawMax` / `rawSum` / `rawAvg`, or their grouped `*By`

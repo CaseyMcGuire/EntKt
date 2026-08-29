@@ -61,8 +61,8 @@ class MemberCollisionValidationTest {
         }
 
         val errors = validate("S" to S())
-        // The clash lands on the update mutation view (where unset
-        // methods live) and on the update builder.
+        // The clash lands on the update mutation view, where unset
+        // methods live.
         assertCollision(errors, "SUpdateMutationView", "unsetName")
     }
 
@@ -120,20 +120,42 @@ class MemberCollisionValidationTest {
         val errors = validate("S" to S())
         assertCollision(errors, "S", "edges")
     }
-    // Collision case: field whose generated name matches a
-    // fixed builder member (`saveAndLoad`).
+    // A field whose generated name matches a generic mutation terminal
+    // does not collide because the draft and operation are distinct types.
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `field 'save_and_load' collides with the fixed update terminal only`() {
+    fun `field 'save_and_load' is valid on an update draft`() {
         class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
             val saveAndLoad by bool("save_and_load")
         }
 
         val errors = validate("S" to S())
-        // Create drafts contain state only, so this name is available there.
-        assertCollision(errors, "SUpdate", "saveAndLoad")
+        assertTrue(
+            errors.none { it.contains("SUpdateDraft") && it.contains("'saveAndLoad'") },
+            "saveAndLoad belongs to UpdateMutation, not SUpdateDraft: ${errors.joinToString()}",
+        )
+    }
+
+    @Test
+    fun `field 'dirty_fields' collides with update draft assignment tracking`() {
+        class S : EntSchema("s", clientName = "ses") {
+            override fun id() = EntId.long()
+            val dirtyFields by bool("dirty_fields")
+        }
+
+        assertCollision(validate("S" to S()), "SUpdateDraft", "dirtyFields")
+    }
+
+    @Test
+    fun `field 'assigned_fields' collides with create draft assignment tracking`() {
+        class S : EntSchema("s", clientName = "ses") {
+            override fun id() = EntId.long()
+            val assignedFields by bool("assigned_fields")
+        }
+
+        assertCollision(validate("S" to S()), "SCreateDraft", "assignedFields")
     }
 
     // ──────────────────────────────────────────────────────────────

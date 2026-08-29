@@ -404,7 +404,7 @@ rule only**, not a general M2M traversal invariant. `throughEntity(...)`
 relationships may declare junction `belongsTo` edges as `.nullable()`
 when the domain allows partial junction rows — callers mutate the
 junction through its repo, where nullable FKs interact with the
-normal create/update builder semantics. The direct-driver link-table
+normal create/update draft semantics. The direct-driver link-table
 helpers, in contrast, cannot reason about nullable junction FKs
 without a separate spec for "what does add(...) / remove(...) /
 set(...) mean when an endpoint may be null", so `throughLink(...)`
@@ -557,7 +557,7 @@ only when:
     above (e.g. a `comment`-only field is allowed because it doesn't
     add a column, but a `string("note")` column is not)
 
-  Generated create builders apply field defaults, run before-create
+  Generated create drafts apply field defaults, run before-create
   hooks, evaluate validation rules, and so on — none of which fire
   on the low-level `Driver.insert(...)` / `insertMany(...)` paths
   used by the link-table helpers, so any "harmless" payload column

@@ -359,9 +359,9 @@ names from Kotlin declaration names regardless of the storage string
 is out of scope here and belongs in a separate schema-naming RFC if
 ever adopted.
 
-Required create builders may use nullable internal staging state to represent
-"not assigned yet", but `null` should not be part of the public assignment API
-for required edges.
+Required create drafts use nullable state to represent incomplete input. Reading
+an unassigned required FK returns `null`; save preparation reports a required
+input violation if hooks do not supply a value before persistence.
 
 Generated required FK setters must defensively reject null **at setter entry**,
 even though their Kotlin signatures are non-null. The check fires before any
@@ -382,7 +382,7 @@ override var authorId: UUID
 ```
 
 Save preparation's `_checkRequiredNotNull()` remains as a final
-backstop for paths that mutate builder state without re-entering
+backstop for paths that mutate draft state without re-entering
 these setters. Such paths are internal — they are not part of the
 hook API — and include things like reflection that writes the
 backing field directly (skipping the property setter), or a future
@@ -391,12 +391,12 @@ checks. The hook-facing `${Entity}UpdateMutationView` does not expose
 `dirtyFields` or any other way to mutate state outside the generated FK setter
 and `unset{FkProperty}()`, so hooks always go through the entry check. For normal
 call sites — Kotlin, Java, or reflection through the property setter — the setter
-rejects before the value reaches the builder's internal state; the backstop only
+rejects before the value reaches the draft's internal state; the backstop only
 fires for paths that skip the property surface entirely.
 
 The resolved FK property, such as `authorId`, is the readable/writable
 source of truth for pending relationship state **on the public
-create/update builders**, with the per-phase getter semantics
+create/update drafts**, with the per-phase getter semantics
 documented in "Resolved FK Getter Behavior" below. The
 hook-facing mutation views narrow this further: `beforeUpdate` hooks
 get a value-oriented view (the getter throws on untouched, see
@@ -408,25 +408,24 @@ generic `beforeSave` hook cannot tell which phase it is running in.
 
 Resolved FK getter behavior should be explicit:
 
-- on create builders for required relationships, reading the FK before assignment
-  must throw because there is no valid FK value yet
-- on create builders for nullable relationships, reading the FK before
-  assignment returns `null`
-- on update builders for required relationships, reading the FK returns the
+- on create drafts, reading either a required or nullable FK before assignment
+  returns `null`; `isSet(Entity.fk)` distinguishes omission from an explicit
+  `null` assignment
+- on update drafts for required relationships, reading the FK returns the
   pending FK if the relationship was changed; reading an untouched FK must throw
-  because update builders do not have current-state values before `save()`
-- on update builders for nullable relationships, reading the FK returns the
+  because update drafts do not have current-state values before `save()`
+- on update drafts for nullable relationships, reading the FK returns the
   pending non-null FK or explicit pending null if the relationship was changed;
   reading an untouched FK must throw because `null` is a valid clear value and
-  cannot also represent untouched current state on the builder
+  cannot also represent untouched current state on the draft
 - writing the FK always marks that relationship pending/dirty
 
 Documentation and examples should present FK assignment as the to-one mutation
 API. They should not introduce relationship entity setter methods or relationship
-assignment properties on mutation builders.
+assignment properties on mutation drafts.
 
 Concretely, after this RFC implements, the only relationship-write form that
-compiles on a generated mutation builder is the resolved FK property. Entity
+compiles on a generated mutation draft is the resolved FK property. Entity
 object assignment APIs are not generated:
 
 ```kotlin
@@ -467,7 +466,7 @@ FK property.
 
 ## Explicit Backing Fields
 
-Generated create/update builders expose the resolved FK property for `belongsTo`
+Generated create/update drafts expose the resolved FK property for `belongsTo`
 edges. For implicit FKs, this is the generated `{edge}Id` property:
 
 ```kotlin
@@ -552,7 +551,7 @@ Both are checked against:
   field-backed FK names, and their `unset` methods — so a field-backed
   FK named `writerId` cannot coexist with an implicit edge `val writer
   = belongsTo<User>("writer")` whose generated FK is also `writerId`),
-- generated members on the entity data class, create/update builders,
+- generated members on the entity data class, create/update drafts,
   hook-facing mutation views, patch type, and write candidate,
 - user-declared Kotlin members on the schema class, and JVM signatures.
 
@@ -581,7 +580,7 @@ the backing field, so generated edge metadata and database constraints must
 agree.
 
 The backing field also controls relationship mutability. If the backing field is
-immutable, create builders may expose the resolved FK setter, but update builders
+immutable, create drafts may expose the resolved FK setter, but update drafts
 must not expose a write path for that relationship. Hook-facing update mutation
 views also must not expose the immutable backing FK as mutable. Implicit
 FK-backed relationships are mutable by default unless a future edge-level
@@ -605,17 +604,10 @@ pattern — see "Explicit Backing Fields" above for the naming rule:
   The explicit assignment is treated as the caller's intentional
   choice.
 
-This rule is relationship-specific in this RFC. Whether scalar
-fields with create defaults follow the same explicit-null-wins
-contract is not defined here and is not assumed; that would require
-nullable scalar create builders to distinguish "untouched" from
-"explicitly assigned `null`" via assigned-flag tracking, which is
-outside this RFC's scope.
-
-This requires the create builder to distinguish "untouched" from
-"explicitly assigned `null`" for nullable field-backed FKs — typically via the
-same dirty-tracking shape the update path uses (an internal "assigned" flag set
-by the FK property setter, separate from the underlying value).
+Create drafts now apply the same explicit-null-wins rule uniformly to nullable
+scalar fields and field-backed FKs. Their `AssignedFields` state, updated by each
+setter and exposed through `isSet(Entity.field)`, distinguishes omission from an
+explicit `null` independently of the property value.
 
 **Caveat for create hooks reading a nullable FK.** Create FK getters
 return `null` for an untouched nullable FK (see Resolved FK Getter
@@ -769,7 +761,7 @@ Required create hooks may set an unset required FK through the non-null setter,
 but cannot intentionally set it to null. Final save preparation still rejects:
 
 - **create**-time required FKs whose final value is still null after
-  before hooks (`_checkRequiredNotNull()` for the create path), and
+  before hooks (`requiredInputViolations` for the create path), and
 - **internal corruption paths** that produce dirty+null state for a
   required FK on update by bypassing the FK setter (reflection,
   future internal bulk-write helpers).
@@ -780,9 +772,9 @@ FK that was dirty — that legitimately leaves the patch in
 and skips the required check by construction. Removing a pending
 required-FK change is a valid hook operation.
 
-Hook-facing create interfaces use the same resolved FK getter behavior as create
-builders: reading an unset required FK must throw, while reading an unset
-nullable FK returns null.
+Hook-facing create interfaces deliberately narrow the incomplete public draft:
+reading an unset required FK throws, while reading an unset nullable FK returns
+`null`.
 
 Hooks may clear nullable relationships by setting the hook-facing resolved FK
 property to null. They cannot leave a required relationship null: the required
@@ -792,36 +784,33 @@ the create-time and internal-corruption cases listed above.
 ### Hook-Facing API Shape
 
 Codegen should generate hook-facing mutation interfaces separately from the
-public create/update builders. Hook callbacks are **typed against** these
-restricted interfaces rather than the concrete public builders. The interfaces
+public create/update drafts. Hook callbacks are **typed against** these
+restricted interfaces rather than the concrete public drafts. The interfaces
 expose mutable scalar fields and resolved FK fields according to field and
 relationship mutability, but they do not expose relationship entity properties
 or link-table edge mutators. Create and update hook interfaces may differ when
 immutable fields are create-only.
 
 **Both paths are now runtime-enforced** via private anonymous adapter
-objects on the respective `${Entity}Create` / `${Entity}Update`
-builders. The original V0 asymmetry — create as static-only, update
-as runtime-enforced — was resolved by
+objects created by the repository and update execution adapter. Drafts contain
+only caller-configurable state and are never passed to hooks as their concrete
+runtime type. The original V0 asymmetry was resolved by
 [RFC 08](08-create-hook-mutation-view-adapter.md):
 
 - **`beforeCreate`** receives a private adapter (`_createMutationView`)
   whose runtime type implements only `${Entity}CreateMutationView`. The
-  adapter forwards property reads/writes to the outer
-  `${Entity}Create` builder but does not extend or expose the concrete
-  builder. A hook that casts `ctx.mutation as ${Entity}Create` throws
+  adapter forwards property reads/writes to the `${Entity}CreateDraft`
+  but does not extend or expose the concrete draft. A hook that casts
+  `ctx.mutation as ${Entity}CreateDraft` throws
   `ClassCastException`.
 
 - **`beforeUpdate`** receives a private adapter
   (`_mutationView`) whose runtime type implements only
   `${Entity}UpdateMutationView`. Same mechanism — `ctx.mutation as
-  ${Entity}Update` throws.
+  ${Entity}UpdateDraft` throws.
 
-The concrete `${Entity}Create` class continues to implement
-`${Entity}CreateMutationView` (and `${Entity}Mutation`) as a static
-type relationship, so non-hook code that upcasts a builder to either
-view interface keeps working. Only the runtime object handed to each
-hook is the adapter, not the builder.
+Neither concrete draft exposes the hook-facing mutation view as its public
+contract. Only the restricted adapter object is handed to each hook.
 
 `beforeSave` receives a common restricted `{Entity}Mutation` interface shared by
 create and update hooks. That common interface exposes only fields and FKs that
@@ -840,7 +829,7 @@ update should use the `beforeUpdate` context's loaded `before` entity.
 `beforeSave` hooks must be written against the **shared setter-only**
 pattern: they should *write* field/FK values (e.g. `m.updatedAt = Instant.now()`)
 but should not *read* them. A read like `m.title` works for create (the
-create builder's getter returns the staged value or `null`) but throws
+create draft's getter returns the staged value or `null`) but throws
 on update when the field is untouched — and a generic `beforeSave`
 hook has no way to tell which phase it's running in.
 
@@ -854,23 +843,16 @@ is the right place for cross-cutting writes like timestamp injection,
 denormalized counters, and other set-and-forget mutations that apply
 uniformly to both create and update.
 
-## Generated Builder Shape
+## Generated Draft Shape
 
-For each mutable FK-owning to-one edge, generated create/update builders expose
+For each mutable FK-owning to-one edge, generated create/update drafts expose
 the resolved FK property. That property is the only relationship write path.
 
 Conceptually, for a required edge:
 
 ```kotlin
-class PostCreate {
-    private var resolvedAuthorFk: UUID? = null
-
-    var authorId: UUID
-        get() = resolvedAuthorFk
-            ?: error("authorId has not been assigned")
-        set(value) {
-            resolvedAuthorFk = value
-        }
+class PostCreateDraft {
+    var authorId: UUID? = null
 }
 ```
 
@@ -878,10 +860,9 @@ This is conceptual, not a required implementation shape. Generated code may
 store only one backing FK field as long as assignment and dirty tracking behave
 the same way.
 
-The nullable private fields in this conceptual required-edge example are staging
-state only. They let create builders distinguish an unset required edge from an
-assigned edge before save preparation. They do not mean public assignment accepts
-`null` for required relationships.
+Create drafts track assignment separately from the nullable property value, so
+`isSet(Post.authorId)` distinguishes omission from explicit `null`. Required
+input validation still rejects a missing/null final value before resolution.
 
 Generated builders must distinguish three pending states for nullable
 relationships: unset, set to a non-null FK, and explicitly set to null. For
@@ -902,7 +883,7 @@ phase for `belongsTo` edges.
 
 Create saves follow the normal generated create pipeline:
 
-1. the create builder block has already run before `save()`, so FK writes have
+1. the create draft block has already run before `save()`, so FK writes have
    updated pending FK state
 2. before hooks run and may mutate hook-facing resolved FK properties
 3. generated field defaults and field-backed FK defaults are applied
@@ -964,8 +945,8 @@ saved.authorId == alice.id
 ## Candidate And Rule Visibility
 
 Create candidates remain full write candidates. Under ID-based update roots,
-update builders and hooks produce a requested update patch. The requested patch
-contains only fields and FKs explicitly changed by the builder or hooks.
+update drafts and hooks produce a requested update patch. The requested patch
+contains only fields and FKs explicitly changed by the draft or hooks.
 Untouched update relationships are not marked dirty and should not appear as
 changed FK patch values.
 
@@ -1035,14 +1016,14 @@ The implementation should be covered by tests for:
 - generated implicit FK property names use the Kotlin schema declaration property
   name plus `Id`, not the storage/runtime edge string, and reject collisions with
   fields, edges, generated methods, Kotlin members, or JVM signatures
-- the generated update/create builder exposes the resolved FK property
+- the generated update/create draft exposes the resolved FK property
   for each **mutable** FK-owning `belongsTo` edge and does **not** expose
   `setAuthor(...)` or a writable relationship entity property; immutable
   field-backed FKs follow the rule at "Relationship Mutability" above
-  (create builder may expose the setter, update builder must not) —
+  (create draft may expose the setter, update draft must not) —
   codegen assertion:
   - for an **implicit FK** fixture (`val author = belongsTo<User>("author")`),
-    the generated `${Entity}Update` / `${Entity}Create` class contains
+    the generated `${Entity}UpdateDraft` / `${Entity}CreateDraft` class contains
     `var authorId:` and does not contain `public fun setAuthor(`,
     `public fun set<Edge>(`, or `var author:` for that edge
   - for a **mutable field-backed** fixture
@@ -1052,21 +1033,21 @@ The implementation should be covered by tests for:
     `authorId`, `setAuthor(...)`, or `var author:`
   - for an **immutable field-backed** fixture
     (`val writerId = uuid("writer_id").immutable(); val author = belongsTo<User>("author").field(writerId)`),
-    the generated `${Entity}Create` class contains `var writerId:` but the
-    generated `${Entity}Update` class does not contain `var writerId:`,
+    the generated `${Entity}CreateDraft` class contains `var writerId:` but the
+    generated `${Entity}UpdateDraft` class does not contain `var writerId:`,
     `authorId`, `setAuthor(...)`, or `var author:` for that edge
 - the old property-style relationship assignment does not compile
-  against the generated builder — compile-fail assertion: a Kotlin
+  against the generated draft — compile-fail assertion: a Kotlin
   source snippet that writes
   `client.posts.update(id) { author = alice }` fails to type-check
   with an "unresolved reference: author" error, while the
   fixture-appropriate resolved FK write
   (`authorId = alice.id` for implicit FKs, `writerId = alice.id` for
-  the field-backed fixture above) type-checks on the same builder
-- the generated builder does not expose a readable relationship entity
+  the field-backed fixture above) type-checks on the same draft
+- the generated draft does not expose a readable relationship entity
   property — codegen assertion: no `public val author:` or
   `public var author:` declaration appears in the generated
-  `${Entity}Update` / `${Entity}Create` for any `belongsTo` edge
+  `${Entity}UpdateDraft` / `${Entity}CreateDraft` for any `belongsTo` edge
 - the hook-facing `${Entity}UpdateMutationView` interface exposes the
   resolved FK setter and `unset{FkProperty}()` and contains no
   `setAuthor`-style member — codegen assertion:
@@ -1157,9 +1138,9 @@ The implementation should be covered by tests for:
 - hook-facing to-one mutation views expose resolved FK fields only, not readable
   relationship entity properties
 - hook callbacks are typed against restricted hook-facing mutation interfaces,
-  not the concrete public create/update builders (per "Hook-Facing API Shape":
+  not the concrete public create/update drafts (per "Hook-Facing API Shape":
   `beforeCreate` / `beforeUpdate` / `beforeSave` all receive private adapters
-  that don't extend the concrete builder — runtime-enforced narrowing on
+  that don't extend the concrete draft — runtime-enforced narrowing on
   both create and update after RFC 08)
 - `beforeSave` is typed against a common restricted mutation interface that
   excludes create-only immutable fields and immutable field-backed FKs

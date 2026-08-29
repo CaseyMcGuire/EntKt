@@ -104,8 +104,8 @@ internal data class MemberCollision(
  *
  * The manifest is per-schema rather than global because the contract
  * scopes collisions per artifact and artifacts are named per
- * schema (`PostUpdate` is a different namespace from
- * `ArticleUpdate`). A cross-schema collision is not a real
+ * schema (`PostUpdateDraft` is a different namespace from
+ * `ArticleUpdateDraft`). A cross-schema collision is not a real
  * collision — Kotlin distinguishes the two classes.
  */
 internal class GeneratedMemberManifest(val schema: String) {
@@ -191,7 +191,7 @@ internal class GeneratedMemberManifest(val schema: String) {
  * In strict mode, `helperEligibleM2MEdges` is also allowed to
  * propagate. A thrown call there would leave the `helperEligible`
  * list empty, which would silently omit the per-edge M2M mutator
- * properties from the update-builder manifest — hiding collisions
+ * properties from the update-draft manifest — hiding collisions
  * between user-declared fields and the mutator properties (e.g.
  * `val tags = string("tags")` on a schema with a
  * `manyToMany<Tag>("tags")` through-link edge). Lenient mode keeps
@@ -208,7 +208,7 @@ internal fun runMemberCollisionCheck(
         val helperEligible = if (strict) {
             // No try/catch: an M2M-resolution failure means we'd
             // build an incomplete manifest and silently miss
-            // mutator-property collisions on the update builder.
+            // mutator-property collisions on the update draft.
             helperEligibleM2MEdges(input.schema, schemaNames)
         } else {
             try {

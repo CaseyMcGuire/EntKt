@@ -110,7 +110,7 @@ comparison):
   domain entity, mutated through its generated repo
   (e.g. `client.userGroups.create { ... }.save(viewerContext)`).
 - `.throughLink<Junction>(sourceEdge, targetEdge)` — junction is pure
-  relationship storage. The generated update builder gets direct
+  relationship storage. The generated update draft gets direct
   id-only mutators on the M2M edge (see
   [Link-table M2M mutators](#link-table-m2m-mutators) below).
 
@@ -166,7 +166,7 @@ back requires an explicit declaration on the other side.
 ### Link-table M2M mutators
 
 `throughLink` edges expose direct id-only mutators on the generated
-update builder. `throughEntity` edges do not — their writes go through
+update draft. `throughEntity` edges do not — their writes go through
 the junction repo.
 
 ```kotlin

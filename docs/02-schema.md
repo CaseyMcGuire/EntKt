@@ -24,7 +24,7 @@ transforms any of them.
 
 | What you write | What it names |
 |---|---|
-| The schema class name (`User`) | Generated types: `User`, `UserQuery`, `UserRepo`, `UserCreateDraft`, `UserUpdate` |
+| The schema class name (`User`) | Generated types: `User`, `UserQuery`, `UserRepo`, `UserCreateDraft`, `UserUpdateDraft` |
 | `clientName = "users"` | Generated client and configuration properties: `client.users`, `privacy.users { }`, `validation.users { }`, `hooks.users { }` |
 | The delegated `val` (`val email by …`) | Every generated field or edge API: `User.email`, `user.email`, `create.email` |
 | The string argument (`string("email")`, `hasMany<Post>("posts")`) | Storage only: columns, tables, indexes, constraints, joins, migration identity |
@@ -159,7 +159,7 @@ These are available on all field types:
 |----------|--------|
 | `.nullable()` | Field is nullable; generated as a Kotlin `T?` |
 | `.unique()` | Adds a unique constraint |
-| `.immutable()` | Omitted from update builder setters |
+| `.immutable()` | Omitted from update-draft setters |
 | `.sensitive()` | Excluded from string representations |
 | `.default(value)` | Type-safe default value for creates |
 | `.defaultNow()` | Set to `Instant.now()` on create (TIME fields only) |
@@ -196,7 +196,7 @@ invariants separately.
 ### Enums
 
 Enum fields require a Kotlin enum class via the reified `enum<E>()` builder.
-The generated entity, create draft, update builder, and query column
+The generated entity, create draft, update draft, and query column
 references all use the actual enum type:
 
 ```kotlin
@@ -213,7 +213,7 @@ class Ticket : EntSchema("tickets", clientName = "tickets") {
 With this declaration:
 
 - The generated `Ticket` entity has `val priority: Priority`
-- The create draft and update builder have `var priority: Priority?`
+- The create and update drafts have `var priority: Priority?`
 - Query predicates accept enum values: `Ticket.priority eq Priority.HIGH`
 - The `.default()` method requires a constant from the same enum class —
   passing a value from a different enum (e.g. `OtherEnum.FOO`) is rejected
@@ -330,7 +330,7 @@ write to. Pick the write model with one of two markers:
 | Marker | When to use |
 |---|---|
 | `.throughEntity<Junction>(sourceEdge, targetEdge)` | Junction carries payload, hooks, privacy, or validation. Callers mutate it through the generated junction repo (e.g. `client.userGroups.create { ... }.save(viewerContext)`). |
-| `.throughLink<Junction>(sourceEdge, targetEdge)` | Junction is pure relationship storage (id + the two FK columns; no payload, no hooks, no privacy). Generated update builders get direct id-only edge helpers: `tags.add(tagId)` / `tags.remove(tagId)` / `tags.set(listOf(...))`. See [Edges → Many-to-Many](03-edges.md#many-to-many) for the full mutator API and the transaction/capability requirements. |
+| `.throughLink<Junction>(sourceEdge, targetEdge)` | Junction is pure relationship storage (id + the two FK columns; no payload, no hooks, no privacy). Generated update drafts get direct id-only edge helpers: `tags.add(tagId)` / `tags.remove(tagId)` / `tags.set(listOf(...))`. See [Edges → Many-to-Many](03-edges.md#many-to-many) for the full mutator API and the transaction/capability requirements. |
 
 The two refs always name the junction's `belongsTo` edges in the
 order **source first, target second** — `sourceEdge` points back at
@@ -892,6 +892,6 @@ class User : EntSchema("users", clientName = "users") {
 }
 ```
 
-Mixin fields are included in the generated entity class, create draft,
-and update builder. Immutable fields (like `createdAt` above) are omitted
-from the update builder. Relationship edges stay on the host schema.
+Mixin fields are included in the generated entity class and create/update
+drafts. Immutable fields (like `createdAt` above) are omitted from the update
+draft. Relationship edges stay on the host schema.

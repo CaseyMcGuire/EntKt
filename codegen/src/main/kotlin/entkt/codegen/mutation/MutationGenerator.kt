@@ -19,7 +19,7 @@ import entkt.schema.EntSchema
 
 /**
  * Generates a `${SchemaName}Mutation` interface per entity. Both the
- * generated Create and Update builders implement this interface, which
+ * generated create and update drafts implement this interface, which
  * exposes all **mutable** field properties (immutable fields are excluded
  * since they can't be changed on update). Edge FK properties are included.
  *
@@ -126,9 +126,8 @@ internal class MutationGenerator(
         // The restricted hook-facing view passed to `beforeCreate`.
         // Extends `Mutation` and adds the create-only writable surface:
         // immutable scalar fields plus immutable field-backed FKs.
-        // Hides `save()`, `client`, `driver`, hook lists, the
-        // staging/assigned private fields, and any other concrete-builder
-        // surface that hooks must not reach.
+        // Hides draft assignment inspection, staging fields, and every other
+        // concrete-draft surface that hooks must not reach.
         val createView = interfaceType(createViewName) {
             addSuperinterface(ClassName(packageName, interfaceName))
             for (field in immutableFields) {

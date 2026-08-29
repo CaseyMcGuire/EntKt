@@ -6,15 +6,18 @@ import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.ArticleUpdatePrivacyRule
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.User
+import entkt.integrationtest.ent.UserUpdateDraft
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
+import entkt.runtime.mutation.UpdateMutation
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
+import entkt.runtime.result.EntMutationAlreadyConsumedException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntTargetAbsentException
@@ -23,6 +26,7 @@ import entkt.runtime.result.MutationWriteState
 import kotlin.Unit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertSame
@@ -62,6 +66,26 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
                 articles(AllowAll)
                 users(OpenUser)
             }
+        }
+    }
+
+    @Test
+    fun `update returns a configurable single-use mutation`() {
+        val client = freshClient()
+        val user = client.users.create {
+            name = "Before"
+            email = "update-operation@example.com"
+        }.saveAndLoad(testViewerContext).getOrThrow()
+
+        val mutation: UpdateMutation<UserUpdateDraft, User> = client.users.update(user.id) {
+            name = "Configured"
+        }
+        mutation.configure { name = "$name again" }
+
+        val updated = mutation.saveAndLoad(testViewerContext).getOrThrow()
+        assertEquals("Configured again", updated.name)
+        assertFailsWith<EntMutationAlreadyConsumedException> {
+            mutation.configure { name = "too late" }
         }
     }
 

@@ -185,12 +185,12 @@ For a field-backed FK whose backing property is named `writer`
 and whose column is `author_id`:
 
 - **Entity class** exposes `writer: UUID` (not `authorId: UUID`).
-- **Create builder** exposes `writer: UUID?` as the FK setter.
-- **Update builder** exposes `writer: UUID?` as the FK setter. It
+- **Create draft** exposes `writer: UUID?` as the FK setter.
+- **Update draft** exposes `writer: UUID?` as the FK setter. It
   does **not** expose `unsetWriter()` — per the RFC 07 implementation,
   `unset{X}()` methods live only on the private hook-facing adapter
   surfaced via `${name}UpdateMutationView`, never on the public
-  update builder. Callers running outside hooks clear the FK via
+  update draft. Callers running outside hooks clear the FK via
   `update(id) { writer = null }`.
 - **`${name}UpdateMutationView`** exposes `unsetWriter()` as the
   nullable-clear helper for hooks (`ctx.mutation.unsetWriter()`).
