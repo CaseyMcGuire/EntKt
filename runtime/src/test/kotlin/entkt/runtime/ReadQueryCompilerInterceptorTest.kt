@@ -44,7 +44,7 @@ class ReadQueryCompilerInterceptorTest {
 
     private val queryCompiler = ReadQueryCompiler(
         driver = NoopDriver,
-        registeredInterceptorsProvider = { EntInterceptorsConfig().resolveForInternalUse() },
+        registeredInterceptors = EntInterceptorsConfig().resolveForInternalUse(),
     )
 
     private fun builder(

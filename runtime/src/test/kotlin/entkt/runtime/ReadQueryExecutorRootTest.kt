@@ -22,8 +22,8 @@ import entkt.runtime.query.InterceptScope
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.query.execution.LoadPrivacyEvaluator
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
+import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntityKey
@@ -158,9 +158,13 @@ class ReadQueryExecutorRootTest {
 
     private fun queryExecutor(adapter: Adapter): ReadQueryExecutor<Item> = ReadQueryExecutor(
         driver = adapter.driver,
-        readExecutionGuard = { adapter.events += "read-guard" },
-        registeredInterceptorsProvider = { adapter.interceptors },
-        loadPrivacyEvaluator = object : LoadPrivacyEvaluator {
+        executionHost = object : ReadQueryExecutionHost {
+            override val entityInterceptors = adapter.interceptors
+
+            override fun checkReadExecution() {
+                adapter.events += "read-guard"
+            }
+
             override fun isConfigured(entity: EntityMapping<*>): Boolean {
                 assertSame(adapter as Any, entity as Any)
                 adapter.events += "has-privacy"

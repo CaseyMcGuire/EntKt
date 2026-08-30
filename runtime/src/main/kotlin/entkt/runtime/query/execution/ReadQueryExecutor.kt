@@ -8,7 +8,6 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.query.ResolvedEntInterceptorsConfig
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.result.ReadResult
 import java.util.concurrent.CancellationException
@@ -23,18 +22,16 @@ import java.util.concurrent.CancellationException
 @EntktInternal
 class ReadQueryExecutor<Entity : EntEntity<*>>(
     private val driver: DatabaseDriver,
-    private val readExecutionGuard: () -> Unit,
-    registeredInterceptorsProvider: () -> ResolvedEntInterceptorsConfig,
-    loadPrivacyEvaluator: LoadPrivacyEvaluator,
+    private val executionHost: ReadQueryExecutionHost,
 ) {
     private val queryCompiler = ReadQueryCompiler(
         driver = driver,
-        registeredInterceptorsProvider = registeredInterceptorsProvider,
+        registeredInterceptors = executionHost.entityInterceptors,
     )
 
     private val entityGraphLoader = EntityGraphLoader(
         storage = DatabaseGraphStorage(driver, queryCompiler),
-        loadPrivacyEvaluator = loadPrivacyEvaluator,
+        loadPrivacyEvaluator = executionHost,
     )
 
     /** Load root entities, authorize them, and recursively load their selected edges. */
@@ -49,7 +46,7 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
         }
         return captureFailure {
             val query = captureQuery()
-            readExecutionGuard()
+            executionHost.checkReadExecution()
             entityGraphLoader.load(
                 query = query,
                 operation = operation,
@@ -65,7 +62,7 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
     ): StorageQuerySpec<Entity> {
-        readExecutionGuard()
+        executionHost.checkReadExecution()
         return queryCompiler.compile(query, operation, viewerContext)
     }
 

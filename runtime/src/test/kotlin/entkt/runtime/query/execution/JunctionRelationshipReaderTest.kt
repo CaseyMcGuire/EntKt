@@ -235,7 +235,7 @@ class JunctionRelationshipReaderTest {
             driver = driver,
             queryCompiler = ReadQueryCompiler(
                 driver = driver,
-                registeredInterceptorsProvider = { interceptors.resolveForInternalUse() },
+                registeredInterceptors = interceptors.resolveForInternalUse(),
             ),
         )
     }

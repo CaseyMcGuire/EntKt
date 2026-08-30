@@ -48,14 +48,13 @@ abstract class EntityQueryBuilder<
     var queryOffset: Int? = null
         private set
 
-    private val readQueryExecutor: ReadQueryExecutor<Entity> by lazy(LazyThreadSafetyMode.NONE) {
-        val host = requireExecutionHost()
-        ReadQueryExecutor(
-            driver = driver,
-            readExecutionGuard = { host.checkReadExecution() },
-            registeredInterceptorsProvider = { host.entityInterceptors },
-            loadPrivacyEvaluator = host,
-        )
+    private val readQueryExecutor: ReadQueryExecutor<Entity>? by lazy(LazyThreadSafetyMode.NONE) {
+        executionHost?.let { host ->
+            ReadQueryExecutor(
+                driver = driver,
+                executionHost = host,
+            )
+        }
     }
 
     final override fun where(predicate: Predicate<Entity>): Self {
@@ -101,19 +100,23 @@ abstract class EntityQueryBuilder<
         operation: ReadOperation,
         maximumRows: Int?,
         structuralPredicates: List<Predicate<Entity>> = emptyList(),
-    ): ReadResult<List<Entity>> = readQueryExecutor.readRootQuery(
-        viewerContext = viewerContext,
-        captureQuery = { captureEntityQuery(structuralPredicates) },
-        operation = operation,
-        maximumRows = maximumRows,
-    )
+    ): ReadResult<List<Entity>> {
+        val executor = readQueryExecutor
+            ?: return ReadResult.failedForInternalUse(missingExecutionHostException())
+        return executor.readRootQuery(
+            viewerContext = viewerContext,
+            captureQuery = { captureEntityQuery(structuralPredicates) },
+            operation = operation,
+            maximumRows = maximumRows,
+        )
+    }
 
     /** Compile this builder's captured shape for a framework-owned storage operation. */
     @EntktInternal
     fun compileEntityQuery(
         viewerContext: ViewerContext,
         operation: ReadOperation,
-    ): StorageQuerySpec<Entity> = readQueryExecutor.compileEntityQuery(
+    ): StorageQuerySpec<Entity> = requireReadQueryExecutor().compileEntityQuery(
         viewerContext = viewerContext,
         query = captureEntityQuery(),
         operation = operation,
@@ -136,6 +139,9 @@ abstract class EntityQueryBuilder<
             is ReadResult.Failed -> result
         }
 
-    private fun requireExecutionHost(): ReadQueryExecutionHost = executionHost
-        ?: error("$entityName query requires a client for privacy enforcement")
+    private fun requireReadQueryExecutor(): ReadQueryExecutor<Entity> = readQueryExecutor
+        ?: throw missingExecutionHostException()
+
+    private fun missingExecutionHostException(): IllegalStateException =
+        IllegalStateException("$entityName query requires a client for privacy enforcement")
 }

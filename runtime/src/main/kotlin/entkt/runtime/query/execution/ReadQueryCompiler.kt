@@ -51,7 +51,7 @@ private const val EDGE_PREDICATE_MAX_DEPTH: Int = 32
 @EntktInternal
 class ReadQueryCompiler(
     private val driver: DatabaseDriver,
-    private val registeredInterceptorsProvider: () -> ResolvedEntInterceptorsConfig,
+    private val registeredInterceptors: ResolvedEntInterceptorsConfig,
 ) {
     /** Apply traversal and interceptor stages at every node in [query]. */
     fun <Entity : EntEntity<*>> compile(
@@ -261,7 +261,6 @@ class ReadQueryCompiler(
         context: QueryContext,
         structuralSingleBindTransport: Boolean = false,
     ): StorageQuerySpec<Entity> {
-        val interceptors = registeredInterceptorsProvider()
         val queryBuilder = QuerySpecBuilder(
             table = entity.table,
             entity = entity.entityClass,
@@ -281,8 +280,8 @@ class ReadQueryCompiler(
             builder = queryBuilder,
             context = context,
             entityName = entity.entityName,
-            entityInterceptors = interceptors.entityInterceptorsFor(entity.clientName),
-            globalInterceptors = interceptors.globals(),
+            entityInterceptors = registeredInterceptors.entityInterceptorsFor(entity.clientName),
+            globalInterceptors = registeredInterceptors.globals(),
         )
 
         val queryAfterInterceptors = queryBuilder.build()

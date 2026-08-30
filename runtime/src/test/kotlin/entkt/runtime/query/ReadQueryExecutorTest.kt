@@ -11,8 +11,8 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
-import entkt.runtime.query.execution.LoadPrivacyEvaluator
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
+import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ReadResult
@@ -71,9 +71,11 @@ class ReadQueryExecutorTest {
         }
         val executor = ReadQueryExecutor<Item>(
             driver = driver,
-            readExecutionGuard = {},
-            registeredInterceptorsProvider = { interceptors.resolveForInternalUse() },
-            loadPrivacyEvaluator = object : LoadPrivacyEvaluator {
+            executionHost = object : ReadQueryExecutionHost {
+                override val entityInterceptors = interceptors.resolveForInternalUse()
+
+                override fun checkReadExecution() = Unit
+
                 override fun isConfigured(entity: EntityMapping<*>): Boolean = false
 
                 override fun <Entity : EntEntity<*>> evaluate(
