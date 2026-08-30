@@ -113,9 +113,9 @@ internal class RepoGenerator(
         val indexesClass = ClassName(packageName, "${schemaName}Indexes")
         val mutationClass = ClassName(packageName, "${schemaName}Mutation")
         val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
-        val entityHooksClass = ClassName(packageName, "${schemaName}Hooks")
-        val privacyConfigClass = ClassName(packageName, "${schemaName}PrivacyConfig")
-        val validationConfigClass = ClassName(packageName, "${schemaName}ValidationConfig")
+        val entityHooksType = resolvedEntityHooksType(packageName, schemaName)
+        val privacyConfigType = resolvedEntityPrivacyConfigType(packageName, schemaName)
+        val validationConfigType = resolvedEntityValidationConfigType(packageName, schemaName)
         val loadItemClass = ClassName(packageName, "${schemaName}LoadPrivacyItem")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
@@ -166,9 +166,9 @@ internal class RepoGenerator(
                 addModifiers(KModifier.INTERNAL)
                 parameter("driver", DRIVER)
                 parameter("client", clientClass)
-                parameter("configuredHooks", entityHooksClass)
-                parameter("configuredPrivacy", privacyConfigClass)
-                parameter("configuredValidation", validationConfigClass)
+                parameter("configuredHooks", entityHooksType)
+                parameter("configuredPrivacy", privacyConfigType)
+                parameter("configuredValidation", validationConfigType)
             }
             property("driver", DRIVER) {
                 addModifiers(KModifier.PRIVATE)
@@ -197,12 +197,12 @@ internal class RepoGenerator(
                 )
             }
             // Privacy config
-            property("privacyConfig", privacyConfigClass) {
+            property("privacyConfig", privacyConfigType) {
                 addModifiers(KModifier.INTERNAL)
                 initializer("configuredPrivacy")
             }
             // Validation config
-            property("validationConfig", validationConfigClass) {
+            property("validationConfig", validationConfigType) {
                 addModifiers(KModifier.INTERNAL)
                 initializer("configuredValidation")
             }
@@ -911,7 +911,7 @@ internal class RepoGenerator(
     ): PropertySpec = property(name, type) {
         addModifiers(KModifier.PRIVATE)
         initializer(
-            "configuredHooks.%L.snapshotForInternalUse()",
+            "configuredHooks.%L",
             name.removeSuffix("Hooks"),
         )
     }

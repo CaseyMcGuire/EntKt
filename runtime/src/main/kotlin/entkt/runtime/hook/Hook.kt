@@ -59,13 +59,6 @@ class HookRegistry<T> @EntktInternal constructor() {
     /** Return an ordered copy detached from subsequent configuration changes. */
     @EntktInternal
     fun snapshotForInternalUse(): List<BatchHook<T>> = registrations.toList()
-
-    /** Copy an existing registry while resolving generated client configuration. */
-    @EntktInternal
-    fun copyFromForInternalUse(source: HookRegistry<T>) {
-        registrations.clear()
-        registrations += source.registrations
-    }
 }
 
 /** Construct an explicitly batch-aware lifecycle hook. */

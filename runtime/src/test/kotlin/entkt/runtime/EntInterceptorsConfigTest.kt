@@ -73,21 +73,25 @@ class EntInterceptorsConfigTest {
     }
 
     @Test
-    fun `snapshot detaches entity and global registration containers`() {
+    fun `resolution detaches and freezes entity and global registration containers`() {
         val config = EntInterceptorsConfig()
         config.addEntity("posts", "initial-entity", noop)
         config.addGlobal("initial-global", noopGlobal)
 
-        val snapshot = config.snapshotForInternalUse()
+        val resolved = config.resolveForInternalUse()
 
         config.addEntity("posts", "late-entity", noop)
         config.addGlobal("late-global", noopGlobal)
 
         assertEquals(
             listOf("initial-entity"),
-            snapshot.entityInterceptorsFor<Post>("posts").map { it.name },
+            resolved.entityInterceptorsFor<Post>("posts").map { it.name },
         )
-        assertEquals(listOf("initial-global"), snapshot.globals().map { it.name })
+        assertEquals(listOf("initial-global"), resolved.globals().map { it.name })
+        assertFailsWith<UnsupportedOperationException> {
+            @Suppress("UNCHECKED_CAST")
+            (resolved.globals() as MutableList<Any>).clear()
+        }
     }
 
     @Test

@@ -30,18 +30,16 @@ class HookRegistryTest {
     }
 
     @Test
-    fun `snapshots and copied registries are detached from later registrations`() {
+    fun `snapshots are detached from later registrations`() {
         val calls = mutableListOf<String>()
         val source = HookRegistry<Int>()
         source { calls += "initial:$it" }
 
         val snapshot = source.snapshotForInternalUse()
-        val copy = HookRegistry<Int>().also { it.copyFromForInternalUse(source) }
         source { calls += "late:$it" }
 
         runBatchHooksForInternalUse(listOf(1), snapshot)
-        runBatchHooksForInternalUse(listOf(2), copy.snapshotForInternalUse())
 
-        assertEquals(listOf("initial:1", "initial:2"), calls)
+        assertEquals(listOf("initial:1"), calls)
     }
 }

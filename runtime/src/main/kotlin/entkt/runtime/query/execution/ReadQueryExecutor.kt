@@ -6,9 +6,9 @@ import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.query.EntInterceptorsConfig
 import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.ReadOperation
+import entkt.runtime.query.ResolvedEntInterceptorsConfig
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.result.ReadResult
 import java.util.concurrent.CancellationException
@@ -24,7 +24,7 @@ import java.util.concurrent.CancellationException
 class ReadQueryExecutor<Entity : EntEntity<*>>(
     private val driver: DatabaseDriver,
     private val readExecutionGuard: () -> Unit,
-    registeredInterceptorsProvider: () -> EntInterceptorsConfig,
+    registeredInterceptorsProvider: () -> ResolvedEntInterceptorsConfig,
     loadPrivacyEvaluatorProvider: () -> LoadPrivacyEvaluator,
 ) {
     private val queryCompiler = ReadQueryCompiler(

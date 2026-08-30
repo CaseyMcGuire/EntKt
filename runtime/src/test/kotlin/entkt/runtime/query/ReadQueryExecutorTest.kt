@@ -72,7 +72,7 @@ class ReadQueryExecutorTest {
         val executor = ReadQueryExecutor<Item>(
             driver = driver,
             readExecutionGuard = {},
-            registeredInterceptorsProvider = { interceptors },
+            registeredInterceptorsProvider = { interceptors.resolveForInternalUse() },
             loadPrivacyEvaluatorProvider = {
                 object : LoadPrivacyEvaluator {
                     override fun isConfigured(entity: EntityMapping<*>): Boolean = false

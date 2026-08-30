@@ -190,6 +190,14 @@ class PrivacyGeneratorTest {
         assert(output.contains("var deleteDerivesFromCreate: Boolean = false")) {
             "Should have deleteDerivesFromCreate flag\n$output"
         }
+        val normalized = output.replace("\\s+".toRegex(), " ")
+        assert(
+            normalized.contains(
+                "fun resolveForInternalUse(): ResolvedEntityPrivacyConfig<" +
+                    "UserLoadBatchPrivacyRule, UserCreateBatchPrivacyRule, " +
+                    "UserUpdateBatchPrivacyRule, UserDeleteBatchPrivacyRule>",
+            ),
+        ) { "Mutable privacy config should resolve to the runtime immutable type\n$output" }
     }
 
     @Test

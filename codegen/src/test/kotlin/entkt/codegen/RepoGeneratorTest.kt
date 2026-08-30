@@ -377,19 +377,19 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo snapshots configured hooks during construction`() {
+    fun `repo receives resolved hooks during construction`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("configuredHooks: CarHooks")) {
-            "The constructor should receive the entity hook configuration\n$output"
+        assert(output.contains("configuredHooks: ResolvedEntityHooks<CarMutation, CarCreateHookContext, CarUpdateHookContext, Car>")) {
+            "The constructor should receive resolved entity hooks\n$output"
         }
-        assert(output.contains("configuredHooks.beforeSave.snapshotForInternalUse()")) {
-            "Should snapshot beforeSaveHooks from config\n$output"
+        assert(output.contains("beforeSaveHooks: List<BatchHook<CarMutation>> = configuredHooks.beforeSave")) {
+            "Should use the resolved beforeSave hooks\n$output"
         }
-        assert(output.contains("configuredHooks.afterDelete.snapshotForInternalUse()")) {
-            "Should snapshot afterDeleteHooks from config\n$output"
+        assert(output.contains("afterDeleteHooks: List<BatchHook<Car>> = configuredHooks.afterDelete")) {
+            "Should use the resolved afterDelete hooks\n$output"
         }
         assert(!output.contains("fun applyHooks"))
     }
@@ -617,9 +617,9 @@ class RepoGeneratorTest {
     fun `repo has privacy config property`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("internal val privacyConfig: CarPrivacyConfig")) {
+        assert(output.contains("internal val privacyConfig: ResolvedEntityPrivacyConfig<CarLoadBatchPrivacyRule, CarCreateBatchPrivacyRule, CarUpdateBatchPrivacyRule, CarDeleteBatchPrivacyRule>")) {
             "Should have internal privacyConfig property\n$output"
         }
     }
@@ -628,12 +628,13 @@ class RepoGeneratorTest {
     fun `repo receives privacy configuration in its constructor`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("configuredPrivacy: CarPrivacyConfig")) {
+        val type = "ResolvedEntityPrivacyConfig<CarLoadBatchPrivacyRule, CarCreateBatchPrivacyRule, CarUpdateBatchPrivacyRule, CarDeleteBatchPrivacyRule>"
+        assert(output.contains("configuredPrivacy: $type")) {
             "Should accept privacy configuration in the constructor\n$output"
         }
-        assert(output.contains("internal val privacyConfig: CarPrivacyConfig = configuredPrivacy"))
+        assert(output.contains("internal val privacyConfig: $type = configuredPrivacy"))
         assert(!output.contains("applyPrivacy") && !output.contains("copyPrivacyFrom"))
     }
 
@@ -887,9 +888,9 @@ class RepoGeneratorTest {
     fun `repo has validation config property`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("internal val validationConfig: CarValidationConfig")) {
+        assert(output.contains("internal val validationConfig: ResolvedEntityValidationConfig<CarCreateBatchValidationRule, CarUpdateBatchValidationRule, CarDeleteBatchValidationRule>")) {
             "Should have internal validationConfig property\n$output"
         }
     }
@@ -898,12 +899,13 @@ class RepoGeneratorTest {
     fun `repo receives validation configuration in its constructor`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("configuredValidation: CarValidationConfig")) {
+        val type = "ResolvedEntityValidationConfig<CarCreateBatchValidationRule, CarUpdateBatchValidationRule, CarDeleteBatchValidationRule>"
+        assert(output.contains("configuredValidation: $type")) {
             "Should accept validation configuration in the constructor\n$output"
         }
-        assert(output.contains("internal val validationConfig: CarValidationConfig = configuredValidation"))
+        assert(output.contains("internal val validationConfig: $type = configuredValidation"))
         assert(!output.contains("applyValidation") && !output.contains("copyValidationFrom"))
     }
 

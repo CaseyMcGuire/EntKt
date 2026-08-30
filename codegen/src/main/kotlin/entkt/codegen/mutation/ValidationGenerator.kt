@@ -23,6 +23,9 @@ private val VALIDATION_RULE = ClassName("entkt.runtime.validation", "ValidationR
 private val BATCH_VALIDATION_RULE = ClassName("entkt.runtime.validation", "BatchValidationRule")
 private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
+private val VALIDATION_ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
+private val RESOLVED_ENTITY_VALIDATION_CONFIG =
+    ClassName("entkt.runtime.validation", "ResolvedEntityValidationConfig")
 
 /**
  * Emits per-entity validation infrastructure:
@@ -175,6 +178,24 @@ internal class ValidationGenerator(
             property("updateDerivesFromCreate", BOOLEAN) {
                 mutable(true)
                 initializer("false")
+            }
+            val resolvedType = RESOLVED_ENTITY_VALIDATION_CONFIG.parameterizedBy(
+                createRuleType,
+                updateRuleType,
+                deleteRuleType,
+            )
+            function("resolveForInternalUse", resolvedType) {
+                addAnnotation(VALIDATION_ENTKT_INTERNAL)
+                addModifiers(KModifier.INTERNAL)
+                statement(
+                    "return %T(\n" +
+                        "  createRules = createRules,\n" +
+                        "  updateRules = updateRules,\n" +
+                        "  deleteRules = deleteRules,\n" +
+                        "  updateDerivesFromCreate = updateDerivesFromCreate,\n" +
+                        ")",
+                    resolvedType,
+                )
             }
         }
     }

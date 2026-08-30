@@ -174,14 +174,14 @@ class DeleteMutationExecutorTest {
         val receivedRuleClients = mutableListOf<Any>()
         val mapping = RecordingMapping(events)
         val queryHost = object : ReadQueryExecutionHost {
-            override val entityInterceptors: EntInterceptorsConfig = EntInterceptorsConfig().apply {
+            override val entityInterceptors = EntInterceptorsConfig().apply {
                 addEntity<Widget>(mapping.clientName, "delete-selection") { scope, context ->
                     events += "select"
                     receivedViewerContexts += context.viewerContext
                     receivedReadOperations += context.operation
                     effectivePredicates.forEach(scope::addPredicate)
                 }
-            }
+            }.resolveForInternalUse()
 
             override fun checkReadExecution() {
                 events += "read-guard"

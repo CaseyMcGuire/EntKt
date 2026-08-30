@@ -98,25 +98,26 @@ class EntGeneratorTest {
         val files = generator.generate(schemas)
 
         // Per schema: entity, mutation, create, update, query, repo, privacy, validation.
-        // Each schema also gets its typed hooks class. The schema-set-level
-        // files are EntReadRuntime, ReadOnlyEntClient, and eight client types.
+        // The schema-set-level files are EntReadRuntime, ReadOnlyEntClient, the
+        // public client DSL/facades, and three immutable resolved-config types.
         // User additionally gets an index-helper file; Car has no eligible
         // indexes and therefore has no corresponding file.
-        assertEquals(9 * schemas.size + 10 + 1, files.size)
+        assertEquals(8 * schemas.size + 13 + 1, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
                 "Car", "CarMutation", "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
-                "CarHooks",
                 "User", "UserMutation", "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
-                "UserHooks",
                 "UserIndexes",
                 "EntReadRuntime",
                 "ReadOnlyEntClient",
                 "EntClientHooks",
+                "ResolvedEntClientHooks",
                 "EntClientPolicies",
+                "ResolvedEntClientPolicies",
                 "EntClientInterceptors",
                 "EntClientConfig",
+                "ResolvedEntClientConfig",
                 "EntClientScope",
                 "_EntHookClientScope",
                 "EntTransactionClient",
@@ -311,12 +312,13 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("UserPrivacy.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserValidation.kt")))
             for (clientFile in listOf(
-                "CarHooks.kt",
-                "UserHooks.kt",
                 "EntClientHooks.kt",
+                "ResolvedEntClientHooks.kt",
                 "EntClientPolicies.kt",
+                "ResolvedEntClientPolicies.kt",
                 "EntClientInterceptors.kt",
                 "EntClientConfig.kt",
+                "ResolvedEntClientConfig.kt",
                 "EntClientScope.kt",
                 "_EntHookClientScope.kt",
                 "EntTransactionClient.kt",

@@ -64,11 +64,11 @@ class EntityQueryBuilderTest {
         val interceptorContexts: MutableList<QueryContext> = mutableListOf()
         val loadViewerContexts: MutableList<ViewerContext> = mutableListOf()
 
-        override val entityInterceptors: EntInterceptorsConfig = EntInterceptorsConfig().apply {
+        override val entityInterceptors = EntInterceptorsConfig().apply {
             addEntity<Item>(ItemMapping.clientName, "record") { _, context ->
                 interceptorContexts += context
             }
-        }
+        }.resolveForInternalUse()
 
         override fun checkReadExecution() {
             guardCalls++

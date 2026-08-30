@@ -16,7 +16,6 @@ import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EdgeTraversal
 import entkt.runtime.query.EntityQuery
-import entkt.runtime.query.EntInterceptorsConfig
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.AbortQueryRejected
 import entkt.runtime.query.GlobalInterceptScopeImpl
@@ -27,6 +26,7 @@ import entkt.runtime.query.QuerySpecBuilder
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.RegisteredGlobalInterceptor
 import entkt.runtime.query.RegisteredInterceptor
+import entkt.runtime.query.ResolvedEntInterceptorsConfig
 import java.util.Collections
 import kotlin.reflect.KClass
 
@@ -51,7 +51,7 @@ private const val EDGE_PREDICATE_MAX_DEPTH: Int = 32
 @EntktInternal
 class ReadQueryCompiler(
     private val driver: DatabaseDriver,
-    private val registeredInterceptorsProvider: () -> EntInterceptorsConfig,
+    private val registeredInterceptorsProvider: () -> ResolvedEntInterceptorsConfig,
 ) {
     /** Apply traversal and interceptor stages at every node in [query]. */
     fun <Entity : EntEntity<*>> compile(

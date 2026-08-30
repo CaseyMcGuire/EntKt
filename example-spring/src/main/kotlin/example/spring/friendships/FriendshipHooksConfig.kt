@@ -1,9 +1,10 @@
 package example.spring.friendships
 
 import entkt.runtime.mutation.orElse
+import entkt.runtime.hook.EntityHooks
 import example.ent.Friendship
 import example.ent.FriendshipCreateHookContext
-import example.ent.FriendshipHooks
+import example.ent.FriendshipMutation
 import example.ent.FriendshipUpdateHookContext
 import example.schema.FriendshipStatus
 import org.springframework.stereotype.Component
@@ -11,7 +12,14 @@ import org.springframework.stereotype.Component
 @Component
 class FriendshipHooksConfig {
 
-    fun apply(hooks: FriendshipHooks) {
+    fun apply(
+        hooks: EntityHooks<
+            FriendshipMutation,
+            FriendshipCreateHookContext,
+            FriendshipUpdateHookContext,
+            Friendship,
+        >,
+    ) {
         hooks.beforeCreate(::requireValidParticipants)
         hooks.beforeCreate(::forbidDuplicateRequest)
         hooks.beforeUpdate(::enforceStatusTransition)

@@ -33,10 +33,10 @@ package entkt.query
  *   [TraversalSourceShape]'s entity scope is established by generated
  *   `queryX()` traversal code from the schema; a hand-built mismatch
  *   would lower into a subquery against the wrong table or column.
- * - **The raw interceptor registry** (`EntInterceptorsConfig` access via
- *   `entityInterceptors`, `addEntity`): registration is scope-key-keyed
- *   with an unchecked cast, so untyped access could bind a
- *   wrong-entity interceptor to another repo's scope.
+ * - **Interceptor registry internals** (`EntInterceptorsConfig.addEntity`,
+ *   `ResolvedEntInterceptorsConfig` access via `entityInterceptors`):
+ *   registration and lookup are scope-key-keyed with an unchecked cast, so
+ *   untyped access could bind or retrieve a wrong-entity interceptor.
  * - **Query traversal seeders** (`snapshotForTraversal`,
  *   `seedEdgeTraversal`, `setDeferredSourceStep`): spoofed traversal
  *   context would corrupt the interceptor QueryContext view and the

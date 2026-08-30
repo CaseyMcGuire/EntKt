@@ -39,6 +39,9 @@ private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val PENDING_EDGE_OPS = ClassName("entkt.runtime.mutation", "PendingEdgeOps")
 private val EDGE_CHANGES = ClassName("entkt.runtime.mutation", "EdgeChanges")
+private val PRIVACY_ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
+private val RESOLVED_ENTITY_PRIVACY_CONFIG =
+    ClassName("entkt.runtime.privacy", "ResolvedEntityPrivacyConfig")
 
 /**
  * Emits per-entity privacy infrastructure:
@@ -481,6 +484,27 @@ internal class PrivacyGenerator(
                     mutable(true)
                     initializer("false")
                 }
+            }
+            val resolvedType = RESOLVED_ENTITY_PRIVACY_CONFIG.parameterizedBy(
+                loadRuleType,
+                createRuleType,
+                updateRuleType,
+                deleteRuleType,
+            )
+            function("resolveForInternalUse", resolvedType) {
+                addAnnotation(PRIVACY_ENTKT_INTERNAL)
+                addModifiers(KModifier.INTERNAL)
+                statement(
+                    "return %T(\n" +
+                        "  loadRules = loadRules,\n" +
+                        "  createRules = createRules,\n" +
+                        "  updateRules = updateRules,\n" +
+                        "  deleteRules = deleteRules,\n" +
+                        "  updateDerivesFromCreate = updateDerivesFromCreate,\n" +
+                        "  deleteDerivesFromCreate = deleteDerivesFromCreate,\n" +
+                        ")",
+                    resolvedType,
+                )
             }
         }
     }

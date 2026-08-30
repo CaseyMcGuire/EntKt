@@ -404,23 +404,10 @@ public class EntInterceptorsConfig public constructor() {
     @entkt.query.EntktInternal
     public fun globals(): List<RegisteredGlobalInterceptor> = globalsList.toList()
 
-    /**
-     * Copy every registration into an independent configuration.
-     *
-     * Interceptor instances themselves are intentionally shared; only the mutable registration
-     * containers are detached. Generated clients call this after their configuration block so a
-     * retained DSL receiver cannot change an already-constructed client or any client derived
-     * from it.
-     */
+    /** Resolve every registration into an immutable, independent configuration. */
     @entkt.query.EntktInternal
-    public fun snapshotForInternalUse(): EntInterceptorsConfig {
-        val snapshot = EntInterceptorsConfig()
-        for ((scopeKey, registrations) in perEntity) {
-            snapshot.perEntity[scopeKey] = registrations.toMutableList()
-        }
-        snapshot.globalsList.addAll(globalsList)
-        return snapshot
-    }
+    public fun resolveForInternalUse(): ResolvedEntInterceptorsConfig =
+        ResolvedEntInterceptorsConfig(perEntity, globalsList)
 
     private fun validateApplicationName(name: String, scope: String) {
         require(name.isNotBlank()) { "Interceptor name must not be blank (scope='$scope')" }

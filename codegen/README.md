@@ -45,9 +45,9 @@ For each schema the generator emits:
   entity, constructed with a `DatabaseDriver` and an optional
   lifecycle-configuration lambda. Every execution terminal receives its
   operation-scoped `ViewerContext` explicitly.
-- **Hooks DSL classes** — `EntClientConfig`, `EntClientHooks`, and per-entity
-  `{Entity}Hooks` classes that provide a structured DSL for registering
-  lifecycle hooks at client construction time.
+- **Hooks DSL** — generated `EntClientConfig` and `EntClientHooks` wiring uses
+  the runtime `EntityHooks<...>` holder to register type-safe lifecycle hooks
+  at client construction time; no per-entity hook-holder class is generated.
 - **Lifecycle rule types** — generated scalar and batch aliases such as
   `UserLoadPrivacyRule` / `UserLoadBatchPrivacyRule` and
   `UserCreateValidationRule` / `UserCreateBatchValidationRule`. Both forms

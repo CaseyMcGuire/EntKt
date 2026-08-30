@@ -115,10 +115,11 @@ class ClientGeneratorTest {
         ) {
             "The client must initialize the resolved default from configuration\n$output"
         }
-        // Transaction clients thread runtime overrides through.
-        assert(output.contains("tx.defaultRelationshipLocking = this.defaultRelationshipLocking")) {
-            "withTransaction must propagate defaultRelationshipLocking\n$output"
+        // Transaction clients reuse the immutable resolved value.
+        assert(output.contains("val tx = EntClient(txDriver, configuration)")) {
+            "withTransaction must reuse the resolved configuration\n$output"
         }
+        assert(!output.contains("tx.defaultRelationshipLocking ="))
         assert(!output.contains("scoped.defaultRelationshipLocking"))
     }
 
@@ -140,16 +141,16 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("EntClientConfig().apply(config).snapshotForInternalUse()")) {
-            "The public constructor should resolve and snapshot its configuration once\n$output"
+        assert(output.contains("EntClientConfig().apply(config).resolveForInternalUse()")) {
+            "The public constructor should resolve its configuration once\n$output"
         }
-        assert(output.contains("configuredHooks = configuration.hooksConfig.cars")) {
+        assert(output.contains("configuredHooks = configuration.hooks.cars")) {
             "The cars repo should receive configured hooks in its constructor\n$output"
         }
-        assert(output.contains("configuredPrivacy = configuration.policiesConfig.usersPrivacyConfig")) {
+        assert(output.contains("configuredPrivacy = configuration.policies.usersPrivacyConfig")) {
             "The users repo should receive privacy configuration in its constructor\n$output"
         }
-        assert(output.contains("configuredValidation = configuration.policiesConfig.usersValidationConfig")) {
+        assert(output.contains("configuredValidation = configuration.policies.usersValidationConfig")) {
             "The users repo should receive validation configuration in its constructor\n$output"
         }
         assert(!output.contains("attachClientForInternalUse") && !output.contains(".applyHooks("))
@@ -177,32 +178,16 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClientConfig snapshot detaches every mutable configuration registry`() {
+    fun `EntClientConfig resolves every mutable configuration registry`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
-        assert(
-            output.contains(
-                "snapshot.hooksConfig.cars.beforeSave.copyFromForInternalUse(" +
-                    "hooksConfig.cars.beforeSave)",
-            ),
-        ) { "Hook registrations should be copied into the snapshot\n$output" }
-        assert(
-            output.contains(
-                "snapshot.policiesConfig.usersPrivacyConfig.loadRules.addAll(" +
-                    "policiesConfig.usersPrivacyConfig.loadRules)",
-            ),
-        ) { "Privacy registrations should be copied into the snapshot\n$output" }
-        assert(
-            output.contains(
-                "snapshot.policiesConfig.usersValidationConfig.createRules.addAll(" +
-                    "policiesConfig.usersValidationConfig.createRules)",
-            ),
-        ) { "Validation registrations should be copied into the snapshot\n$output" }
-        assert(
-            output.contains(
-                "snapshot.interceptorsConfig.config = interceptorsConfig.config.snapshotForInternalUse()",
-            ),
-        ) { "Interceptor registrations should be copied into the snapshot\n$output" }
+        assert(output.contains("hooks = ResolvedEntClientHooks(hooksConfig)"))
+        assert(output.contains("source.cars.resolveForInternalUse()"))
+        assert(output.contains("policies = ResolvedEntClientPolicies(policiesConfig)"))
+        assert(output.contains("source.usersPrivacyConfig.resolveForInternalUse()"))
+        assert(output.contains("source.usersValidationConfig.resolveForInternalUse()"))
+        assert(output.contains("interceptors = interceptorsConfig.config.resolveForInternalUse()"))
+        assert(!output.contains("snapshotForInternalUse") && !output.contains("copyFromForInternalUse"))
     }
 
     @Test
@@ -220,12 +205,13 @@ class ClientGeneratorTest {
 
         assertEquals(
             setOf(
-                "CarHooks",
-                "UserHooks",
                 "EntClientHooks",
+                "ResolvedEntClientHooks",
                 "EntClientPolicies",
+                "ResolvedEntClientPolicies",
                 "EntClientInterceptors",
                 "EntClientConfig",
+                "ResolvedEntClientConfig",
                 "EntClientScope",
                 "_EntHookClientScope",
                 "EntTransactionClient",
@@ -346,57 +332,36 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `generates per-entity hooks DSL class`() {
+    fun `uses the generic runtime entity hooks holder`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("class CarHooks")) { "Should generate CarHooks\n$output" }
-        assert(output.contains("class UserHooks")) { "Should generate UserHooks\n$output" }
+        assert(output.contains("EntityHooks<CarMutation, CarCreateHookContext, CarUpdateHookContext, Car>"))
+        assert(output.contains("EntityHooks<UserMutation, UserCreateHookContext, UserUpdateHookContext, User>"))
+        assert(!output.contains("class CarHooks") && !output.contains("class UserHooks"))
     }
 
     @Test
-    fun `entity hooks class has typed registries for each lifecycle phase`() {
+    fun `resolved entity hooks preserve all schema-specific hook types`() {
         val schemas = buildSchemas()
-        val output = generator.generate(schemas).toString()
+        val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("val beforeSave: HookRegistry<CarMutation>")) {
-            "Should have beforeSave\n$output"
-        }
-        assert(output.contains("val beforeCreate: HookRegistry<CarCreateHookContext>")) {
-            "beforeCreate hook should be typed against CarCreateHookContext (restricted view + client)\n$output"
-        }
-        assert(output.contains("val afterCreate: HookRegistry<Car>")) {
-            "Should have afterCreate\n$output"
-        }
-        assert(output.contains("val beforeUpdate: HookRegistry<CarUpdateHookContext>")) {
-            "beforeUpdate now takes a CarUpdateHookContext\n$output"
-        }
-        assert(output.contains("val afterUpdate: HookRegistry<Car>")) {
-            "Should have afterUpdate\n$output"
-        }
-        assert(output.contains("val beforeDelete: HookRegistry<Car>")) {
-            "Should have beforeDelete\n$output"
-        }
-        assert(output.contains("val afterDelete: HookRegistry<Car>")) {
-            "Should have afterDelete\n$output"
-        }
-        assert(!output.contains("beforeCreateHooks") && !output.contains("beforeCreateBatchHook")) {
-            "Hook storage and overloads should live in runtime HookRegistry\n$output"
-        }
+        assert(output.contains("ResolvedEntityHooks<CarMutation, CarCreateHookContext, CarUpdateHookContext, Car>"))
+        assert(!output.contains("beforeCreateHooks") && !output.contains("beforeCreateBatchHook"))
     }
 
     @Test
     fun `generates EntClientHooks with per-entity methods`() {
         val schemas = buildSchemas()
-        val output = generator.generate(schemas).toString()
+        val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("class EntClientHooks")) {
             "Should generate EntClientHooks\n$output"
         }
-        assert(output.contains("fun cars(block: CarHooks.() -> Unit)")) {
+        assert(output.contains("fun cars(block: EntityHooks<CarMutation, CarCreateHookContext, CarUpdateHookContext, Car>.() -> Unit)")) {
             "Should have cars method on EntClientHooks\n$output"
         }
-        assert(output.contains("fun users(block: UserHooks.() -> Unit)")) {
+        assert(output.contains("fun users(block: EntityHooks<UserMutation, UserCreateHookContext, UserUpdateHookContext, User>.() -> Unit)")) {
             "Should have users method on EntClientHooks\n$output"
         }
     }
@@ -419,11 +384,10 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        // Check that @EntktDsl appears before each hooks class
-        val carHooksPos = output.indexOf("class CarHooks")
-        val entktDslBeforeCar = output.lastIndexOf("@EntktDsl", carHooksPos)
-        assert(entktDslBeforeCar != -1 && entktDslBeforeCar < carHooksPos) {
-            "CarHooks should be annotated with @EntktDsl\n$output"
+        val hooksPos = output.indexOf("class EntClientHooks")
+        val entktDslBeforeHooks = output.lastIndexOf("@EntktDsl", hooksPos)
+        assert(entktDslBeforeHooks != -1 && entktDslBeforeHooks < hooksPos) {
+            "EntClientHooks should be annotated with @EntktDsl\n$output"
         }
     }
 
@@ -511,10 +475,10 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("configuredPrivacy = configuration.policiesConfig.carsPrivacyConfig"))
-        assert(output.contains("configuredPrivacy = configuration.policiesConfig.usersPrivacyConfig"))
-        assert(output.contains("configuredValidation = configuration.policiesConfig.carsValidationConfig"))
-        assert(output.contains("configuredValidation = configuration.policiesConfig.usersValidationConfig"))
+        assert(output.contains("configuredPrivacy = configuration.policies.carsPrivacyConfig"))
+        assert(output.contains("configuredPrivacy = configuration.policies.usersPrivacyConfig"))
+        assert(output.contains("configuredValidation = configuration.policies.carsValidationConfig"))
+        assert(output.contains("configuredValidation = configuration.policies.usersValidationConfig"))
         assert(!output.contains("applyPrivacy") && !output.contains("applyValidation"))
     }
 

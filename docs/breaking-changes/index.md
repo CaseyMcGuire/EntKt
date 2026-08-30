@@ -30,6 +30,15 @@ above it.
 
 ## Unreleased
 
+- **Resolve client configuration and reuse generic entity hooks** (`codegen`, `runtime`)
+  Generated clients now resolve mutable hook, privacy, validation, and
+  interceptor DSL values into detached immutable runtime configuration before
+  constructing repositories. Generated `${Entity}Hooks` holder classes are
+  replaced by `EntityHooks<Mutation, CreateHookContext, UpdateHookContext,
+  Entity>`.
+  _Migration:_ change helper parameters that name `${Entity}Hooks` to the
+  corresponding parameterized `EntityHooks` type.
+
 - **Separate update drafts from executable update mutations** (`codegen`, `runtime`)
   Generated `${Entity}Update` classes are replaced by state-only
   `${Entity}UpdateDraft` values. Repository `update(id) { ... }` now returns a

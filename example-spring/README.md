@@ -137,7 +137,7 @@ curl localhost:8080/users/{id}/friends
 curl localhost:8080/users/{id}/friend-requests
 ```
 
-Friendship hooks (`FriendshipHooks.kt`) enforce:
+Friendship hooks (`FriendshipHooksConfig.kt`) enforce:
 - Requester and recipient must be different users
 - Duplicate friend requests are rejected
 - Only `PENDING → ACCEPTED` status transitions are allowed

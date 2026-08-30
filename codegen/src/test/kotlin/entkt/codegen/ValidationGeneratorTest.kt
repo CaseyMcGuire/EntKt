@@ -142,6 +142,14 @@ class ValidationGeneratorTest {
         assert(output.contains("var updateDerivesFromCreate: Boolean = false")) {
             "Should have updateDerivesFromCreate flag\n$output"
         }
+        val normalized = output.replace("\\s+".toRegex(), " ")
+        assert(
+            normalized.contains(
+                "fun resolveForInternalUse(): ResolvedEntityValidationConfig<" +
+                    "UserCreateBatchValidationRule, UserUpdateBatchValidationRule, " +
+                    "UserDeleteBatchValidationRule>",
+            ),
+        ) { "Mutable validation config should resolve to the runtime immutable type\n$output" }
     }
 
     @Test

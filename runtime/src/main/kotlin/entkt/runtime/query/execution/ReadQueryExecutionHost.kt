@@ -1,7 +1,7 @@
 package entkt.runtime.query.execution
 
 import entkt.query.EntktInternal
-import entkt.runtime.query.EntInterceptorsConfig
+import entkt.runtime.query.ResolvedEntInterceptorsConfig
 
 /**
  * Contextless services a generated query needs when it executes a read.
@@ -15,5 +15,5 @@ interface ReadQueryExecutionHost : LoadPrivacyEvaluator {
     fun checkReadExecution()
 
     /** Stable interceptor registry shared by queries hosted by this runtime. */
-    val entityInterceptors: EntInterceptorsConfig
+    val entityInterceptors: ResolvedEntInterceptorsConfig
 }

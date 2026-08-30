@@ -58,16 +58,12 @@ Codegen (`codegen/src/main/kotlin/entkt/codegen/`):
 - `EntClientConfig` gains an `interceptors { ... }` block; the
   generated `EntClientInterceptors` exposes one per-entity method
   per repo (`posts(interceptor, name = ...)`) plus `global(...)`
-- `EntClient` carries the `entityInterceptors:
-  EntInterceptorsConfig` and propagates it through
-  `withTransaction` / `withTransactionOrError` /
-  `withPrivacyContext` / the internal fixed-context clone. The
-  property is emitted as `@EntktInternal internal var` per the
-  phantom-typed-query-scopes RFC so application code in the
-  consuming module can't reach the raw config to call
-  `addEntity(scopeKey: String, ..., QueryInterceptor<E>)` with
-  a mismatched scope; same on `EntClientInterceptors.config`,
-  which carries the same annotation.
+- `EntClient` carries an immutable `entityInterceptors:
+  ResolvedEntInterceptorsConfig`. Construction detaches it from the mutable
+  `EntClientInterceptors` DSL holder, and transaction and read-only clients
+  share that resolved value. The property and raw DSL holder remain guarded
+  by `@EntktInternal` so application code cannot cross the unchecked,
+  string-keyed entity-scope boundary.
 - Every generated `*Query` class has an internal
   `runReadInterceptors(operation, entOperation, extraStructural)`
   helper that seeds the `QuerySpecBuilder`, runs the chain, walks
