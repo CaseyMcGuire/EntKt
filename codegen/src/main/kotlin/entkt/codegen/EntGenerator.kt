@@ -863,8 +863,8 @@ class EntGenerator(
                     fileCollisions.keys.joinToString("\n") { (_, name) ->
                         "  - more than one artifact generates '$name.kt' — a schema name " +
                             "collides with a derived artifact name (<Schema>Mutation/CreateDraft/" +
-                            "UpdateDraft/Query/Repo/Privacy/Validation/Indexes) or a reserved " +
-                            "client file (EntClient, ReadOnlyEntClient, EntReadRuntime)"
+                            "UpdateDraft/Query/Repo/Privacy/Validation/Indexes/Hooks) or a " +
+                            "generated client-support file"
                     },
             )
         }

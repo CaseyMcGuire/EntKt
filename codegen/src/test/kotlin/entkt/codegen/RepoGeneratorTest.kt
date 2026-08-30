@@ -385,10 +385,10 @@ class RepoGeneratorTest {
         assert(output.contains("configuredHooks: CarHooks")) {
             "The constructor should receive the entity hook configuration\n$output"
         }
-        assert(output.contains("configuredHooks.beforeSaveHooks.toList()")) {
+        assert(output.contains("configuredHooks.beforeSave.snapshotForInternalUse()")) {
             "Should snapshot beforeSaveHooks from config\n$output"
         }
-        assert(output.contains("configuredHooks.afterDeleteHooks.toList()")) {
+        assert(output.contains("configuredHooks.afterDelete.snapshotForInternalUse()")) {
             "Should snapshot afterDeleteHooks from config\n$output"
         }
         assert(!output.contains("fun applyHooks"))

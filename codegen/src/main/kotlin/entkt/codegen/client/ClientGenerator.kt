@@ -37,7 +37,6 @@ import entkt.codegen.metadata.ENTITY_SCHEMA
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
-private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val MUTATION_RUNTIME = ClassName("entkt.runtime.mutation.execution", "MutationRuntime")
 private val CREATE_MUTATION_EXECUTOR =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationExecutor")
@@ -54,14 +53,12 @@ private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "Tra
 private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "TransactionExecutionToken")
 private val TRANSACTION_EXECUTION_GUARD_FOR_INTERNAL_USE =
     MemberName("entkt.runtime.result", "transactionExecutionGuardForInternalUse")
-private val BATCH_HOOK = ClassName("entkt.runtime.hook", "BatchHook")
-private val HOOK = ClassName("entkt.runtime.hook", "Hook")
-private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
+private val HOOK_REGISTRY = ClassName("entkt.runtime.hook", "HookRegistry")
 
 /**
- * Emits the top-level `EntClient` that wires every per-schema repo
- * together, plus the hooks DSL classes (`EntClientConfig`,
- * `EntClientHooks`, and per-entity `{Entity}Hooks`).
+ * Emits the top-level `EntClient` that wires every per-schema repo together,
+ * plus one same-named file for each generated client-support type
+ * (`EntClientConfig`, `EntClientHooks`, and per-entity `{Entity}Hooks`).
  *
  * The client takes a [DatabaseDriver] and an optional configuration lambda:
  *
@@ -84,7 +81,7 @@ internal class ClientGenerator(
     private val packageName: String,
 ) {
 
-    fun generate(schemas: List<SchemaInput>): FileSpec {
+    fun generate(schemas: List<SchemaInput>): List<FileSpec> {
         // Sort schemas so that FK dependencies are registered before
         // dependents — e.g. User before Friendship (which references User).
         val sorted = topologicalSort(schemas)
@@ -93,6 +90,7 @@ internal class ClientGenerator(
         val clientScopeClass = ClassName(packageName, "EntClientScope")
         val transactionClientClass = ClassName(packageName, "EntTransactionClient")
         val hookClientScopeFacadeClass = ClassName(packageName, "_EntHookClientScope")
+        val newHookClientScope = MemberName(packageName, "newEntHookClientScopeForInternalUse")
         val configClass = ClassName(packageName, "EntClientConfig")
         val hooksClass = ClassName(packageName, "EntClientHooks")
         val t = TypeVariableName("T")
@@ -307,7 +305,7 @@ internal class ClientGenerator(
                 // from restoring withTransaction or configuration APIs.
             property("hookClientScopeForInternalUse", clientScopeClass) {
                 addModifiers(KModifier.INTERNAL)
-                initializer("%T(this)", hookClientScopeFacadeClass)
+                initializer("%M(this)", newHookClientScope)
             }
             addProperties(sorted.map { buildRepoProperty(it) })
             addProperty(buildReadOnlyClientProperty(sorted))
@@ -370,35 +368,58 @@ internal class ClientGenerator(
             addType(buildCompanionObject(sorted))
         }
 
-        return kotlinFile(packageName, "EntClient") {
-            addAnnotation(annotation(ClassName("kotlin", "OptIn")) {
-                useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
-                addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
-            })
-            addTypes(entityHookTypes)
-            addType(hooksType)
-            addType(policiesType)
-            addType(interceptorsType)
-            addType(configType)
-            addType(buildClientScope(clientScopeClass, sorted))
-            addType(
-                buildHookClientScopeFacade(
-                    clientClass,
-                    clientScopeClass,
-                    hookClientScopeFacadeClass,
-                    sorted,
-                ),
+        val clientScopeType = buildClientScope(clientScopeClass, sorted)
+        val hookClientScopeType = buildHookClientScopeFacade(
+            clientClass,
+            clientScopeClass,
+            hookClientScopeFacadeClass,
+            sorted,
+        )
+        val transactionClientType = buildTransactionClient(
+            clientClass,
+            clientScopeClass,
+            transactionClientClass,
+            sorted,
+        )
+
+        return buildList {
+            entityHookTypes.forEach { add(buildClientFile(it)) }
+            add(buildClientFile(hooksType))
+            add(buildClientFile(policiesType))
+            add(buildClientFile(interceptorsType))
+            add(buildClientFile(configType))
+            add(buildClientFile(clientScopeType))
+            add(
+                buildClientFile(requireNotNull(hookClientScopeType.name)) {
+                    addFunction(
+                        buildHookClientScopeFactory(
+                            clientClass,
+                            clientScopeClass,
+                            hookClientScopeFacadeClass,
+                        ),
+                    )
+                    addType(hookClientScopeType)
+                },
             )
-            addType(
-                buildTransactionClient(
-                    clientClass,
-                    clientScopeClass,
-                    transactionClientClass,
-                    sorted,
-                ),
-            )
-            addType(typeSpec)
+            add(buildClientFile(transactionClientType))
+            add(buildClientFile(typeSpec))
         }
+    }
+
+    /** Emit one generated top-level client type in its own same-named file. */
+    private fun buildClientFile(type: TypeSpec): FileSpec =
+        buildClientFile(requireNotNull(type.name)) { addType(type) }
+
+    /** Emit a generated client-support file with the internal API opt-in. */
+    private fun buildClientFile(
+        fileName: String,
+        content: FileSpec.Builder.() -> Unit,
+    ): FileSpec = kotlinFile(packageName, fileName) {
+        addAnnotation(annotation(ClassName("kotlin", "OptIn")) {
+            useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+            addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
+        })
+        content(this)
     }
 
     private fun buildEntityHooksClass(input: SchemaInput): TypeSpec {
@@ -428,27 +449,10 @@ internal class ClientGenerator(
         }
     }
 
-    /** Emit one ordered hook registry plus its scalar and batch DSL overloads. */
+    /** Emit one typed registration property backed by the reusable runtime hook registry. */
     private fun TypeSpec.Builder.addHookRegistration(definition: HookDef) {
-        val lambdaType = LambdaTypeName.get(
-            parameters = arrayOf(definition.paramType),
-            returnType = UNIT,
-        )
-        val batchHookType = BATCH_HOOK.parameterizedBy(definition.paramType)
-        property("${definition.name}Hooks", MUTABLE_LIST.parameterizedBy(batchHookType)) {
-            addModifiers(KModifier.INTERNAL)
-            initializer("mutableListOf()")
-        }
-        function(definition.name) {
-            parameter("hook", lambdaType)
-            statement("%LHooks.add(%T(hook))", definition.name, HOOK)
-        }
-        function(definition.name) {
-            addAnnotation(annotation(JVM_NAME) {
-                addMember("%S", "${definition.name}BatchHook")
-            })
-            parameter("hook", batchHookType)
-            statement("%LHooks.add(hook)", definition.name)
+        property(definition.name, HOOK_REGISTRY.parameterizedBy(definition.paramType)) {
+            initializer("%T()", HOOK_REGISTRY)
         }
     }
 
@@ -570,7 +574,7 @@ internal class ClientGenerator(
                 "afterDelete",
             )) {
                 statement(
-                    "snapshot.hooksConfig.%L.%LHooks.addAll(hooksConfig.%L.%LHooks)",
+                    "snapshot.hooksConfig.%L.%L.copyFromForInternalUse(hooksConfig.%L.%L)",
                     clientName,
                     phase,
                     clientName,
@@ -760,6 +764,18 @@ internal class ClientGenerator(
         }
     }
 
+    /** Keep the concrete hook facade file-private while allowing EntClient to construct it. */
+    private fun buildHookClientScopeFactory(
+        clientClass: ClassName,
+        clientScopeClass: ClassName,
+        facadeClass: ClassName,
+    ): FunSpec = function("newEntHookClientScopeForInternalUse", clientScopeClass) {
+        addAnnotation(ClassName("entkt.query", "EntktInternal"))
+        addModifiers(KModifier.INTERNAL)
+        parameter("client", clientClass)
+        statement("return %T(client)", facadeClass)
+    }
+
     private fun buildCompanionObject(schemas: List<SchemaInput>): TypeSpec {
         val listType = ClassName("kotlin.collections", "List")
             .parameterizedBy(ENTITY_SCHEMA)
@@ -814,7 +830,7 @@ internal class ClientGenerator(
             // and bypass the typed DSL — `addEntity` itself is also
             // `@EntktInternal` (defense in depth). The typed helper
             // methods below (`posts(...)`, `users(...)`, `global(...)`)
-            // live in the generated EntClient.kt file which carries
+            // live in a generated client-support file which carries
             // `@file:OptIn(EntktInternal::class)`, so the call sites
             // here compile cleanly.
             property("config", ENT_INTERCEPTORS_CONFIG) {

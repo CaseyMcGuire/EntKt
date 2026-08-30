@@ -27,6 +27,47 @@ fun interface Hook<in T> : BatchHook<T> {
     }
 }
 
+/**
+ * Ordered lifecycle-hook registrations used by generated configuration DSLs.
+ *
+ * Calling the registry preserves the generated hook DSL shape while keeping
+ * registration storage and scalar-hook adaptation in runtime code:
+ *
+ * ```kotlin
+ * beforeCreate { context -> /* ... */ }
+ * beforeCreate(batchHook)
+ * ```
+ *
+ * This registry is the mutable construction surface for an `EntClient`
+ * configuration. Generated clients snapshot each registry before exposing a
+ * repository so later changes to a retained configuration scope cannot affect
+ * an existing client.
+ */
+class HookRegistry<T> @EntktInternal constructor() {
+    private val registrations = mutableListOf<BatchHook<T>>()
+
+    /** Register one scalar hook at the end of this lifecycle phase. */
+    operator fun invoke(hook: (T) -> Unit) {
+        registrations += Hook(hook)
+    }
+
+    /** Register one explicitly batch-aware hook at the end of this lifecycle phase. */
+    operator fun invoke(hook: BatchHook<T>) {
+        registrations += hook
+    }
+
+    /** Return an ordered copy detached from subsequent configuration changes. */
+    @EntktInternal
+    fun snapshotForInternalUse(): List<BatchHook<T>> = registrations.toList()
+
+    /** Copy an existing registry while resolving generated client configuration. */
+    @EntktInternal
+    fun copyFromForInternalUse(source: HookRegistry<T>) {
+        registrations.clear()
+        registrations += source.registrations
+    }
+}
+
 /** Construct an explicitly batch-aware lifecycle hook. */
 fun <T> batchHook(
     block: (List<T>) -> Unit,

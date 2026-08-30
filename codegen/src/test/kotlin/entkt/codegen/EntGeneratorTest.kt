@@ -87,7 +87,7 @@ class EntGeneratorTest {
     private val generator = EntGenerator("com.example.ent")
 
     @Test
-    fun `generates eight files per schema plus the client-level files`() {
+    fun `generates schema and client classes in separate files`() {
         val car = Car()
         val user = User()
         finalize(car, user)
@@ -98,21 +98,28 @@ class EntGeneratorTest {
         val files = generator.generate(schemas)
 
         // Per schema: entity, mutation, create, update, query, repo, privacy, validation.
-        // Plus the schema-set-level files: EntReadRuntime (the read contract
-        // + per-entity read surfaces), ReadOnlyEntClient (the shared read-only
-        // interface, its internal implementation, and the per-entity read
-        // repos), and the EntClient that wires every repo together. User
-        // also gets a UserIndexes file (it declares eligible indexes); Car
-        // has none, so it gets no index-helper file.
-        assertEquals(8 * schemas.size + 3 + 1, files.size)
+        // Each schema also gets its typed hooks class. The schema-set-level
+        // files are EntReadRuntime, ReadOnlyEntClient, and eight client types.
+        // User additionally gets an index-helper file; Car has no eligible
+        // indexes and therefore has no corresponding file.
+        assertEquals(9 * schemas.size + 10 + 1, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
                 "Car", "CarMutation", "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
+                "CarHooks",
                 "User", "UserMutation", "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
+                "UserHooks",
                 "UserIndexes",
                 "EntReadRuntime",
                 "ReadOnlyEntClient",
+                "EntClientHooks",
+                "EntClientPolicies",
+                "EntClientInterceptors",
+                "EntClientConfig",
+                "EntClientScope",
+                "_EntHookClientScope",
+                "EntTransactionClient",
                 "EntClient",
             ),
             names,
@@ -303,7 +310,20 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("UserRepo.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserPrivacy.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserValidation.kt")))
-            assertTrue(Files.exists(packageDir.resolve("EntClient.kt")))
+            for (clientFile in listOf(
+                "CarHooks.kt",
+                "UserHooks.kt",
+                "EntClientHooks.kt",
+                "EntClientPolicies.kt",
+                "EntClientInterceptors.kt",
+                "EntClientConfig.kt",
+                "EntClientScope.kt",
+                "_EntHookClientScope.kt",
+                "EntTransactionClient.kt",
+                "EntClient.kt",
+            )) {
+                assertTrue(Files.exists(packageDir.resolve(clientFile)))
+            }
         } finally {
             outputDir.toFile().deleteRecursively()
         }

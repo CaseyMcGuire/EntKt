@@ -910,7 +910,10 @@ internal class RepoGenerator(
         type: com.squareup.kotlinpoet.TypeName,
     ): PropertySpec = property(name, type) {
         addModifiers(KModifier.PRIVATE)
-        initializer("configuredHooks.%LHooks.toList()", name.removeSuffix("Hooks"))
+        initializer(
+            "configuredHooks.%L.snapshotForInternalUse()",
+            name.removeSuffix("Hooks"),
+        )
     }
 
 }

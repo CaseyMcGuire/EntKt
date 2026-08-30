@@ -54,7 +54,7 @@ class ClientGeneratorTest {
         assert(output.contains("class EntTransactionClient") && output.contains(": EntClientScope")) {
             "EntTransactionClient should implement EntClientScope\n$output"
         }
-        assert(output.contains("internal val hookClientScopeForInternalUse: EntClientScope = _EntHookClientScope(this)")) {
+        assert(output.contains("internal val hookClientScopeForInternalUse: EntClientScope = newEntHookClientScopeForInternalUse(this)")) {
             "EntClient should cache a narrow hook facade\n$output"
         }
         assert(output.contains("private class _EntHookClientScope") && output.contains(": EntClientScope")) {
@@ -182,7 +182,8 @@ class ClientGeneratorTest {
 
         assert(
             output.contains(
-                "snapshot.hooksConfig.cars.beforeSaveHooks.addAll(hooksConfig.cars.beforeSaveHooks)",
+                "snapshot.hooksConfig.cars.beforeSave.copyFromForInternalUse(" +
+                    "hooksConfig.cars.beforeSave)",
             ),
         ) { "Hook registrations should be copied into the snapshot\n$output" }
         assert(
@@ -207,10 +208,37 @@ class ClientGeneratorTest {
     @Test
     fun `EntClient is emitted in the configured package`() {
         val schemas = buildSchemas()
-        val file = generator.generate(schemas)
+        val file = generator.generate(schemas).single { it.name == "EntClient" }
 
         assertEquals("com.example.ent", file.packageName)
         assertEquals("EntClient", file.name)
+    }
+
+    @Test
+    fun `emits every top-level client class in a separate same-named file`() {
+        val files = generator.generate(buildSchemas())
+
+        assertEquals(
+            setOf(
+                "CarHooks",
+                "UserHooks",
+                "EntClientHooks",
+                "EntClientPolicies",
+                "EntClientInterceptors",
+                "EntClientConfig",
+                "EntClientScope",
+                "_EntHookClientScope",
+                "EntTransactionClient",
+                "EntClient",
+            ),
+            files.map { it.name }.toSet(),
+        )
+        assert(!files.single { it.name == "EntClient" }.toString().contains("class CarHooks"))
+        assert(
+            files.single { it.name == "_EntHookClientScope" }
+                .toString()
+                .contains("private class _EntHookClientScope"),
+        )
     }
 
     @Test
@@ -327,42 +355,33 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `entity hooks class has DSL methods for each lifecycle phase`() {
+    fun `entity hooks class has typed registries for each lifecycle phase`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("fun beforeSave(hook: (CarMutation) -> Unit)")) {
+        assert(output.contains("val beforeSave: HookRegistry<CarMutation>")) {
             "Should have beforeSave\n$output"
         }
-        assert(output.contains("fun beforeCreate(hook: (CarCreateHookContext) -> Unit)")) {
+        assert(output.contains("val beforeCreate: HookRegistry<CarCreateHookContext>")) {
             "beforeCreate hook should be typed against CarCreateHookContext (restricted view + client)\n$output"
         }
-        assert(output.contains("fun afterCreate(hook: (Car) -> Unit)")) {
+        assert(output.contains("val afterCreate: HookRegistry<Car>")) {
             "Should have afterCreate\n$output"
         }
-        assert(output.contains("fun beforeUpdate(hook: (CarUpdateHookContext) -> Unit)")) {
+        assert(output.contains("val beforeUpdate: HookRegistry<CarUpdateHookContext>")) {
             "beforeUpdate now takes a CarUpdateHookContext\n$output"
         }
-        assert(output.contains("fun afterUpdate(hook: (Car) -> Unit)")) {
+        assert(output.contains("val afterUpdate: HookRegistry<Car>")) {
             "Should have afterUpdate\n$output"
         }
-        assert(output.contains("fun beforeDelete(hook: (Car) -> Unit)")) {
+        assert(output.contains("val beforeDelete: HookRegistry<Car>")) {
             "Should have beforeDelete\n$output"
         }
-        assert(output.contains("fun afterDelete(hook: (Car) -> Unit)")) {
+        assert(output.contains("val afterDelete: HookRegistry<Car>")) {
             "Should have afterDelete\n$output"
         }
-        assert(output.contains("val beforeCreateHooks: MutableList<BatchHook<CarCreateHookContext>>")) {
-            "Hook registries should store scalar and batch hooks in one ordered list\n$output"
-        }
-        assert(output.contains("beforeCreateHooks.add(Hook(hook))")) {
-            "Scalar hook lambdas should be adapted to Hook\n$output"
-        }
-        assert(output.contains("fun beforeCreate(hook: BatchHook<CarCreateHookContext>)")) {
-            "Should accept an explicitly batch-aware hook under the same lifecycle name\n$output"
-        }
-        assert(output.contains("@JvmName(\"beforeCreateBatchHook\")")) {
-            "The batch overload should not capture Java scalar lambdas\n$output"
+        assert(!output.contains("beforeCreateHooks") && !output.contains("beforeCreateBatchHook")) {
+            "Hook storage and overloads should live in runtime HookRegistry\n$output"
         }
     }
 
