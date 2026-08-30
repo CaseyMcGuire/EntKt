@@ -213,21 +213,26 @@ migrations, and lifecycle hooks, see [`:example-spring`](../example-spring/READM
 
 ## Generated API
 
-For a `User` schema, entkt generates the public types you use to read and
-write users:
+For a `User` schema, entkt generates the schema-specific types you normally use
+to read and write users:
 
 | Surface | Purpose |
 |---------|---------|
 | `User` | Typed entity properties and query columns such as `User.name` and `User.age` |
-| `UserCreateDraft` | Mutable create input returned through `client.users.create { ... }`; the resulting `CreateMutation` supplies `configure`, `save`, and `saveAndLoad` |
-| `UserUpdateDraft` | Mutable update input configured through `client.users.update(id) { ... }`; the resulting `UpdateMutation` supplies `configure`, `save`, and `saveAndLoad` |
+| `UserCreateDraft` | Mutable create input used by `client.users.create { ... }` and later `configure { ... }` blocks |
+| `UserUpdateDraft` | Mutable update patch used by `client.users.update(id) { ... }` and later `configure { ... }` blocks |
+| `CreateMutation<UserCreateDraft, User>` / `UpdateMutation<UserUpdateDraft, User>` | Single-use runtime operations returned by `create` and `update`; they supply `configure`, `save`, and `saveAndLoad` and are not generated per entity |
 | `UserQuery` | Filtering, ordering, pagination, traversal, edge loading, and result-bearing read terminals |
 | `UserRepo` | Entry points such as `create`, `update`, `query`, `findById`, and the delete methods |
-| Privacy and validation rule types | Typed contexts and scopes for application policies |
+| `UserIndexes` | Typed exact and range helpers generated when `User` declares an eligible index |
+| Lifecycle types | `UserMutation`, hook contexts, privacy/validation items, candidates, patches, rule aliases, and configuration scopes |
 | `EntClient` | The application entry point containing every generated repository |
 
-The generated file layout and storage adapters are implementation details;
-application code should use these public types through `EntClient`.
+The generator also emits schema-set configuration, transaction, hook,
+read-only, and optional Ent Viewer types. See the
+[complete generated-output reference](../codegen/README.md#generated-output)
+for their roles and for the boundary between application API and internal
+storage adapters.
 
 ## Schema Inspection
 

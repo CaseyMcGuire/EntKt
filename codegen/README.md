@@ -1,57 +1,85 @@
 # :codegen
 
-KotlinPoet-based generator: entity classes, create/update/query builders,
-repos, `EntClient`.
+KotlinPoet-based generator for schema-specific entities, drafts, queries,
+repositories, lifecycle types, and clients.
 
 ## Generated output
 
-For each schema the generator emits:
+Generated declarations fall into three groups: the application-facing entity
+family, one schema-set-level client family, and internal adapters that connect
+those types to the runtime. The tables below use a `User` schema as the
+example; `{Entity}` is replaced by each schema class name.
 
-- **Entity data class** with typed properties, companion-object column refs
-  (`User.name: StringColumn`, `User.age: NullableComparableColumn<Int>`), baked-in
-  `EntitySchema` metadata, a `fromRow()` row decoder, and a nested `Edges`
-  data class for eagerly loaded relationships.
-- **`{Entity}Mutation` interface** — shared interface implemented by both
-  Create and Update builders, with `var` properties for all mutable fields.
-  Enables shared `beforeSave` hooks registered through the client lifecycle
-  DSL.
-- **`{Entity}Create` builder** — DSL setters +
-  `.save(viewerContext): MutationResult<Unit>` and
-  `.saveAndLoad(viewerContext): MutationResult<Entity>`.
-  Mints client UUIDs when `IdStrategy.CLIENT_UUID`. Implements `{Entity}Mutation`.
-- **`{Entity}Update` builder** — DSL setters (immutable fields are elided) plus
-  `.save(viewerContext): MutationResult<Unit>` /
-  `.saveAndLoad(viewerContext): MutationResult<Entity>`.
-  Implements `{Entity}Mutation`. The current owner row is loaded internally at
-  the start of the save pipeline (bypassing LOAD privacy); hooks receive a
-  `{Entity}UpdateHookContext` with `before`, `patch`, and a restricted
-  `mutation` view.
-- **`{Entity}Query` builder** — `.where(...)`, `.orderBy(...)`, `.limit(...)`,
-  `.offset(...)`, `.all(viewerContext): ReadResult<List<E>>`,
-  `.firstOrNull(viewerContext): ReadResult<E?>`, edge traversal methods
-  (e.g. `.queryPosts()`), and edge loading methods (e.g. `.loadPosts { }`,
-  returning an `EdgeLoad` handle whose `filterVisible()` opts that edge out
-  of strict eager privacy).
-- **`{Entity}Repo`** — `.create { }`, `.update(id) { }`, `.query { }`,
-  `.findById(viewerContext, id): ReadResult<Entity?>`,
-  `.delete(viewerContext, entity)`, `.deleteById(viewerContext, id)`,
-  `.deleteMany(viewerContext, vararg predicates)`, and, for generated-ID repositories,
-  `.createMany(viewerContext, vararg blocks)` — the mutation terminals return
-  `MutationResult`. Explicit-ID repositories use `.create(id) { }` and do not
-  currently expose a bulk-create signature.
-  There is no generated lifecycle-aware `updateMany()` terminal.
-  Registers the entity's `EntitySchema` with the driver on construction.
-- **`EntClient`** — long-lived, contextless entry point holding one repo per
-  entity, constructed with a `DatabaseDriver` and an optional
-  lifecycle-configuration lambda. Every execution terminal receives its
-  operation-scoped `ViewerContext` explicitly.
-- **Hooks DSL** — generated `EntClientConfig` and `EntClientHooks` wiring uses
-  the runtime `EntityHooks<...>` holder to register type-safe lifecycle hooks
-  at client construction time; no per-entity hook-holder class is generated.
-- **Lifecycle rule types** — generated scalar and batch aliases such as
-  `UserLoadPrivacyRule` / `UserLoadBatchPrivacyRule` and
-  `UserCreateValidationRule` / `UserCreateBatchValidationRule`. Both forms
-  register under the existing operation names.
+### Per-entity application types
+
+| Generated artifact | Purpose |
+|---|---|
+| `User.kt` / `User` | Immutable entity data class. Its companion exposes typed query columns and schema metadata, and its nested `Edges` class stores eager-loaded relationships as `EdgeState` values. |
+| `UserCreateDraft.kt` / `UserCreateDraft` | Mutable, potentially incomplete create input. It tracks which fields were assigned. Application code receives it as the `create { ... }` or `CreateMutation.configure { ... }` DSL receiver rather than constructing it directly. |
+| `UserUpdateDraft.kt` / `UserUpdateDraft` | Mutable update patch. It records assignments, unsets, and relationship changes without executing them. Application code receives it through `update(id) { ... }` or `UpdateMutation.configure { ... }`. |
+| `UserMutation.kt` / `UserMutation` | Mutable field interface received by `beforeSave`. `UserCreateMutationView` and `UserUpdateMutationView` are the operation-specific mutation views exposed by hook contexts. These are hook contracts, not executable mutation objects. |
+| `UserQuery.kt` / `UserQuery` | Typed query DSL for predicates, ordering, pagination, traversal, and edge selection. `all(viewerContext)` and `firstOrNull(viewerContext)` execute the captured query. |
+| `UserRepo.kt` / `UserRepo` | Entity entry points exposed as `client.users`: `create`, `update`, `query`, `findById`, deletes, and supported bulk operations. `create` and `update` return runtime mutation operations; delete methods execute immediately. |
+| `UserIndexes.kt` / `UserIndexes` | Generated only when the schema has an eligible index. Exact indexes expose `find(viewerContext)` and `query { ... }`; range-capable indexes also expose a range DSL. Access them through `client.users.indexes`. |
+| `UserPrivacy.kt` | Typed privacy aliases, operation items, `UserWriteCandidate`, `UserUpdatePatch`, edge-change views, hook contexts, and the privacy/policy configuration scopes. See [Privacy](../docs/06-privacy.md) and [Hooks](../docs/05-hooks.md). |
+| `UserValidation.kt` | Typed validation aliases, operation items, and validation configuration scopes. Validation reuses `UserWriteCandidate` from the privacy/lifecycle model. See [Validation](../docs/07-validation.md). |
+
+`UserCreateDraft` does not implement `UserMutation`. Create hooks receive
+generated mutation-view adapters so lifecycle code sees only the intended hook
+contract. `UserUpdateDraft` implements `UserMutation`, but persistence still
+happens only through the `UpdateMutation` returned by the repository.
+
+`CreateMutation<Draft, Entity>` and `UpdateMutation<Draft, Entity>` are runtime
+classes, not generated classes. They own the single-use `configure`, `save`,
+and `saveAndLoad` operation lifecycle while generated repositories supply the
+schema-specific draft and persistence adapter:
+
+```kotlin
+val creation: CreateMutation<UserCreateDraft, User> =
+    client.users.create { name = "Ada" }
+
+creation.configure { email = "ada@example.com" }
+val user = creation.saveAndLoad(viewerContext).getOrThrow()
+```
+
+### Schema-set client types
+
+These types are generated once for the complete schema set:
+
+| Generated type | Purpose |
+|---|---|
+| `EntClient` | Long-lived, contextless root client containing one repository per schema. Every entity-operation terminal receives an operation-scoped `ViewerContext`. |
+| `EntClientScope` | Common repository-only interface implemented by root, transaction, and hook client scopes. Accept this type when shared code needs repositories but must not start transactions. |
+| `EntTransactionClient` | Transaction-bound implementation of `EntClientScope` supplied to `withTransaction`. It deliberately has no nested `withTransaction` method. |
+| `ReadOnlyEntClient` | Read-only client available to privacy and validation rules. The same generated file contains one `{Entity}ReadRepo` per schema. Each read terminal still requires an explicit `ViewerContext`. |
+| `EntClientConfig` | Constructor DSL receiver for transaction requirements, update and relationship-locking defaults, hooks, policies, and interceptors. |
+| `EntClientHooks` | Schema-typed `hooks { users { ... } }` registration DSL backed by the runtime `EntityHooks` holder. No per-entity hook-holder class is generated. |
+| `EntClientPolicies` | Schema-typed `policies { users(UserPolicy) }` registration DSL. |
+| `EntClientInterceptors` | Schema-typed entity and global read-interceptor registration DSL. |
+
+`EntReadRuntime`, the per-entity `{Entity}ReadSurface` interfaces,
+`ResolvedEntClientConfig`, `ResolvedEntClientHooks`,
+`ResolvedEntClientPolicies`, `ReadOnlyEntClientImpl`, and
+`_EntHookClientScope` are generated framework wiring. They may need public or
+package-visible Kotlin declarations so generated files can compose, but
+application code should not construct or implement them. The same applies to
+internal mappings, mutation specs, and adapters declared inside per-entity
+files. Treat `@EntktInternal` as an explicit boundary rather than an invitation
+to opt in.
+
+### Optional Ent Viewer types
+
+When Ent Viewer generation is enabled, codegen additionally emits one
+`{Entity}ViewerEntity` adapter per schema and a
+`GeneratedEntViewerRegistry`. Applications mount the registry; the adapters
+are framework integration details. See [Ent Viewer](../docs/11-ent-viewer.md).
+
+### Runtime types used by the generated API
+
+The generated surface also refers to ordinary runtime types including
+`CreateMutation`, `UpdateMutation`, `ReadResult`, `MutationResult`,
+`ViewerContext`, `EntityHooks`, and the privacy/validation rule interfaces.
+They are shared implementations and are therefore not regenerated per schema.
 
 ## Lifecycle hooks
 
