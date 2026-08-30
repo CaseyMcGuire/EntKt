@@ -24,7 +24,6 @@ import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.companionObject
 import entkt.codegen.kotlinpoet.constructor
 import entkt.codegen.kotlinpoet.function
-import entkt.codegen.kotlinpoet.getter
 import entkt.codegen.kotlinpoet.interfaceType
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.objectType
@@ -376,13 +375,11 @@ internal class ClientGenerator(
             clientClass,
             clientScopeClass,
             hookClientScopeFacadeClass,
-            sorted,
         )
         val transactionClientType = buildTransactionClient(
             clientClass,
             clientScopeClass,
             transactionClientClass,
-            sorted,
         )
 
         return buildList {
@@ -655,28 +652,14 @@ internal class ClientGenerator(
         clientClass: ClassName,
         clientScopeClass: ClassName,
         transactionClientClass: ClassName,
-        schemas: List<SchemaInput>,
     ): TypeSpec {
         return classType(transactionClientClass) {
-            addSuperinterface(clientScopeClass)
             primaryConstructor {
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.INTERNAL)
-                parameter("delegate", clientClass)
+                parameter("client", clientClass)
             }
-            property("delegate", clientClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("delegate")
-            }
-
-            for (input in schemas) {
-                val propName = input.clientName
-                val repoClass = ClassName(packageName, "${input.name}Repo")
-                property(propName, repoClass) {
-                    addModifiers(KModifier.OVERRIDE)
-                    getter { statement("return delegate.%L", propName) }
-                }
-            }
+            addSuperinterface(clientScopeClass, "client")
         }
     }
 
@@ -710,23 +693,11 @@ internal class ClientGenerator(
         clientClass: ClassName,
         clientScopeClass: ClassName,
         facadeClass: ClassName,
-        schemas: List<SchemaInput>,
     ): TypeSpec {
         return classType(facadeClass) {
             addModifiers(KModifier.PRIVATE)
-            addSuperinterface(clientScopeClass)
-            primaryConstructor { parameter("delegate", clientClass) }
-            property("delegate", clientClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("delegate")
-            }
-            for (input in schemas) {
-                val propName = input.clientName
-                property(propName, ClassName(packageName, "${input.name}Repo")) {
-                    addModifiers(KModifier.OVERRIDE)
-                    getter { statement("return delegate.%L", propName) }
-                }
-            }
+            primaryConstructor { parameter("client", clientClass) }
+            addSuperinterface(clientScopeClass, "client")
         }
     }
 

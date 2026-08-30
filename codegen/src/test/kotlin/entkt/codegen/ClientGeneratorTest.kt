@@ -51,14 +51,15 @@ class ClientGeneratorTest {
             !scope.contains("ViewerContext")) {
             "EntClientScope should expose repositories without ambient viewer state\n$output"
         }
-        assert(output.contains("class EntTransactionClient") && output.contains(": EntClientScope")) {
-            "EntTransactionClient should implement EntClientScope\n$output"
+        assert(output.contains("class EntTransactionClient") && output.contains(": EntClientScope by client")) {
+            "EntTransactionClient should delegate EntClientScope\n$output"
         }
         assert(output.contains("internal val hookClientScopeForInternalUse: EntClientScope = newEntHookClientScopeForInternalUse(this)")) {
             "EntClient should cache a narrow hook facade\n$output"
         }
-        assert(output.contains("private class _EntHookClientScope") && output.contains(": EntClientScope")) {
-            "Hook contexts should receive a private facade rather than the full client\n$output"
+        assert(output.contains("private class _EntHookClientScope") &&
+            Regex(": EntClientScope by client").findAll(output).count() == 2) {
+            "Both narrow facades should delegate EntClientScope\n$output"
         }
     }
 
@@ -307,16 +308,18 @@ class ClientGeneratorTest {
         assert(start >= 0 && end > start) { "Could not isolate EntTransactionClient\n$output" }
         val transactionClient = output.substring(start, end)
 
-        assert(transactionClient.contains("val cars: CarRepo get() = delegate.cars")) {
-            "Transaction facade should expose full repositories\n$transactionClient"
+        assert(transactionClient.contains(": EntClientScope by client")) {
+            "Transaction facade should delegate the repository capability\n$transactionClient"
         }
+        assert(!transactionClient.contains("override val cars:"))
         assert(!transactionClient.contains("withViewerContext"))
         assert(!transactionClient.contains("bypassPrivacy_DANGEROUS"))
         assert(!transactionClient.contains("fun <T> withTransaction(")) {
             "Nested transactions must be absent from the transaction facade\n$transactionClient"
         }
-        assert(transactionClient.contains("private val `delegate`: EntClient")) {
-            "The full transaction-bound EntClient must not be exposed\n$transactionClient"
+        assert(transactionClient.contains("client: EntClient") &&
+            !transactionClient.contains("val client: EntClient")) {
+            "The delegated EntClient must remain a constructor parameter, not an exposed property\n$transactionClient"
         }
     }
 
