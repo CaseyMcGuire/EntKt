@@ -117,7 +117,10 @@ class EntktPluginTest {
             val generatedDir = appDir.resolve("build/generated/entkt/com/example/ent")
             assertTrue(generatedDir.resolve("Pet.kt").exists(), "Should generate Pet.kt")
             assertTrue(generatedDir.resolve("PetCreateDraft.kt").exists(), "Should generate PetCreateDraft.kt")
-            assertTrue(generatedDir.resolve("PetUpdate.kt").exists(), "Should generate PetUpdate.kt")
+            assertTrue(
+                generatedDir.resolve("PetUpdateDraft.kt").exists(),
+                "Should generate PetUpdateDraft.kt",
+            )
             assertTrue(generatedDir.resolve("PetQuery.kt").exists(), "Should generate PetQuery.kt")
             assertTrue(generatedDir.resolve("PetRepo.kt").exists(), "Should generate PetRepo.kt")
             assertTrue(generatedDir.resolve("Owner.kt").exists(), "Should generate Owner.kt")
@@ -179,6 +182,7 @@ class EntktPluginTest {
 
             // Repo is the DI seam — takes a DatabaseDriver, exposes create/query/update/byId
             val repoContent = generatedDir.resolve("PetRepo.kt").readText()
+            val repoFlat = repoContent.replace("\\s+".toRegex(), " ")
             assertTrue(repoContent.contains("class PetRepo"), "Should generate PetRepo class")
             assertTrue(repoContent.contains("import entkt.runtime.driver.DatabaseDriver"), "Should import DatabaseDriver")
             assertTrue(repoContent.contains("driver: DatabaseDriver"), "Should take DatabaseDriver in constructor")
@@ -199,10 +203,13 @@ class EntktPluginTest {
                 "update should take a per-save UpdateConsistency override defaulting to the client's default",
             )
             assertTrue(
-                repoContent.contains("block: PetUpdate.() -> Unit"),
-                "update should take a builder block",
+                repoFlat.contains("block: PetUpdateDraft.() -> Unit"),
+                "update should take a draft block",
             )
-            assertTrue(repoContent.contains("): PetUpdate"), "update should return PetUpdate")
+            assertTrue(
+                repoFlat.contains("): UpdateMutation<PetUpdateDraft, Pet>"),
+                "update should return UpdateMutation<PetUpdateDraft, Pet>",
+            )
             assertTrue(
                 repoContent.contains("fun query(block: PetQuery.() -> Unit = {}): PetQuery"),
                 "Repo should expose query(block)",
@@ -216,18 +223,18 @@ class EntktPluginTest {
             assertTrue(
                 clientFlat.contains(
                     "override val pets: PetRepo = PetRepo( driver = driver, client = this, " +
-                        "configuredHooks = configuration.hooksConfig.pets, " +
-                        "configuredPrivacy = configuration.policiesConfig.petsPrivacyConfig, " +
-                        "configuredValidation = configuration.policiesConfig.petsValidationConfig, )",
+                        "configuredHooks = configuration.hooks.pets, " +
+                        "configuredPrivacy = configuration.policies.petsPrivacyConfig, " +
+                        "configuredValidation = configuration.policies.petsValidationConfig, )",
                 ),
                 "Client should expose pets: PetRepo",
             )
             assertTrue(
                 clientFlat.contains(
                     "override val owners: OwnerRepo = OwnerRepo( driver = driver, client = this, " +
-                        "configuredHooks = configuration.hooksConfig.owners, " +
-                        "configuredPrivacy = configuration.policiesConfig.ownersPrivacyConfig, " +
-                        "configuredValidation = configuration.policiesConfig.ownersValidationConfig, )",
+                        "configuredHooks = configuration.hooks.owners, " +
+                        "configuredPrivacy = configuration.policies.ownersPrivacyConfig, " +
+                        "configuredValidation = configuration.policies.ownersValidationConfig, )",
                 ),
                 "Client should expose owners: OwnerRepo",
             )
