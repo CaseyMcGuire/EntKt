@@ -49,11 +49,12 @@ abstract class EntityQueryBuilder<
         private set
 
     private val readQueryExecutor: ReadQueryExecutor<Entity> by lazy(LazyThreadSafetyMode.NONE) {
+        val host = requireExecutionHost()
         ReadQueryExecutor(
             driver = driver,
-            readExecutionGuard = { requireExecutionHost().checkReadExecution() },
-            registeredInterceptorsProvider = { requireExecutionHost().entityInterceptors },
-            loadPrivacyEvaluatorProvider = { requireExecutionHost() },
+            readExecutionGuard = { host.checkReadExecution() },
+            registeredInterceptorsProvider = { host.entityInterceptors },
+            loadPrivacyEvaluator = host,
         )
     }
 

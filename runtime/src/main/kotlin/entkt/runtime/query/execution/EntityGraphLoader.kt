@@ -37,7 +37,7 @@ import kotlin.reflect.KClass
  */
 internal class EntityGraphLoader(
     private val storage: GraphStorage,
-    private val loadPrivacyEvaluatorProvider: () -> LoadPrivacyEvaluator,
+    private val loadPrivacyEvaluator: LoadPrivacyEvaluator,
 ) {
     /** Load the root batch, then evaluate its recursively selected graph. */
     fun <Entity : EntEntity<*>> load(
@@ -148,11 +148,10 @@ internal class EntityGraphLoader(
             return entities
         }
 
-        val evaluator = loadPrivacyEvaluatorProvider()
-        if (!evaluator.isConfigured(entity)) {
+        if (!loadPrivacyEvaluator.isConfigured(entity)) {
             return entities
         }
-        val evaluations = evaluator.evaluate(entity, viewerContext, entities)
+        val evaluations = loadPrivacyEvaluator.evaluate(entity, viewerContext, entities)
 
         return when (denialPolicy) {
             LoadDenialPolicy.FailRoot -> {

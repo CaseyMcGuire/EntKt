@@ -73,16 +73,14 @@ class ReadQueryExecutorTest {
             driver = driver,
             readExecutionGuard = {},
             registeredInterceptorsProvider = { interceptors.resolveForInternalUse() },
-            loadPrivacyEvaluatorProvider = {
-                object : LoadPrivacyEvaluator {
-                    override fun isConfigured(entity: EntityMapping<*>): Boolean = false
+            loadPrivacyEvaluator = object : LoadPrivacyEvaluator {
+                override fun isConfigured(entity: EntityMapping<*>): Boolean = false
 
-                    override fun <Entity : EntEntity<*>> evaluate(
-                        entity: EntityMapping<Entity>,
-                        viewerContext: ViewerContext,
-                        entities: List<Entity>,
-                    ): List<LoadPrivacyEvaluation<Entity>> = error("LOAD privacy is not configured")
-                }
+                override fun <Entity : EntEntity<*>> evaluate(
+                    entity: EntityMapping<Entity>,
+                    viewerContext: ViewerContext,
+                    entities: List<Entity>,
+                ): List<LoadPrivacyEvaluation<Entity>> = error("LOAD privacy is not configured")
             },
         )
 

@@ -140,9 +140,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluatorProvider = {
-                RecordingPrivacy(events, configured = false)
-            },
+            loadPrivacyEvaluator = RecordingPrivacy(events, configured = false),
         )
         val notes = ItemEdge("notes")
         val children = ItemEdge("children")
@@ -194,9 +192,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluatorProvider = {
-                RecordingPrivacy(events, deniedIds = setOf(1L, 2L))
-            },
+            loadPrivacyEvaluator = RecordingPrivacy(events, deniedIds = setOf(1L, 2L)),
         )
         val query = query(
             EdgeSelection(ItemEdge("children"), query(), EdgeVisibility.REQUIRE_VISIBLE),
@@ -221,9 +217,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluatorProvider = {
-                RecordingPrivacy(events, deniedIds = setOf(2L))
-            },
+            loadPrivacyEvaluator = RecordingPrivacy(events, deniedIds = setOf(2L)),
         )
         val query = query(
             EdgeSelection(ItemEdge("children"), query(), EdgeVisibility.FILTER_INVISIBLE),
@@ -251,9 +245,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluatorProvider = {
-                RecordingPrivacy(events, deniedIds = setOf(3L))
-            },
+            loadPrivacyEvaluator = RecordingPrivacy(events, deniedIds = setOf(3L)),
         )
         val query = query(
             EdgeSelection(
@@ -288,7 +280,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluatorProvider = { RecordingPrivacy(events) },
+            loadPrivacyEvaluator = RecordingPrivacy(events),
         )
         val query = query(
             EdgeSelection(ItemEdge("children"), query(), EdgeVisibility.REQUIRE_VISIBLE),

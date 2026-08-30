@@ -160,7 +160,7 @@ class ReadQueryExecutorRootTest {
         driver = adapter.driver,
         readExecutionGuard = { adapter.events += "read-guard" },
         registeredInterceptorsProvider = { adapter.interceptors },
-        loadPrivacyEvaluatorProvider = { object : LoadPrivacyEvaluator {
+        loadPrivacyEvaluator = object : LoadPrivacyEvaluator {
             override fun isConfigured(entity: EntityMapping<*>): Boolean {
                 assertSame(adapter as Any, entity as Any)
                 adapter.events += "has-privacy"
@@ -185,7 +185,7 @@ class ReadQueryExecutorRootTest {
                     }
                 }
             }
-        } },
+        },
     )
 
     private fun readAll(adapter: Adapter): ReadResult<List<Item>> =
