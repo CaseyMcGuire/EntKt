@@ -7,6 +7,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
+import entkt.runtime.hook.HookRunner
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.RelationshipLockKey
 import entkt.runtime.mutation.TransactionRequiredException
@@ -165,6 +166,8 @@ class UpdateMutationExecutorTest {
         var loadDenial: PrivacyDenial? = null
         var relationshipAction: (State, UpdateWriteTracker) -> Unit = { _, _ -> }
         var afterAction: (Widget) -> Unit = {}
+        var currentRelationshipRequirements: UpdateRelationshipRequirements =
+            UpdateRelationshipRequirements.None
         val request = UpdateMutationRequest(
             id = 1L,
             draft = Draft(),
@@ -200,29 +203,44 @@ class UpdateMutationExecutorTest {
             freshItem = { it },
         )
 
-        val spec: UpdateMutationSpec<State, Widget>
-            get() = UpdateMutationSpec(
-                begin = { events += "begin" },
-                end = { events += "end" },
-                before = { context, entity ->
-                    events += "before:${entity.name}"
-                    receivedContexts += context
-                },
-                prepare = { entity, _ ->
-                    events += "prepare:${entity.name}"
-                    preparation
-                },
-                relationships = { state, writes ->
-                    events += "relationships:${state.name}"
-                    relationshipAction(state, writes)
-                },
-                afterUpdate = listOf(
-                    Hook { entity ->
-                        events += "after:${entity.name}"
-                        afterAction(entity)
-                    },
-                ),
-            )
+        val adapter = object : UpdateMutationAdapter<Draft, Widget, String, State> {
+            override fun relationshipRequirements(draft: Draft): UpdateRelationshipRequirements =
+                currentRelationshipRequirements
+
+            override fun capturePendingEdges(draft: Draft): String {
+                events += "capture-pending-edges"
+                return "pending-edges"
+            }
+
+            override fun runBeforeHooks(
+                viewerContext: ViewerContext,
+                draft: Draft,
+                before: Widget,
+                pendingEdges: String,
+            ) {
+                events += "before:${before.name}:$pendingEdges"
+                receivedContexts += viewerContext
+            }
+
+            override fun prepare(
+                request: UpdateMutationRequest<Draft>,
+                before: Widget,
+                pendingEdges: String,
+                scope: UpdatePreparationScope,
+            ): UpdatePreparation<State> {
+                events += "prepare:${before.name}:$pendingEdges"
+                return preparation
+            }
+
+            override fun persistRelationships(
+                request: UpdateMutationRequest<Draft>,
+                state: State,
+                writes: UpdateWriteTracker,
+            ) {
+                events += "relationships:${state.name}"
+                relationshipAction(state, writes)
+            }
+        }
 
         val executor = UpdateMutationExecutor(
             driver = driver,
@@ -256,20 +274,37 @@ class UpdateMutationExecutorTest {
             },
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
+            adapter = adapter,
+            afterUpdateHookRunner = HookRunner(
+                listOf(
+                    Hook { entity ->
+                        events += "after:${entity.name}"
+                        afterAction(entity)
+                    },
+                ),
+            ),
         )
+
+        fun execute(
+            applyLoadPrivacy: Boolean,
+            request: UpdateMutationRequest<Draft> = this.request,
+            relationshipRequirements: UpdateRelationshipRequirements = UpdateRelationshipRequirements.None,
+        ): MutationResult<Widget> {
+            currentRelationshipRequirements = relationshipRequirements
+            return executor.update(
+                viewerContext = viewerContext,
+                request = request,
+                entity = mapping,
+                applyLoadPrivacy = applyLoadPrivacy,
+            )
+        }
     }
 
     @Test
     fun `update executor owns lifecycle order and preserves supplied identities`() {
         val fixture = Fixture()
 
-        val result = fixture.executor.update(
-            fixture.viewerContext,
-            fixture.request,
-            fixture.mapping,
-            applyLoadPrivacy = true,
-            fixture.spec,
-        )
+        val result = fixture.execute(applyLoadPrivacy = true)
 
         assertEquals(MutationResult.Success(Widget(1L, "after")), result)
         assertEquals(
@@ -278,9 +313,9 @@ class UpdateMutationExecutorTest {
                 "runtime-preflight:Widget update:false",
                 "load-row",
                 "decode:before",
-                "begin",
-                "before:before",
-                "prepare:before",
+                "capture-pending-edges",
+                "before:before:pending-edges",
+                "prepare:before:pending-edges",
                 "privacy:after",
                 "validation:after",
                 "update:1:after",
@@ -288,7 +323,6 @@ class UpdateMutationExecutorTest {
                 "relationships:after",
                 "after:after",
                 "load-privacy",
-                "end",
             ),
             fixture.events,
         )
@@ -300,12 +334,9 @@ class UpdateMutationExecutorTest {
     fun `pessimistic consistency is validated from the request before owner loading`() {
         val missingTransaction = Fixture()
 
-        val transactionResult = missingTransaction.executor.update(
-            missingTransaction.viewerContext,
-            missingTransaction.request.copy(consistency = UpdateConsistency.Pessimistic),
-            missingTransaction.mapping,
-            false,
-            missingTransaction.spec,
+        val transactionResult = missingTransaction.execute(
+            applyLoadPrivacy = false,
+            request = missingTransaction.request.copy(consistency = UpdateConsistency.Pessimistic),
         )
 
         val transactionFailure = assertIs<EntUnexpectedMutationException>(
@@ -315,12 +346,9 @@ class UpdateMutationExecutorTest {
         assertFalse("load-row" in missingTransaction.events)
 
         val missingCapability = Fixture(inTransaction = true)
-        val capabilityResult = missingCapability.executor.update(
-            missingCapability.viewerContext,
-            missingCapability.request.copy(consistency = UpdateConsistency.Pessimistic),
-            missingCapability.mapping,
-            false,
-            missingCapability.spec,
+        val capabilityResult = missingCapability.execute(
+            applyLoadPrivacy = false,
+            request = missingCapability.request.copy(consistency = UpdateConsistency.Pessimistic),
         )
 
         val capabilityFailure = assertIs<EntUnexpectedMutationException>(
@@ -346,19 +374,16 @@ class UpdateMutationExecutorTest {
             ),
         )
 
-        val result = fixture.executor.update(
-            viewerContext = fixture.viewerContext,
-            request = fixture.request.copy(relationshipLocking = RelationshipLocking.Canonical),
-            entity = fixture.mapping,
+        val result = fixture.execute(
             applyLoadPrivacy = false,
-            spec = fixture.spec,
+            request = fixture.request.copy(relationshipLocking = RelationshipLocking.Canonical),
             relationshipRequirements = requirements,
         )
 
         assertIs<MutationResult.Success<Widget>>(result)
         val relationshipLock = fixture.events.indexOf("serialize-relationship:widget_tags")
         val ownerLoad = fixture.events.indexOf("serialize-owner-edge-and-load")
-        val beforeHook = fixture.events.indexOf("before:before")
+        val beforeHook = fixture.events.indexOf("before:before:pending-edges")
         assertTrue(relationshipLock in 0 until ownerLoad && ownerLoad < beforeHook)
     }
 
@@ -374,14 +399,7 @@ class UpdateMutationExecutorTest {
             supportsReadRowForUpdate = true,
         )
 
-        rowLockFixture.executor.update(
-            rowLockFixture.viewerContext,
-            rowLockFixture.request,
-            rowLockFixture.mapping,
-            false,
-            rowLockFixture.spec,
-            requirements,
-        )
+        rowLockFixture.execute(false, relationshipRequirements = requirements)
 
         assertTrue("load-row-for-update" in rowLockFixture.events)
         assertFalse("serialize-owner-edge-and-load" in rowLockFixture.events)
@@ -390,14 +408,7 @@ class UpdateMutationExecutorTest {
             inTransaction = true,
             supportsOwnerEdgeSerialization = true,
         )
-        ownerSerializationFixture.executor.update(
-            ownerSerializationFixture.viewerContext,
-            ownerSerializationFixture.request,
-            ownerSerializationFixture.mapping,
-            false,
-            ownerSerializationFixture.spec,
-            requirements,
-        )
+        ownerSerializationFixture.execute(false, relationshipRequirements = requirements)
 
         assertTrue("serialize-owner-edge-and-load" in ownerSerializationFixture.events)
         assertFalse("load-row-for-update" in ownerSerializationFixture.events)
@@ -417,14 +428,7 @@ class UpdateMutationExecutorTest {
             supportsOwnerEdgeSerialization = true,
         )
 
-        val result = fixture.executor.update(
-            fixture.viewerContext,
-            fixture.request,
-            fixture.mapping,
-            false,
-            fixture.spec,
-            requirements,
-        )
+        val result = fixture.execute(false, relationshipRequirements = requirements)
 
         val failure = assertIs<EntUnexpectedMutationException>(
             assertIs<MutationResult.Failed>(result).exception,
@@ -442,64 +446,46 @@ class UpdateMutationExecutorTest {
             PreparedUpdate(State("before"), emptyMap(), isNoOp = true),
         )
 
-        val result = fixture.executor.update(
-            fixture.viewerContext,
-            fixture.request,
-            fixture.mapping,
-            true,
-            fixture.spec,
-        )
+        val result = fixture.execute(applyLoadPrivacy = true)
 
         assertEquals(MutationResult.Success(Widget(1L, "before")), result)
         assertTrue("privacy:before" in fixture.events)
         assertTrue("validation:before" in fixture.events)
         assertTrue("load-privacy" in fixture.events)
         assertFalse(fixture.events.any { it.startsWith("update:") || it.startsWith("relationships:") || it.startsWith("after:") })
-        assertEquals("end", fixture.events.last())
+        assertEquals("load-privacy", fixture.events.last())
     }
 
     @Test
-    fun `missing target is typed and does not open generated update state`() {
+    fun `missing target is typed and does not capture pending edges`() {
         val fixture = Fixture()
         fixture.loadedRow = null
 
-        val result = fixture.executor.update(
-            fixture.viewerContext,
-            fixture.request,
-            fixture.mapping,
-            false,
-            fixture.spec,
-        )
+        val result = fixture.execute(applyLoadPrivacy = false)
 
         val failure = assertIs<EntTargetAbsentException>(
             assertIs<MutationResult.Failed>(result).exception,
         )
         assertEquals(EntityKey("id", 1L), failure.key)
         assertSame(failure, fixture.failures.single())
-        assertFalse("begin" in fixture.events || "end" in fixture.events)
+        assertFalse("capture-pending-edges" in fixture.events)
     }
 
     @Test
-    fun `generated preparation violations are typed and cleanup always runs`() {
+    fun `generated preparation violations are typed`() {
         val fixture = Fixture()
         fixture.preparation = UpdatePreparation.Invalid(
             listOf(ValidationViolation("name is required", field = "name")),
         )
 
-        val result = fixture.executor.update(
-            fixture.viewerContext,
-            fixture.request,
-            fixture.mapping,
-            false,
-            fixture.spec,
-        )
+        val result = fixture.execute(applyLoadPrivacy = false)
 
         val failure = assertIs<EntValidationException>(
             assertIs<MutationResult.Failed>(result).exception,
         )
         assertEquals("name is required", failure.violations.single().message)
         assertFalse(fixture.events.any { it.startsWith("privacy:") || it.startsWith("update:") })
-        assertEquals(listOf("end", "record-failure"), fixture.events.takeLast(2))
+        assertEquals("record-failure", fixture.events.last())
     }
 
     @Test
@@ -507,13 +493,7 @@ class UpdateMutationExecutorTest {
         val privacyFixture = Fixture()
         privacyFixture.privacyDecision = PrivacyDecision.Deny("owner only")
 
-        val privacyResult = privacyFixture.executor.update(
-            privacyFixture.viewerContext,
-            privacyFixture.request,
-            privacyFixture.mapping,
-            false,
-            privacyFixture.spec,
-        )
+        val privacyResult = privacyFixture.execute(applyLoadPrivacy = false)
         val privacyFailure = assertIs<EntMutationPrivacyDeniedException>(
             assertIs<MutationResult.Failed>(privacyResult).exception,
         )
@@ -523,13 +503,7 @@ class UpdateMutationExecutorTest {
 
         val validationFixture = Fixture()
         validationFixture.invalids = listOf(ValidationDecision.Invalid("reserved", field = "name"))
-        val validationResult = validationFixture.executor.update(
-            validationFixture.viewerContext,
-            validationFixture.request,
-            validationFixture.mapping,
-            false,
-            validationFixture.spec,
-        )
+        val validationResult = validationFixture.execute(applyLoadPrivacy = false)
         val validationFailure = assertIs<EntValidationException>(
             assertIs<MutationResult.Failed>(validationResult).exception,
         )
@@ -545,17 +519,11 @@ class UpdateMutationExecutorTest {
         fixture.driver.updateFailure = driverFailure
         fixture.driver.classifiedFailure = classified
 
-        val result = fixture.executor.update(
-            fixture.viewerContext,
-            fixture.request,
-            fixture.mapping,
-            false,
-            fixture.spec,
-        )
+        val result = fixture.execute(applyLoadPrivacy = false)
 
         assertSame(classified, assertIs<MutationResult.Failed>(result).exception)
         assertSame(classified, fixture.failures.single())
-        assertEquals("end", fixture.events[fixture.events.lastIndex - 1])
+        assertEquals("record-failure", fixture.events.last())
     }
 
     @Test
@@ -575,13 +543,7 @@ class UpdateMutationExecutorTest {
             throw relationshipFailure
         }
 
-        val result = fixture.executor.update(
-            fixture.viewerContext,
-            fixture.request,
-            fixture.mapping,
-            false,
-            fixture.spec,
-        )
+        val result = fixture.execute(applyLoadPrivacy = false)
 
         val failure = assertIs<EntUnexpectedMutationException>(
             assertIs<MutationResult.Failed>(result).exception,
@@ -596,13 +558,7 @@ class UpdateMutationExecutorTest {
         val hookFailure = IllegalStateException("after")
         afterFixture.afterAction = { throw hookFailure }
 
-        val afterResult = afterFixture.executor.update(
-            afterFixture.viewerContext,
-            afterFixture.request,
-            afterFixture.mapping,
-            false,
-            afterFixture.spec,
-        )
+        val afterResult = afterFixture.execute(applyLoadPrivacy = false)
         val afterFailure = assertIs<EntUnexpectedMutationException>(
             assertIs<MutationResult.Failed>(afterResult).exception,
         )
@@ -611,13 +567,7 @@ class UpdateMutationExecutorTest {
 
         val loadFixture = Fixture(inTransaction = true)
         loadFixture.loadDenial = PrivacyDenial("Widget", EntityKey("id", 1L), "hidden")
-        val loadResult = loadFixture.executor.update(
-            loadFixture.viewerContext,
-            loadFixture.request,
-            loadFixture.mapping,
-            true,
-            loadFixture.spec,
-        )
+        val loadResult = loadFixture.execute(applyLoadPrivacy = true)
         val loadFailure = assertIs<EntMutationPrivacyDeniedException>(
             assertIs<MutationResult.Failed>(loadResult).exception,
         )
@@ -626,23 +576,17 @@ class UpdateMutationExecutorTest {
     }
 
     @Test
-    fun `cancellation propagates without failure recording and still clears generated state`() {
+    fun `cancellation propagates without failure recording`() {
         val fixture = Fixture()
         val cancellation = CancellationException("cancel")
         fixture.relationshipAction = { _, _ -> throw cancellation }
 
         val thrown = assertFailsWith<CancellationException> {
-            fixture.executor.update(
-                fixture.viewerContext,
-                fixture.request,
-                fixture.mapping,
-                false,
-                fixture.spec,
-            )
+            fixture.execute(applyLoadPrivacy = false)
         }
 
         assertSame(cancellation, thrown)
         assertTrue(fixture.failures.isEmpty())
-        assertEquals("end", fixture.events.last())
+        assertEquals("relationships:after", fixture.events.last())
     }
 }

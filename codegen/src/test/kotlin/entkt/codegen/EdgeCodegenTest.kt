@@ -913,7 +913,7 @@ class EdgeCodegenTest {
             "Optional edge FK should lower to FieldPatch.Set(value) / Unset\n$output"
         }
         // Candidate folds effective patch over the loaded entity.
-        assert(output.contains("ownerId = effectivePatch.ownerId.orElse(entity.ownerId)")) {
+        assert(output.contains("ownerId = effectivePatch.ownerId.orElse(before.ownerId)")) {
             "Candidate should fold effective patch over entity for edge FKs via orElse(...)\n$output"
         }
     }
@@ -1127,9 +1127,9 @@ class EdgeCodegenTest {
             "UpdateMutationView adapter must not emit unsetOwnerId() for an immutable FK\n$updateOutput"
         }
         // Candidate construction still carries the FK value, sourced
-        // from `entity` rather than the (absent) effective patch.
-        assert(updateOutput.contains("ownerId = entity.ownerId")) {
-            "Candidate should pull immutable FK directly from entity.before\n$updateOutput"
+        // from the loaded entity rather than the (absent) effective patch.
+        assert(updateOutput.contains("ownerId = before.ownerId")) {
+            "Candidate should pull immutable FK directly from the loaded entity\n$updateOutput"
         }
     }
 

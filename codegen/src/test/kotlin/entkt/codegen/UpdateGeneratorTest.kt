@@ -80,7 +80,7 @@ class UpdateGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("createdAt = entity.createdAt")) { "Should preserve immutable createdAt\n$output" }
+        assert(output.contains("createdAt = before.createdAt")) { "Should preserve immutable createdAt\n$output" }
     }
 
     @Test
@@ -106,7 +106,7 @@ class UpdateGeneratorTest {
             "Nullable field should lower to FieldPatch.Set(value) / Unset (no !!)\n$output"
         }
         // Candidate folds the effective patch over the loaded `before`.
-        assert(output.contains("name = effectivePatch.name.orElse(entity.name)")) {
+        assert(output.contains("name = effectivePatch.name.orElse(before.name)")) {
             "Candidate should fold effective patch over entity via orElse(...)\n$output"
         }
     }
@@ -191,7 +191,7 @@ class UpdateGeneratorTest {
         // the check on the call site (preceded by the hook loop's closing
         // brace) rather than the function declaration. A non-empty result
         // becomes UpdatePreparation.Invalid for runtime classification.
-        val hookLoop = output.indexOf("for (hook in beforeUpdateHooks)")
+        val hookLoop = output.indexOf("beforeUpdateHookRunner.runFresh")
         val checkCallSite = output.indexOf("val requiredViolations = draft._checkRequiredNotNull()")
         val canonicalPatchPos = output.indexOf("val requestedPatch = draft._buildRequestedPatch(driver)")
         assert(hookLoop != -1 && checkCallSite != -1 && canonicalPatchPos != -1) {
@@ -290,7 +290,7 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `draft is contextless and adapter retains the mutation request`() {
+    fun `draft and stable adapter retain no mutation request`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -298,8 +298,8 @@ class UpdateGeneratorTest {
         assert(output.contains("class UserUpdateDraft @EntktInternal constructor()")) {
             "The draft should contain only configurable update state\n$output"
         }
-        assert(output.contains("private val request: UpdateMutationRequest<UserUpdateDraft>,")) {
-            "The schema adapter should retain the request passed to runtime execution\n$output"
+        assert(!output.contains("private val request: UpdateMutationRequest<UserUpdateDraft>")) {
+            "The stateless schema adapter must not retain a request between executions\n$output"
         }
         assert(!output.contains("private val id:") &&
             !output.contains("private val consistency:") &&
@@ -318,12 +318,8 @@ class UpdateGeneratorTest {
             output.contains("entity = UserQuery.GeneratedEntityMapping")) {
             "The generated adapter should pass the request and entity mapping to UpdateMutationExecutor\n$output"
         }
-        val specBlock = output.substring(
-            output.indexOf("UpdateMutationSpec("),
-            output.indexOf("private val updateExecutor"),
-        )
-        assert(!specBlock.contains("GeneratedEntityMapping")) {
-            "EntityMapping must be a direct update() argument, not UpdateMutationSpec state\n$output"
+        assert(!output.contains("UpdateMutationSpec")) {
+            "UpdateMutationSpec should be removed from generated updates\n$output"
         }
         assert(!output.contains("driver.byId(User.TABLE") &&
             !output.contains("driver.readRowForUpdate(User.TABLE")) {
@@ -346,8 +342,7 @@ class UpdateGeneratorTest {
             "EntNoChangesException must be gone from the generated update\n$output"
         }
         assert(output.contains("updateExecutor.update(") &&
-            output.contains("request = request") &&
-            output.contains("spec = updateSpec")) {
+            output.contains("request = request")) {
             "the generated adapter should delegate the complete request to UpdateMutationExecutor\n$output"
         }
         assert(!output.contains("_loadUpdateRow") && !output.contains("loadRow =")) {
@@ -378,7 +373,7 @@ class UpdateGeneratorTest {
         // id, entity, or the private patch helpers.
         assert(
             output.contains(
-                "for (hook in beforeUpdateHooks) { val snapshot = draft._buildRequestedPatch(driver) val beforeSnapshot = entity val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, _mutationView) runBatchHooksForInternalUse(listOf(ctx), listOf(hook)) }",
+                "val mutationView = _buildMutationView(draft, pendingEdges) beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft))) beforeUpdateHookRunner.runFresh { val snapshot = draft._buildRequestedPatch(driver) val beforeSnapshot = before val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, mutationView) listOf(ctx) }",
             ),
         ) {
             "beforeUpdate hooks should receive a per-call snapshot wrapped around _mutationView\n$output"
@@ -404,18 +399,18 @@ class UpdateGeneratorTest {
         // adapter so only hooks can reach them via ctx.mutation.
         assert(
             output.contains(
-                "private val _mutationView: UserUpdateMutationView = object : UserUpdateMutationView",
+                "private fun _buildMutationView(draft: UserUpdateDraft, pendingEdgesSnapshot: UserPendingEdgeOps): UserUpdateMutationView = object : UserUpdateMutationView",
             ),
         ) {
-            "Should generate a private _mutationView adapter implementing UserUpdateMutationView\n$output"
+            "Should generate a private per-save mutation-view adapter\n$output"
         }
         assert(
-            output.contains("override fun unsetName() { this@Execution.draft._unsetFieldForInternalUse(\"name\") }"),
+            output.contains("override fun unsetName() { draft._unsetFieldForInternalUse(\"name\") }"),
         ) {
             "unsetName() override should clear the operation draft's assignment\n$output"
         }
         assert(
-            output.contains("override fun unsetAge() { this@Execution.draft._unsetFieldForInternalUse(\"age\") }"),
+            output.contains("override fun unsetAge() { draft._unsetFieldForInternalUse(\"age\") }"),
         ) {
             "unsetAge() override should clear the operation draft's assignment\n$output"
         }
@@ -451,7 +446,7 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         val emptyCheck = output.indexOf(
-            "val edgeChanges = _buildEdgeChanges(pendingEdges) if (!draft._hasFieldAssignments())",
+            "val edgeChanges = _buildEdgeChanges(request.id, pendingEdges) if (!draft._hasFieldAssignments())",
         )
         assert(emptyCheck != -1) {
             "Hook-cleared check must run after _buildRequestedPatch+_buildEdgeChanges and before update defaults\n$output"
@@ -500,7 +495,7 @@ class UpdateGeneratorTest {
         // _buildEdgeChanges call sits between _buildRequestedPatch
         // and the post-hook empty check.
         val postHookEmptyPos = output.indexOf(
-            "val edgeChanges = _buildEdgeChanges(pendingEdges) if (!draft._hasFieldAssignments())",
+            "val edgeChanges = _buildEdgeChanges(request.id, pendingEdges) if (!draft._hasFieldAssignments())",
         )
         assert(postHookEmptyPos != -1) { "Expected post-hook empty check\n$output" }
         assert(postHookEmptyPos < effectivePatchPos) {
@@ -519,12 +514,10 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("internal fun execute( viewerContext: ViewerContext, request: UpdateMutationRequest<UserUpdateDraft>, applyLoadPrivacy: Boolean, ): MutationResult<User> = Execution(request).execute(viewerContext, applyLoadPrivacy)")) {
-            "The stable adapter should create isolated execution state per terminal\n$output"
+        assert(output.contains("public fun execute( viewerContext: ViewerContext, request: UpdateMutationRequest<UserUpdateDraft>, applyLoadPrivacy: Boolean, ): MutationResult<User> = updateExecutor.update(")) {
+            "The stateless adapter should delegate each explicit request to UpdateMutationExecutor\n$output"
         }
-        assert(output.contains("public fun execute(viewerContext: ViewerContext, applyLoadPrivacy: Boolean): MutationResult<User> = updateExecutor.update(")) {
-            "The execution adapter should delegate the lifecycle to UpdateMutationExecutor\n$output"
-        }
+        assert(!output.contains("class Execution")) { "Generated updates should have no per-request execution holder\n$output" }
         assert(!output.contains("public fun save(") && !output.contains("public fun saveAndLoad(")) {
             "Save terminals belong to the generic runtime PendingUpdateMutation, not the generated draft\n$output"
         }
@@ -566,19 +559,15 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `entity is private internal state`() {
+    fun `loaded entity remains an explicit method input`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // moved hook access to ctx.before / ctx.mutation, so
-        // the `entity` lateinit is now purely internal state populated
-        // by save() and read by candidate construction. Keeping it
-        // public would let direct callers either crash on uninitialized
-        // access or observe a stale (pre-update) row after save().
-        assert(output.contains("private lateinit var entity: User")) {
-            "entity should be a private lateinit var (internal state populated by save())\n$output"
+        assert(!output.contains("lateinit var entity") &&
+            output.contains("name = effectivePatch.name.orElse(before.name)")) {
+            "Generated update code should use the loaded before parameter without mutable entity state\n$output"
         }
     }
 
@@ -637,7 +626,7 @@ class UpdateGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        val hookCall = output.indexOf("runBatchHooksForInternalUse(listOf(_beforeSaveView), beforeSaveHooks)")
+        val hookCall = output.indexOf("beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft)))")
         val patchCtor = output.indexOf("val requestedPatch = draft._buildRequestedPatch(driver)")
         assert(hookCall != -1 && patchCtor != -1 && hookCall < patchCtor) {
             "Before hooks should run before requested patch construction\n$output"
@@ -645,13 +634,13 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `update spec supplies after hooks to the runtime executor`() {
+    fun `stable adapter supplies after hooks to the runtime executor`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("afterUpdate = afterUpdateHooks")) {
-            "updateSpec should supply afterUpdate hooks to UpdateMutationExecutor\n$output"
+        assert(output.contains("afterUpdateHookRunner = HookRunner(afterUpdateHooks)")) {
+            "The generated adapter should inject a typed afterUpdate runner into UpdateMutationExecutor\n$output"
         }
         assert(!output.contains("runBatchHooksForInternalUse(listOf(updatedEntity)")) {
             "generated code should not execute afterUpdate hooks itself\n$output"
@@ -785,7 +774,7 @@ class UpdateGeneratorTest {
             "Fields without updateDefault should pass through requested patch entry\n$output"
         }
         // Candidate folds effective patch over loaded entity for those fields.
-        assert(output.contains("name = effectivePatch.name.orElse(entity.name)")) {
+        assert(output.contains("name = effectivePatch.name.orElse(before.name)")) {
             "Candidate should fold effective patch over entity via orElse(...) for non-default fields\n$output"
         }
     }
@@ -1008,8 +997,8 @@ class UpdateGeneratorTest {
         // so there must be NO `override var tags` / `override fun unsetTags`
         // in the adapter — the only way the view interface could expose
         // the mutator property.
-        assert(output.contains("_mutationView: M2MPostUpdateMutationView")) {
-            "Expected _mutationView adapter typed as M2MPostUpdateMutationView\n$output"
+        assert(output.contains("_buildMutationView(draft: M2MPostUpdateDraft, pendingEdgesSnapshot: M2MPostPendingEdgeOps): M2MPostUpdateMutationView")) {
+            "Expected a per-save adapter typed as M2MPostUpdateMutationView\n$output"
         }
         assert(!output.contains("override var tags") &&
                !output.contains("override val tags")) {
@@ -1093,23 +1082,19 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `update adapter keeps relationship requirements out of the spec`() {
+    fun `update adapter implements the typed runtime adapter contract`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        val beginAdapter = output.indexOf("begin = ::_beginUpdate")
-        val beforeAdapter = output.indexOf("before = ::_runBeforeUpdateHooks")
-        assert(beginAdapter != -1 && beginAdapter < beforeAdapter) {
-            "updateSpec must preserve schema adapter ordering\n$output"
+        assert(output.contains("UpdateMutationAdapter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostUpdateAdapter.PreparedState>") &&
+            output.contains("override fun capturePendingEdges(") &&
+            output.contains("override fun runBeforeHooks(") &&
+            output.contains("override fun prepare(")) {
+            "The generated adapter should implement the typed runtime lifecycle contract\n$output"
         }
-        val specBlock = output.substring(
-            output.indexOf("UpdateMutationSpec("),
-            output.indexOf("private val updateExecutor"),
-        )
-        assert(!specBlock.contains("relationshipRequirements") &&
-            output.contains("relationshipRequirements = _updateRelationshipRequirements()")) {
-            "Per-request relationship requirements should be passed to update(), not stored in updateSpec\n$output"
+        assert(!output.contains("UpdateMutationSpec") && !output.contains("capturePendingEdges = ::")) {
+            "Lifecycle behavior should not be bundled into a spec or method-reference callback list\n$output"
         }
     }
 
@@ -1130,8 +1115,8 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("runBatchHooksForInternalUse(listOf(_beforeSaveView), beforeSaveHooks)")) {
-            "beforeSave on update saves must receive _beforeSaveView (shared-only adapter)\n$output"
+        assert(output.contains("beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft)))")) {
+            "beforeSave on update saves must receive a shared-only per-request view\n$output"
         }
         assert(!output.contains("runBatchHooksForInternalUse(listOf(this), beforeSaveHooks)")) {
             "Old `hook(this)` shape must be gone — it exposed the concrete-draft cast attack\n$output"
@@ -1151,28 +1136,29 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("runBatchHooksForInternalUse(listOf(_beforeSaveView), beforeSaveHooks)")) {
+        assert(output.contains("beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft)))")) {
             "Non-M2M schemas should also pass the shared-only adapter to beforeSave\n$output"
         }
     }
 
     @Test
-    fun `_beforeSaveView is the shared-only adapter — implements Mutation, omits pendingEdges and unset`() {
+    fun `_buildBeforeSaveView is the shared-only adapter — implements Mutation, omits pendingEdges and unset`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         // The adapter is typed as M2MPostMutation (the shared
         // interface), not M2MPostUpdateMutationView.
-        assert(output.contains("private val _beforeSaveView: M2MPostMutation = object : M2MPostMutation")) {
-            "_beforeSaveView must implement M2MPostMutation directly, not the update view\n$output"
+        val declaration = "private fun _buildBeforeSaveView(draft: M2MPostUpdateDraft): M2MPostMutation = object : M2MPostMutation"
+        assert(output.contains(declaration)) {
+            "_buildBeforeSaveView must return M2MPostMutation directly, not the update view\n$output"
         }
         // Find the adapter block start, then scan a bounded window
         // forward to its closing brace pattern. The adapter must NOT
         // expose pendingEdges or unsetTitle inside its body — those
         // belong to the update view, which the adapter doesn't inherit.
-        val viewIdx = output.indexOf("private val _beforeSaveView: M2MPostMutation = object : M2MPostMutation")
-        assert(viewIdx != -1) { "Missing _beforeSaveView adapter\n$output" }
+        val viewIdx = output.indexOf(declaration)
+        assert(viewIdx != -1) { "Missing _buildBeforeSaveView adapter\n$output" }
         // The adapter body is small (just scalar forwarders); window
         // out to the next `private` declaration after it.
         val nextPrivateIdx = output.indexOf("private", viewIdx + 1).let { if (it == -1) output.length else it }
@@ -1192,36 +1178,29 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // The 5-arg form: (client, detached before, patch, pendingEdges, mutation).
-        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, _mutationView)")) {
+        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, mutationView)")) {
             "beforeUpdate hook context should receive pendingEdges as the 4th argument\n$output"
         }
     }
 
     @Test
-    fun `mutation view adapter pendingEdges routes through the captured snapshot, not a fresh rebuild`() {
+    fun `mutation view receives the runtime-owned pending-edge snapshot`() {
         // The adapter returns the SAME pendingEdges instance that the
         // hook context received. The previous
         // _buildPendingEdgeOps() rebuild path was structurally
         // equivalent (because hook code can't mutate the op log
         // through the view) but every read paid a fresh allocation
         // and the two surfaces returned different object instances.
-        // Routing through _capturedPendingEdges keeps them
-        // object-identity equal and forecloses divergence if any
-        // future path ever reaches the live mutator post-snapshot.
+        // Passing the snapshot into the view keeps the hook context and
+        // mutation view object-identity equal without generated mutable state.
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains(
-            "override val pendingEdges: M2MPostPendingEdgeOps get() = " +
-                "this@Execution._capturedPendingEdges",
+            "override val pendingEdges: M2MPostPendingEdgeOps get() = pendingEdgesSnapshot",
         )) {
-            "Adapter pendingEdges getter must read the captured snapshot field\n$output"
-        }
-        // Error path when accessed outside save context (field still
-        // null at adapter-touch time).
-        assert(output.contains("pendingEdges accessed outside a save()")) {
-            "Adapter getter should error when the captured snapshot is unset\n$output"
+            "Adapter pendingEdges getter must return the runtime-owned snapshot\n$output"
         }
         // The old direct delegation to _buildPendingEdgeOps() in the
         // getter must be gone — that was the divergence vector.
@@ -1234,72 +1213,52 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `update class declares the captured pendingEdges snapshot field, even for non-M2M schemas`() {
-        // The adapter is always generated (UpdateMutationView always
-        // carries pendingEdges typed against the per-entity aggregator,
-        // empty or not), so the field that backs it must always be
-        // present too — otherwise the getter wouldn't compile on
-        // non-M2M schemas.
+    fun `update class carries no mutable pending-edge snapshot field`() {
         val user = User()
         finalize(user, Car())
         val userOutput = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
-        assert(userOutput.contains("private var _capturedPendingEdges: UserPendingEdgeOps?")) {
-            "Non-M2M schemas should also declare _capturedPendingEdges\n$userOutput"
+        assert(!userOutput.contains("_capturedPendingEdges")) {
+            "Non-M2M schemas should not store pending-edge lifecycle state\n$userOutput"
         }
 
         val (post, _, _, names) = makeLinkM2MSchemas()
         val postOutput = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
-        assert(postOutput.contains("private var _capturedPendingEdges: M2MPostPendingEdgeOps?")) {
-            "M2M-capable schemas declare _capturedPendingEdges typed against their aggregator\n$postOutput"
+        assert(!postOutput.contains("_capturedPendingEdges")) {
+            "M2M-capable schemas should not store pending-edge lifecycle state\n$postOutput"
         }
     }
 
     @Test
-    fun `begin adapter populates the captured pending-edge snapshot`() {
+    fun `capture adapter returns pending edges to the runtime`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private fun _beginUpdate() { _capturedPendingEdges = draft._buildPendingEdgeOps() }")) {
-            "the begin adapter should atomically capture pending edges\n$output"
+        assert(output.contains("override fun capturePendingEdges(draft: M2MPostUpdateDraft): M2MPostPendingEdgeOps = draft._buildPendingEdgeOps()")) {
+            "the capture adapter should return the snapshot to runtime\n$output"
         }
-        assert(output.contains("begin = ::_beginUpdate")) {
-            "updateSpec should expose the begin adapter to runtime\n$output"
+        assert(output.contains("adapter = this")) {
+            "the executor should receive the typed adapter once at construction\n$output"
         }
     }
 
     @Test
-    fun `update spec supplies one pending-edge cleanup adapter`() {
-        // The try/finally must wrap the entire post-assignment region
-        // so all exits clear the field — including every
-        // `return MutationResult.failedForInternalUse(...)` (privacy
-        // denial, validation, vanished target, driver failure), the
-        // no-op `return MutationResult.Success(entity)`, the final
-        // `return MutationResult.Success(updatedEntity)`, and any
-        // exception escaping hooks toward the outer capture boundary.
-        // Without the finally, a hook stashing ctx.mutation could read
-        // pendingEdges post-save — contradicting the getter's contract.
+    fun `generated update has no pending-edge cleanup callback`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private fun _endUpdate() { _capturedPendingEdges = null }")) {
-            "the end adapter should clear pending edges\n$output"
+        assert(!output.contains("_endUpdate") && !output.contains("end = ::")) {
+            "Runtime-local pending edges should require no cleanup callback\n$output"
         }
-        assert(Regex(Regex.escape("end = ::_endUpdate")).findAll(output).count() == 1) {
-            "updateSpec should supply exactly one cleanup adapter\n$output"
-        }
-        // Symmetry guard: also fires for non-M2M schemas, since the
-        // _capturedPendingEdges field exists uniformly across all
-        // Update executions (per design).
         val user = User()
         finalize(user, Car())
         val userOutput = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
-        assert(userOutput.contains("private fun _endUpdate() { _capturedPendingEdges = null }")) {
-            "Non-M2M schemas must expose the same cleanup adapter\n$userOutput"
+        assert(!userOutput.contains("_endUpdate") && !userOutput.contains("_capturedPendingEdges")) {
+            "Non-M2M schemas should also have no cleanup machinery\n$userOutput"
         }
     }
 
@@ -1370,21 +1329,17 @@ class UpdateGeneratorTest {
     // ---------- symmetric link-table writes canonical relationship locking ----------
 
     @Test
-    fun `update execution passes relationship requirements directly to the executor method`() {
+    fun `typed adapter exposes relationship requirements to the executor`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("relationshipRequirements = _updateRelationshipRequirements()")) {
-            "Update execution must pass per-request relationship requirements directly\n$output"
+        assert(output.contains("override fun relationshipRequirements(draft: M2MPostUpdateDraft): UpdateRelationshipRequirements")) {
+            "The typed adapter must expose schema-specific requirements from the request draft\n$output"
         }
-        val specBlock = output.substring(
-            output.indexOf("UpdateMutationSpec("),
-            output.indexOf("private val updateExecutor"),
-        )
         assert(!output.contains("private val relationshipLocking:") &&
-            !specBlock.contains("relationshipRequirements")) {
-            "Per-request relationship state must not be copied or stored in UpdateMutationSpec\n$output"
+            !output.contains("UpdateMutationSpec")) {
+            "Per-request relationship state must not be copied or stored\n$output"
         }
     }
 
@@ -1478,22 +1433,18 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `relationship requirements are passed to the executor instead of the update spec`() {
+    fun `relationship requirements live on the typed adapter instead of a spec`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("relationshipRequirements = _updateRelationshipRequirements()")) {
-            "The executor method should receive per-request relationship requirements\n$output"
+        assert(output.contains("override fun relationshipRequirements(draft: M2MPostUpdateDraft): UpdateRelationshipRequirements")) {
+            "The typed adapter should derive per-request relationship requirements\n$output"
         }
-        val specBlock = output.substring(
-            output.indexOf("UpdateMutationSpec("),
-            output.indexOf("private val updateExecutor"),
-        )
-        assert(!specBlock.contains("relationshipRequirements") &&
-            !specBlock.contains("preflight") &&
-            !specBlock.contains("loadRow")) {
-            "Runtime inputs and lifecycle policy must not be stored in UpdateMutationSpec\n$output"
+        assert(!output.contains("UpdateMutationSpec") &&
+            !output.contains("preflight") &&
+            !output.contains("loadRow")) {
+            "Runtime inputs and lifecycle policy must not be stored in generated state\n$output"
         }
     }
 
@@ -1554,8 +1505,8 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("relationshipRequirements = _updateRelationshipRequirements()")) {
-            "M2M adapters should pass schema-specific requirements to runtime\n$output"
+        assert(output.contains("override fun relationshipRequirements(draft: M2MPostUpdateDraft): UpdateRelationshipRequirements")) {
+            "M2M adapters should expose schema-specific requirements to runtime\n$output"
         }
         assert(!output.contains("readRowForUpdate(") &&
             !output.contains("serializeOwnerEdgeAndRead(") &&
@@ -1595,7 +1546,7 @@ class UpdateGeneratorTest {
         // Helper signature: takes the captured pendingEdges snapshot,
         // returns the per-entity EdgeChangesView.
         assert(output.contains(
-            "private fun _buildEdgeChanges(pendingEdges: M2MPostPendingEdgeOps): M2MPostEdgeChangesView",
+            "private fun _buildEdgeChanges(id: Any, pendingEdges: M2MPostPendingEdgeOps): M2MPostEdgeChangesView",
         )) {
             "Expected _buildEdgeChanges helper taking pendingEdges and returning the view\n$output"
         }
@@ -1606,8 +1557,8 @@ class UpdateGeneratorTest {
         // typed query scopes; Predicate.Leaf<Any> renders the same structural
         // data.
         assert(output.contains(
-            "val _current_tags: Set<UUID> = if (draft.tags.hasOps()) { " +
-                "driver.query(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, request.id)), emptyList(), null, null) " +
+            "val _current_tags: Set<UUID> = if (pendingEdges.tags.hasChanges) { " +
+                "driver.query(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, id)), emptyList(), null, null) " +
                 ".map { it[\"tag_id\"] as UUID } .toSet() } else emptySet()",
         )) {
             "Expected per-edge junction read that lowers to Predicate.Leaf<Any>(sourceCol, Op.EQ, this.id)\n$output"
@@ -1630,11 +1581,11 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // No junction reads, no computeEdgeChanges calls, just an empty view.
-        assert(output.contains("private fun _buildEdgeChanges(pendingEdges: UserPendingEdgeOps): UserEdgeChangesView")) {
+        assert(output.contains("private fun _buildEdgeChanges(id: Any, pendingEdges: UserPendingEdgeOps): UserEdgeChangesView")) {
             "Helper must still be emitted for uniform shape\n$output"
         }
         assert(output.contains("return UserEdgeChangesView()") ||
-               output.contains("_buildEdgeChanges(pendingEdges: UserPendingEdgeOps): UserEdgeChangesView = UserEdgeChangesView()")) {
+               output.contains("_buildEdgeChanges(id: Any, pendingEdges: UserPendingEdgeOps): UserEdgeChangesView = UserEdgeChangesView()")) {
             "Empty path should short-circuit to no-arg view constructor\n$output"
         }
         assert(!output.contains("computeEdgeChanges")) {
@@ -1654,7 +1605,7 @@ class UpdateGeneratorTest {
         val patchIdx = output.indexOf("val requestedPatch = draft._buildRequestedPatch(driver)")
         // The runtime scope provides the driver-read capture boundary.
         val edgeChangesIdx = output.indexOf(
-            "val edgeChanges = scope.driverRead { _buildEdgeChanges(pendingEdges) }",
+            "val edgeChanges = scope.driverRead { _buildEdgeChanges(request.id, pendingEdges) }",
         )
         // gates the empty-branch condition on M2M-pending so
         // M2M-only updates proceed past it.
@@ -1746,7 +1697,7 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("values = values, isNoOp = false") &&
-            output.contains("relationships = ::_persistUpdateRelationships")) {
+            output.contains("override fun persistRelationships(")) {
             "the schema adapter should supply owner values and relationship persistence separately\n$output"
         }
         assert(!output.contains("driver.update(")) {
@@ -1762,7 +1713,7 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("values = values, isNoOp = false") &&
-            output.contains("relationships = ::_persistUpdateRelationships")) {
+            output.contains("override fun persistRelationships(")) {
             "non-M2M adapters should pass prepared values through the uniform runtime contract\n$output"
         }
         assert(!output.contains("driver.update(") &&

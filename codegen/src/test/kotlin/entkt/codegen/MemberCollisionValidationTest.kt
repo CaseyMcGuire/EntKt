@@ -271,9 +271,9 @@ class MemberCollisionValidationTest {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // The generated hook-facing adapter properties (`_beforeSaveView`,
-    // `_createMutationView` on Create; `_mutationView`,
-    // `_capturedPendingEdges` on Update) all use a leading `_`.
+    // The generated hook-facing adapter factories (`_buildBeforeSaveView`,
+    // `_createMutationView` on Create; `_buildMutationView` and
+    // `_buildEdgeChanges` on Update) all use a leading `_`.
     //
     // Under the declaration-name contract a schema can no longer reach
     // them: declaration names must be lower-camel identifiers, so `_` is
@@ -290,10 +290,10 @@ class MemberCollisionValidationTest {
         // One object expression per reserved name: a declaration name is
         // a compile-time property name, so this cannot be table-driven.
         val cases = listOf<Pair<String, () -> Unit>>(
-            "_beforeSaveView" to {
+            "_buildBeforeSaveView" to {
                 object : EntSchema("reserved_a", clientName = "reservedAs") {
                     override fun id() = EntId.long()
-                    val _beforeSaveView by long("backing_col")
+                    val _buildBeforeSaveView by long("backing_col")
                 }
                 Unit
             },
@@ -304,17 +304,17 @@ class MemberCollisionValidationTest {
                 }
                 Unit
             },
-            "_mutationView" to {
+            "_buildMutationView" to {
                 object : EntSchema("reserved_c", clientName = "reservedCs") {
                     override fun id() = EntId.long()
-                    val _mutationView by long("backing_col")
+                    val _buildMutationView by long("backing_col")
                 }
                 Unit
             },
-            "_capturedPendingEdges" to {
+            "_buildEdgeChanges" to {
                 object : EntSchema("reserved_d", clientName = "reservedDs") {
                     override fun id() = EntId.long()
-                    val _capturedPendingEdges by long("backing_col")
+                    val _buildEdgeChanges by long("backing_col")
                 }
                 Unit
             },

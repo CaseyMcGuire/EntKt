@@ -127,9 +127,9 @@ class JsonCodegenTest {
             """driver.copyJsonValue(JsonArticle.TABLE, "metadata",""" in update,
             update,
         )
-        assertTrue("val beforeSnapshot = entity.copy(" in update, update)
+        assertTrue("val beforeSnapshot = before.copy(" in update, update)
         assertTrue(
-            """metadata = driver.copyJsonValue(JsonArticle.TABLE, "metadata", entity.metadata)""" in update,
+            """metadata = driver.copyJsonValue(JsonArticle.TABLE, "metadata", before.metadata)""" in update,
             update,
         )
     }

@@ -18,7 +18,6 @@ import entkt.codegen.columnName
 import entkt.codegen.lifecyclePatchSnapshot
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
-import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
@@ -54,8 +53,9 @@ private val IMMUTABLE_SET_SNAPSHOT =
     MemberName("entkt.runtime.mutation", "immutableSetSnapshotForInternalUse")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
-private val UPDATE_MUTATION_REQUEST =
-    ClassName("entkt.runtime.mutation", "UpdateMutationRequest")
+private val UPDATE_MUTATION_ADAPTER =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationAdapter")
+private val HOOK_RUNNER = ClassName("entkt.runtime.hook", "HookRunner")
 
 
 internal class UpdateGenerator(
@@ -76,7 +76,7 @@ internal class UpdateGenerator(
         // Immutable FKs are create-only — the update draft, the
         // hook-facing view, and the patch must not expose a write path
         // for them. `allEdgeFks` is used only for candidate construction
-        // (which carries the unchanged value from `entity.before`).
+        // (which carries the unchanged value from the loaded entity).
         val allEdgeFks = computeEdgeFks(schema, schemaNames)
         val edgeFks = allEdgeFks.filter { !it.immutable }
 
@@ -156,55 +156,18 @@ internal class UpdateGenerator(
             }
         }
 
-        val requestType = UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass)
-        val executionType = classType("Execution") {
-            addModifiers(KModifier.PRIVATE, KModifier.INNER)
-            primaryConstructor { parameter("request", requestType) }
-            property("request", requestType) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("request")
-            }
-            property("draft", draftClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("request.draft")
-            }
-            property("entity", entityClass) {
-                addModifiers(KModifier.PRIVATE, KModifier.LATEINIT)
-                mutable(true)
-            }
-            property(
-                "_capturedPendingEdges",
-                ClassName(packageName, "${schemaName}PendingEdgeOps").copy(nullable = true),
-            ) {
-                addModifiers(KModifier.PRIVATE)
-                mutable(true)
-                initializer("null")
-            }
-            addProperty(
-                buildMutationViewProperty(
-                    outerClassName = "Execution",
-                    updateMutationViewClass = updateMutationViewClass,
-                    mutableFields = mutableFields,
-                    edgeFks = edgeFks,
-                    pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps"),
-                ),
-            )
-            addProperty(
-                buildBeforeSaveAdapterProperty(
-                    outerClassName = "Execution",
-                    mutationClass = mutationClass,
-                    mutableFields = mutableFields,
-                    edgeFks = edgeFks,
-                ),
-            )
-            addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
-            addProperty(saveArtifacts.specProperty)
-            addProperty(saveArtifacts.executorProperty)
-            saveArtifacts.functions.forEach(::addFunction)
-        }
+        val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
 
         val adapterType = classType(adapterClass.simpleName) {
             addModifiers(KModifier.INTERNAL)
+            addSuperinterface(
+                UPDATE_MUTATION_ADAPTER.parameterizedBy(
+                    draftClass,
+                    entityClass,
+                    pendingEdgeOpsClass,
+                    preparedStateClass,
+                ),
+            )
             primaryConstructor {
                 parameter("driver", DRIVER)
                 parameter("client", clientClass)
@@ -220,27 +183,35 @@ internal class UpdateGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("client")
             }
-            property("beforeSaveHooks", beforeSaveHookType) {
+            property("beforeSaveHookRunner", HOOK_RUNNER.parameterizedBy(mutationClass)) {
                 addModifiers(KModifier.PRIVATE)
-                initializer("beforeSaveHooks")
+                initializer("%T(beforeSaveHooks)", HOOK_RUNNER)
             }
-            property("beforeUpdateHooks", beforeUpdateHookType) {
+            property("beforeUpdateHookRunner", HOOK_RUNNER.parameterizedBy(updateHookCtxClass)) {
                 addModifiers(KModifier.PRIVATE)
-                initializer("beforeUpdateHooks")
+                initializer("%T(beforeUpdateHooks)", HOOK_RUNNER)
             }
-            property("afterUpdateHooks", afterUpdateHookType) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("afterUpdateHooks")
-            }
-            function("execute", MUTATION_RESULT.parameterizedBy(entityClass)) {
-                addModifiers(KModifier.INTERNAL)
-                parameter("viewerContext", VIEWER_CONTEXT)
-                parameter("request", requestType)
-                parameter("applyLoadPrivacy", BOOLEAN)
-                statement("return Execution(request).execute(viewerContext, applyLoadPrivacy)")
-            }
+            addFunction(
+                buildMutationViewFunction(
+                    updateMutationViewClass = updateMutationViewClass,
+                    draftClass = draftClass,
+                    mutableFields = mutableFields,
+                    edgeFks = edgeFks,
+                    pendingEdgeOpsClass = pendingEdgeOpsClass,
+                ),
+            )
+            addFunction(
+                buildBeforeSaveAdapterFunction(
+                    mutationClass = mutationClass,
+                    draftClass = draftClass,
+                    mutableFields = mutableFields,
+                    edgeFks = edgeFks,
+                ),
+            )
+            addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
+            addProperty(saveArtifacts.executorProperty)
+            saveArtifacts.functions.forEach(::addFunction)
             addType(saveArtifacts.preparedStateType)
-            addType(executionType)
         }
 
         return kotlinFile(packageName, className) {
@@ -363,60 +334,54 @@ internal class UpdateGenerator(
     }
 
     /**
-     * Build the private `_mutationView` adapter that hooks see as
+     * Build the private `_buildMutationView` factory for the adapter hooks see as
      * `ctx.mutation`. The adapter implements [updateMutationViewClass]
      * by forwarding each [mutationClass] field/FK property to the
-     * execution's draft (so reads go through the throw-on-untouched
+     * supplied draft (so reads go through the throw-on-untouched
      * getter and writes flow through the dirty-tracking setter) and
      * declaring `unset{Field}()` overrides that clear the corresponding
-     * draft assignment. Keeping the view behind a private
-     * property keeps `unset` off the public DSL surface.
+     * draft assignment. Keeping the factory private keeps `unset` off
+     * the public DSL surface and captures the runtime-owned edge snapshot.
      */
-    private fun buildMutationViewProperty(
-        outerClassName: String,
+    private fun buildMutationViewFunction(
         updateMutationViewClass: ClassName,
+        draftClass: ClassName,
         mutableFields: List<Field>,
         edgeFks: List<EdgeFk>,
         pendingEdgeOpsClass: ClassName,
-    ): PropertySpec {
+    ): FunSpec {
         val adapter = anonymousType {
             addSuperinterface(updateMutationViewClass)
             // Forward each mutation field/FK property to the operation draft.
             for (field in mutableFields) {
                 val propName = field.apiName
                 val typeName = field.resolvedTypeName().copy(nullable = true)
-                addProperty(buildAdapterForwarderProperty(outerClassName, propName, typeName))
+                addProperty(buildAdapterForwarderProperty(propName, typeName))
             }
             for (fk in edgeFks) {
                 // Forwarder property type matches the interface (required → non-null).
                 val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-                addProperty(buildAdapterForwarderProperty(outerClassName, fk.propertyName, typeName))
+                addProperty(buildAdapterForwarderProperty(fk.propertyName, typeName))
             }
             for (field in mutableFields) {
-                addFunction(buildAdapterUnsetFunction(outerClassName, field.apiName))
+                addFunction(buildAdapterUnsetFunction(field.apiName))
             }
             for (fk in edgeFks) {
-                addFunction(buildAdapterUnsetFunction(outerClassName, fk.propertyName))
+                addFunction(buildAdapterUnsetFunction(fk.propertyName))
             }
-            // Route pendingEdges through the execution's captured snapshot so the
-            // hook context and mutation view expose the same immutable value.
+            // The runtime-owned snapshot is captured by this per-save view.
             property("pendingEdges", pendingEdgeOpsClass) {
                 addModifiers(KModifier.OVERRIDE)
                 getter {
-                    statement(
-                            "return this@%L._capturedPendingEdges " +
-                                "?: error(%S)",
-                            outerClassName,
-                            "pendingEdges accessed outside a save() — the captured snapshot is " +
-                                "only populated during save() between the owner-row read and the " +
-                                "afterUpdate hook block",
-                        )
+                    statement("return pendingEdgesSnapshot")
                 }
             }
         }
-        return property("_mutationView", updateMutationViewClass) {
+        return function("_buildMutationView", updateMutationViewClass) {
             addModifiers(KModifier.PRIVATE)
-            initializer("%L", adapter)
+            parameter("draft", draftClass)
+            parameter("pendingEdgesSnapshot", pendingEdgeOpsClass)
+            statement("return %L", adapter)
         }
     }
 
@@ -430,54 +395,54 @@ internal class UpdateGenerator(
      * `mutation as ${Schema}UpdateMutationView` fails at runtime.
      *
      * The adapter forwards each mutable scalar field and mutable
-     * edge FK property to the execution's update draft, same as the
-     * `_mutationView` forwarders.
+     * edge FK property to the supplied update draft, same as the
+     * update mutation-view forwarders.
      */
-    private fun buildBeforeSaveAdapterProperty(
-        outerClassName: String,
+    private fun buildBeforeSaveAdapterFunction(
         mutationClass: ClassName,
+        draftClass: ClassName,
         mutableFields: List<Field>,
         edgeFks: List<EdgeFk>,
-    ): PropertySpec {
+    ): FunSpec {
         val adapter = anonymousType {
             addSuperinterface(mutationClass)
             for (field in mutableFields) {
                 val propName = field.apiName
                 val typeName = field.resolvedTypeName().copy(nullable = true)
-                addProperty(buildAdapterForwarderProperty(outerClassName, propName, typeName))
+                addProperty(buildAdapterForwarderProperty(propName, typeName))
             }
             for (fk in edgeFks) {
                 val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-                addProperty(buildAdapterForwarderProperty(outerClassName, fk.propertyName, typeName))
+                addProperty(buildAdapterForwarderProperty(fk.propertyName, typeName))
             }
         }
-        return property("_beforeSaveView", mutationClass) {
+        return function("_buildBeforeSaveView", mutationClass) {
             addModifiers(KModifier.PRIVATE)
-            initializer("%L", adapter)
+            parameter("draft", draftClass)
+            statement("return %L", adapter)
         }
     }
 
     private fun buildAdapterForwarderProperty(
-        outerClassName: String,
         prop: String,
         typeName: com.squareup.kotlinpoet.TypeName,
     ): PropertySpec {
         return property(prop, typeName) {
             addModifiers(KModifier.OVERRIDE)
             mutable(true)
-            getter { statement("return this@%L.draft.%L", outerClassName, prop) }
+            getter { statement("return draft.%L", prop) }
             setter {
                 parameter("value", typeName)
-                statement("this@%L.draft.%L = value", outerClassName, prop)
+                statement("draft.%L = value", prop)
             }
         }
     }
 
-    private fun buildAdapterUnsetFunction(outerClassName: String, prop: String): FunSpec {
+    private fun buildAdapterUnsetFunction(prop: String): FunSpec {
         val name = "unset${prop.replaceFirstChar { it.uppercaseChar() }}"
         return function(name) {
             addModifiers(KModifier.OVERRIDE)
-            statement("this@%L.draft._unsetFieldForInternalUse(%S)", outerClassName, prop)
+            statement("draft._unsetFieldForInternalUse(%S)", prop)
         }
     }
 
@@ -866,6 +831,7 @@ internal class UpdateGenerator(
         if (helperEligibleEdges.isEmpty()) {
             return function("_buildEdgeChanges", edgeChangesViewClass) {
                 addModifiers(KModifier.PRIVATE)
+                parameter("id", Any::class.asClassName())
                 parameter("pendingEdges", pendingEdgeOpsClass)
                 statement("return %T()", edgeChangesViewClass)
             }
@@ -881,8 +847,8 @@ internal class UpdateGenerator(
                 // Predicate.Leaf<Any> renders the same structural data
                 // (field/op/value) and erases at the driver boundary.
                 add(
-                    "val %L: Set<%T> = if (draft.%L.hasOps()) {\n" +
-                        "  driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, request.id)), emptyList(), null, null)\n" +
+                    "val %L: Set<%T> = if (pendingEdges.%L.hasChanges) {\n" +
+                        "  driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, id)), emptyList(), null, null)\n" +
                         "    .map { it[%S] as %T }\n" +
                         "    .toSet()\n" +
                         "} else emptySet()\n",
@@ -904,6 +870,7 @@ internal class UpdateGenerator(
         }
         return function("_buildEdgeChanges", edgeChangesViewClass) {
             addModifiers(KModifier.PRIVATE)
+            parameter("id", Any::class.asClassName())
             parameter("pendingEdges", pendingEdgeOpsClass)
             addCode(body)
         }

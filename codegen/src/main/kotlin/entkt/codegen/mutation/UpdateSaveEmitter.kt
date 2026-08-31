@@ -32,10 +32,11 @@ private val RELATIONSHIP_LOCK_KEY = ClassName("entkt.runtime.mutation", "Relatio
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UUID_CLASS = ClassName("java.util", "UUID")
-private val UPDATE_MUTATION_SPEC =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationSpec")
+private val HOOK_RUNNER = ClassName("entkt.runtime.hook", "HookRunner")
 private val UPDATE_MUTATION_EXECUTOR =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationExecutor")
+private val UPDATE_MUTATION_REQUEST =
+    ClassName("entkt.runtime.mutation", "UpdateMutationRequest")
 private val PREPARED_UPDATE =
     ClassName("entkt.runtime.mutation.execution", "PreparedUpdate")
 private val UPDATE_PREPARATION =
@@ -60,7 +61,6 @@ private val SNAPSHOT_EDGE_CHANGES =
 /** Schema-specific artifacts around the reusable runtime UPDATE lifecycle. */
 internal data class UpdateSaveArtifacts(
     val preparedStateType: TypeSpec,
-    val specProperty: PropertySpec,
     val executorProperty: PropertySpec,
     val functions: List<FunSpec>,
 )
@@ -79,6 +79,8 @@ internal class UpdateSaveEmitter(
     private val entityClass = ClassName(packageName, schemaName)
     private val queryClass = ClassName(packageName, "${schemaName}Query")
     private val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
+    private val draftClass = ClassName(packageName, "${schemaName}UpdateDraft")
+    private val pendingEdgesClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
     private val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
     private val edgeChangesClass = ClassName(packageName, "${schemaName}EdgeChangesView")
     private val updateHookContextClass = ClassName(packageName, "${schemaName}UpdateHookContext")
@@ -86,14 +88,12 @@ internal class UpdateSaveEmitter(
 
     fun build(): UpdateSaveArtifacts = UpdateSaveArtifacts(
         preparedStateType = buildPreparedStateType(),
-        specProperty = buildSpecProperty(),
         executorProperty = buildExecutorProperty(),
         functions = buildList {
             if (helperEligibleEdges.isNotEmpty()) {
                 add(buildRelationshipRequirementsFunction())
             }
-            add(buildBeginFunction())
-            add(buildEndFunction())
+            add(buildCapturePendingEdgesFunction())
             add(buildBeforeFunction())
             add(buildPrepareFunction())
             add(buildRelationshipFunction())
@@ -112,7 +112,7 @@ internal class UpdateSaveEmitter(
         val constructor = FunSpec.constructorBuilder()
         parameters.forEach { (name, type) -> constructor.addParameter(name, type) }
         return TypeSpec.classBuilder(preparedStateClass.simpleName)
-            .addModifiers(KModifier.PRIVATE, KModifier.DATA)
+            .addModifiers(KModifier.INTERNAL, KModifier.DATA)
             .primaryConstructor(constructor.build())
             .addProperties(
                 parameters.map { (name, type) ->
@@ -122,34 +122,17 @@ internal class UpdateSaveEmitter(
             .build()
     }
 
-    private fun buildSpecProperty(): PropertySpec {
-        val specType = UPDATE_MUTATION_SPEC.parameterizedBy(
-            preparedStateClass,
-            entityClass,
-        )
-        return property("updateSpec", specType) {
-            addModifiers(KModifier.PRIVATE)
-            initializer(codeBlock {
-                add("%T(\n", UPDATE_MUTATION_SPEC)
-                indent()
-                add("begin = ::_beginUpdate,\n")
-                add("end = ::_endUpdate,\n")
-                add("before = ::_runBeforeUpdateHooks,\n")
-                add("prepare = ::_prepareUpdate,\n")
-                add("relationships = ::_persistUpdateRelationships,\n")
-                add("afterUpdate = afterUpdateHooks,\n")
-                unindent()
-                add(")")
-            })
-        }
-    }
-
     private fun buildExecutorProperty(): PropertySpec {
         val updateRuleInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
         val createRuleInput = ClassName(packageName, "${schemaName}CreateRuleInput")
         return property(
             "updateExecutor",
-            UPDATE_MUTATION_EXECUTOR.parameterizedBy(preparedStateClass),
+            UPDATE_MUTATION_EXECUTOR.parameterizedBy(
+                draftClass,
+                entityClass,
+                pendingEdgesClass,
+                preparedStateClass,
+            ),
         ) {
             addModifiers(KModifier.PRIVATE)
             initializer(codeBlock {
@@ -228,6 +211,8 @@ internal class UpdateSaveEmitter(
                 add("},\n")
                 unindent()
                 add("),\n")
+                add("adapter = this,\n")
+                add("afterUpdateHookRunner = %T(afterUpdateHooks),\n", HOOK_RUNNER)
                 unindent()
                 add(")")
             })
@@ -235,10 +220,11 @@ internal class UpdateSaveEmitter(
     }
 
     private fun buildRelationshipRequirementsFunction(): FunSpec = function(
-        "_updateRelationshipRequirements",
+        "relationshipRequirements",
         UPDATE_RELATIONSHIP_REQUIREMENTS,
     ) {
-        addModifiers(KModifier.PRIVATE)
+        addModifiers(KModifier.OVERRIDE)
+        parameter("draft", draftClass)
         statement("val canonicalLockKeys = mutableListOf<%T>()", RELATIONSHIP_LOCK_KEY)
         emitCanonicalRelationshipLockKeys(
             builder = this,
@@ -257,49 +243,44 @@ internal class UpdateSaveEmitter(
         })
     }
 
-    private fun buildBeginFunction(): FunSpec = function("_beginUpdate") {
-        addModifiers(KModifier.PRIVATE)
-        statement("_capturedPendingEdges = draft._buildPendingEdgeOps()")
+    private fun buildCapturePendingEdgesFunction(): FunSpec = function(
+        "capturePendingEdges",
+        pendingEdgesClass,
+    ) {
+        addModifiers(KModifier.OVERRIDE)
+        parameter("draft", draftClass)
+        statement("return draft._buildPendingEdgeOps()")
     }
 
-    private fun buildEndFunction(): FunSpec = function("_endUpdate") {
-        addModifiers(KModifier.PRIVATE)
-        statement("_capturedPendingEdges = null")
-    }
-
-    private fun buildBeforeFunction(): FunSpec = function("_runBeforeUpdateHooks") {
-        addModifiers(KModifier.PRIVATE)
+    private fun buildBeforeFunction(): FunSpec = function("runBeforeHooks") {
+        addModifiers(KModifier.OVERRIDE)
         parameter("viewerContext", VIEWER_CONTEXT)
+        parameter("draft", draftClass)
         parameter("before", entityClass)
-        statement("entity = before")
-        statement(
-            "val pendingEdges = checkNotNull(_capturedPendingEdges) { %S }",
-            "update pending edges were not captured",
-        )
-        statement("%M(listOf(_beforeSaveView), beforeSaveHooks)", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
-        beginControlFlow("for (hook in beforeUpdateHooks)")
+        parameter("pendingEdges", pendingEdgesClass)
+        statement("val mutationView = _buildMutationView(draft, pendingEdges)")
+        statement("beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft)))")
+        beginControlFlow("beforeUpdateHookRunner.runFresh")
         statement("val snapshot = draft._buildRequestedPatch(driver)")
-        statement("val beforeSnapshot = %L", lifecycleValueSnapshot("entity", allFields, entityClass))
+        statement("val beforeSnapshot = %L", lifecycleValueSnapshot("before", allFields, entityClass))
         statement(
-            "val ctx = %T(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, _mutationView)",
+            "val ctx = %T(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, mutationView)",
             updateHookContextClass,
         )
-        statement("%M(listOf(ctx), listOf(hook))", RUN_BATCH_HOOKS_FOR_INTERNAL_USE)
+        statement("listOf(ctx)")
         endControlFlow()
     }
 
     private fun buildPrepareFunction(): FunSpec = function(
-        "_prepareUpdate",
+        "prepare",
         UPDATE_PREPARATION.parameterizedBy(preparedStateClass),
     ) {
-        addModifiers(KModifier.PRIVATE)
+        addModifiers(KModifier.OVERRIDE)
+        parameter("request", UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass))
         parameter("before", entityClass)
+        parameter("pendingEdges", pendingEdgesClass)
         parameter("scope", UPDATE_PREPARATION_SCOPE)
-        statement("entity = before")
-        statement(
-            "val pendingEdges = checkNotNull(_capturedPendingEdges) { %S }",
-            "update pending edges were not captured",
-        )
+        statement("val draft = request.draft")
         statement("val requiredViolations = draft._checkRequiredNotNull()")
         statement(
             "if (requiredViolations.isNotEmpty()) return·%T.Invalid(requiredViolations)",
@@ -307,9 +288,9 @@ internal class UpdateSaveEmitter(
         )
         statement("val requestedPatch = draft._buildRequestedPatch(driver)")
         if (helperEligibleEdges.isNotEmpty()) {
-            statement("val edgeChanges = scope.driverRead { _buildEdgeChanges(pendingEdges) }")
+            statement("val edgeChanges = scope.driverRead { _buildEdgeChanges(request.id, pendingEdges) }")
         } else {
-            statement("val edgeChanges = _buildEdgeChanges(pendingEdges)")
+            statement("val edgeChanges = _buildEdgeChanges(request.id, pendingEdges)")
         }
 
         val emptyCondition = if (helperEligibleEdges.isEmpty()) {
@@ -413,8 +394,9 @@ internal class UpdateSaveEmitter(
         }
     }
 
-    private fun buildRelationshipFunction(): FunSpec = function("_persistUpdateRelationships") {
-        addModifiers(KModifier.PRIVATE)
+    private fun buildRelationshipFunction(): FunSpec = function("persistRelationships") {
+        addModifiers(KModifier.OVERRIDE)
+        parameter("request", UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass))
         parameter("state", preparedStateClass)
         parameter("writes", UPDATE_WRITE_TRACKER)
         if (helperEligibleEdges.isEmpty()) return@function
@@ -476,6 +458,7 @@ internal class UpdateSaveEmitter(
         MUTATION_RESULT.parameterizedBy(entityClass),
     ) {
         parameter("viewerContext", VIEWER_CONTEXT)
+        parameter("request", UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass))
         parameter("applyLoadPrivacy", BOOLEAN)
         addCode(codeBlock {
             add("return updateExecutor.update(\n")
@@ -484,10 +467,6 @@ internal class UpdateSaveEmitter(
             add("request = request,\n")
             add("entity = %T.GeneratedEntityMapping,\n", queryClass)
             add("applyLoadPrivacy = applyLoadPrivacy,\n")
-            add("spec = updateSpec,\n")
-            if (helperEligibleEdges.isNotEmpty()) {
-                add("relationshipRequirements = _updateRelationshipRequirements(),\n")
-            }
             unindent()
             add(")\n")
         })
@@ -621,10 +600,10 @@ private fun emitCandidateConstruction(
         for (field in allFields) {
             val property = field.apiName
             if (field.immutable) {
-                add("  %L = entity.%L,\n", property, property)
+                add("  %L = before.%L,\n", property, property)
             } else {
                 add(
-                    "  %L = effectivePatch.%L.%M(entity.%L),\n",
+                    "  %L = effectivePatch.%L.%M(before.%L),\n",
                     property,
                     property,
                     FIELD_PATCH_OR_ELSE,
@@ -634,10 +613,10 @@ private fun emitCandidateConstruction(
         }
         for (fk in edgeFks) {
             if (fk.immutable) {
-                add("  %L = entity.%L,\n", fk.propertyName, fk.propertyName)
+                add("  %L = before.%L,\n", fk.propertyName, fk.propertyName)
             } else {
                 add(
-                    "  %L = effectivePatch.%L.%M(entity.%L),\n",
+                    "  %L = effectivePatch.%L.%M(before.%L),\n",
                     fk.propertyName,
                     fk.propertyName,
                     FIELD_PATCH_OR_ELSE,
