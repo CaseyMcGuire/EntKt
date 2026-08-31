@@ -18,10 +18,7 @@ class HookRegistryTest {
             },
         )
 
-        runBatchHooksForInternalUse(
-            elements = listOf(2, 1),
-            hooks = registry.snapshotForInternalUse(),
-        )
+        HookRunner(registry.snapshotForInternalUse()).run(listOf(2, 1))
 
         assertEquals(
             listOf("scalar:2", "scalar:1", "batch:2, 1"),
@@ -38,7 +35,7 @@ class HookRegistryTest {
         val snapshot = source.snapshotForInternalUse()
         source { calls += "late:$it" }
 
-        runBatchHooksForInternalUse(listOf(1), snapshot)
+        HookRunner(snapshot).run(listOf(1))
 
         assertEquals(listOf("initial:1"), calls)
     }

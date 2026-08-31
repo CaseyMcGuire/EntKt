@@ -212,16 +212,6 @@ class UpdateMutationExecutorTest {
                 return "pending-edges"
             }
 
-            override fun runBeforeHooks(
-                viewerContext: ViewerContext,
-                draft: Draft,
-                before: Widget,
-                pendingEdges: String,
-            ) {
-                events += "before:${before.name}:$pendingEdges"
-                receivedContexts += viewerContext
-            }
-
             override fun prepare(
                 request: UpdateMutationRequest<Draft>,
                 before: Widget,
@@ -275,6 +265,26 @@ class UpdateMutationExecutorTest {
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
             adapter = adapter,
+            hookInputConverter = object :
+                UpdateHookInputConverter<Draft, Widget, String, String, String> {
+                override fun beforeSaveInput(draft: Draft): String = "before-save:before"
+
+                override fun beforeUpdateInput(
+                    viewerContext: ViewerContext,
+                    draft: Draft,
+                    before: Widget,
+                    pendingEdges: String,
+                ): String {
+                    receivedContexts += viewerContext
+                    return "before:${before.name}:$pendingEdges"
+                }
+            },
+            beforeSaveHookRunner = HookRunner(
+                listOf(Hook { events += it }),
+            ),
+            beforeUpdateHookRunner = HookRunner(
+                listOf(Hook { events += it }),
+            ),
             afterUpdateHookRunner = HookRunner(
                 listOf(
                     Hook { entity ->
@@ -314,6 +324,7 @@ class UpdateMutationExecutorTest {
                 "load-row",
                 "decode:before",
                 "capture-pending-edges",
+                "before-save:before",
                 "before:before:pending-edges",
                 "prepare:before:pending-edges",
                 "privacy:after",

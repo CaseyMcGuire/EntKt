@@ -7,6 +7,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
+import entkt.runtime.hook.HookRunner
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacyEvaluation
@@ -138,23 +139,27 @@ class CreateMutationExecutorTest {
                 schemaFieldViolations
             },
             beforeSave = mutationHookPhaseForInternalUse(
-                hooks = listOf(Hook { value: String -> events += "before-save:$value" }),
+                runner = HookRunner(listOf(Hook { value: String -> events += "before-save:$value" })),
                 value = { _, input -> input.beforeSaveHookValue() },
             ),
             beforeCreate = mutationHookPhaseForInternalUse(
-                hooks = listOf(
-                    Hook { value: String ->
-                        events += "before-create:$value"
-                        beforeCreateAction()
-                    },
+                runner = HookRunner(
+                    listOf(
+                        Hook { value: String ->
+                            events += "before-create:$value"
+                            beforeCreateAction()
+                        },
+                    ),
                 ),
                 value = { _, input -> input.beforeCreateHookValue() },
             ),
-            afterCreate = listOf(
-                Hook { value ->
-                    events += "after-create:${value.id}"
-                    afterCreateAction(value)
-                },
+            afterCreate = HookRunner(
+                listOf(
+                    Hook { value ->
+                        events += "after-create:${value.id}"
+                        afterCreateAction(value)
+                    },
+                ),
             ),
             )
 

@@ -6,7 +6,6 @@ import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.hook.runBatchHooksForInternalUse
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.MutationPrivacyEvaluator
@@ -216,7 +215,7 @@ class CreateMutationExecutor<Candidate>(
             postWriteState = postWriteState,
             promoteDriverNotPersisted = promoteDriverNotPersisted,
         )
-        runBatchHooksForInternalUse(createdEntities, spec.afterCreate)
+        spec.afterCreate.run(createdEntities)
 
         return createdEntities
     }

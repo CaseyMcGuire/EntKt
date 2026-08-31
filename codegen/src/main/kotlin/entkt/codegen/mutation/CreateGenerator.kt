@@ -61,9 +61,6 @@ internal val MUTATION_ENT_OPERATION = ClassName("entkt.runtime.result", "EntOper
 internal val MUTATION_CANCELLATION_EXCEPTION = ClassName("java.util.concurrent", "CancellationException")
 internal val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 internal val PREPARED_CREATE = ClassName("entkt.runtime.mutation", "PreparedCreate")
-internal val RUN_BATCH_HOOKS_FOR_INTERNAL_USE =
-    MemberName("entkt.runtime.hook", "runBatchHooksForInternalUse")
-
 // Keep generated mutation code on Kotlin's Exception type so KotlinPoet does
 // not introduce a `java.lang.Exception as LangException` alias in repo files.
 internal val KOTLIN_EXCEPTION = ClassName("kotlin", "Exception")
@@ -630,11 +627,6 @@ internal class CreateGenerator(
     }
 
 }
-
-internal fun hookListType(paramType: ClassName) =
-    List::class.asClassName().parameterizedBy(
-        ClassName("entkt.runtime.hook", "BatchHook").parameterizedBy(paramType),
-    )
 
 /**
  * Emit inline validation checks for a single field's validators.

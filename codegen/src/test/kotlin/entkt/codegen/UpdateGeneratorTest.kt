@@ -179,26 +179,32 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `required-null check runs after beforeUpdate hooks so a hook can repair`() {
+    fun `generated beforeUpdate values let hooks repair required-null assignments`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The hook loop must complete before _checkRequiredNotNull() fires,
-        // so a hook that calls mutation.unsetName() or mutation.name = "x"
-        // can repair an explicit `name = null` builder assignment. Anchor
-        // the check on the call site (preceded by the hook loop's closing
-        // brace) rather than the function declaration. A non-empty result
-        // becomes UpdatePreparation.Invalid for runtime classification.
-        val hookLoop = output.indexOf("beforeUpdateHookRunner.runFresh")
+        // Runtime owns hook ordering. Generated code supplies a schema-specific
+        // converter whose beforeUpdate input is rebuilt from the live draft,
+        // allowing a preceding hook to repair an explicit `name = null`.
+        assert(output.contains("hookInputConverter = HookInputConverter(driver, client)")) {
+            "The generated adapter should inject its schema-specific hook-input converter\n$output"
+        }
+        assert(
+            output.contains(
+                "override fun beforeUpdateInput( viewerContext: ViewerContext, draft: UserUpdateDraft, before: User, pendingEdges: UserPendingEdgeOps, ): UserUpdateHookContext { val snapshot = draft._buildRequestedPatch(driver)",
+            ),
+        ) {
+            "beforeUpdate hook values should snapshot the live draft on each request\n$output"
+        }
+
+        // Preparation remains the safety net after the runtime hook phase: a
+        // non-empty result becomes UpdatePreparation.Invalid.
         val checkCallSite = output.indexOf("val requiredViolations = draft._checkRequiredNotNull()")
         val canonicalPatchPos = output.indexOf("val requestedPatch = draft._buildRequestedPatch(driver)")
-        assert(hookLoop != -1 && checkCallSite != -1 && canonicalPatchPos != -1) {
-            "Expected hook loop, required-null check call site, and canonical patch construction\n$output"
-        }
-        assert(hookLoop < checkCallSite) {
-            "_checkRequiredNotNull() must be called after the beforeUpdate hook loop\n$output"
+        assert(checkCallSite != -1 && canonicalPatchPos != -1) {
+            "Expected required-null check call site and canonical patch construction\n$output"
         }
         assert(checkCallSite < canonicalPatchPos) {
             "_checkRequiredNotNull() must be called before the canonical requestedPatch is built\n$output"
@@ -366,17 +372,25 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Each iteration of the beforeUpdate loop builds a fresh
-        // snapshot via _buildRequestedPatch() and wraps it in a hook
-        // context. The hook receives the private `_mutationView`
+        // The executor invokes the schema-specific converter once per
+        // beforeUpdate hook. The hook receives the private mutation-view
         // adapter (not the builder itself), so it can't reach save(),
         // id, entity, or the private patch helpers.
+        assert(output.contains("_buildMutationView(draft, pendingEdges)")) {
+            "The generated value factory should supply a restricted mutation view\n$output"
+        }
+        assert(output.contains("override fun beforeSaveInput(draft: UserUpdateDraft): UserMutation = _buildBeforeSaveView(draft)")) {
+            "The converter should supply the generated shared-write view\n$output"
+        }
+        assert(output.contains("val snapshot = draft._buildRequestedPatch(driver)")) {
+            "Each beforeUpdate hook value should use a fresh patch snapshot\n$output"
+        }
         assert(
             output.contains(
-                "val mutationView = _buildMutationView(draft, pendingEdges) beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft))) beforeUpdateHookRunner.runFresh { val snapshot = draft._buildRequestedPatch(driver) val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, mutationView) listOf(ctx) }",
+                "UserUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, _buildMutationView(draft, pendingEdges))",
             ),
         ) {
-            "beforeUpdate hooks should receive a per-call snapshot wrapped around _mutationView\n$output"
+            "beforeUpdate hooks should receive a per-call snapshot wrapped around mutationView\n$output"
         }
         // The canonical requestedPatch for privacy/validation is rebuilt
         // after all hooks finish.
@@ -572,7 +586,7 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `adapter takes client and hook list parameters`() {
+    fun `adapter takes client and typed hook runners`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -580,14 +594,14 @@ class UpdateGeneratorTest {
         assert(output.contains("client: EntClient")) {
             "Should take client\n$output"
         }
-        assert(output.contains("beforeSaveHooks: List<BatchHook<UserMutation>>")) {
-            "Should take beforeSaveHooks\n$output"
+        assert(output.contains("beforeSaveHookRunner: HookRunner<UserMutation>")) {
+            "Should take a typed beforeSave runner\n$output"
         }
-        assert(output.contains("beforeUpdateHooks: List<BatchHook<UserUpdateHookContext>>")) {
-            "beforeUpdate hooks now take a UserUpdateHookContext\n$output"
+        assert(output.contains("beforeUpdateHookRunner: HookRunner<UserUpdateHookContext>")) {
+            "Should take a typed beforeUpdate runner\n$output"
         }
-        assert(output.contains("afterUpdateHooks: List<BatchHook<User>>")) {
-            "Should take afterUpdateHooks\n$output"
+        assert(output.contains("afterUpdateHookRunner: HookRunner<User>")) {
+            "Should take a typed afterUpdate runner\n$output"
         }
     }
 
@@ -621,15 +635,24 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `save calls before hooks before requested patch construction`() {
+    fun `stable adapter supplies the hook converter and runners to the runtime executor`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        val hookCall = output.indexOf("beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft)))")
-        val patchCtor = output.indexOf("val requestedPatch = draft._buildRequestedPatch(driver)")
-        assert(hookCall != -1 && patchCtor != -1 && hookCall < patchCtor) {
-            "Before hooks should run before requested patch construction\n$output"
+        assert(
+            output.contains(
+                "hookInputConverter = HookInputConverter(driver, client), beforeSaveHookRunner = beforeSaveHookRunner, beforeUpdateHookRunner = beforeUpdateHookRunner, afterUpdateHookRunner = afterUpdateHookRunner,",
+            ),
+        ) {
+            "The generated adapter should inject conversion and execution dependencies separately\n$output"
+        }
+        assert(output.contains("private class HookInputConverter(")) {
+            "Update adapters should generate one schema-specific converter implementation\n$output"
+        }
+        assert(!output.contains("ValueFactory") && !output.contains("hooks = UpdateMutationHooks(")) {
+            "Generated update wiring should not use callback factories or a hook orchestrator\n$output"
         }
     }
 
@@ -638,9 +661,13 @@ class UpdateGeneratorTest {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("afterUpdateHookRunner = HookRunner(afterUpdateHooks)")) {
-            "The generated adapter should inject a typed afterUpdate runner into UpdateMutationExecutor\n$output"
+        assert(output.contains("afterUpdateHookRunner = afterUpdateHookRunner")) {
+            "The generated adapter should inject the afterUpdate runner into runtime hooks\n$output"
+        }
+        assert(!output.contains("override fun runAfterUpdate(")) {
+            "Generated code should not implement afterUpdate execution\n$output"
         }
         assert(!output.contains("runBatchHooksForInternalUse(listOf(updatedEntity)")) {
             "generated code should not execute afterUpdate hooks itself\n$output"
@@ -1089,9 +1116,18 @@ class UpdateGeneratorTest {
 
         assert(output.contains("UpdateMutationAdapter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostUpdateAdapter.PreparedState>") &&
             output.contains("override fun capturePendingEdges(") &&
-            output.contains("override fun runBeforeHooks(") &&
             output.contains("override fun prepare(")) {
             "The generated adapter should implement the typed runtime lifecycle contract\n$output"
+        }
+        assert(output.contains("UpdateHookInputConverter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostMutation, M2MPostUpdateHookContext>") &&
+            output.contains("hookInputConverter = HookInputConverter(driver, client)")) {
+            "The runtime executor should receive a typed schema-specific hook-input converter\n$output"
+        }
+        assert(!output.contains("beforeSaveValueFactory") && !output.contains("beforeUpdateValueFactory")) {
+            "The update adapter should not wire hook inputs through callbacks\n$output"
+        }
+        assert(!output.contains("override fun runBeforeHooks(")) {
+            "The schema adapter should not own before-hook execution\n$output"
         }
         assert(!output.contains("UpdateMutationSpec") && !output.contains("capturePendingEdges = ::")) {
             "Lifecycle behavior should not be bundled into a spec or method-reference callback list\n$output"
@@ -1115,8 +1151,8 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft)))")) {
-            "beforeSave on update saves must receive a shared-only per-request view\n$output"
+        assert(output.contains("override fun beforeSaveInput(draft: M2MPostUpdateDraft): M2MPostMutation = _buildBeforeSaveView(draft)")) {
+            "beforeSave on update saves must receive the converter's shared-only view\n$output"
         }
         assert(!output.contains("runBatchHooksForInternalUse(listOf(this), beforeSaveHooks)")) {
             "Old `hook(this)` shape must be gone — it exposed the concrete-draft cast attack\n$output"
@@ -1136,8 +1172,8 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft)))")) {
-            "Non-M2M schemas should also pass the shared-only adapter to beforeSave\n$output"
+        assert(output.contains("override fun beforeSaveInput(draft: UserUpdateDraft): UserMutation = _buildBeforeSaveView(draft)")) {
+            "Non-M2M schemas should also expose the shared-only adapter as the beforeSave hook value\n$output"
         }
     }
 
@@ -1159,10 +1195,11 @@ class UpdateGeneratorTest {
         // belong to the update view, which the adapter doesn't inherit.
         val viewIdx = output.indexOf(declaration)
         assert(viewIdx != -1) { "Missing _buildBeforeSaveView adapter\n$output" }
-        // The adapter body is small (just scalar forwarders); window
-        // out to the next `private` declaration after it.
-        val nextPrivateIdx = output.indexOf("private", viewIdx + 1).let { if (it == -1) output.length else it }
-        val adapterWindow = output.substring(viewIdx, nextPrivateIdx)
+        // The converter method follows the view, so stop before the
+        // beforeUpdate conversion mentions pendingEdges.
+        val converterMethodIdx = output.indexOf("override fun beforeSaveInput", viewIdx)
+        assert(converterMethodIdx != -1) { "Missing beforeSaveInput after _buildBeforeSaveView\n$output" }
+        val adapterWindow = output.substring(viewIdx, converterMethodIdx)
         assert(!adapterWindow.contains("pendingEdges")) {
             "_beforeSaveView must not carry pendingEdges (that's update-view-only)\n$adapterWindow"
         }
@@ -1178,7 +1215,7 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         // The 5-arg form: (client, before, patch, pendingEdges, mutation).
-        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, mutationView)")) {
+        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, _buildMutationView(draft, pendingEdges))")) {
             "beforeUpdate hook context should receive pendingEdges as the 4th argument\n$output"
         }
     }

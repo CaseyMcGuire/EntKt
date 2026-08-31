@@ -10,6 +10,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
+import entkt.runtime.hook.HookRunner
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
@@ -210,8 +211,8 @@ class DeleteMutationExecutorTest {
                 events += "candidate:${entity.id}"
                 Candidate(entity.name)
             },
-            beforeDelete = listOf(Hook { entity -> events += "before:${entity.id}" }),
-            afterDelete = listOf(Hook { entity -> events += "after:${entity.id}" }),
+            beforeDelete = HookRunner(listOf(Hook { entity -> events += "before:${entity.id}" })),
+            afterDelete = HookRunner(listOf(Hook { entity -> events += "after:${entity.id}" })),
         )
 
         val privacyEvaluator = mutationPrivacyEvaluatorForInternalUse<
@@ -378,8 +379,8 @@ class DeleteMutationExecutorTest {
                 idColumn = "id",
                 newQuery = fixture.spec.newQuery,
                 candidate = fixture.spec.candidate,
-                beforeDelete = emptyList(),
-                afterDelete = listOf(Hook<Widget> { throw boom }),
+                beforeDelete = HookRunner(emptyList()),
+                afterDelete = HookRunner(listOf(Hook<Widget> { throw boom })),
             )
 
             val result = fixture.executor.deleteById(fixture.viewerContext, 1L, failingSpec)

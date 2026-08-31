@@ -4,7 +4,6 @@ import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.UpdateMutationRequest
-import entkt.runtime.privacy.ViewerContext
 
 /** Stateless schema-specific operations required by the reusable UPDATE lifecycle. */
 @EntktInternal
@@ -18,13 +17,6 @@ interface UpdateMutationAdapter<
         UpdateRelationshipRequirements.None
 
     fun capturePendingEdges(draft: Draft): PendingEdges
-
-    fun runBeforeHooks(
-        viewerContext: ViewerContext,
-        draft: Draft,
-        before: Entity,
-        pendingEdges: PendingEdges,
-    )
 
     fun prepare(
         request: UpdateMutationRequest<Draft>,

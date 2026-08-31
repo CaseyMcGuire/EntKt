@@ -3,7 +3,7 @@ package entkt.runtime.mutation.execution
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.hook.BatchHook
+import entkt.runtime.hook.HookRunner
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.result.ValidationViolation
@@ -25,7 +25,7 @@ class CreateMutationSpec<
     val beforeCreate: MutationHookPhase<Draft>,
 
     /** Hooks applied to the entities returned by a successful database write. */
-    val afterCreate: List<BatchHook<Entity>>,
+    val afterCreate: HookRunner<Entity>,
 
     /** Report missing required draft inputs before values are resolved. */
     val requiredInputViolations: (Draft) -> List<ValidationViolation>,

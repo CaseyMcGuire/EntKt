@@ -18,6 +18,7 @@ import entkt.codegen.columnName
 import entkt.codegen.lifecyclePatchSnapshot
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
@@ -55,6 +56,8 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UPDATE_MUTATION_ADAPTER =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationAdapter")
+private val UPDATE_HOOK_INPUT_CONVERTER =
+    ClassName("entkt.runtime.mutation.execution", "UpdateHookInputConverter")
 private val HOOK_RUNNER = ClassName("entkt.runtime.hook", "HookRunner")
 
 
@@ -89,9 +92,9 @@ internal class UpdateGenerator(
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
 
-        val beforeSaveHookType = hookListType(mutationClass)
-        val beforeUpdateHookType = hookListType(updateHookCtxClass)
-        val afterUpdateHookType = hookListType(entityClass)
+        val beforeSaveHookType = HOOK_RUNNER.parameterizedBy(mutationClass)
+        val beforeUpdateHookType = HOOK_RUNNER.parameterizedBy(updateHookCtxClass)
+        val afterUpdateHookType = HOOK_RUNNER.parameterizedBy(entityClass)
 
         // Helper-eligible link-table M2M edges. Each gets a
         // nested mutator class on the update draft and a public
@@ -157,7 +160,17 @@ internal class UpdateGenerator(
         }
 
         val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
-
+        val hookInputConverterType = buildHookInputConverterType(
+            draftClass = draftClass,
+            entityClass = entityClass,
+            mutationClass = mutationClass,
+            updateMutationViewClass = updateMutationViewClass,
+            updateHookContextClass = updateHookCtxClass,
+            clientClass = clientClass,
+            pendingEdgeOpsClass = pendingEdgeOpsClass,
+            mutableFields = mutableFields,
+            edgeFks = edgeFks,
+        )
         val adapterType = classType(adapterClass.simpleName) {
             addModifiers(KModifier.INTERNAL)
             addSuperinterface(
@@ -171,9 +184,9 @@ internal class UpdateGenerator(
             primaryConstructor {
                 parameter("driver", DRIVER)
                 parameter("client", clientClass)
-                parameter("beforeSaveHooks", beforeSaveHookType)
-                parameter("beforeUpdateHooks", beforeUpdateHookType)
-                parameter("afterUpdateHooks", afterUpdateHookType)
+                parameter("beforeSaveHookRunner", beforeSaveHookType)
+                parameter("beforeUpdateHookRunner", beforeUpdateHookType)
+                parameter("afterUpdateHookRunner", afterUpdateHookType)
             }
             property("driver", DRIVER) {
                 addModifiers(KModifier.PRIVATE)
@@ -183,13 +196,52 @@ internal class UpdateGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("client")
             }
-            property("beforeSaveHookRunner", HOOK_RUNNER.parameterizedBy(mutationClass)) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("%T(beforeSaveHooks)", HOOK_RUNNER)
+            addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
+            addProperty(saveArtifacts.executorProperty)
+            saveArtifacts.functions.forEach(::addFunction)
+            addType(saveArtifacts.preparedStateType)
+            addType(hookInputConverterType)
+        }
+
+        return kotlinFile(packageName, className) {
+            addAnnotation(entktInternalFileOptIn())
+            addType(draftType)
+            addType(adapterType)
+        }
+    }
+
+    private fun buildHookInputConverterType(
+        draftClass: ClassName,
+        entityClass: ClassName,
+        mutationClass: ClassName,
+        updateMutationViewClass: ClassName,
+        updateHookContextClass: ClassName,
+        clientClass: ClassName,
+        pendingEdgeOpsClass: ClassName,
+        mutableFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): TypeSpec {
+        val converterType = UPDATE_HOOK_INPUT_CONVERTER.parameterizedBy(
+            draftClass,
+            entityClass,
+            pendingEdgeOpsClass,
+            mutationClass,
+            updateHookContextClass,
+        )
+        return classType("HookInputConverter") {
+            addModifiers(KModifier.PRIVATE)
+            addSuperinterface(converterType)
+            primaryConstructor {
+                parameter("driver", DRIVER)
+                parameter("client", clientClass)
             }
-            property("beforeUpdateHookRunner", HOOK_RUNNER.parameterizedBy(updateHookCtxClass)) {
+            property("driver", DRIVER) {
                 addModifiers(KModifier.PRIVATE)
-                initializer("%T(beforeUpdateHooks)", HOOK_RUNNER)
+                initializer("driver")
+            }
+            property("client", clientClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("client")
             }
             addFunction(
                 buildMutationViewFunction(
@@ -208,16 +260,23 @@ internal class UpdateGenerator(
                     edgeFks = edgeFks,
                 ),
             )
-            addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
-            addProperty(saveArtifacts.executorProperty)
-            saveArtifacts.functions.forEach(::addFunction)
-            addType(saveArtifacts.preparedStateType)
-        }
-
-        return kotlinFile(packageName, className) {
-            addAnnotation(entktInternalFileOptIn())
-            addType(draftType)
-            addType(adapterType)
+            function("beforeSaveInput", mutationClass) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("draft", draftClass)
+                statement("return _buildBeforeSaveView(draft)")
+            }
+            function("beforeUpdateInput", updateHookContextClass) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("viewerContext", VIEWER_CONTEXT)
+                parameter("draft", draftClass)
+                parameter("before", entityClass)
+                parameter("pendingEdges", pendingEdgeOpsClass)
+                statement("val snapshot = draft._buildRequestedPatch(driver)")
+                statement(
+                    "return %T(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, _buildMutationView(draft, pendingEdges))",
+                    updateHookContextClass,
+                )
+            }
         }
     }
 

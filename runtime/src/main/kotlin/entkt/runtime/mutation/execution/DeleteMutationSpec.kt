@@ -4,7 +4,7 @@ import entkt.query.EntktInternal
 import entkt.query.Predicate
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.hook.BatchHook
+import entkt.runtime.hook.HookRunner
 import entkt.runtime.query.EntityQueryBuilder
 
 /** Entity and normalized candidate evaluated together by DELETE rules. */
@@ -31,9 +31,7 @@ class DeleteMutationSpec<
     val idColumn: String,
     val newQuery: () -> EntityQueryBuilder<Entity, *>,
     val candidate: (Entity) -> Candidate,
-    beforeDelete: List<BatchHook<Entity>>,
-    afterDelete: List<BatchHook<Entity>>,
+    val beforeDelete: HookRunner<Entity>,
+    val afterDelete: HookRunner<Entity>,
 ) {
-    val beforeDelete: List<BatchHook<Entity>> = beforeDelete.toList()
-    val afterDelete: List<BatchHook<Entity>> = afterDelete.toList()
 }

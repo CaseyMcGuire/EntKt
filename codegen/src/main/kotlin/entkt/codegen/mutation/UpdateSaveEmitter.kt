@@ -32,7 +32,6 @@ private val RELATIONSHIP_LOCK_KEY = ClassName("entkt.runtime.mutation", "Relatio
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UUID_CLASS = ClassName("java.util", "UUID")
-private val HOOK_RUNNER = ClassName("entkt.runtime.hook", "HookRunner")
 private val UPDATE_MUTATION_EXECUTOR =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationExecutor")
 private val UPDATE_MUTATION_REQUEST =
@@ -81,6 +80,7 @@ internal class UpdateSaveEmitter(
     private val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
     private val draftClass = ClassName(packageName, "${schemaName}UpdateDraft")
     private val pendingEdgesClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
+    private val mutationClass = ClassName(packageName, "${schemaName}Mutation")
     private val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
     private val edgeChangesClass = ClassName(packageName, "${schemaName}EdgeChangesView")
     private val updateHookContextClass = ClassName(packageName, "${schemaName}UpdateHookContext")
@@ -94,7 +94,6 @@ internal class UpdateSaveEmitter(
                 add(buildRelationshipRequirementsFunction())
             }
             add(buildCapturePendingEdgesFunction())
-            add(buildBeforeFunction())
             add(buildPrepareFunction())
             add(buildRelationshipFunction())
             add(buildExecuteFunction())
@@ -132,6 +131,8 @@ internal class UpdateSaveEmitter(
                 entityClass,
                 pendingEdgesClass,
                 preparedStateClass,
+                mutationClass,
+                updateHookContextClass,
             ),
         ) {
             addModifiers(KModifier.PRIVATE)
@@ -212,7 +213,10 @@ internal class UpdateSaveEmitter(
                 unindent()
                 add("),\n")
                 add("adapter = this,\n")
-                add("afterUpdateHookRunner = %T(afterUpdateHooks),\n", HOOK_RUNNER)
+                add("hookInputConverter = HookInputConverter(driver, client),\n")
+                add("beforeSaveHookRunner = beforeSaveHookRunner,\n")
+                add("beforeUpdateHookRunner = beforeUpdateHookRunner,\n")
+                add("afterUpdateHookRunner = afterUpdateHookRunner,\n")
                 unindent()
                 add(")")
             })
@@ -250,24 +254,6 @@ internal class UpdateSaveEmitter(
         addModifiers(KModifier.OVERRIDE)
         parameter("draft", draftClass)
         statement("return draft._buildPendingEdgeOps()")
-    }
-
-    private fun buildBeforeFunction(): FunSpec = function("runBeforeHooks") {
-        addModifiers(KModifier.OVERRIDE)
-        parameter("viewerContext", VIEWER_CONTEXT)
-        parameter("draft", draftClass)
-        parameter("before", entityClass)
-        parameter("pendingEdges", pendingEdgesClass)
-        statement("val mutationView = _buildMutationView(draft, pendingEdges)")
-        statement("beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft)))")
-        beginControlFlow("beforeUpdateHookRunner.runFresh")
-        statement("val snapshot = draft._buildRequestedPatch(driver)")
-        statement(
-            "val ctx = %T(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, mutationView)",
-            updateHookContextClass,
-        )
-        statement("listOf(ctx)")
-        endControlFlow()
     }
 
     private fun buildPrepareFunction(): FunSpec = function(

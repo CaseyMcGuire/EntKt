@@ -1,7 +1,6 @@
 package entkt.runtime.hook
 
 import entkt.query.EntktInternal
-import java.util.Collections
 
 /**
  * A lifecycle hook that can process an ordered batch of hook values.
@@ -66,18 +65,4 @@ fun <T> batchHook(
     block: (List<T>) -> Unit,
 ): BatchHook<T> = object : BatchHook<T> {
     override fun runBatch(elements: List<T>) = block(elements)
-}
-
-/** Invoke each registered hook once with the same non-empty ordered batch. */
-@EntktInternal
-fun <T> runBatchHooksForInternalUse(
-    elements: List<T>,
-    hooks: List<BatchHook<T>>,
-) {
-    if (elements.isEmpty()) return
-
-    val elementSnapshot = elements.toList()
-    for (hook in hooks.toList()) {
-        hook.runBatch(Collections.unmodifiableList(ArrayList(elementSnapshot)))
-    }
 }

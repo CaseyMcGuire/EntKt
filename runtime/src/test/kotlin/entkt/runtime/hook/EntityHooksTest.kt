@@ -4,7 +4,6 @@ package entkt.runtime.hook
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 
 class EntityHooksTest {
     @Test
@@ -16,11 +15,7 @@ class EntityHooksTest {
         val resolved = source.resolveForInternalUse()
         source.beforeSave { calls += "late:$it" }
 
-        runBatchHooksForInternalUse(listOf(1), resolved.beforeSave)
+        resolved.beforeSave.run(listOf(1))
         assertEquals(listOf("initial:1"), calls)
-        assertFailsWith<UnsupportedOperationException> {
-            @Suppress("UNCHECKED_CAST")
-            (resolved.beforeSave as MutableList<BatchHook<Int>>).clear()
-        }
     }
 }

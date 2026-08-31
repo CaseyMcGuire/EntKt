@@ -6,7 +6,6 @@ import entkt.query.EntktInternal
 import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
-import entkt.runtime.hook.runBatchHooksForInternalUse
 import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.ReadOperation
@@ -106,7 +105,7 @@ class DeleteMutationExecutor<Entity : EntEntity<*>, Candidate>(
         }
         evaluatePrivacy(attempt, viewerContext, candidates, spec)
         evaluateValidation(attempt, candidates, spec)
-        runBatchHooksForInternalUse(entities, spec.beforeDelete)
+        spec.beforeDelete.run(entities)
 
         val approvedIds = entities.map { it.id }
         attempt.writeState = MutationWriteState.TransactionPending
@@ -150,7 +149,7 @@ class DeleteMutationExecutor<Entity : EntEntity<*>, Candidate>(
         check(deletedEntities.size == deletedIdSnapshot.size) {
             "DatabaseDriver.deleteManyByIds acknowledgement could not be correlated to candidates"
         }
-        runBatchHooksForInternalUse(deletedEntities, spec.afterDelete)
+        spec.afterDelete.run(deletedEntities)
         deletedIdSnapshot.size
     }
 
@@ -194,7 +193,7 @@ class DeleteMutationExecutor<Entity : EntEntity<*>, Candidate>(
         val candidate = DeleteRuleCandidate(entity, spec.candidate(entity))
         evaluatePrivacy(attempt, viewerContext, listOf(candidate), spec)
         evaluateValidation(attempt, listOf(candidate), spec)
-        runBatchHooksForInternalUse(listOf(entity), spec.beforeDelete)
+        spec.beforeDelete.run(listOf(entity))
 
         val deleted = try {
             driver.delete(spec.entity.table, entity.id)
@@ -205,7 +204,7 @@ class DeleteMutationExecutor<Entity : EntEntity<*>, Candidate>(
         }
         if (deleted) {
             attempt.writeState = postWriteState
-            runBatchHooksForInternalUse(listOf(entity), spec.afterDelete)
+            spec.afterDelete.run(listOf(entity))
         }
         return deleted
     }

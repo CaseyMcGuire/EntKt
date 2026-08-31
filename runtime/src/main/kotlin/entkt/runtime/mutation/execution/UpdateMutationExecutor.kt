@@ -34,12 +34,24 @@ class UpdateMutationExecutor<
     Entity : EntEntity<*>,
     PendingEdges,
     State,
+    BeforeSaveHookInput,
+    BeforeUpdateHookInput,
     >(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime,
     private val privacyEvaluator: MutationPrivacyEvaluator<State>,
     private val validationEvaluator: MutationValidationEvaluator<State>,
     private val adapter: UpdateMutationAdapter<Draft, Entity, PendingEdges, State>,
+    private val hookInputConverter:
+        UpdateHookInputConverter<
+            Draft,
+            Entity,
+            PendingEdges,
+            BeforeSaveHookInput,
+            BeforeUpdateHookInput,
+        >,
+    private val beforeSaveHookRunner: HookRunner<BeforeSaveHookInput>,
+    private val beforeUpdateHookRunner: HookRunner<BeforeUpdateHookInput>,
     private val afterUpdateHookRunner: HookRunner<Entity>,
 ) {
     private val execution = MutationExecutionSupport(mutationRuntime)
@@ -77,7 +89,19 @@ class UpdateMutationExecutor<
         val before = entity.decode(row)
 
         val pendingEdges = adapter.capturePendingEdges(request.draft)
-        adapter.runBeforeHooks(viewerContext, request.draft, before, pendingEdges)
+        beforeSaveHookRunner.run(
+            listOf(hookInputConverter.beforeSaveInput(request.draft)),
+        )
+        beforeUpdateHookRunner.runFresh {
+            listOf(
+                hookInputConverter.beforeUpdateInput(
+                    viewerContext,
+                    request.draft,
+                    before,
+                    pendingEdges,
+                ),
+            )
+        }
         val prepared = when (
             val preparation = adapter.prepare(
                 request,

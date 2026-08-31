@@ -4,7 +4,7 @@ package entkt.runtime
 
 import entkt.runtime.hook.Hook
 import entkt.runtime.hook.batchHook
-import entkt.runtime.hook.runBatchHooksForInternalUse
+import entkt.runtime.hook.HookRunner
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
@@ -271,7 +271,7 @@ class BatchLifecycleEvaluationTest {
                 validationContext,
             ) { it },
         )
-        runBatchHooksForInternalUse(emptyList<Int>(), listOf(hook))
+        HookRunner(listOf(hook)).run(emptyList())
 
         assertEquals(0, privacyCalls)
         assertEquals(0, validationCalls)
@@ -447,7 +447,7 @@ class BatchLifecycleEvaluationTest {
             listOf(validation),
             validationContext,
         ) { it }
-        runBatchHooksForInternalUse(listOf(1), listOf(hook))
+        HookRunner(listOf(hook)).run(listOf(1))
     }
 
     @Test
@@ -459,7 +459,7 @@ class BatchLifecycleEvaluationTest {
             Hook<Int> { events += "last $it" },
         )
 
-        runBatchHooksForInternalUse(listOf(2, 1), hooks)
+        HookRunner(hooks).run(listOf(2, 1))
 
         assertEquals(
             listOf("scalar 2", "scalar 1", "batch 2, 1", "last 2", "last 1"),
