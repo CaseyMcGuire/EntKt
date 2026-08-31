@@ -1206,7 +1206,7 @@ class EdgeCodegenTest {
         assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetWriteCandidate, Pet, ReadOnlyEntClient>")) {
             "the repo should pass a compact immutable specification to CreateMutationExecutor\n$output"
         }
-        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::resolve, fieldViolations = ::createFieldViolations, beforeSave = mutationHookPhaseForInternalUse(beforeSaveHooks) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(beforeCreateHooks, ::createBeforeCreateContext), afterCreate = afterCreateHooks, privacy = mutationPrivacyPhaseForInternalUse(\"Pet CREATE privacy\", privacyConfig.createRules)")) {
+        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::resolve, fieldViolations = ::createFieldViolations, beforeSave = mutationHookPhaseForInternalUse(configuredHooks.beforeSave) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(configuredHooks.beforeCreate, ::createBeforeCreateContext), afterCreate = configuredHooks.afterCreate, privacy = mutationPrivacyPhaseForInternalUse(\"Pet CREATE privacy\", privacyConfig.createRules)")) {
             "phase-local hook and rule types should remain captured by typed adapters\n$output"
         }
         assert(!output.contains("CreateMutationInput") && !output.contains("createMutationInput(")) {

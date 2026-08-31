@@ -136,20 +136,6 @@ internal class RepoGenerator(
             returnType = UNIT,
         )
 
-        // Hook list types
-        val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
-        val batchHookClass = ClassName("entkt.runtime.hook", "BatchHook")
-        // beforeCreate hooks receive the restricted CreateHookContext
-        // (view + client), not the concrete create draft.
-        val beforeCreateHookType = batchHookClass.parameterizedBy(createHookCtxClass)
-        val afterCreateHookType = batchHookClass.parameterizedBy(entityClass)
-        val beforeUpdateHookType = batchHookClass.parameterizedBy(updateHookCtxClass)
-        val afterUpdateHookType = batchHookClass.parameterizedBy(entityClass)
-        val beforeDeleteHookType = batchHookClass.parameterizedBy(entityClass)
-        val afterDeleteHookType = batchHookClass.parameterizedBy(entityClass)
-
-        fun hookList(hookType: com.squareup.kotlinpoet.TypeName) = LIST.parameterizedBy(hookType)
-
         val typeSpec = classType(className) {
             // The repo is the entity's read surface: query terminals reach
             // `hasLoadPrivacy()` / `loadDenials(...)` through the
@@ -181,18 +167,10 @@ internal class RepoGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("client")
             }
-            // Hook list properties
-            addProperty(hookListProperty("beforeSaveHooks", hookList(batchHookClass.parameterizedBy(mutationClass))))
-            addProperty(hookListProperty("beforeCreateHooks", hookList(beforeCreateHookType)))
-            addProperty(hookListProperty("afterCreateHooks", hookList(afterCreateHookType)))
-            addProperty(hookListProperty("beforeUpdateHooks", hookList(beforeUpdateHookType)))
-            addProperty(hookListProperty("afterUpdateHooks", hookList(afterUpdateHookType)))
-            addProperty(hookListProperty("beforeDeleteHooks", hookList(beforeDeleteHookType)))
-            addProperty(hookListProperty("afterDeleteHooks", hookList(afterDeleteHookType)))
             property("updateAdapter", updateAdapterClass) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(
-                    "%T(driver, client, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)",
+                    "%T(driver, client, configuredHooks.beforeSave, configuredHooks.beforeUpdate, configuredHooks.afterUpdate)",
                     updateAdapterClass,
                 )
             }
@@ -556,9 +534,9 @@ internal class RepoGenerator(
                 add("requiredInputViolations = ::requiredInputViolations,\n")
                 add("resolveDraft = ::resolve,\n")
                 add("fieldViolations = ::createFieldViolations,\n")
-                add("beforeSave = %M(beforeSaveHooks) { _, draft -> createBeforeSaveView(draft) },\n", MUTATION_HOOK_PHASE)
-                add("beforeCreate = %M(beforeCreateHooks, ::createBeforeCreateContext),\n", MUTATION_HOOK_PHASE)
-                add("afterCreate = afterCreateHooks,\n")
+                add("beforeSave = %M(configuredHooks.beforeSave) { _, draft -> createBeforeSaveView(draft) },\n", MUTATION_HOOK_PHASE)
+                add("beforeCreate = %M(configuredHooks.beforeCreate, ::createBeforeCreateContext),\n", MUTATION_HOOK_PHASE)
+                add("afterCreate = configuredHooks.afterCreate,\n")
                 add(
                     "privacy = %M(%S, privacyConfig.createRules) { candidate -> %T(snapshotCreateCandidate(candidate)) },\n",
                     MUTATION_PRIVACY_PHASE,
@@ -694,8 +672,8 @@ internal class RepoGenerator(
                 )
                 unindent()
                 add("),\n")
-                add("beforeDelete = beforeDeleteHooks,\n")
-                add("afterDelete = afterDeleteHooks,\n")
+                add("beforeDelete = configuredHooks.beforeDelete,\n")
+                add("afterDelete = configuredHooks.afterDelete,\n")
                 unindent()
                 add(")")
             })
@@ -903,17 +881,6 @@ internal class RepoGenerator(
             parameter("blocks", createLambda) { addModifiers(KModifier.VARARG) }
             statement("return createOperation.createMany(viewerContext, blocks.asList())")
         }
-    }
-
-    private fun hookListProperty(
-        name: String,
-        type: com.squareup.kotlinpoet.TypeName,
-    ): PropertySpec = property(name, type) {
-        addModifiers(KModifier.PRIVATE)
-        initializer(
-            "configuredHooks.%L",
-            name.removeSuffix("Hooks"),
-        )
     }
 
 }

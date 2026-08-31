@@ -337,7 +337,7 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private val updateAdapter: CarUpdateAdapter = CarUpdateAdapter(driver, client, beforeSaveHooks, beforeUpdateHooks, afterUpdateHooks)")) {
+        assert(output.contains("private val updateAdapter: CarUpdateAdapter = CarUpdateAdapter(driver, client, configuredHooks.beforeSave, configuredHooks.beforeUpdate, configuredHooks.afterUpdate)")) {
             "repo should construct one stable schema-specific update adapter\n$output"
         }
         assert(output.contains("val draft = CarUpdateDraft().apply(block)") &&
@@ -377,7 +377,7 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo receives resolved hooks during construction`() {
+    fun `repo uses resolved hooks directly during construction`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
@@ -385,12 +385,13 @@ class RepoGeneratorTest {
         assert(output.contains("configuredHooks: ResolvedEntityHooks<CarMutation, CarCreateHookContext, CarUpdateHookContext, Car>")) {
             "The constructor should receive resolved entity hooks\n$output"
         }
-        assert(output.contains("beforeSaveHooks: List<BatchHook<CarMutation>> = configuredHooks.beforeSave")) {
-            "Should use the resolved beforeSave hooks\n$output"
+        assert(output.contains("beforeSave = mutationHookPhaseForInternalUse(configuredHooks.beforeSave)")) {
+            "Should use the resolved beforeSave hooks directly\n$output"
         }
-        assert(output.contains("afterDeleteHooks: List<BatchHook<Car>> = configuredHooks.afterDelete")) {
-            "Should use the resolved afterDelete hooks\n$output"
+        assert(output.contains("afterDelete = configuredHooks.afterDelete")) {
+            "Should use the resolved afterDelete hooks directly\n$output"
         }
+        assert(!output.contains("private val beforeSaveHooks") && !output.contains("private val afterDeleteHooks"))
         assert(!output.contains("fun applyHooks"))
     }
 
