@@ -373,7 +373,7 @@ class UpdateGeneratorTest {
         // id, entity, or the private patch helpers.
         assert(
             output.contains(
-                "val mutationView = _buildMutationView(draft, pendingEdges) beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft))) beforeUpdateHookRunner.runFresh { val snapshot = draft._buildRequestedPatch(driver) val beforeSnapshot = before val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, mutationView) listOf(ctx) }",
+                "val mutationView = _buildMutationView(draft, pendingEdges) beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft))) beforeUpdateHookRunner.runFresh { val snapshot = draft._buildRequestedPatch(driver) val ctx = UserUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, mutationView) listOf(ctx) }",
             ),
         ) {
             "beforeUpdate hooks should receive a per-call snapshot wrapped around _mutationView\n$output"
@@ -1177,8 +1177,8 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // The 5-arg form: (client, detached before, patch, pendingEdges, mutation).
-        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, mutationView)")) {
+        // The 5-arg form: (client, before, patch, pendingEdges, mutation).
+        assert(output.contains("M2MPostUpdateHookContext(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, mutationView)")) {
             "beforeUpdate hook context should receive pendingEdges as the 4th argument\n$output"
         }
     }

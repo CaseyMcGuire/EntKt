@@ -262,9 +262,8 @@ internal class UpdateSaveEmitter(
         statement("beforeSaveHookRunner.run(listOf(_buildBeforeSaveView(draft)))")
         beginControlFlow("beforeUpdateHookRunner.runFresh")
         statement("val snapshot = draft._buildRequestedPatch(driver)")
-        statement("val beforeSnapshot = %L", lifecycleValueSnapshot("before", allFields, entityClass))
         statement(
-            "val ctx = %T(client.hookClientScopeForInternalUse, viewerContext, beforeSnapshot, snapshot, pendingEdges, mutationView)",
+            "val ctx = %T(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, mutationView)",
             updateHookContextClass,
         )
         statement("listOf(ctx)")
