@@ -1,16 +1,13 @@
 package entkt.codegen.mutation
 
-import com.squareup.kotlinpoet.ANY
 import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.MAP
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.apiName
@@ -31,13 +28,7 @@ import entkt.schema.UpdateDefault
 
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val FIELD_PATCH_OR_ELSE = MemberName("entkt.runtime.mutation", "orElse")
-private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
-private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val RELATIONSHIP_LOCK_KEY = ClassName("entkt.runtime.mutation", "RelationshipLockKey")
-private val TRANSACTION_REQUIRED_EXCEPTION =
-    ClassName("entkt.runtime.mutation", "TransactionRequiredException")
-private val UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION =
-    ClassName("entkt.runtime.mutation", "UnsupportedDriverCapabilityException")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UUID_CLASS = ClassName("java.util", "UUID")
@@ -53,6 +44,8 @@ private val UPDATE_PREPARATION_SCOPE =
     ClassName("entkt.runtime.mutation.execution", "UpdatePreparationScope")
 private val UPDATE_WRITE_TRACKER =
     ClassName("entkt.runtime.mutation.execution", "UpdateWriteTracker")
+private val UPDATE_RELATIONSHIP_REQUIREMENTS =
+    ClassName("entkt.runtime.mutation.execution", "UpdateRelationshipRequirements")
 private val MUTATION_PRIVACY_EVALUATOR_FACTORY =
     MemberName("entkt.runtime.privacy", "mutationPrivacyEvaluatorForInternalUse")
 private val PRIVACY_DECISION_EVALUATOR_FACTORY =
@@ -95,16 +88,17 @@ internal class UpdateSaveEmitter(
         preparedStateType = buildPreparedStateType(),
         specProperty = buildSpecProperty(),
         executorProperty = buildExecutorProperty(),
-        functions = listOf(
-            buildPreflightFunction(),
-            buildLoadRowFunction(),
-            buildBeginFunction(),
-            buildEndFunction(),
-            buildBeforeFunction(),
-            buildPrepareFunction(),
-            buildRelationshipFunction(),
-            buildExecuteFunction(),
-        ),
+        functions = buildList {
+            if (helperEligibleEdges.isNotEmpty()) {
+                add(buildRelationshipRequirementsFunction())
+            }
+            add(buildBeginFunction())
+            add(buildEndFunction())
+            add(buildBeforeFunction())
+            add(buildPrepareFunction())
+            add(buildRelationshipFunction())
+            add(buildExecuteFunction())
+        },
     )
 
     private fun buildPreparedStateType(): TypeSpec {
@@ -139,9 +133,6 @@ internal class UpdateSaveEmitter(
                 add("%T(\n", UPDATE_MUTATION_SPEC)
                 indent()
                 add("entity = %T.GeneratedEntityMapping,\n", queryClass)
-                add("id = id,\n")
-                add("preflight = ::_preflightUpdate,\n")
-                add("loadRow = ::_loadUpdateRow,\n")
                 add("begin = ::_beginUpdate,\n")
                 add("end = ::_endUpdate,\n")
                 add("before = ::_runBeforeUpdateHooks,\n")
@@ -244,94 +235,27 @@ internal class UpdateSaveEmitter(
         }
     }
 
-    private fun buildPreflightFunction(): FunSpec = function("_preflightUpdate") {
+    private fun buildRelationshipRequirementsFunction(): FunSpec = function(
+        "_updateRelationshipRequirements",
+        UPDATE_RELATIONSHIP_REQUIREMENTS,
+    ) {
         addModifiers(KModifier.PRIVATE)
+        statement("val canonicalLockKeys = mutableListOf<%T>()", RELATIONSHIP_LOCK_KEY)
+        emitCanonicalRelationshipLockKeys(
+            builder = this,
+            helperEligibleEdges = helperEligibleEdges,
+            receiver = "draft",
+            destination = "canonicalLockKeys",
+        )
         addCode(codeBlock {
-            beginControlFlow("if (consistency == %T.Pessimistic)", UPDATE_CONSISTENCY)
-            beginControlFlow("if (!driver.inTransaction)")
-            addStatement(
-                "throw %T(%S)",
-                TRANSACTION_REQUIRED_EXCEPTION,
-                "$schemaName Pessimistic update requires a transaction-scoped client",
-            )
-            endControlFlow()
-            beginControlFlow("if (!driver.supportsReadRowForUpdate)")
-            addStatement(
-                "throw %T(%S)",
-                UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION,
-                "$schemaName Pessimistic update requires a driver with supportsReadRowForUpdate = true",
-            )
-            endControlFlow()
-            endControlFlow()
-
-            if (helperEligibleEdges.isNotEmpty()) {
-                beginControlFlow("if (draft._hasPendingLinkTableM2MOps())")
-                beginControlFlow("if (!driver.inTransaction)")
-                addStatement(
-                    "throw %T(%S)",
-                    TRANSACTION_REQUIRED_EXCEPTION,
-                    "$schemaName link-table M2M update requires a transaction-scoped client",
-                )
-                endControlFlow()
-                beginControlFlow("if (!driver.supportsReadRowForUpdate && !driver.supportsOwnerEdgeSerialization)")
-                addStatement(
-                    "throw %T(%S)",
-                    UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION,
-                    "$schemaName link-table M2M update requires a driver with " +
-                        "supportsReadRowForUpdate or supportsOwnerEdgeSerialization",
-                )
-                endControlFlow()
-                beginControlFlow("if (draft._hasPendingLinkTableM2MInserts() && !driver.supportsInsertIgnore)")
-                addStatement(
-                    "throw %T(%S)",
-                    UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION,
-                    "$schemaName link-table M2M add/set requires a driver with supportsInsertIgnore = true",
-                )
-                endControlFlow()
-                beginControlFlow(
-                    "if (relationshipLocking == %T.Canonical && !driver.supportsRelationshipSerialization)",
-                    RELATIONSHIP_LOCKING,
-                )
-                addStatement(
-                    "throw %T(%S)",
-                    UNSUPPORTED_DRIVER_CAPABILITY_EXCEPTION,
-                    "$schemaName relationshipLocking = Canonical requires a driver with " +
-                        "supportsRelationshipSerialization = true",
-                )
-                endControlFlow()
-                addStatement("draft._checkLinkTableM2MMixedMode()")
-                endControlFlow()
-            }
-            emitCanonicalRelationshipLocks(this, helperEligibleEdges, receiver = "draft")
+            add("return %T(\n", UPDATE_RELATIONSHIP_REQUIREMENTS)
+            indent()
+            add("hasPendingWrites = draft._hasPendingLinkTableM2MOps(),\n")
+            add("requiresInsertIgnore = draft._hasPendingLinkTableM2MInserts(),\n")
+            add("canonicalLockKeys = canonicalLockKeys,\n")
+            unindent()
+            add(")\n")
         })
-    }
-
-    private fun buildLoadRowFunction(): FunSpec {
-        val rowType = MAP.parameterizedBy(STRING, ANY.copy(nullable = true)).copy(nullable = true)
-        return function("_loadUpdateRow", rowType) {
-            addModifiers(KModifier.PRIVATE)
-            if (helperEligibleEdges.isNotEmpty()) {
-                addCode(codeBlock {
-                    beginControlFlow("return if (consistency == %T.Pessimistic)", UPDATE_CONSISTENCY)
-                    addStatement("driver.readRowForUpdate(%T.TABLE, id)", entityClass)
-                    nextControlFlow("else if (draft._hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate)")
-                    addStatement("driver.readRowForUpdate(%T.TABLE, id)", entityClass)
-                    nextControlFlow("else if (draft._hasPendingLinkTableM2MOps())")
-                    addStatement("driver.serializeOwnerEdgeAndRead(%T.TABLE, id)", entityClass)
-                    nextControlFlow("else")
-                    addStatement("driver.byId(%T.TABLE, id)", entityClass)
-                    endControlFlow()
-                })
-            } else {
-                addCode(codeBlock {
-                    beginControlFlow("return if (consistency == %T.Pessimistic)", UPDATE_CONSISTENCY)
-                    addStatement("driver.readRowForUpdate(%T.TABLE, id)", entityClass)
-                    nextControlFlow("else")
-                    addStatement("driver.byId(%T.TABLE, id)", entityClass)
-                    endControlFlow()
-                })
-            }
-        }
     }
 
     private fun buildBeginFunction(): FunSpec = function("_beginUpdate") {
@@ -503,7 +427,7 @@ internal class UpdateSaveEmitter(
             beginControlFlow("for (_targetId in edgeChanges.%L.added)", property)
             when (edge.junctionIdStrategy) {
                 "CLIENT_UUID" -> statement(
-                    "if (driver.insertIgnore(%S, mapOf(%S to %T.randomUUID(), %S to id, %S to _targetId), " +
+                    "if (driver.insertIgnore(%S, mapOf(%S to %T.randomUUID(), %S to request.id, %S to _targetId), " +
                         "conflictColumns = listOf(%S, %S)) != null) writes.markWritten()",
                     edge.junctionTable,
                     "id",
@@ -514,7 +438,7 @@ internal class UpdateSaveEmitter(
                     edge.junctionTargetColumn,
                 )
                 "AUTO_INT", "AUTO_LONG" -> statement(
-                    "if (driver.insertIgnore(%S, mapOf(%S to id, %S to _targetId), " +
+                    "if (driver.insertIgnore(%S, mapOf(%S to request.id, %S to _targetId), " +
                         "conflictColumns = listOf(%S, %S)) != null) writes.markWritten()",
                     edge.junctionTable,
                     edge.junctionSourceColumn,
@@ -531,7 +455,7 @@ internal class UpdateSaveEmitter(
             endControlFlow()
             beginControlFlow("if (edgeChanges.%L.removed.isNotEmpty())", property)
             statement(
-                "if (driver.deleteMany(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, id), " +
+                "if (driver.deleteMany(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, request.id), " +
                     "%T.Leaf<%T>(%S, %T.IN, edgeChanges.%L.removed.toList()))) > 0) writes.markWritten()",
                 edge.junctionTable,
                 PREDICATE,
@@ -558,8 +482,12 @@ internal class UpdateSaveEmitter(
             add("return updateExecutor.update(\n")
             indent()
             add("viewerContext = viewerContext,\n")
+            add("request = request,\n")
             add("applyLoadPrivacy = applyLoadPrivacy,\n")
             add("spec = updateSpec,\n")
+            if (helperEligibleEdges.isNotEmpty()) {
+                add("relationshipRequirements = _updateRelationshipRequirements(),\n")
+            }
             unindent()
             add(")\n")
         })
@@ -583,10 +511,11 @@ internal class UpdateSaveEmitter(
     }
 }
 
-private fun emitCanonicalRelationshipLocks(
-    builder: CodeBlock.Builder,
+private fun emitCanonicalRelationshipLockKeys(
+    builder: FunSpec.Builder,
     helperEligibleEdges: List<HelperEligibleM2M>,
     receiver: String,
+    destination: String,
 ) {
     val groups = helperEligibleEdges.groupBy { edge ->
         edge.junctionTable to listOf(edge.junctionSourceColumn, edge.junctionTargetColumn).sorted()
@@ -595,13 +524,10 @@ private fun emitCanonicalRelationshipLocks(
     for (key in orderedKeys) {
         val edges = groups.getValue(key)
         val guard = edges.joinToString(" || ") { "$receiver.${it.mutatorPropertyName}.hasOps()" }
-        builder.beginControlFlow(
-            "if (relationshipLocking == %T.Canonical && (%L))",
-            RELATIONSHIP_LOCKING,
-            guard,
-        )
+        builder.beginControlFlow("if (%L)", guard)
         builder.addStatement(
-            "driver.serializeRelationship(%T.canonical(%S, listOf(%S, %S)))",
+            "%L += %T.canonical(%S, listOf(%S, %S))",
+            destination,
             RELATIONSHIP_LOCK_KEY,
             key.first,
             key.second[0],

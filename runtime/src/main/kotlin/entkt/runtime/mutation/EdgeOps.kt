@@ -170,11 +170,9 @@ public fun <ID> snapshotEdgeChangesForInternalUse(changes: EdgeChanges<ID>): Edg
  *  2. `requestedAdds` and `requestedRemoves` are disjoint.
  *
  * Either failing throws `IllegalArgumentException` (via `require`).
- * In generated-code call sites these can't fire — the mutator's
- * call-site checks and the save-preflight defense-in-depth
- * `_checkLinkTableM2MMixedMode` already reject the corresponding
- * states. The guards make the public utility safe for direct callers
- * (tests, ad-hoc usage) that construct `PendingEdgeOps` manually.
+ * Generated mutators reject these states at their call sites and keep
+ * their op logs private. The guards make the public utility safe for
+ * direct callers that construct `PendingEdgeOps` manually.
  */
 public fun <ID> computeEdgeChanges(
     pending: PendingEdgeOps<ID>,

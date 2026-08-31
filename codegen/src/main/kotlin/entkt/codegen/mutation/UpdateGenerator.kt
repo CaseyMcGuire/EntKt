@@ -44,8 +44,6 @@ private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENT_CLIENT_NAME = "EntClient"
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
-private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
-private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val UPDATE_MUTATION_DRAFT =
     ClassName("entkt.runtime.mutation", "UpdateMutationDraft")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
@@ -90,7 +88,6 @@ internal class UpdateGenerator(
         val updateMutationViewClass = ClassName(packageName, "${schemaName}UpdateMutationView")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
-        val idType = schema.id().type.toTypeName()
 
         val beforeSaveHookType = hookListType(mutationClass)
         val beforeUpdateHookType = hookListType(updateHookCtxClass)
@@ -150,7 +147,6 @@ internal class UpdateGenerator(
                 if (helperEligibleEdges.isNotEmpty()) {
                     addFunction(buildHasPendingLinkTableM2MOpsFunction(helperEligibleEdges))
                     addFunction(buildHasPendingLinkTableM2MInsertsFunction(helperEligibleEdges))
-                    addFunction(buildCheckLinkTableM2MMixedModeFunction(helperEligibleEdges))
                 }
             }
             run {
@@ -171,18 +167,6 @@ internal class UpdateGenerator(
             property("draft", draftClass) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("request.draft")
-            }
-            property("id", idType) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("request.id as %T", idType)
-            }
-            property("consistency", UPDATE_CONSISTENCY) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("request.consistency")
-            }
-            property("relationshipLocking", RELATIONSHIP_LOCKING) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("request.relationshipLocking")
             }
             property("entity", entityClass) {
                 addModifiers(KModifier.PRIVATE, KModifier.LATEINIT)
@@ -655,9 +639,6 @@ internal class UpdateGenerator(
      *    `_buildPendingEdgeOps` to materialize the immutable
      *    aggregator the hook context / privacy / validation surfaces
      *    consume.
-     *  - `validateInvariants()` — used by the save-preflight
-     *    defense-in-depth check (`_checkLinkTableM2MMixedMode`) to
-     *    re-assert both mixed-mode rules against captured state.
      *
      * The constructor is `internal` so callers cannot construct a
      * standalone mutator outside the builder.
@@ -673,11 +654,8 @@ internal class UpdateGenerator(
      *     throw at the second call.
      *
      * Both throw `IllegalStateException` with a message naming the
-     * edge and the conflicting operations. The save-preflight
-     * `validateInvariants()` is the backstop for reflection or future
-     * generated bulk-write code that could bypass per-call guards;
-     * with `private` field visibility there's no documented in-module
-     * path that needs the backstop, but it stays as defense-in-depth.
+     * edge and the conflicting operations. The private op-log fields
+     * prevent same-module code from bypassing these call-site checks.
      */
     private fun buildEdgeMutatorType(edge: HelperEligibleM2M): TypeSpec {
         val idType = edge.targetIdTypeName
@@ -690,8 +668,6 @@ internal class UpdateGenerator(
             "remove(id) for the same id in one mutation"
         val sameIdRemoveAfterAddMessage = "edge '${edge.mutatorPropertyName}': cannot remove(id) after " +
             "add(id) for the same id in one mutation"
-        val sameIdOverlapMessage = "edge '${edge.mutatorPropertyName}': delta add/remove sets overlap on " +
-            "one or more ids — `add(x)` and `remove(x)` for the same x must not coexist"
 
         return classType(edge.mutatorClassSimpleName) {
             primaryConstructor { addModifiers(KModifier.INTERNAL) }
@@ -778,25 +754,13 @@ internal class UpdateGenerator(
                         IMMUTABLE_SET_SNAPSHOT,
                 )
             }
-            // Re-run both mixed-mode rules as a save-preflight backstop.
-            function("validateInvariants") {
-                addModifiers(KModifier.INTERNAL)
-                statement(
-                        "if (_requestedSet != null && (_adds.isNotEmpty() || _removes.isNotEmpty())) throw %T(%S)",
-                        ILLEGAL_STATE_EXCEPTION, mixedModeMessage,
-                    )
-                statement(
-                        "if ((_adds.toSet() intersect _removes.toSet()).isNotEmpty()) throw %T(%S)",
-                        ILLEGAL_STATE_EXCEPTION, sameIdOverlapMessage,
-                    )
-            }
         }
     }
 
     /**
      * Build `_hasPendingLinkTableM2MOps()`. ORs each
-     * helper-eligible mutator's `hasOps()` flag — the gate for the
-     * M2M preflight in save(). Generated only when the schema has at
+     * helper-eligible mutator's `hasOps()` flag — reported to the
+     * runtime relationship requirements. Generated only when the schema has at
      * least one helper-eligible link-table M2M edge.
      */
     private fun buildHasPendingLinkTableM2MOpsFunction(
@@ -812,10 +776,10 @@ internal class UpdateGenerator(
 
     /**
      * Build `_hasPendingLinkTableM2MInserts()`. ORs each
-     * helper-eligible mutator's `hasInserts()` flag — the gate for the
-     * `supportsInsertIgnore` capability preflight in save(). True when any
+     * helper-eligible mutator's `hasInserts()` flag — reported to runtime
+     * so it can enforce `supportsInsertIgnore`. True when any
      * edge has a pending `add` or `set`; remove-only saves stay false and
-     * are exempt from the preflight (they never call `insertIgnore`).
+     * do not require that capability (they never call `insertIgnore`).
      * Generated only when the schema has at least one helper-eligible
      * link-table M2M edge.
      */
@@ -827,37 +791,6 @@ internal class UpdateGenerator(
         return function("_hasPendingLinkTableM2MInserts", BOOLEAN) {
             addModifiers(KModifier.INTERNAL)
             statement("return %L", expr)
-        }
-    }
-
-    /**
-     * Build `_checkLinkTableM2MMixedMode()`, the
-     * defense-in-depth check that re-runs the per-mutator-call mixed-mode
-     * rule against the captured op-log state at save preflight. The per-call
-     * check on the mutator methods is the fail-fast surface; this is the
-     * backstop for setter-bypassing paths (reflection writing the op
-     * lists directly, or future bulk-write helpers). Throws the same
-     * `IllegalStateException` message shape as the per-call check.
-     *
-     * Generated only when the schema has at least one helper-eligible
-     * link-table M2M edge.
-     */
-    private fun buildCheckLinkTableM2MMixedModeFunction(
-        helperEligibleEdges: List<HelperEligibleM2M>,
-    ): FunSpec {
-        // The two mixed-mode invariants live on the mutator itself
-        // (`validateInvariants()`) now that the op-log fields are
-        // private. This helper just dispatches per edge. Per-call
-        // guards in add()/remove()/set() reject violations at the
-        // mutator surface under normal usage; this preflight is the
-        // defense-in-depth backstop for state that bypassed those
-        // guards (reflection or future bulk-write codegen that
-        // sidestepped the per-call rule).
-        return function("_checkLinkTableM2MMixedMode") {
-            addModifiers(KModifier.INTERNAL)
-            for (edge in helperEligibleEdges) {
-                statement("this.%L.validateInvariants()", edge.mutatorPropertyName)
-            }
         }
     }
 
@@ -949,7 +882,7 @@ internal class UpdateGenerator(
                 // (field/op/value) and erases at the driver boundary.
                 add(
                     "val %L: Set<%T> = if (draft.%L.hasOps()) {\n" +
-                        "  driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, id)), emptyList(), null, null)\n" +
+                        "  driver.query(%S, listOf(%T.Leaf<%T>(%S, %T.EQ, request.id)), emptyList(), null, null)\n" +
                         "    .map { it[%S] as %T }\n" +
                         "    .toSet()\n" +
                         "} else emptySet()\n",

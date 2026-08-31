@@ -26,7 +26,7 @@ enum class UpdateConsistency {
 }
 
 /**
- * Thrown by generated saves when the requested consistency mode (or
+ * Thrown by the runtime update lifecycle when the requested consistency mode (or
  * a multi-write helper) needs a driver capability the configured
  * [DatabaseDriver] doesn't expose — e.g. `UpdateConsistency.Pessimistic` on a
  * driver that reports `supportsReadRowForUpdate = false`.

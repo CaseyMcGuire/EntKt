@@ -290,7 +290,7 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `draft is contextless and adapter casts the request id`() {
+    fun `draft is contextless and adapter retains the mutation request`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -298,25 +298,28 @@ class UpdateGeneratorTest {
         assert(output.contains("class UserUpdateDraft @EntktInternal constructor()")) {
             "The draft should contain only configurable update state\n$output"
         }
-        assert(output.contains("private val id: UUID = request.id as UUID")) {
-            "The schema adapter should recover the typed id from the generic request\n$output"
+        assert(output.contains("private val request: UpdateMutationRequest<UserUpdateDraft>,")) {
+            "The schema adapter should retain the request passed to runtime execution\n$output"
+        }
+        assert(!output.contains("private val id:") &&
+            !output.contains("private val consistency:") &&
+            !output.contains("private val relationshipLocking:")) {
+            "The schema adapter should not copy request fields into redundant properties\n$output"
         }
     }
 
     @Test
-    fun `loads current row internally before hooks`() {
+    fun `passes the request to the runtime executor`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        // The internal current-row load short-circuits with
-        // Failed(EntTargetAbsentException) for missing rows before any
-        // hook, privacy, or validation runs.
-        val loadPos = output.indexOf("driver.byId(User.TABLE, id)")
-        val hookPos = output.indexOf("runBatchHooksForInternalUse(listOf(_beforeSaveView), beforeSaveHooks)")
-        assert(loadPos != -1) { "save() should load the current row via driver.byId(...)\n$output" }
-        assert(hookPos != -1 && loadPos < hookPos) {
-            "Internal current-row load should happen before before-hooks\n$output"
+        assert(output.contains("request = request")) {
+            "The generated adapter should pass the complete request to UpdateMutationExecutor\n$output"
+        }
+        assert(!output.contains("driver.byId(User.TABLE") &&
+            !output.contains("driver.readRowForUpdate(User.TABLE")) {
+            "Owner-row selection belongs to UpdateMutationExecutor\n$output"
         }
     }
 
@@ -334,11 +337,13 @@ class UpdateGeneratorTest {
         assert(!output.contains("EntNoChangesException")) {
             "EntNoChangesException must be gone from the generated update\n$output"
         }
-        val loadPos = output.indexOf("driver.byId(User.TABLE, id)")
-        assert(loadPos != -1) { "executeSave should load the current row via driver.byId(...)\n$output" }
-        assert(output.contains("loadRow = ::_loadUpdateRow") &&
-            output.contains("updateExecutor.update(")) {
-            "the generated load adapter should delegate absence handling to UpdateMutationExecutor\n$output"
+        assert(output.contains("updateExecutor.update(") &&
+            output.contains("request = request") &&
+            output.contains("spec = updateSpec")) {
+            "the generated adapter should delegate the complete request to UpdateMutationExecutor\n$output"
+        }
+        assert(!output.contains("_loadUpdateRow") && !output.contains("loadRow =")) {
+            "generated update code should not retain an owner-row callback\n$output"
         }
         assert(!output.contains("EntTargetAbsentException(")) {
             "generated update code should not duplicate runtime target handling\n$output"
@@ -348,9 +353,6 @@ class UpdateGeneratorTest {
         val emptyCount = Regex(Regex.escape("if (!draft._hasFieldAssignments()")).findAll(output).count()
         assert(emptyCount == 1) {
             "Expected exactly one dirtyFields-empty branch (post-hooks), got $emptyCount\n$output"
-        }
-        assert(loadPos < output.indexOf("if (!draft._hasFieldAssignments())")) {
-            "the generated adapter should declare its load before preparation\n$output"
         }
     }
 
@@ -609,43 +611,15 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `Pessimistic preflight checks inTransaction before driver capability before readRowForUpdate call`() {
-        // Pins the ordering of three things in the generated save():
-        //   1. `if (!driver.inTransaction)` → throw TransactionRequiredException
-        //   2. `if (!driver.supportsReadRowForUpdate)` → throw UnsupportedDriverCapabilityException
-        //   3. `driver.readRowForUpdate(...)` call site
-        // The inTransaction guard MUST come before the readRowForUpdate
-        // call. Without it, a future refactor that reorders the
-        // preflights could let a non-transactional driver hit the
-        // root-class throw inside `readRowForUpdate`, surfacing the
-        // wrong exception type (IllegalStateException from
-        // `requireTransactionForLocking` instead of
-        // TransactionRequiredException — and on Postgres root, the lock
-        // would have released immediately even if the call had been
-        // allowed). PostgresDriver advertises
-        // `supportsReadRowForUpdate = true` on its non-transactional
-        // root specifically so the capability check passes for
-        // valid-driver-family callers; the inTransaction check is
-        // what protects the actual call site.
+    fun `Pessimistic lifecycle behavior is not emitted into the schema adapter`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        val txCheck = output.indexOf("if (!driver.inTransaction)")
-        val capabilityCheck = output.indexOf("if (!driver.supportsReadRowForUpdate)")
-        val lockCall = output.indexOf("driver.readRowForUpdate(")
-
-        assert(txCheck != -1) { "Should emit !driver.inTransaction guard for Pessimistic\n$output" }
-        assert(capabilityCheck != -1) { "Should emit !driver.supportsReadRowForUpdate guard for Pessimistic\n$output" }
-        assert(lockCall != -1) { "Should call driver.readRowForUpdate for Pessimistic\n$output" }
-        assert(txCheck < lockCall) {
-            "!driver.inTransaction guard MUST come before driver.readRowForUpdate(...) — " +
-                "future refactors that flip this order surface IllegalStateException instead of " +
-                "TransactionRequiredException, and on auto-commit drivers (e.g. Postgres root) the " +
-                "lock would release immediately even if the call were allowed.\n$output"
-        }
-        assert(capabilityCheck < lockCall) {
-            "!driver.supportsReadRowForUpdate guard MUST come before driver.readRowForUpdate(...)\n$output"
+        assert(!output.contains("UpdateConsistency.Pessimistic") &&
+            !output.contains("supportsReadRowForUpdate") &&
+            !output.contains("readRowForUpdate(")) {
+            "Pessimistic validation and row selection belong to UpdateMutationExecutor\n$output"
         }
     }
 
@@ -930,8 +904,7 @@ class UpdateGeneratorTest {
         // link-table M2M helpers op-log fields locked down to private so
         // same-module application code can't bypass per-call invariants
         // by writing tags._adds.add(...) directly. Downstream codegen
-        // (_buildPendingEdgeOps, _checkLinkTableM2MMixedMode, the M2M
-        // pending-ops gate) uses the internal accessors instead.
+        // uses the internal snapshot and pending-operation accessors.
         val (post, tag, postTag, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
@@ -951,9 +924,8 @@ class UpdateGeneratorTest {
                !output.contains("internal val _removes")) {
             "Internal field-visibility form must be gone — the bypass vector\n$output"
         }
-        // Three internal accessors: hasOps, snapshotOps, validateInvariants.
         assert(output.contains("internal fun hasOps(): Boolean")) {
-            "hasOps() accessor must be internal — wired into M2M preflight gate\n$output"
+            "hasOps() accessor must be internal — wired into relationship requirements\n$output"
         }
         assert(output.contains("internal fun snapshotOps(): PendingEdgeOps<UUID>")) {
             "snapshotOps() accessor must be internal — replaces inline field reads in _buildPendingEdgeOps\n$output"
@@ -966,8 +938,8 @@ class UpdateGeneratorTest {
         ) {
             "Hook-facing pending edge sets must be detached and JVM-unmodifiable\n$output"
         }
-        assert(output.contains("internal fun validateInvariants()")) {
-            "validateInvariants() accessor must be internal — replaces inline checks in _checkLinkTableM2MMixedMode\n$output"
+        assert(!output.contains("validateInvariants") && !output.contains("_checkLinkTableM2MMixedMode")) {
+            "Per-call invariant enforcement should not grow a second save-time callback\n$output"
         }
     }
 
@@ -1113,16 +1085,23 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `update spec orders row load then pending-edge capture then hooks`() {
+    fun `update adapter keeps relationship requirements out of the spec`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        val loadAdapter = output.indexOf("loadRow = ::_loadUpdateRow")
         val beginAdapter = output.indexOf("begin = ::_beginUpdate")
         val beforeAdapter = output.indexOf("before = ::_runBeforeUpdateHooks")
-        assert(loadAdapter in 0 until beginAdapter && beginAdapter < beforeAdapter) {
-            "updateSpec must expose load, capture, and hook adapters in lifecycle order\n$output"
+        assert(beginAdapter != -1 && beginAdapter < beforeAdapter) {
+            "updateSpec must preserve schema adapter ordering\n$output"
+        }
+        val specBlock = output.substring(
+            output.indexOf("UpdateMutationSpec("),
+            output.indexOf("private val updateExecutor"),
+        )
+        assert(!specBlock.contains("relationshipRequirements") &&
+            output.contains("relationshipRequirements = _updateRelationshipRequirements()")) {
+            "Per-request relationship requirements should be passed to update(), not stored in updateSpec\n$output"
         }
     }
 
@@ -1316,7 +1295,7 @@ class UpdateGeneratorTest {
         }
     }
 
-    // ---------- link-table M2M save-time preflight ----------
+    // ---------- link-table M2M runtime requirements ----------
 
     @Test
     fun `update draft emits _hasPendingLinkTableM2MOps that ORs mutator hasOps flags`() {
@@ -1367,77 +1346,70 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `save emits supportsInsertIgnore preflight gated on pending inserts`() {
+    fun `relationship requirements report whether pending writes need insertIgnore`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Gated on _hasPendingLinkTableM2MInserts() (not _hasPendingLinkTableM2MOps())
-        // so a remove-only save — which never calls insertIgnore — is exempt
-        // from the capability requirement.
-        assert(output.contains("if (draft._hasPendingLinkTableM2MInserts() && !driver.supportsInsertIgnore)")) {
-            "supportsInsertIgnore preflight must be gated on pending inserts\n$output"
+        assert(output.contains("requiresInsertIgnore = draft._hasPendingLinkTableM2MInserts()")) {
+            "Generated requirements must distinguish add/set from remove-only writes\n$output"
         }
-        assert(output.contains("requires a driver with supportsInsertIgnore = true")) {
-            "Expected the insertIgnore capability error message\n$output"
+        assert(!output.contains("supportsInsertIgnore")) {
+            "Driver capability validation belongs to UpdateMutationExecutor\n$output"
         }
     }
 
     // ---------- symmetric link-table writes canonical relationship locking ----------
 
     @Test
-    fun `update ctor takes a relationshipLocking parameter and property`() {
+    fun `update execution passes relationship requirements directly to the executor method`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private val relationshipLocking: RelationshipLocking")) {
-            "Update execution must carry a relationshipLocking property\n$output"
+        assert(output.contains("relationshipRequirements = _updateRelationshipRequirements()")) {
+            "Update execution must pass per-request relationship requirements directly\n$output"
+        }
+        val specBlock = output.substring(
+            output.indexOf("UpdateMutationSpec("),
+            output.indexOf("private val updateExecutor"),
+        )
+        assert(!output.contains("private val relationshipLocking:") &&
+            !specBlock.contains("relationshipRequirements")) {
+            "Per-request relationship state must not be copied or stored in UpdateMutationSpec\n$output"
         }
     }
 
     @Test
-    fun `save emits the Canonical supportsRelationshipSerialization preflight`() {
+    fun `generated requirements contain canonical relationship keys`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("if (relationshipLocking == RelationshipLocking.Canonical && !driver.supportsRelationshipSerialization)")) {
-            "Expected the Canonical capability preflight\n$output"
-        }
-        assert(output.contains("requires a driver with supportsRelationshipSerialization = true")) {
-            "Expected the Canonical capability error message\n$output"
-        }
-    }
-
-    @Test
-    fun `preflight takes the canonical relationship lock before the row-load adapter`() {
-        val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = generator.generate("M2MPost", post, names).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        // Gated on Canonical AND the edge having pending ops; keyed by the
-        // canonical (sorted) FK pair so both orientations lock the same key.
         assert(output.contains(
-            "if (relationshipLocking == RelationshipLocking.Canonical && (draft.tags.hasOps())) { " +
-                "driver.serializeRelationship(RelationshipLockKey.canonical(\"m2m_post_tags\", listOf(\"post_id\", \"tag_id\"))) }",
+            "canonicalLockKeys += RelationshipLockKey.canonical(\"m2m_post_tags\", listOf(\"post_id\", \"tag_id\"))",
         )) {
-            "Expected the guarded canonical relationship lock\n$output"
+            "Expected the schema-specific canonical relationship key\n$output"
         }
+        assert(!output.contains("supportsRelationshipSerialization")) {
+            "Canonical capability validation belongs to UpdateMutationExecutor\n$output"
+        }
+    }
 
-        // Runtime invokes preflight before loadRow. Within the generated
-        // preflight adapter, capability validation precedes lock acquisition.
-        assert(output.contains("preflight = ::_preflightUpdate, loadRow = ::_loadUpdateRow")) {
-            "UpdateMutationSpec must wire preflight before row loading\n$output"
+    @Test
+    fun `relationship requirements guard canonical keys by pending edge operations`() {
+        val (post, _, _, names) = makeLinkM2MSchemas()
+        val output = generator.generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains(
+            "if (draft.tags.hasOps()) { canonicalLockKeys += " +
+                "RelationshipLockKey.canonical(\"m2m_post_tags\", listOf(\"post_id\", \"tag_id\")) }",
+        )) {
+            "Expected the canonical key to be included only for a changed edge\n$output"
         }
-        val preflightIdx = output.indexOf("if (relationshipLocking == RelationshipLocking.Canonical && !driver.supportsRelationshipSerialization)")
-        val lockIdx = output.indexOf("driver.serializeRelationship(RelationshipLockKey.canonical(\"m2m_post_tags\"")
-        val ownerReadIdx = output.indexOf("private fun _loadUpdateRow()")
-        assert(preflightIdx != -1 && lockIdx != -1 && ownerReadIdx != -1) {
-            "Missing one of the ordering anchors\n$output"
-        }
-        assert(preflightIdx < lockIdx && lockIdx < ownerReadIdx) {
-            "Relationship lock must sit after capability validation and before the row-load adapter\n$output"
+        assert(!output.contains("driver.serializeRelationship(") && !output.contains("_loadUpdateRow")) {
+            "Lock acquisition and owner-row loading belong to UpdateMutationExecutor\n$output"
         }
     }
 
@@ -1480,219 +1452,107 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `update draft emits _checkLinkTableM2MMixedMode that dispatches per-edge to validateInvariants`() {
-        // the mixed-mode invariants live on the mutator
-        // itself (`validateInvariants()`) now that the op-log fields
-        // are private. The save-preflight helper just dispatches per
-        // edge.
+    fun `mixed-mode invariants stay at the mutator call sites without a save callback`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("internal fun _checkLinkTableM2MMixedMode()")) {
-            "Expected _checkLinkTableM2MMixedMode helper\n$output"
-        }
-        assert(output.contains("this.tags.validateInvariants()")) {
-            "Expected per-edge dispatch to mutator's validateInvariants() accessor\n$output"
-        }
-        // The actual invariant assertions now live inside the
-        // mutator class's validateInvariants() body — pin the error
-        // messages there.
         assert(output.contains("edge 'tags': cannot mix replacement (set) and delta (add/remove)")) {
-            "Replacement-vs-delta error message must still surface from the mutator\n$output"
+            "Replacement-vs-delta checks must remain on add/remove/set\n$output"
         }
-        assert(output.contains("edge 'tags': delta add/remove sets overlap")) {
-            "Same-id overlap error message must still surface from the mutator\n$output"
+        assert(output.contains("edge 'tags': cannot add(id) after remove(id) for the same id") &&
+            output.contains("edge 'tags': cannot remove(id) after add(id) for the same id")) {
+            "Same-id mixed-direction checks must remain on add/remove\n$output"
+        }
+        assert(!output.contains("validateInvariants") && !output.contains("_checkLinkTableM2MMixedMode")) {
+            "Generated updates should not retain a redundant save-time validation callback\n$output"
         }
     }
 
     @Test
-    fun `update spec enforces M2M preflight before owner-row loading`() {
+    fun `relationship requirements are passed to the executor instead of the update spec`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Both checks live in the generated preflight adapter. Runtime invokes
-        // that adapter before the separately generated row-load adapter.
-        val pessIdx = output.indexOf("if (consistency == UpdateConsistency.Pessimistic)")
-        val m2mIdx = output.indexOf("if (draft._hasPendingLinkTableM2MOps())")
-        val readIdx = output.indexOf("private fun _loadUpdateRow()")
-        assert(pessIdx != -1 && m2mIdx != -1 && readIdx != -1) {
-            "Missing one of the preflight anchors\n$output"
+        assert(output.contains("relationshipRequirements = _updateRelationshipRequirements()")) {
+            "The executor method should receive per-request relationship requirements\n$output"
         }
-        assert(pessIdx < m2mIdx) {
-            "Pessimistic preflight must come before M2M preflight\n$output"
-        }
-        assert(m2mIdx < readIdx) {
-            "M2M preflight must come before the owner-row read\n$output"
-        }
-        assert(output.contains("preflight = ::_preflightUpdate, loadRow = ::_loadUpdateRow")) {
-            "UpdateMutationSpec must preserve the same runtime ordering\n$output"
+        val specBlock = output.substring(
+            output.indexOf("UpdateMutationSpec("),
+            output.indexOf("private val updateExecutor"),
+        )
+        assert(!specBlock.contains("relationshipRequirements") &&
+            !specBlock.contains("preflight") &&
+            !specBlock.contains("loadRow")) {
+            "Runtime inputs and lifecycle policy must not be stored in UpdateMutationSpec\n$output"
         }
     }
 
     @Test
-    fun `M2M preflight throws TransactionRequiredException then UnsupportedDriverCapabilityException then mixed-mode`() {
+    fun `relationship requirements contain only schema-specific facts`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        val m2mIdx = output.indexOf("if (draft._hasPendingLinkTableM2MOps())")
-        assert(m2mIdx != -1) { "Missing M2M preflight block\n$output" }
-        val m2mBlock = output.substring(m2mIdx, (m2mIdx + 1500).coerceAtMost(output.length))
-
-        // Order inside the block: inTransaction → capability → mixed-mode.
-        val txIdx = m2mBlock.indexOf("if (!driver.inTransaction)")
-        val capIdx = m2mBlock.indexOf("if (!driver.supportsReadRowForUpdate && !driver.supportsOwnerEdgeSerialization)")
-        val mixedIdx = m2mBlock.indexOf("draft._checkLinkTableM2MMixedMode()")
-        assert(txIdx != -1 && capIdx != -1 && mixedIdx != -1) {
-            "Missing one of: tx check, capability check, mixed-mode call\n$m2mBlock"
+        assert(output.contains("hasPendingWrites = draft._hasPendingLinkTableM2MOps()") &&
+            output.contains("requiresInsertIgnore = draft._hasPendingLinkTableM2MInserts()") &&
+            output.contains("canonicalLockKeys = canonicalLockKeys")) {
+            "Generated requirements should describe pending writes, inserts, and canonical keys\n$output"
         }
-        assert(txIdx < capIdx) {
-            "TransactionRequiredException must fire before the capability check\n$m2mBlock"
-        }
-        assert(capIdx < mixedIdx) {
-            "UnsupportedDriverCapabilityException must fire before mixed-mode defense\n$m2mBlock"
-        }
-
-        // Exception types + diagnostic messages.
-        assert(m2mBlock.contains(
-            "throw TransactionRequiredException(\"M2MPost link-table M2M update requires a transaction-scoped client\")",
-        )) {
-            "Tx-required message should name the schema and the M2M-update path\n$m2mBlock"
-        }
-        assert(m2mBlock.contains(
-            "throw UnsupportedDriverCapabilityException(\"M2MPost link-table M2M update requires a driver with supportsReadRowForUpdate or supportsOwnerEdgeSerialization\")",
-        )) {
-            "Capability message should mention both acceptable capabilities\n$m2mBlock"
+        assert(!output.contains("TransactionRequiredException") &&
+            !output.contains("UnsupportedDriverCapabilityException") &&
+            !output.contains("supportsOwnerEdgeSerialization")) {
+            "Transaction and driver capability policy belongs to UpdateMutationExecutor\n$output"
         }
     }
 
     @Test
-    fun `M2M preflight accepts driver-family fallback — either readRowForUpdate or ownerEdgeSerialization is enough`() {
-        val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = generator.generate("M2MPost", post, names).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        // The capability check uses && to require BOTH flags to be
-        // false before throwing — i.e. it accepts when EITHER is true.
-        // (The plan's "looser" fallback contrasts with the Pessimistic
-        // preflight, which strictly requires supportsReadRowForUpdate.)
-        assert(output.contains("if (!driver.supportsReadRowForUpdate && !driver.supportsOwnerEdgeSerialization)")) {
-            "Capability check should accept either readRowForUpdate or ownerEdgeSerialization\n$output"
-        }
-        assert(!output.contains("if (!driver.supportsReadRowForUpdate || !driver.supportsOwnerEdgeSerialization)")) {
-            "Capability check must NOT require both flags — || would over-constrain the fallback\n$output"
-        }
-    }
-
-    @Test
-    fun `schemas without helper-eligible M2M edges emit no M2M preflight helpers or block`() {
+    fun `schemas without helper-eligible M2M edges emit no relationship requirements helper`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // No mutator scaffolding → no M2M preflight helpers and no
-        // _hasPendingLinkTableM2MOps() gate in save().
+        // No mutator scaffolding means there is nothing schema-specific
+        // to report to the runtime executor.
         assert(!output.contains("_hasPendingLinkTableM2MOps")) {
             "Schemas without helper-eligible M2M edges should not get the M2M ops helper\n$output"
         }
-        assert(!output.contains("_checkLinkTableM2MMixedMode")) {
-            "Schemas without helper-eligible M2M edges should not get the mixed-mode helper\n$output"
+        assert(!output.contains("_updateRelationshipRequirements")) {
+            "Schemas without helper-eligible M2M edges should use the executor default requirements\n$output"
         }
     }
 
     @Test
-    fun `mixed-mode defense fires per helper-eligible edge — two edges yield two checks`() {
+    fun `multi-edge schemas retain per-edge mutator call-site checks`() {
         val (doc, _, _, _, names) = makeMultiEdgeSchemas()
         val output = generator.generate("M2MDoc", doc, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // One check per edge, each naming the offending edge.
         assert(output.contains("edge 'tags': cannot mix")) {
-            "Defense-in-depth should check the tags edge\n$output"
+            "The tags mutator should enforce mixed-mode calls\n$output"
         }
         assert(output.contains("edge 'labels': cannot mix")) {
-            "Defense-in-depth should check the labels edge\n$output"
-        }
-    }
-
-    @Test
-    fun `defense-in-depth also catches same-id overlap between _adds and _removes`() {
-        // with the op-log fields now private, the overlap
-        // check lives inside the mutator's validateInvariants() body
-        // — and the save-preflight _checkLinkTableM2MMixedMode calls
-        // it via this.tags.validateInvariants(). Test both: the
-        // mutator implements the check, and the preflight dispatches.
-        val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = generator.generate("M2MPost", post, names).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        // Inside the mutator's validateInvariants():
-        assert(output.contains(
-            "if ((_adds.toSet() intersect _removes.toSet()).isNotEmpty()) throw IllegalStateException",
-        )) {
-            "Mutator's validateInvariants() must catch same-id overlap between _adds and _removes\n$output"
-        }
-        // The named-edge error message.
-        assert(output.contains("edge 'tags': delta add/remove sets overlap")) {
-            "Overlap-check message should name the edge and the overlap shape\n$output"
-        }
-    }
-
-    @Test
-    fun `multi-edge schemas dispatch validateInvariants per edge in the preflight`() {
-        // the save-preflight _checkLinkTableM2MMixedMode
-        // calls each mutator's validateInvariants(). Pin the
-        // per-edge dispatch.
-        val (doc, _, _, _, names) = makeMultiEdgeSchemas()
-        val output = generator.generate("M2MDoc", doc, names).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("this.tags.validateInvariants()")) {
-            "Expected per-edge dispatch for tags\n$output"
-        }
-        assert(output.contains("this.labels.validateInvariants()")) {
-            "Expected per-edge dispatch for labels\n$output"
-        }
-        // Each mutator's body carries its own overlap check, with
-        // the edge name in the error message.
-        assert(output.contains("edge 'tags': delta add/remove sets overlap")) {
-            "Each mutator should embed its named overlap message\n$output"
-        }
-        assert(output.contains("edge 'labels': delta add/remove sets overlap")) {
-            "Each mutator should embed its named overlap message\n$output"
+            "The labels mutator should enforce mixed-mode calls\n$output"
         }
     }
 
     // ---------- link-table M2M helpers three-way owner-row read + junction reads + EdgeChanges ----------
 
     @Test
-    fun `M2M-capable schema emits the owner-row read primitive choices`() {
+    fun `M2M-capable schema delegates owner-row selection to runtime`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Four-arm schema-specific read adapter:
-        //   Pessimistic                            → readRowForUpdate
-        //   M2M pending + supportsReadRowForUpdate → readRowForUpdate
-        //   M2M pending + !supportsReadRowForUpdate→ serializeOwnerEdgeAndRead
-        //   ReadCurrent (no M2M pending)           → byId
-        assert(output.contains("private fun _loadUpdateRow(): Map<String, Any?>? = if (consistency == UpdateConsistency.Pessimistic)")) {
-            "Pessimistic branch should be first in the row-load adapter\n$output"
+        assert(output.contains("relationshipRequirements = _updateRelationshipRequirements()")) {
+            "M2M adapters should pass schema-specific requirements to runtime\n$output"
         }
-        assert(output.contains("else if (draft._hasPendingLinkTableM2MOps() && driver.supportsReadRowForUpdate)")) {
-            "M2M+RRFU branch should reuse readRowForUpdate\n$output"
-        }
-        assert(output.contains("else if (draft._hasPendingLinkTableM2MOps()) { driver.serializeOwnerEdgeAndRead(M2MPost.TABLE, id) }")) {
-            "M2M+!RRFU branch should fall through to serializeOwnerEdgeAndRead\n$output"
-        }
-        assert(output.contains("else { driver.byId(M2MPost.TABLE, id) }")) {
-            "byId fallback path should remain for ReadCurrent without M2M pending\n$output"
-        }
-        assert(output.contains("loadRow = ::_loadUpdateRow")) {
-            "UpdateMutationExecutor should receive the generated row-load adapter\n$output"
+        assert(!output.contains("readRowForUpdate(") &&
+            !output.contains("serializeOwnerEdgeAndRead(") &&
+            !output.contains("driver.byId(")) {
+            "The generated adapter should not select an owner-row read primitive\n$output"
         }
         assert(!output.contains("_classifyDriverFailure") &&
             !output.contains("EntTargetAbsentException(")) {
@@ -1739,7 +1599,7 @@ class UpdateGeneratorTest {
         // data.
         assert(output.contains(
             "val _current_tags: Set<UUID> = if (draft.tags.hasOps()) { " +
-                "driver.query(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, id)), emptyList(), null, null) " +
+                "driver.query(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, request.id)), emptyList(), null, null) " +
                 ".map { it[\"tag_id\"] as UUID } .toSet() } else emptySet()",
         )) {
             "Expected per-edge junction read that lowers to Predicate.Leaf<Any>(sourceCol, Op.EQ, this.id)\n$output"
@@ -1913,7 +1773,7 @@ class UpdateGeneratorTest {
         // so the driver mints the junction id and the values map only
         // carries the two FK columns.
         assert(output.contains(
-            "if (edgeChanges.tags.added.isNotEmpty()) { for (_targetId in edgeChanges.tags.added) { if (driver.insertIgnore(\"m2m_post_tags\", mapOf(\"post_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\")) != null) writes.markWritten() } }",
+            "if (edgeChanges.tags.added.isNotEmpty()) { for (_targetId in edgeChanges.tags.added) { if (driver.insertIgnore(\"m2m_post_tags\", mapOf(\"post_id\" to request.id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\")) != null) writes.markWritten() } }",
         )) {
             "AUTO_LONG junction inserts should use insertIgnore, omit the id key (driver mints), and iterate added\n$output"
         }
@@ -1928,7 +1788,7 @@ class UpdateGeneratorTest {
         // One round-trip per edge: deleteMany(table, [sourceCol=ownerId, targetCol IN removed]).
         // Junction-table deletes have no entity scope; Predicate.Leaf<Any>.
         assert(output.contains(
-            "if (edgeChanges.tags.removed.isNotEmpty()) { if (driver.deleteMany(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, id), Predicate.Leaf<Any>(\"tag_id\", Op.IN, edgeChanges.tags.removed.toList()))) > 0) writes.markWritten() }",
+            "if (edgeChanges.tags.removed.isNotEmpty()) { if (driver.deleteMany(\"m2m_post_tags\", listOf(Predicate.Leaf<Any>(\"post_id\", Op.EQ, request.id), Predicate.Leaf<Any>(\"tag_id\", Op.IN, edgeChanges.tags.removed.toList()))) > 0) writes.markWritten() }",
         )) {
             "Deletes should use one deleteMany per edge with AND-paired source EQ + target IN predicates (erased Predicate.Leaf<Any>)\n$output"
         }
@@ -1943,7 +1803,7 @@ class UpdateGeneratorTest {
         // CLIENT_UUID junction → values map carries an "id" key with
         // UUID.randomUUID() in addition to the two FK columns.
         assert(output.contains(
-            "if (driver.insertIgnore(\"uuid_junction_post_tags\", mapOf(\"id\" to UUID.randomUUID(), \"post_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\")) != null) writes.markWritten()",
+            "if (driver.insertIgnore(\"uuid_junction_post_tags\", mapOf(\"id\" to UUID.randomUUID(), \"post_id\" to request.id, \"tag_id\" to _targetId), conflictColumns = listOf(\"post_id\", \"tag_id\")) != null) writes.markWritten()",
         )) {
             "CLIENT_UUID junction inserts should mint id via UUID.randomUUID() in the values map and use insertIgnore\n$output"
         }
@@ -1957,10 +1817,10 @@ class UpdateGeneratorTest {
 
         // Each helper-eligible edge gets its own insert + deleteMany
         // pair, scoped by the per-edge junction table and FK columns.
-        assert(output.contains("if (driver.insertIgnore(\"m2m_doc_tags\", mapOf(\"doc_id\" to id, \"tag_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"tag_id\")) != null) writes.markWritten()")) {
+        assert(output.contains("if (driver.insertIgnore(\"m2m_doc_tags\", mapOf(\"doc_id\" to request.id, \"tag_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"tag_id\")) != null) writes.markWritten()")) {
             "Expected per-edge insertIgnore for the tags edge\n$output"
         }
-        assert(output.contains("if (driver.insertIgnore(\"m2m_doc_labels\", mapOf(\"doc_id\" to id, \"label_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"label_id\")) != null) writes.markWritten()")) {
+        assert(output.contains("if (driver.insertIgnore(\"m2m_doc_labels\", mapOf(\"doc_id\" to request.id, \"label_id\" to _targetId), conflictColumns = listOf(\"doc_id\", \"label_id\")) != null) writes.markWritten()")) {
             "Expected per-edge insertIgnore for the labels edge\n$output"
         }
         assert(output.contains("driver.deleteMany(\"m2m_doc_tags\"")) {

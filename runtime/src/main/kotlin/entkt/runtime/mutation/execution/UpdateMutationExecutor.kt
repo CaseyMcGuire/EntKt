@@ -6,6 +6,12 @@ import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.hook.runBatchHooksForInternalUse
+import entkt.runtime.mutation.TransactionRequiredException
+import entkt.runtime.mutation.RelationshipLocking
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
+import entkt.runtime.mutation.UpdateConsistency
+import entkt.runtime.mutation.UpdateMutationDraft
+import entkt.runtime.mutation.UpdateMutationRequest
 import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -30,10 +36,12 @@ class UpdateMutationExecutor<State>(
 ) {
     private val execution = MutationExecutionSupport(mutationRuntime)
 
-    fun <Entity : EntEntity<*>> update(
+    fun <Entity : EntEntity<*>, Draft : UpdateMutationDraft<Entity>> update(
         viewerContext: ViewerContext,
+        request: UpdateMutationRequest<Draft>,
         applyLoadPrivacy: Boolean,
         spec: UpdateMutationSpec<State, Entity>,
+        relationshipRequirements: UpdateRelationshipRequirements = UpdateRelationshipRequirements.None,
     ): MutationResult<Entity> = execution.execute { attempt ->
         val postWriteState = if (driver.inTransaction) {
             MutationWriteState.TransactionPending
@@ -41,13 +49,21 @@ class UpdateMutationExecutor<State>(
             MutationWriteState.Committed
         }
         mutationRuntime.checkTransactionRequirement("${spec.entity.entityName} update")
-        spec.preflight()
+        checkConsistency(request.consistency, spec.entity.entityName)
+        checkRelationshipRequirements(
+            request.relationshipLocking,
+            relationshipRequirements,
+            spec.entity.entityName,
+        )
+        acquireCanonicalRelationshipLocks(request.relationshipLocking, relationshipRequirements)
 
-        val row = driverCall(attempt, spec, MutationWriteState.NotPersisted, spec.loadRow)
+        val row = driverCall(attempt, spec, MutationWriteState.NotPersisted) {
+            loadOwnerRow(request, relationshipRequirements, spec)
+        }
             ?: attempt.reject(
                 EntTargetAbsentException(
                     entityType = spec.entity.entityName,
-                    key = EntityKey("id", spec.id),
+                    key = EntityKey("id", request.id),
                 ),
             )
         val before = spec.entity.decode(row)
@@ -66,7 +82,7 @@ class UpdateMutationExecutor<State>(
                 )
             }
 
-            evaluatePrivacy(attempt, viewerContext, prepared.state, spec)
+            evaluatePrivacy(attempt, viewerContext, request.id, prepared.state, spec)
             evaluateValidation(attempt, prepared.state, spec)
 
             if (prepared.isNoOp) {
@@ -84,11 +100,11 @@ class UpdateMutationExecutor<State>(
                     spec,
                     MutationWriteState.PersistenceUnknown,
                 ) {
-                    driver.update(spec.entity.table, spec.id, prepared.values)
+                    driver.update(spec.entity.table, request.id, prepared.values)
                 } ?: attempt.reject(
                     EntTargetAbsentException(
                         entityType = spec.entity.entityName,
-                        key = EntityKey("id", spec.id),
+                        key = EntityKey("id", request.id),
                     ),
                 )
                 attempt.writeState = postWriteState
@@ -111,9 +127,84 @@ class UpdateMutationExecutor<State>(
         }
     }
 
+    private fun checkConsistency(
+        consistency: UpdateConsistency,
+        entityName: String,
+    ) {
+        if (consistency != UpdateConsistency.Pessimistic) return
+        if (!driver.inTransaction) {
+            throw TransactionRequiredException(
+                "$entityName Pessimistic update requires a transaction-scoped client",
+            )
+        }
+        if (!driver.supportsReadRowForUpdate) {
+            throw UnsupportedDriverCapabilityException(
+                "$entityName Pessimistic update requires a driver with " +
+                    "supportsReadRowForUpdate = true",
+            )
+        }
+    }
+
+    private fun checkRelationshipRequirements(
+        relationshipLocking: RelationshipLocking,
+        requirements: UpdateRelationshipRequirements,
+        entityName: String,
+    ) {
+        if (!requirements.hasPendingWrites) return
+        if (!driver.inTransaction) {
+            throw TransactionRequiredException(
+                "$entityName link-table M2M update requires a transaction-scoped client",
+            )
+        }
+        if (!driver.supportsReadRowForUpdate && !driver.supportsOwnerEdgeSerialization) {
+            throw UnsupportedDriverCapabilityException(
+                "$entityName link-table M2M update requires a driver with " +
+                    "supportsReadRowForUpdate or supportsOwnerEdgeSerialization",
+            )
+        }
+        if (requirements.requiresInsertIgnore && !driver.supportsInsertIgnore) {
+            throw UnsupportedDriverCapabilityException(
+                "$entityName link-table M2M add/set requires a driver with " +
+                    "supportsInsertIgnore = true",
+            )
+        }
+        if (
+            relationshipLocking == RelationshipLocking.Canonical &&
+            !driver.supportsRelationshipSerialization
+        ) {
+            throw UnsupportedDriverCapabilityException(
+                "$entityName relationshipLocking = Canonical requires a driver with " +
+                    "supportsRelationshipSerialization = true",
+            )
+        }
+    }
+
+    private fun acquireCanonicalRelationshipLocks(
+        relationshipLocking: RelationshipLocking,
+        requirements: UpdateRelationshipRequirements,
+    ) {
+        if (relationshipLocking != RelationshipLocking.Canonical) return
+        requirements.canonicalLockKeys.forEach(driver::serializeRelationship)
+    }
+
+    private fun <Entity : EntEntity<*>, Draft : UpdateMutationDraft<Entity>> loadOwnerRow(
+        request: UpdateMutationRequest<Draft>,
+        relationshipRequirements: UpdateRelationshipRequirements,
+        spec: UpdateMutationSpec<State, Entity>,
+    ): Map<String, Any?>? = when {
+        request.consistency == UpdateConsistency.Pessimistic ->
+            driver.readRowForUpdate(spec.entity.table, request.id)
+        relationshipRequirements.hasPendingWrites && driver.supportsReadRowForUpdate ->
+            driver.readRowForUpdate(spec.entity.table, request.id)
+        relationshipRequirements.hasPendingWrites ->
+            driver.serializeOwnerEdgeAndRead(spec.entity.table, request.id)
+        else -> driver.byId(spec.entity.table, request.id)
+    }
+
     private fun <Entity : EntEntity<*>> evaluatePrivacy(
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
+        id: Any,
         state: State,
         spec: UpdateMutationSpec<State, Entity>,
     ) {
@@ -123,7 +214,7 @@ class UpdateMutationExecutor<State>(
                     writeState = MutationWriteState.NotPersisted,
                     entityType = spec.entity.entityName,
                     operation = EntOperation.UPDATE,
-                    entityKey = EntityKey("id", spec.id),
+                    entityKey = EntityKey("id", id),
                     reason = denial.reason,
                 ),
             )

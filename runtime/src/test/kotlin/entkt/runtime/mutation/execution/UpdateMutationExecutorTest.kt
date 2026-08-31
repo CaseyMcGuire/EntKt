@@ -7,6 +7,13 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
+import entkt.runtime.mutation.RelationshipLocking
+import entkt.runtime.mutation.RelationshipLockKey
+import entkt.runtime.mutation.TransactionRequiredException
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
+import entkt.runtime.mutation.UpdateConsistency
+import entkt.runtime.mutation.UpdateMutationDraft
+import entkt.runtime.mutation.UpdateMutationRequest
 import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
@@ -47,6 +54,8 @@ class UpdateMutationExecutorTest {
 
     private data class State(val name: String)
 
+    private class Draft : UpdateMutationDraft<Widget>
+
     private class RecordingMapping(
         private val events: MutableList<String>,
     ) : EntityMapping<Widget> {
@@ -66,7 +75,12 @@ class UpdateMutationExecutorTest {
     private class RecordingDriver(
         private val events: MutableList<String>,
         private val transaction: Boolean,
+        override val supportsReadRowForUpdate: Boolean,
+        override val supportsOwnerEdgeSerialization: Boolean,
+        override val supportsInsertIgnore: Boolean,
+        override val supportsRelationshipSerialization: Boolean,
     ) : DatabaseDriver by NoopDriver {
+        var loadedRow: Map<String, Any?>? = mapOf("id" to 1L, "name" to "before")
         var updatedRow: Map<String, Any?>? = mapOf("id" to 1L, "name" to "after")
         var updateFailure: Exception? = null
         var classifiedFailure: EntMutationException? = null
@@ -76,6 +90,25 @@ class UpdateMutationExecutorTest {
                 events += "transaction-state"
                 return transaction
             }
+
+        override fun byId(table: String, id: Any): Map<String, Any?>? {
+            events += "load-row"
+            return loadedRow
+        }
+
+        override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
+            events += "load-row-for-update"
+            return loadedRow
+        }
+
+        override fun serializeOwnerEdgeAndRead(table: String, id: Any): Map<String, Any?>? {
+            events += "serialize-owner-edge-and-load"
+            return loadedRow
+        }
+
+        override fun serializeRelationship(key: RelationshipLockKey) {
+            events += "serialize-relationship:${key.junctionTable}"
+        }
 
         override fun update(
             table: String,
@@ -99,16 +132,31 @@ class UpdateMutationExecutorTest {
 
     private class Fixture(
         inTransaction: Boolean = false,
+        supportsReadRowForUpdate: Boolean = false,
+        supportsOwnerEdgeSerialization: Boolean = false,
+        supportsInsertIgnore: Boolean = false,
+        supportsRelationshipSerialization: Boolean = false,
     ) {
         val events = mutableListOf<String>()
-        val driver = RecordingDriver(events, inTransaction)
+        val driver = RecordingDriver(
+            events,
+            inTransaction,
+            supportsReadRowForUpdate,
+            supportsOwnerEdgeSerialization,
+            supportsInsertIgnore,
+            supportsRelationshipSerialization,
+        )
         val mapping = RecordingMapping(events)
         val viewerContext = ViewerContext(Viewer.User(7L))
         val ruleClient = Any()
         val failures = mutableListOf<EntMutationException>()
         val receivedContexts = mutableListOf<ViewerContext>()
         val receivedClients = mutableListOf<Any>()
-        var loadedRow: Map<String, Any?>? = mapOf("id" to 1L, "name" to "before")
+        var loadedRow: Map<String, Any?>?
+            get() = driver.loadedRow
+            set(value) {
+                driver.loadedRow = value
+            }
         var preparation: UpdatePreparation<State> = UpdatePreparation.Ready(
             PreparedUpdate(State("after"), mapOf("name" to "after"), isNoOp = false),
         )
@@ -117,6 +165,12 @@ class UpdateMutationExecutorTest {
         var loadDenial: PrivacyDenial? = null
         var relationshipAction: (State, UpdateWriteTracker) -> Unit = { _, _ -> }
         var afterAction: (Widget) -> Unit = {}
+        val request = UpdateMutationRequest(
+            id = 1L,
+            draft = Draft(),
+            consistency = UpdateConsistency.ReadCurrent,
+            relationshipLocking = RelationshipLocking.OwnerOnly,
+        )
 
         val privacyEvaluator = mutationPrivacyEvaluatorForInternalUse<Any, State, State>(
             lifecycle = "Widget UPDATE privacy",
@@ -149,12 +203,6 @@ class UpdateMutationExecutorTest {
         val spec: UpdateMutationSpec<State, Widget>
             get() = UpdateMutationSpec(
                 entity = mapping,
-                id = 1L,
-                preflight = { events += "spec-preflight" },
-                loadRow = {
-                    events += "load-row"
-                    loadedRow
-                },
                 begin = { events += "begin" },
                 end = { events += "end" },
                 before = { context, entity ->
@@ -218,6 +266,7 @@ class UpdateMutationExecutorTest {
 
         val result = fixture.executor.update(
             fixture.viewerContext,
+            fixture.request,
             applyLoadPrivacy = true,
             fixture.spec,
         )
@@ -227,7 +276,6 @@ class UpdateMutationExecutorTest {
             listOf(
                 "transaction-state",
                 "runtime-preflight:Widget update:false",
-                "spec-preflight",
                 "load-row",
                 "decode:before",
                 "begin",
@@ -249,13 +297,146 @@ class UpdateMutationExecutorTest {
     }
 
     @Test
+    fun `pessimistic consistency is validated from the request before owner loading`() {
+        val missingTransaction = Fixture()
+
+        val transactionResult = missingTransaction.executor.update(
+            missingTransaction.viewerContext,
+            missingTransaction.request.copy(consistency = UpdateConsistency.Pessimistic),
+            false,
+            missingTransaction.spec,
+        )
+
+        val transactionFailure = assertIs<EntUnexpectedMutationException>(
+            assertIs<MutationResult.Failed>(transactionResult).exception,
+        )
+        assertIs<TransactionRequiredException>(transactionFailure.cause)
+        assertFalse("load-row" in missingTransaction.events)
+
+        val missingCapability = Fixture(inTransaction = true)
+        val capabilityResult = missingCapability.executor.update(
+            missingCapability.viewerContext,
+            missingCapability.request.copy(consistency = UpdateConsistency.Pessimistic),
+            false,
+            missingCapability.spec,
+        )
+
+        val capabilityFailure = assertIs<EntUnexpectedMutationException>(
+            assertIs<MutationResult.Failed>(capabilityResult).exception,
+        )
+        assertIs<UnsupportedDriverCapabilityException>(capabilityFailure.cause)
+        assertFalse("load-row" in missingCapability.events)
+    }
+
+    @Test
+    fun `relationship requirements are enforced and canonical locks precede owner loading`() {
+        val fixture = Fixture(
+            inTransaction = true,
+            supportsOwnerEdgeSerialization = true,
+            supportsInsertIgnore = true,
+            supportsRelationshipSerialization = true,
+        )
+        val requirements = UpdateRelationshipRequirements(
+            hasPendingWrites = true,
+            requiresInsertIgnore = true,
+            canonicalLockKeys = listOf(
+                RelationshipLockKey.canonical("widget_tags", listOf("widget_id", "tag_id")),
+            ),
+        )
+
+        val result = fixture.executor.update(
+            viewerContext = fixture.viewerContext,
+            request = fixture.request.copy(relationshipLocking = RelationshipLocking.Canonical),
+            applyLoadPrivacy = false,
+            spec = fixture.spec,
+            relationshipRequirements = requirements,
+        )
+
+        assertIs<MutationResult.Success<Widget>>(result)
+        val relationshipLock = fixture.events.indexOf("serialize-relationship:widget_tags")
+        val ownerLoad = fixture.events.indexOf("serialize-owner-edge-and-load")
+        val beforeHook = fixture.events.indexOf("before:before")
+        assertTrue(relationshipLock in 0 until ownerLoad && ownerLoad < beforeHook)
+    }
+
+    @Test
+    fun `relationship owner loading prefers row locking and falls back to owner serialization`() {
+        val requirements = UpdateRelationshipRequirements(
+            hasPendingWrites = true,
+            requiresInsertIgnore = false,
+            canonicalLockKeys = emptyList(),
+        )
+        val rowLockFixture = Fixture(
+            inTransaction = true,
+            supportsReadRowForUpdate = true,
+        )
+
+        rowLockFixture.executor.update(
+            rowLockFixture.viewerContext,
+            rowLockFixture.request,
+            false,
+            rowLockFixture.spec,
+            requirements,
+        )
+
+        assertTrue("load-row-for-update" in rowLockFixture.events)
+        assertFalse("serialize-owner-edge-and-load" in rowLockFixture.events)
+
+        val ownerSerializationFixture = Fixture(
+            inTransaction = true,
+            supportsOwnerEdgeSerialization = true,
+        )
+        ownerSerializationFixture.executor.update(
+            ownerSerializationFixture.viewerContext,
+            ownerSerializationFixture.request,
+            false,
+            ownerSerializationFixture.spec,
+            requirements,
+        )
+
+        assertTrue("serialize-owner-edge-and-load" in ownerSerializationFixture.events)
+        assertFalse("load-row-for-update" in ownerSerializationFixture.events)
+    }
+
+    @Test
+    fun `relationship capability failures occur before owner loading`() {
+        val requirements = UpdateRelationshipRequirements(
+            hasPendingWrites = true,
+            requiresInsertIgnore = true,
+            canonicalLockKeys = listOf(
+                RelationshipLockKey.canonical("widget_tags", listOf("tag_id", "widget_id")),
+            ),
+        )
+        val fixture = Fixture(
+            inTransaction = true,
+            supportsOwnerEdgeSerialization = true,
+        )
+
+        val result = fixture.executor.update(
+            fixture.viewerContext,
+            fixture.request,
+            false,
+            fixture.spec,
+            requirements,
+        )
+
+        val failure = assertIs<EntUnexpectedMutationException>(
+            assertIs<MutationResult.Failed>(result).exception,
+        )
+        assertIs<UnsupportedDriverCapabilityException>(failure.cause)
+        assertFalse(fixture.events.any {
+            it == "load-row" || it == "load-row-for-update" || it == "serialize-owner-edge-and-load"
+        })
+    }
+
+    @Test
     fun `no-op still evaluates rules and load privacy but skips every post-persist phase`() {
         val fixture = Fixture()
         fixture.preparation = UpdatePreparation.Ready(
             PreparedUpdate(State("before"), emptyMap(), isNoOp = true),
         )
 
-        val result = fixture.executor.update(fixture.viewerContext, true, fixture.spec)
+        val result = fixture.executor.update(fixture.viewerContext, fixture.request, true, fixture.spec)
 
         assertEquals(MutationResult.Success(Widget(1L, "before")), result)
         assertTrue("privacy:before" in fixture.events)
@@ -270,7 +451,7 @@ class UpdateMutationExecutorTest {
         val fixture = Fixture()
         fixture.loadedRow = null
 
-        val result = fixture.executor.update(fixture.viewerContext, false, fixture.spec)
+        val result = fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
 
         val failure = assertIs<EntTargetAbsentException>(
             assertIs<MutationResult.Failed>(result).exception,
@@ -287,7 +468,7 @@ class UpdateMutationExecutorTest {
             listOf(ValidationViolation("name is required", field = "name")),
         )
 
-        val result = fixture.executor.update(fixture.viewerContext, false, fixture.spec)
+        val result = fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
 
         val failure = assertIs<EntValidationException>(
             assertIs<MutationResult.Failed>(result).exception,
@@ -304,6 +485,7 @@ class UpdateMutationExecutorTest {
 
         val privacyResult = privacyFixture.executor.update(
             privacyFixture.viewerContext,
+            privacyFixture.request,
             false,
             privacyFixture.spec,
         )
@@ -318,6 +500,7 @@ class UpdateMutationExecutorTest {
         validationFixture.invalids = listOf(ValidationDecision.Invalid("reserved", field = "name"))
         val validationResult = validationFixture.executor.update(
             validationFixture.viewerContext,
+            validationFixture.request,
             false,
             validationFixture.spec,
         )
@@ -336,7 +519,7 @@ class UpdateMutationExecutorTest {
         fixture.driver.updateFailure = driverFailure
         fixture.driver.classifiedFailure = classified
 
-        val result = fixture.executor.update(fixture.viewerContext, false, fixture.spec)
+        val result = fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
 
         assertSame(classified, assertIs<MutationResult.Failed>(result).exception)
         assertSame(classified, fixture.failures.single())
@@ -360,7 +543,7 @@ class UpdateMutationExecutorTest {
             throw relationshipFailure
         }
 
-        val result = fixture.executor.update(fixture.viewerContext, false, fixture.spec)
+        val result = fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
 
         val failure = assertIs<EntUnexpectedMutationException>(
             assertIs<MutationResult.Failed>(result).exception,
@@ -377,6 +560,7 @@ class UpdateMutationExecutorTest {
 
         val afterResult = afterFixture.executor.update(
             afterFixture.viewerContext,
+            afterFixture.request,
             false,
             afterFixture.spec,
         )
@@ -390,6 +574,7 @@ class UpdateMutationExecutorTest {
         loadFixture.loadDenial = PrivacyDenial("Widget", EntityKey("id", 1L), "hidden")
         val loadResult = loadFixture.executor.update(
             loadFixture.viewerContext,
+            loadFixture.request,
             true,
             loadFixture.spec,
         )
@@ -407,7 +592,7 @@ class UpdateMutationExecutorTest {
         fixture.relationshipAction = { _, _ -> throw cancellation }
 
         val thrown = assertFailsWith<CancellationException> {
-            fixture.executor.update(fixture.viewerContext, false, fixture.spec)
+            fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
         }
 
         assertSame(cancellation, thrown)

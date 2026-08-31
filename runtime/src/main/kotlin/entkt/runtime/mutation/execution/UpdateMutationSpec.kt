@@ -53,9 +53,6 @@ class UpdateMutationSpec<
     Entity : EntEntity<*>,
     >(
     val entity: EntityMapping<Entity>,
-    val id: Any,
-    val preflight: () -> Unit,
-    val loadRow: () -> Map<String, Any?>?,
     val begin: () -> Unit,
     val end: () -> Unit,
     val before: (ViewerContext, Entity) -> Unit,
