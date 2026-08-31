@@ -36,6 +36,8 @@ import entkt.schema.ValidatorSpec
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val UUID_CLASS = ClassName("java.util", "UUID")
+private val CREATE_MUTATION_DRAFT =
+    ClassName("entkt.runtime.mutation", "CreateMutationDraft")
 
 // ── Shared canonical-mutation emission support ───────────────────────
 // One home for the runtime type references and emission fragments every
@@ -163,6 +165,7 @@ internal class CreateGenerator(
         val assignedFieldsType = ClassName("entkt.runtime.mutation", "AssignedFields")
         val typeSpec = classType(className) {
             addAnnotation(annotation(ENTKT_DSL))
+            addSuperinterface(CREATE_MUTATION_DRAFT.parameterizedBy(entityClass))
             primaryConstructor {
                 addAnnotation(ENTKT_INTERNAL)
                 if (idStrategy == "EXPLICIT") parameter("id", idType)

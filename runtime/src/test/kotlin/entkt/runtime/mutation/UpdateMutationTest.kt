@@ -17,12 +17,12 @@ import kotlin.test.assertTrue
 class UpdateMutationTest {
     private val viewerContext = ViewerContext.privacyBypass_DANGEROUS("test")
 
-    private class Draft(var title: String? = null)
-
     private data class Article(
         override val id: Long,
         val title: String,
     ) : EntEntity.LongId
+
+    private class Draft(var title: String? = null) : UpdateMutationDraft<Article>
 
     private class RecordingRepository : UpdateMutationRepository<Draft, Article> {
         var viewerContext: ViewerContext? = null

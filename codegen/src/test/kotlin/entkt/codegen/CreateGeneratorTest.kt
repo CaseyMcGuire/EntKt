@@ -53,6 +53,7 @@ class CreateGeneratorTest {
         val output = generator.generate("Car", car).toString()
 
         assertTrue(output.contains("class CarCreateDraft"), output)
+        assertTrue(output.contains("CreateMutationDraft<Car>"), output)
         assertTrue(output.contains("var model: String? = null"), output)
         assertTrue(output.contains("assignedFields.mark(Car.model)"), output)
         assertTrue(output.contains("fun isSet(column: ColumnReference<Car>)"), output)

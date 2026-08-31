@@ -15,12 +15,12 @@ import kotlin.test.assertSame
 class CreateMutationTest {
     private val viewerContext = ViewerContext.privacyBypass_DANGEROUS("test")
 
-    private class Draft(var title: String? = null)
-
     private data class Article(
         override val id: Long,
         val title: String,
     ) : EntEntity.LongId
+
+    private class Draft(var title: String? = null) : CreateMutationDraft<Article>
 
     private class RecordingRepository : CreateMutationRepository<Draft, Article> {
         var savedDraft: Draft? = null

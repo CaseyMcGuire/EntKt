@@ -10,7 +10,7 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.privacy.ViewerContext
 
 /** A configurable create operation that can be consumed by exactly one save terminal. */
-class CreateMutation<Draft : Any, Entity : EntEntity<*>> @EntktInternal constructor(
+class CreateMutation<Draft : CreateMutationDraft<Entity>, Entity : EntEntity<*>> @EntktInternal constructor(
     private val draft: Draft,
     private val repository: CreateMutationRepository<Draft, Entity>,
 ) {

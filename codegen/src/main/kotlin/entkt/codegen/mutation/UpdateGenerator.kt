@@ -46,6 +46,8 @@ private val ENT_CLIENT_NAME = "EntClient"
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
+private val UPDATE_MUTATION_DRAFT =
+    ClassName("entkt.runtime.mutation", "UpdateMutationDraft")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val ILLEGAL_STATE_EXCEPTION = ClassName("kotlin", "IllegalStateException")
 private val PENDING_EDGE_OPS = ClassName("entkt.runtime.mutation", "PendingEdgeOps")
@@ -114,6 +116,7 @@ internal class UpdateGenerator(
         val draftType = classType(className) {
             addAnnotation(annotation(ENTKT_DSL))
             addSuperinterface(mutationClass)
+            addSuperinterface(UPDATE_MUTATION_DRAFT.parameterizedBy(entityClass))
             primaryConstructor {
                 addAnnotation(ENTKT_INTERNAL)
             }

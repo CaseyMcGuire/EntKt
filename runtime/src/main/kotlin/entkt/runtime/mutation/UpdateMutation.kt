@@ -10,7 +10,7 @@ import entkt.runtime.result.EntOperation
 import entkt.runtime.result.MutationResult
 
 /** A configurable update operation that can be consumed by exactly one save terminal. */
-class UpdateMutation<Draft : Any, Entity : EntEntity<*>> @EntktInternal constructor(
+class UpdateMutation<Draft : UpdateMutationDraft<Entity>, Entity : EntEntity<*>> @EntktInternal constructor(
     private val request: UpdateMutationRequest<Draft>,
     private val repository: UpdateMutationRepository<Draft, Entity>,
 ) {

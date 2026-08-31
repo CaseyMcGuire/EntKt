@@ -418,11 +418,15 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // SchemaUpdate implements the shared Mutation interface but
-        // not the hook-facing view — that view is satisfied by the
-        // private adapter so unset{Field}() never leaks onto the DSL.
-        assert(output.contains("public class UserUpdateDraft") && output.contains(") : UserMutation {")) {
-            "UserUpdateDraft should implement only UserMutation at the class level\n$output"
+        // SchemaUpdate implements the shared Mutation interface and its
+        // entity-specific draft contract, but not the hook-facing view —
+        // that view is satisfied by the private adapter so unset{Field}()
+        // never leaks onto the DSL.
+        assert(
+            output.contains("public class UserUpdateDraft") &&
+                output.contains(") : UserMutation, UpdateMutationDraft<User> {"),
+        ) {
+            "UserUpdateDraft should implement UserMutation and UpdateMutationDraft<User>\n$output"
         }
         assert(!output.contains("public class UserUpdateDraft @EntktInternal constructor() : UserUpdateMutationView")) {
             "UserUpdateDraft must not implement UserUpdateMutationView directly\n$output"
