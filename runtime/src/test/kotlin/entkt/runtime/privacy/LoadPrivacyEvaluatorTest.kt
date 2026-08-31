@@ -1,25 +1,16 @@
 @file:OptIn(entkt.query.EntktInternal::class)
 
-package entkt.runtime.query.execution
+package entkt.runtime.privacy
 
 import entkt.runtime.entity.EntEntity
-import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.BatchPrivacyRule
-import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.PrivacyRule
-import entkt.runtime.privacy.PrivacyRuleContext
-import entkt.runtime.privacy.Viewer
-import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.query.EdgeMapping
-import entkt.runtime.result.EntityKey
-import entkt.runtime.result.PrivacyDenial
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotSame
 import kotlin.test.assertSame
+import kotlin.test.assertIs
 
-class LoadPrivacyPhaseTest {
+class LoadPrivacyEvaluatorTest {
     private data class Record(
         override val id: Long,
         val label: String,
@@ -27,22 +18,10 @@ class LoadPrivacyPhaseTest {
 
     private data class RuleItem(val entity: Record)
 
-    private object RecordMapping : EntityMapping<Record> {
-        override val entityName = "Record"
-        override val clientName = "records"
-        override val entityClass = Record::class
-        override val table = "records"
-
-        override fun decode(row: Map<String, Any?>): Record =
-            Record(row.getValue("id") as Long, row.getValue("label") as String)
-
-        override fun edgeByStorageName(storageName: String): EdgeMapping<Record, *>? = null
-    }
-
     private val viewerContext = ViewerContext(Viewer.User(7L))
 
     @Test
-    fun `phase preserves context correlation and fail-closed outcomes`() {
+    fun `evaluator preserves context correlation and fail-closed outcomes`() {
         val ruleClient = Any()
         var providerCalls = 0
         val contexts = mutableListOf<PrivacyRuleContext<Any>>()
@@ -62,8 +41,9 @@ class LoadPrivacyPhaseTest {
             PrivacyDecision.Continue
         }
         val configuredRules = mutableListOf<BatchPrivacyRule<Any, RuleItem>>(first, second)
-        val phase = loadPrivacyPhaseForInternalUse(
-            entity = RecordMapping,
+        val evaluator = loadPrivacyEvaluatorForInternalUse<Any, Record, RuleItem>(
+            lifecycle = "Record LOAD privacy",
+            unresolvedReason = "no load rule allowed access",
             rules = configuredRules,
             ruleClientProvider = {
                 providerCalls++
@@ -73,19 +53,15 @@ class LoadPrivacyPhaseTest {
         )
         configuredRules.clear()
 
-        val denials = phase.denials(
+        val evaluation = evaluator.evaluate(
             viewerContext,
             listOf(Record(1L, "one"), Record(2L, "two"), Record(3L, "three")),
         )
 
-        assertEquals(
-            listOf(
-                null,
-                PrivacyDenial("Record", EntityKey("id", 2L), "owner only"),
-                PrivacyDenial("Record", EntityKey("id", 3L), "no load rule allowed access"),
-            ),
-            denials,
-        )
+        assertEquals(listOf(1L), evaluation.allowedSubjects().map(Record::id))
+        val denied = evaluation.deniedOutcomes()
+        assertEquals(listOf(2L, 3L), denied.map { it.subject.id })
+        assertEquals(listOf("owner only", "no load rule allowed access"), denied.map { it.reason })
         assertEquals(1, providerCalls)
         assertEquals(4, contexts.size)
         contexts.forEach { context ->
@@ -102,8 +78,9 @@ class LoadPrivacyPhaseTest {
     fun `empty and bypass batches never resolve the rule client or invoke rules`() {
         var providerCalls = 0
         var ruleCalls = 0
-        val phase = loadPrivacyPhaseForInternalUse(
-            entity = RecordMapping,
+        val evaluator = loadPrivacyEvaluatorForInternalUse<Any, Record, RuleItem>(
+            lifecycle = "Record LOAD privacy",
+            unresolvedReason = "no load rule allowed access",
             rules = listOf(
                 PrivacyRule<Any, RuleItem> { _, _ ->
                     ruleCalls++
@@ -117,13 +94,13 @@ class LoadPrivacyPhaseTest {
             freshItem = ::RuleItem,
         )
 
-        assertEquals(emptyList(), phase.denials(viewerContext, emptyList()))
+        assertEquals(0, evaluator.evaluate(viewerContext, emptyList()).size)
         assertEquals(
-            listOf(null, null),
-            phase.denials(
+            listOf(Record(1L, "one"), Record(1L, "duplicate")),
+            evaluator.evaluate(
                 ViewerContext.privacyBypass_DANGEROUS("load phase test"),
                 listOf(Record(1L, "one"), Record(1L, "duplicate")),
-            ),
+            ).allowedSubjects(),
         )
         assertEquals(0, providerCalls)
         assertEquals(0, ruleCalls)
@@ -132,8 +109,9 @@ class LoadPrivacyPhaseTest {
     @Test
     fun `rule exceptions escape unchanged`() {
         val failure = IllegalStateException("rule failed")
-        val phase = loadPrivacyPhaseForInternalUse(
-            entity = RecordMapping,
+        val evaluator = loadPrivacyEvaluatorForInternalUse<Any, Record, RuleItem>(
+            lifecycle = "Record LOAD privacy",
+            unresolvedReason = "no load rule allowed access",
             rules = listOf(
                 PrivacyRule<Any, RuleItem> { _, _ -> throw failure },
             ),
@@ -142,7 +120,7 @@ class LoadPrivacyPhaseTest {
         )
 
         val thrown = assertFailsWith<IllegalStateException> {
-            phase.denials(viewerContext, listOf(Record(1L, "one")))
+            evaluator.evaluate(viewerContext, listOf(Record(1L, "one")))
         }
 
         assertSame(failure, thrown)

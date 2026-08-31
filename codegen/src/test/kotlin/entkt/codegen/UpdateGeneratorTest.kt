@@ -337,7 +337,7 @@ class UpdateGeneratorTest {
         val loadPos = output.indexOf("driver.byId(User.TABLE, id)")
         assert(loadPos != -1) { "executeSave should load the current row via driver.byId(...)\n$output" }
         assert(output.contains("loadRow = ::_loadUpdateRow") &&
-            output.contains("client.updateMutations.update(")) {
+            output.contains("updateExecutor.update(")) {
             "the generated load adapter should delegate absence handling to UpdateMutationExecutor\n$output"
         }
         assert(!output.contains("EntTargetAbsentException(")) {
@@ -456,9 +456,9 @@ class UpdateGeneratorTest {
         assert(emptyBlock.contains("state = PreparedState(") && emptyBlock.contains("values = emptyMap()")) {
             "No-op preparation should retain the unchanged rule state without owner values\n$output"
         }
-        assert(output.contains("privacy = mutationPrivacyPhaseForInternalUse(") &&
-            output.contains("validation = mutationValidationPhaseForInternalUse(")) {
-            "updateSpec should pass the no-op state through runtime privacy and validation phases\n$output"
+        assert(output.contains("privacyEvaluator = mutationPrivacyEvaluatorForInternalUse(") &&
+            output.contains("validationEvaluator = mutationValidationEvaluatorForInternalUse(")) {
+            "updateExecutor should pass the no-op state through runtime privacy and validation evaluators\n$output"
         }
     }
 
@@ -512,7 +512,7 @@ class UpdateGeneratorTest {
         assert(output.contains("internal fun execute( viewerContext: ViewerContext, request: UpdateMutationRequest<UserUpdateDraft>, applyLoadPrivacy: Boolean, ): MutationResult<User> = Execution(request).execute(viewerContext, applyLoadPrivacy)")) {
             "The stable adapter should create isolated execution state per terminal\n$output"
         }
-        assert(output.contains("public fun execute(viewerContext: ViewerContext, applyLoadPrivacy: Boolean): MutationResult<User> = client.updateMutations.update(")) {
+        assert(output.contains("public fun execute(viewerContext: ViewerContext, applyLoadPrivacy: Boolean): MutationResult<User> = updateExecutor.update(")) {
             "The execution adapter should delegate the lifecycle to UpdateMutationExecutor\n$output"
         }
         assert(!output.contains("public fun save(") && !output.contains("public fun saveAndLoad(")) {
@@ -981,12 +981,9 @@ class UpdateGeneratorTest {
 
         val snapshot =
             "state.edgeChanges.copy( tags = snapshotEdgeChangesForInternalUse(state.edgeChanges.tags), )"
-        assert(output.contains("M2MPostUpdatePrivacyItem") && output.contains(snapshot)) {
-            "Every UPDATE privacy item should detach edge-change sets\n$output"
-        }
-        assert(output.contains("M2MPostUpdateValidationItem") &&
+        assert(output.contains("M2MPostUpdateRuleInput") &&
             Regex(Regex.escape(snapshot)).findAll(output).count() >= 2) {
-            "Every UPDATE validation item should detach edge-change sets too\n$output"
+            "Every UPDATE rule input should detach edge-change sets for privacy and validation\n$output"
         }
     }
 
@@ -1818,9 +1815,8 @@ class UpdateGeneratorTest {
         assert(occurrences == 2) {
             "Expected one detached edgeChanges snapshot for privacy and one for validation, got $occurrences\n$output"
         }
-        assert(output.contains("M2MPostUpdatePrivacyItem(") &&
-            output.contains("M2MPostUpdateValidationItem(")) {
-            "Both rule adapters should materialize their typed item from PreparedState\n$output"
+        assert(Regex(Regex.escape("M2MPostUpdateRuleInput(")).findAll(output).count() == 2) {
+            "Both rule adapters should materialize the shared typed input from PreparedState\n$output"
         }
         assert(!output.contains("updateDenialReasonOrNull") &&
             !output.contains("evaluateUpdateValidation")) {

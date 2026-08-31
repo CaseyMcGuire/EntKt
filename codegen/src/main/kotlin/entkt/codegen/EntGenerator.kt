@@ -16,6 +16,7 @@ import entkt.codegen.metadata.columnMetadataFor
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.mutation.CreateGenerator
+import entkt.codegen.mutation.LifecycleRuleInputGenerator
 import entkt.codegen.mutation.MutationGenerator
 import entkt.codegen.mutation.UpdateGenerator
 import entkt.codegen.mutation.ValidationGenerator
@@ -764,6 +765,7 @@ class EntGenerator(
     private val indexHelperGenerator = IndexHelperGenerator(packageName)
     private val privacyGenerator = PrivacyGenerator(packageName)
     private val validationGenerator = ValidationGenerator(packageName)
+    private val lifecycleRuleInputGenerator = LifecycleRuleInputGenerator(packageName)
     private val readRuntimeGenerator = ReadRuntimeGenerator(packageName)
     private val readClientGenerator = ReadClientGenerator(packageName)
     private val clientGenerator = ClientGenerator(packageName)
@@ -840,6 +842,7 @@ class EntGenerator(
                 indexHelperGenerator.generate(name, schema, schemaNames)?.let { add(it) }
                 add(privacyGenerator.generate(name, schema, schemaNames))
                 add(validationGenerator.generate(name, schema, schemaNames))
+                addAll(lifecycleRuleInputGenerator.generate(name))
             }
         }
         val viewerFiles = if (viewer) viewerGenerator.generate(schemas, schemaNames) else emptyList()
@@ -863,7 +866,8 @@ class EntGenerator(
                     fileCollisions.keys.joinToString("\n") { (_, name) ->
                         "  - more than one artifact generates '$name.kt' — a schema name " +
                             "collides with a derived artifact name (<Schema>Mutation/CreateDraft/" +
-                            "UpdateDraft/Query/Repo/Privacy/Validation/Indexes/Hooks) or a " +
+                            "UpdateDraft/Query/Repo/Privacy/Validation/CreateRuleInput/" +
+                            "UpdateRuleInput/DeleteRuleInput/Indexes/Hooks) or a " +
                             "generated client-support file"
                     },
             )

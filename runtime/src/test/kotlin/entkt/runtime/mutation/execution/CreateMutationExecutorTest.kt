@@ -9,13 +9,14 @@ import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
+import entkt.runtime.privacyEvaluation
+import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.batchPrivacyRule
+import entkt.runtime.privacy.mutationPrivacyEvaluatorForInternalUse
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EdgeMapping
-import entkt.runtime.query.execution.LoadPrivacyEvaluation
-import entkt.runtime.query.execution.correlateLoadPrivacyEvaluationsForInternalUse
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -29,6 +30,7 @@ import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ValidationViolation
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
+import entkt.runtime.validation.mutationValidationEvaluatorForInternalUse
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -126,7 +128,6 @@ class CreateMutationExecutorTest {
             RecordingInput,
             Candidate,
             Widget,
-            Unit,
             > =
             CreateMutationSpec(
             entity = entity,
@@ -155,8 +156,11 @@ class CreateMutationExecutorTest {
                     afterCreateAction(value)
                 },
             ),
-            privacy = mutationPrivacyPhaseForInternalUse(
+            )
+
+        val privacyEvaluator = mutationPrivacyEvaluatorForInternalUse<Unit, Candidate, Candidate>(
                 lifecycle = "Widget CREATE privacy",
+                unresolvedReason = "no create rule allowed access",
                 rules = listOf(
                     batchPrivacyRule<Unit, Candidate> { context, batch ->
                         events += "create-privacy"
@@ -164,9 +168,11 @@ class CreateMutationExecutorTest {
                         batch.decideEach { createDecision }
                     },
                 ),
+                ruleClientProvider = { Unit },
                 freshItem = { it },
-            ),
-            validation = mutationValidationPhaseForInternalUse(
+            )
+
+        val validationEvaluator = mutationValidationEvaluatorForInternalUse<Unit, Candidate, Candidate>(
                 lifecycle = "Widget CREATE validation",
                 rules = listOf(
                     batchValidationRule<Unit, Candidate> { _, batch ->
@@ -182,8 +188,8 @@ class CreateMutationExecutorTest {
                         }
                     },
                 ),
+                ruleClientProvider = { Unit },
                 freshItem = { it },
-            ),
             )
     }
 
@@ -594,17 +600,20 @@ class CreateMutationExecutorTest {
                     entity: EntityMapping<Entity>,
                     viewerContext: ViewerContext,
                     entities: List<Entity>,
-                ): List<LoadPrivacyEvaluation<Entity>> {
+                ): PrivacyEvaluation<Entity> {
                     events += "load-privacy"
                     spec.receivedViewerContexts += viewerContext
-                    return correlateLoadPrivacyEvaluationsForInternalUse(
-                        lifecycle = "Widget LOAD privacy",
-                        entities = entities,
-                        denials = entities.map { spec.loadDenial },
+                    return privacyEvaluation(
+                        subjects = entities,
+                        decisions = entities.map {
+                            spec.loadDenial?.let { PrivacyDecision.Deny(it.reason) }
+                                ?: PrivacyDecision.Allow
+                        },
                     )
                 }
             },
-            ruleClient = Unit,
+            privacyEvaluator = spec.privacyEvaluator,
+            validationEvaluator = spec.validationEvaluator,
         )
         return Fixture(
             events = events,
@@ -622,7 +631,7 @@ class CreateMutationExecutorTest {
         val driver: RecordingDriver,
         val spec: RecordingSpec,
         val input: RecordingInput,
-        val executor: CreateMutationExecutor<Unit>,
+        val executor: CreateMutationExecutor<Candidate>,
         val viewerContext: ViewerContext,
         val recordedFailures: MutableList<EntMutationException>,
     )

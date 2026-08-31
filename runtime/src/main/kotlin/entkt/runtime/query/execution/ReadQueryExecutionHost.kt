@@ -10,7 +10,7 @@ import entkt.runtime.query.ResolvedEntInterceptorsConfig
  * The operation's viewer remains an explicit terminal argument and is never stored here.
  */
 @EntktInternal
-interface ReadQueryExecutionHost : LoadPrivacyEvaluator {
+interface ReadQueryExecutionHost : LoadPrivacyDispatcher {
     /** Reject reads through an escaped or otherwise stale transaction-scoped client. */
     fun checkReadExecution()
 

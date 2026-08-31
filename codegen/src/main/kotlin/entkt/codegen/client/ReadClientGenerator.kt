@@ -25,7 +25,7 @@ import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
-private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
+private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
 private val LIST = ClassName("kotlin.collections", "List")
 private val RESOLVED_ENT_INTERCEPTORS_CONFIG =
     ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig")
@@ -59,7 +59,7 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  * public interface does not extend `EntReadRuntime`; that framework-internal
  * contract stays on the implementation. LOAD-privacy behavior is delegated
  * to the host client's repos (typed as the narrow read surfaces), so
- * `hasLoadPrivacy` / `loadDenials` behave identically through
+ * `hasLoadPrivacy` / `evaluateLoadPrivacy` behave identically through
  * the read-only client.
  *
  * Construction is framework-internal: each `EntClient` constructs one stable
@@ -151,19 +151,13 @@ internal class ReadClientGenerator(
                 statement("return host.hasLoadPrivacy()")
             }
             function(
-                "loadDenials",
-                returnType = LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)),
+                "evaluateLoadPrivacy",
+                returnType = PRIVACY_EVALUATION.parameterizedBy(entityClass),
             ) {
                 addModifiers(KModifier.OVERRIDE)
                 parameter("viewerContext", VIEWER_CONTEXT)
                 parameter("entities", LIST.parameterizedBy(entityClass))
-                statement("return host.loadDenials(viewerContext, entities)")
-            }
-            function("loadDenialOrNull", returnType = PRIVACY_DENIAL.copy(nullable = true)) {
-                addModifiers(KModifier.OVERRIDE)
-                parameter("viewerContext", VIEWER_CONTEXT)
-                parameter("entity", entityClass)
-                statement("return host.loadDenialOrNull(viewerContext, entity)")
+                statement("return host.evaluateLoadPrivacy(viewerContext, entities)")
             }
             addFunction(buildQueryEntry(queryClass, clientRef = "runtime"))
             // Index-helper namespace: the same `${schemaName}Indexes`

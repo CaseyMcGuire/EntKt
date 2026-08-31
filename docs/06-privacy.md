@@ -433,10 +433,11 @@ could not load directly. When that matters, load the related row explicitly
 with `findById` or `firstOrNull` so its LOAD policy runs. See
 [Privacy Limitations → Predicate-Based Inference](08-privacy-limitations.md#predicate-based-inference).
 
-## Operation Items
+## Rule Inputs
 
 Shared `privacy` and `client` values live on `PrivacyRuleContext`; generated
-operation items contain only values that differ per entity or candidate. One
+rule inputs contain only values that differ per entity or candidate. Mutation
+privacy and validation share the same generated input type for each operation. One
 phase constructs one rule context and passes that exact instance to every
 reached rule; each rule still receives fresh defensive item snapshots.
 
@@ -448,18 +449,18 @@ data class UserLoadPrivacyItem(
 )
 ```
 
-### CreatePrivacyItem
+### CreateRuleInput
 
 ```kotlin
-data class UserCreatePrivacyItem(
+data class UserCreateRuleInput(
     val candidate: UserWriteCandidate,  // the values being written
 )
 ```
 
-### UpdatePrivacyItem
+### UpdateRuleInput
 
 ```kotlin
-data class UserUpdatePrivacyItem(
+data class UserUpdateRuleInput(
     val before: User,                   // current state (loaded by save(viewerContext))
     val requestedPatch: UserUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: UserUpdatePatch, // after framework update defaults (e.g. updatedAt)
@@ -501,10 +502,10 @@ save with `MutationResult.Failed(EntValidationException)` before privacy
 fires. Rules can treat `FieldPatch.Set(value)` for required fields as
 having a non-null value and `FieldPatch.Unset` as "not in this update".
 
-### DeletePrivacyItem
+### DeleteRuleInput
 
 ```kotlin
-data class UserDeletePrivacyItem(
+data class UserDeleteRuleInput(
     val entity: User,                   // the entity being deleted
     val candidate: UserWriteCandidate,  // snapshot of its writable fields
 )
@@ -548,7 +549,7 @@ privacy {
 
 When derivation is active, the operation's own rules are evaluated
 first. If all return `Continue`, the create rules are evaluated as a
-fallback (using a `CreatePrivacyItem` built from the candidate). If
+fallback (using a `CreateRuleInput` built from the candidate). If
 the create rules also fail to `Allow`, the operation is denied
 (fail-closed).
 
@@ -840,9 +841,9 @@ For each schema with a policy, entkt provides:
 | `{Entity}WriteCandidate` | Snapshot of writable fields for write rules |
 | `PrivacyRuleContext<Client>` | Shared supplied `viewerContext` and stable privacy read client |
 | `{Entity}LoadPrivacyItem` | Per-entity input for LOAD rules |
-| `{Entity}CreatePrivacyItem` | Per-candidate input for CREATE rules |
-| `{Entity}UpdatePrivacyItem` | Per-entity input for UPDATE rules |
-| `{Entity}DeletePrivacyItem` | Per-entity input for DELETE rules |
+| `{Entity}CreateRuleInput` | Shared per-candidate input for CREATE privacy and validation rules |
+| `{Entity}UpdateRuleInput` | Shared per-entity input for UPDATE privacy and validation rules |
+| `{Entity}DeleteRuleInput` | Shared per-entity input for DELETE privacy and validation rules |
 | `{Entity}PrivacyScope` | DSL scope inside `privacy { }` |
 | `{Entity}PolicyScope` | Outer scope for `EntityPolicy.configure` (exposes `privacy {}` and `validation {}`) |
 | `{Entity}{Op}PrivacyRule` | Typealiases for rule types |

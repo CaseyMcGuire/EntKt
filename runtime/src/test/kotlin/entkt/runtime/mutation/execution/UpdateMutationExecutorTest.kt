@@ -7,12 +7,14 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
+import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
+import entkt.runtime.privacy.batchPrivacyRule
+import entkt.runtime.privacy.mutationPrivacyEvaluatorForInternalUse
 import entkt.runtime.query.EdgeMapping
-import entkt.runtime.query.execution.LoadPrivacyEvaluation
-import entkt.runtime.query.execution.correlateLoadPrivacyEvaluationsForInternalUse
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -26,6 +28,8 @@ import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ValidationViolation
 import entkt.runtime.validation.ValidationDecision
+import entkt.runtime.validation.batchValidationRule
+import entkt.runtime.validation.mutationValidationEvaluatorForInternalUse
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -114,7 +118,35 @@ class UpdateMutationExecutorTest {
         var relationshipAction: (State, UpdateWriteTracker) -> Unit = { _, _ -> }
         var afterAction: (Widget) -> Unit = {}
 
-        val spec: UpdateMutationSpec<State, Widget, Any>
+        val privacyEvaluator = mutationPrivacyEvaluatorForInternalUse<Any, State, State>(
+            lifecycle = "Widget UPDATE privacy",
+            unresolvedReason = "no update rule allowed access",
+            rules = listOf(
+                batchPrivacyRule<Any, State> { context, states ->
+                    events += "privacy:${states.single().name}"
+                    receivedContexts += context.viewerContext
+                    receivedClients += context.client
+                    states.decideEach { privacyDecision }
+                },
+            ),
+            ruleClientProvider = { ruleClient },
+            freshItem = { it },
+        )
+
+        val validationEvaluator = mutationValidationEvaluatorForInternalUse<Any, State, State>(
+            lifecycle = "Widget UPDATE validation",
+            rules = listOf(
+                batchValidationRule<Any, State> { context, states ->
+                    events += "validation:${states.single().name}"
+                    receivedClients += context.client
+                    states.decideEach { invalids.firstOrNull() ?: ValidationDecision.Valid }
+                },
+            ),
+            ruleClientProvider = { ruleClient },
+            freshItem = { it },
+        )
+
+        val spec: UpdateMutationSpec<State, Widget>
             get() = UpdateMutationSpec(
                 entity = mapping,
                 id = 1L,
@@ -132,17 +164,6 @@ class UpdateMutationExecutorTest {
                 prepare = { entity, _ ->
                     events += "prepare:${entity.name}"
                     preparation
-                },
-                privacy = MutationPrivacyPhase { context, client, states ->
-                    events += "privacy:${states.single().name}"
-                    receivedContexts += context
-                    receivedClients += client
-                    listOf(privacyDecision)
-                },
-                validation = MutationValidationPhase { client, states ->
-                    events += "validation:${states.single().name}"
-                    receivedClients += client
-                    listOf(invalids)
                 },
                 relationships = { state, writes ->
                     events += "relationships:${state.name}"
@@ -174,17 +195,20 @@ class UpdateMutationExecutorTest {
                     entity: EntityMapping<Entity>,
                     viewerContext: ViewerContext,
                     entities: List<Entity>,
-                ): List<LoadPrivacyEvaluation<Entity>> {
+                ): PrivacyEvaluation<Entity> {
                     events += "load-privacy"
                     receivedContexts += viewerContext
-                    return correlateLoadPrivacyEvaluationsForInternalUse(
-                        lifecycle = "Widget LOAD privacy",
-                        entities = entities,
-                        denials = entities.map { loadDenial },
+                    return privacyEvaluation(
+                        subjects = entities,
+                        decisions = entities.map {
+                            loadDenial?.let { PrivacyDecision.Deny(it.reason) }
+                                ?: PrivacyDecision.Allow
+                        },
                     )
                 }
             },
-            ruleClient = ruleClient,
+            privacyEvaluator = privacyEvaluator,
+            validationEvaluator = validationEvaluator,
         )
     }
 

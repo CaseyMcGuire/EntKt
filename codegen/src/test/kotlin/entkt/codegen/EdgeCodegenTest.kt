@@ -1203,11 +1203,15 @@ class EdgeCodegenTest {
         assert(output.contains("private fun createBeforeCreateContext(viewerContext: ViewerContext, draft: PetCreateDraft): PetCreateHookContext")) {
             "the repo should construct the typed hook context for its create specification\n$output"
         }
-        assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetWriteCandidate, Pet, ReadOnlyEntClient>")) {
+        assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetWriteCandidate, Pet>")) {
             "the repo should pass a compact immutable specification to CreateMutationExecutor\n$output"
         }
-        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::resolve, fieldViolations = ::createFieldViolations, beforeSave = mutationHookPhaseForInternalUse(configuredHooks.beforeSave) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(configuredHooks.beforeCreate, ::createBeforeCreateContext), afterCreate = configuredHooks.afterCreate, privacy = mutationPrivacyPhaseForInternalUse(\"Pet CREATE privacy\", privacyConfig.createRules)")) {
-            "phase-local hook and rule types should remain captured by typed adapters\n$output"
+        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::resolve, fieldViolations = ::createFieldViolations, beforeSave = mutationHookPhaseForInternalUse(configuredHooks.beforeSave) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(configuredHooks.beforeCreate, ::createBeforeCreateContext), afterCreate = configuredHooks.afterCreate, )")) {
+            "phase-local hook types should remain captured by typed adapters\n$output"
+        }
+        assert(output.contains("private val createExecutor: CreateMutationExecutor<PetWriteCandidate>") &&
+            output.contains("privacyEvaluator = mutationPrivacyEvaluatorForInternalUse(")) {
+            "rule evaluators should be injected directly into the typed executor\n$output"
         }
         assert(!output.contains("CreateMutationInput") && !output.contains("createMutationInput(")) {
             "phase-local hook values should not leak into the create specification\n$output"

@@ -10,9 +10,10 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.privacyEvaluation
+import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.query.execution.LoadPrivacyEvaluation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.result.ReadResult
 import kotlin.test.Test
@@ -80,9 +81,9 @@ class EntityQueryBuilderTest {
             entity: EntityMapping<Entity>,
             viewerContext: ViewerContext,
             entities: List<Entity>,
-        ): List<LoadPrivacyEvaluation<Entity>> {
+        ): PrivacyEvaluation<Entity> {
             loadViewerContexts += viewerContext
-            return entities.map { LoadPrivacyEvaluation.Allowed(it) }
+            return privacyEvaluation(entities)
         }
     }
 

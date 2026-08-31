@@ -43,6 +43,8 @@ private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val UPDATE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationSpec")
+private val UPDATE_MUTATION_EXECUTOR =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationExecutor")
 private val PREPARED_UPDATE =
     ClassName("entkt.runtime.mutation.execution", "PreparedUpdate")
 private val UPDATE_PREPARATION =
@@ -51,14 +53,14 @@ private val UPDATE_PREPARATION_SCOPE =
     ClassName("entkt.runtime.mutation.execution", "UpdatePreparationScope")
 private val UPDATE_WRITE_TRACKER =
     ClassName("entkt.runtime.mutation.execution", "UpdateWriteTracker")
-private val MUTATION_PRIVACY_PHASE =
-    MemberName("entkt.runtime.mutation.execution", "mutationPrivacyPhaseForInternalUse")
-private val MUTATION_VALIDATION_PHASE =
-    MemberName("entkt.runtime.mutation.execution", "mutationValidationPhaseForInternalUse")
-private val WITH_PRIVACY_FALLBACK =
-    MemberName("entkt.runtime.mutation.execution", "withPrivacyFallbackForInternalUse")
-private val PLUS_VALIDATION =
-    MemberName("entkt.runtime.mutation.execution", "plusValidationForInternalUse")
+private val MUTATION_PRIVACY_EVALUATOR_FACTORY =
+    MemberName("entkt.runtime.privacy", "mutationPrivacyEvaluatorForInternalUse")
+private val PRIVACY_DECISION_EVALUATOR_FACTORY =
+    MemberName("entkt.runtime.privacy", "privacyDecisionEvaluatorForInternalUse")
+private val MUTATION_VALIDATION_EVALUATOR_FACTORY =
+    MemberName("entkt.runtime.validation", "mutationValidationEvaluatorForInternalUse")
+private val VALIDATION_DECISION_EVALUATOR_FACTORY =
+    MemberName("entkt.runtime.validation", "validationDecisionEvaluatorForInternalUse")
 private val SNAPSHOT_EDGE_CHANGES =
     MemberName("entkt.runtime.mutation", "snapshotEdgeChangesForInternalUse")
 
@@ -66,6 +68,7 @@ private val SNAPSHOT_EDGE_CHANGES =
 internal data class UpdateSaveArtifacts(
     val preparedStateType: TypeSpec,
     val specProperty: PropertySpec,
+    val executorProperty: PropertySpec,
     val functions: List<FunSpec>,
 )
 
@@ -91,6 +94,7 @@ internal class UpdateSaveEmitter(
     fun build(): UpdateSaveArtifacts = UpdateSaveArtifacts(
         preparedStateType = buildPreparedStateType(),
         specProperty = buildSpecProperty(),
+        executorProperty = buildExecutorProperty(),
         functions = listOf(
             buildPreflightFunction(),
             buildLoadRowFunction(),
@@ -125,17 +129,10 @@ internal class UpdateSaveEmitter(
     }
 
     private fun buildSpecProperty(): PropertySpec {
-        val readOnlyClient = ClassName(packageName, "ReadOnlyEntClient")
         val specType = UPDATE_MUTATION_SPEC.parameterizedBy(
             preparedStateClass,
             entityClass,
-            readOnlyClient,
         )
-        val updatePrivacyItem = ClassName(packageName, "${schemaName}UpdatePrivacyItem")
-        val createPrivacyItem = ClassName(packageName, "${schemaName}CreatePrivacyItem")
-        val updateValidationItem = ClassName(packageName, "${schemaName}UpdateValidationItem")
-        val createValidationItem = ClassName(packageName, "${schemaName}CreateValidationItem")
-
         return property("updateSpec", specType) {
             addModifiers(KModifier.PRIVATE)
             initializer(codeBlock {
@@ -149,11 +146,34 @@ internal class UpdateSaveEmitter(
                 add("end = ::_endUpdate,\n")
                 add("before = ::_runBeforeUpdateHooks,\n")
                 add("prepare = ::_prepareUpdate,\n")
-                add("privacy = %M(\n", MUTATION_PRIVACY_PHASE)
+                add("relationships = ::_persistUpdateRelationships,\n")
+                add("afterUpdate = afterUpdateHooks,\n")
+                unindent()
+                add(")")
+            })
+        }
+    }
+
+    private fun buildExecutorProperty(): PropertySpec {
+        val updateRuleInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
+        val createRuleInput = ClassName(packageName, "${schemaName}CreateRuleInput")
+        return property(
+            "updateExecutor",
+            UPDATE_MUTATION_EXECUTOR.parameterizedBy(preparedStateClass),
+        ) {
+            addModifiers(KModifier.PRIVATE)
+            initializer(codeBlock {
+                add("%T(\n", UPDATE_MUTATION_EXECUTOR)
+                indent()
+                add("driver = driver,\n")
+                add("mutationRuntime = client,\n")
+                add("privacyEvaluator = %M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE privacy")
+                add("unresolvedReason = %S,\n", "no update rule allowed access")
                 add("rules = client.%L.privacyConfig.updateRules,\n", clientName)
-                add("freshItem = { state: %T -> %T(\n", preparedStateClass, updatePrivacyItem)
+                add("ruleClientProvider = { client.readOnlyClient },\n")
+                add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
                 indent()
                 add("%L,\n", lifecycleValueSnapshot("state.before", allFields, entityClass))
                 add("%L,\n", lifecyclePatchSnapshot("state.requestedPatch", allFields, entityClass))
@@ -162,19 +182,17 @@ internal class UpdateSaveEmitter(
                 add("%L,\n", edgeChangesSnapshot("state.edgeChanges"))
                 unindent()
                 add(") },\n")
-                unindent()
-                add(").%M(\n", WITH_PRIVACY_FALLBACK)
-                indent()
                 add("fallback = if (client.%L.privacyConfig.updateDerivesFromCreate) {\n", clientName)
                 indent()
-                add("%M(\n", MUTATION_PRIVACY_PHASE)
+                add("%M(\n", PRIVACY_DECISION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE privacy")
                 add("rules = client.%L.privacyConfig.createRules,\n", clientName)
+                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { state: %T -> %T(%L) },\n",
                     preparedStateClass,
-                    createPrivacyItem,
+                    createRuleInput,
                     lifecycleValueSnapshot("state.candidate", allFields, entityClass),
                 )
                 unindent()
@@ -185,11 +203,12 @@ internal class UpdateSaveEmitter(
                 add("},\n")
                 unindent()
                 add("),\n")
-                add("validation = %M(\n", MUTATION_VALIDATION_PHASE)
+                add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE validation")
                 add("rules = client.%L.validationConfig.updateRules,\n", clientName)
-                add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateValidationItem)
+                add("ruleClientProvider = { client.readOnlyClient },\n")
+                add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
                 indent()
                 add("%L,\n", lifecycleValueSnapshot("state.before", allFields, entityClass))
                 add("%L,\n", lifecyclePatchSnapshot("state.requestedPatch", allFields, entityClass))
@@ -198,19 +217,17 @@ internal class UpdateSaveEmitter(
                 add("%L,\n", edgeChangesSnapshot("state.edgeChanges"))
                 unindent()
                 add(") },\n")
-                unindent()
-                add(").%M(\n", PLUS_VALIDATION)
-                indent()
                 add("additional = if (client.%L.validationConfig.updateDerivesFromCreate) {\n", clientName)
                 indent()
-                add("%M(\n", MUTATION_VALIDATION_PHASE)
+                add("%M(\n", VALIDATION_DECISION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE validation")
                 add("rules = client.%L.validationConfig.createRules,\n", clientName)
+                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { state: %T -> %T(%L) },\n",
                     preparedStateClass,
-                    createValidationItem,
+                    createRuleInput,
                     lifecycleValueSnapshot("state.candidate", allFields, entityClass),
                 )
                 unindent()
@@ -221,8 +238,6 @@ internal class UpdateSaveEmitter(
                 add("},\n")
                 unindent()
                 add("),\n")
-                add("relationships = ::_persistUpdateRelationships,\n")
-                add("afterUpdate = afterUpdateHooks,\n")
                 unindent()
                 add(")")
             })
@@ -540,7 +555,7 @@ internal class UpdateSaveEmitter(
         parameter("viewerContext", VIEWER_CONTEXT)
         parameter("applyLoadPrivacy", BOOLEAN)
         addCode(codeBlock {
-            add("return client.updateMutations.update(\n")
+            add("return updateExecutor.update(\n")
             indent()
             add("viewerContext = viewerContext,\n")
             add("applyLoadPrivacy = applyLoadPrivacy,\n")

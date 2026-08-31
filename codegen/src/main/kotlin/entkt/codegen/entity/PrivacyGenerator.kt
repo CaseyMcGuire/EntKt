@@ -50,8 +50,11 @@ private val RESOLVED_ENTITY_PRIVACY_CONFIG =
  * - `{Entity}PrivacyScope` — DSL scope for declaring rules per operation
  * - `{Entity}PolicyScope` — outer scope passed to [EntityPolicy.configure]
  * - `{Entity}WriteCandidate` — snapshot of writable fields for write rules
- * - `{Entity}{Op}PrivacyItem` — per-item snapshots for each operation
+ * - `{Entity}LoadPrivacyItem` — per-entity snapshot for LOAD rules
  * - `{Entity}{Op}PrivacyRule` and `{Entity}{Op}BatchPrivacyRule` — typealiases for each operation's rule types
+ *
+ * CREATE, UPDATE, and DELETE rules share the lifecycle inputs emitted by
+ * `LifecycleRuleInputGenerator` with validation rules.
  */
 internal class PrivacyGenerator(
     private val packageName: String,
@@ -96,13 +99,12 @@ internal class PrivacyGenerator(
         // hook context shape across entities).
         val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
 
-        // Operation item class names. The runtime PrivacyRuleContext holds
-        // privacy/client state once for the whole evaluation phase; these generated
-        // values contain only state that varies per item.
+        // Operation input class names. The runtime PrivacyRuleContext holds
+        // privacy/client state once for the whole evaluation phase.
         val loadItem = ClassName(packageName, "${schemaName}LoadPrivacyItem")
-        val createItem = ClassName(packageName, "${schemaName}CreatePrivacyItem")
-        val updateItem = ClassName(packageName, "${schemaName}UpdatePrivacyItem")
-        val deleteItem = ClassName(packageName, "${schemaName}DeletePrivacyItem")
+        val createInput = ClassName(packageName, "${schemaName}CreateRuleInput")
+        val updateInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
+        val deleteInput = ClassName(packageName, "${schemaName}DeleteRuleInput")
 
         // Rule typealiases
         val loadRule = "${schemaName}LoadPrivacyRule"
@@ -116,22 +118,15 @@ internal class PrivacyGenerator(
 
         return kotlinFile(packageName, "${schemaName}Privacy") {
             typeAlias(loadRule, PRIVACY_RULE.parameterizedBy(readClientClass, loadItem))
-            typeAlias(createRule, PRIVACY_RULE.parameterizedBy(readClientClass, createItem))
-            typeAlias(updateRule, PRIVACY_RULE.parameterizedBy(readClientClass, updateItem))
-            typeAlias(deleteRule, PRIVACY_RULE.parameterizedBy(readClientClass, deleteItem))
+            typeAlias(createRule, PRIVACY_RULE.parameterizedBy(readClientClass, createInput))
+            typeAlias(updateRule, PRIVACY_RULE.parameterizedBy(readClientClass, updateInput))
+            typeAlias(deleteRule, PRIVACY_RULE.parameterizedBy(readClientClass, deleteInput))
             typeAlias(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, loadItem))
-            typeAlias(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, createItem))
-            typeAlias(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, updateItem))
-            typeAlias(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, deleteItem))
+            typeAlias(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, createInput))
+            typeAlias(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, updateInput))
+            typeAlias(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, deleteInput))
 
             addType(buildLoadItem(entityClass, loadItem))
-            addType(buildCreateItem(candidateClass, createItem))
-            addType(
-            buildUpdateItem(
-                entityClass, candidateClass, patchClass, edgeChangesViewClass, updateItem,
-            ),
-            )
-            addType(buildDeleteItem(entityClass, candidateClass, deleteItem))
 
         // WriteCandidate
             addType(buildWriteCandidate(candidateClass, fields, edgeFks))
@@ -216,37 +211,7 @@ internal class PrivacyGenerator(
         itemClass: ClassName,
     ): TypeSpec = privacyItem(itemClass, "entity" to entityClass)
 
-    private fun buildCreateItem(
-        candidateClass: ClassName,
-        itemClass: ClassName,
-    ): TypeSpec = privacyItem(itemClass, "candidate" to candidateClass)
-
-    private fun buildUpdateItem(
-        entityClass: ClassName,
-        candidateClass: ClassName,
-        patchClass: ClassName,
-        edgeChangesViewClass: ClassName,
-        itemClass: ClassName,
-    ): TypeSpec = privacyItem(
-        itemClass,
-        "before" to entityClass,
-        "requestedPatch" to patchClass,
-        "effectivePatch" to patchClass,
-        "candidate" to candidateClass,
-        "edgeChanges" to edgeChangesViewClass,
-    )
-
-    private fun buildDeleteItem(
-        entityClass: ClassName,
-        candidateClass: ClassName,
-        itemClass: ClassName,
-    ): TypeSpec = privacyItem(
-        itemClass,
-        "entity" to entityClass,
-        "candidate" to candidateClass,
-    )
-
-    /** Data shape shared by load, create, update, and delete privacy items. */
+    /** Data shape supplied only to LOAD privacy rules. */
     private fun privacyItem(
         itemClass: ClassName,
         vararg members: Pair<String, com.squareup.kotlinpoet.TypeName>,

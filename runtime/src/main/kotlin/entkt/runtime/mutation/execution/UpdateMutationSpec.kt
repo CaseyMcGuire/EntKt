@@ -51,7 +51,6 @@ fun interface UpdateWriteTracker {
 class UpdateMutationSpec<
     State,
     Entity : EntEntity<*>,
-    RuleClient,
     >(
     val entity: EntityMapping<Entity>,
     val id: Any,
@@ -61,8 +60,6 @@ class UpdateMutationSpec<
     val end: () -> Unit,
     val before: (ViewerContext, Entity) -> Unit,
     val prepare: (Entity, UpdatePreparationScope) -> UpdatePreparation<State>,
-    val privacy: MutationPrivacyPhase<RuleClient, State>,
-    val validation: MutationValidationPhase<RuleClient, State>,
     val relationships: (State, UpdateWriteTracker) -> Unit,
     afterUpdate: List<BatchHook<Entity>>,
 ) {

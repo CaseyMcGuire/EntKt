@@ -215,6 +215,7 @@ internal class UpdateGenerator(
             )
             addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
             addProperty(saveArtifacts.specProperty)
+            addProperty(saveArtifacts.executorProperty)
             saveArtifacts.functions.forEach(::addFunction)
         }
 

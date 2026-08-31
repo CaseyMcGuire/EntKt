@@ -7,7 +7,7 @@ import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.hook.runBatchHooksForInternalUse
-import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -19,20 +19,24 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.toValidationViolation
+import entkt.runtime.validation.MutationValidationEvaluator
 import java.util.concurrent.CancellationException
 
 /** Executes scalar and phase-major bulk DELETE lifecycles. */
 @EntktInternal
-class DeleteMutationExecutor<RuleClient>(
+class DeleteMutationExecutor<Entity : EntEntity<*>, Candidate>(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime,
-    private val ruleClient: RuleClient,
+    private val privacyEvaluator:
+        MutationPrivacyEvaluator<DeleteRuleCandidate<Entity, Candidate>>,
+    private val validationEvaluator:
+        MutationValidationEvaluator<DeleteRuleCandidate<Entity, Candidate>>,
 ) {
     private val execution = MutationExecutionSupport(mutationRuntime)
 
     /** Bind one generated entity specification to the reusable delete operation. */
-    fun <Entity : EntEntity<*>, Candidate> operationForInternalUse(
-        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+    fun operationForInternalUse(
+        spec: DeleteMutationSpec<Entity, Candidate>,
         ownedTransaction: (
             ViewerContext,
             List<Predicate<Entity>>,
@@ -50,10 +54,10 @@ class DeleteMutationExecutor<RuleClient>(
     )
 
     /** Delete by an entity handle, projecting the affected-row signal to Unit. */
-    fun <Entity : EntEntity<*>, Candidate> delete(
+    fun delete(
         viewerContext: ViewerContext,
         entity: Entity,
-        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+        spec: DeleteMutationSpec<Entity, Candidate>,
     ): MutationResult<Unit> = when (
         val result = deleteById(viewerContext, entity.id, spec)
     ) {
@@ -62,10 +66,10 @@ class DeleteMutationExecutor<RuleClient>(
     }
 
     /** Reload and idempotently delete one current row. */
-    fun <Entity : EntEntity<*>, Candidate> deleteById(
+    fun deleteById(
         viewerContext: ViewerContext,
         id: Any,
-        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+        spec: DeleteMutationSpec<Entity, Candidate>,
     ): MutationResult<Boolean> = execution.execute { attempt ->
         mutationRuntime.checkTransactionRequirement("${spec.entity.entityName} delete")
         val row = try {
@@ -86,10 +90,10 @@ class DeleteMutationExecutor<RuleClient>(
     }
 
     /** Execute DELETE selection, lifecycle phases, and correlated persistence in an active transaction. */
-    fun <Entity : EntEntity<*>, Candidate> deleteMany(
+    fun deleteMany(
         viewerContext: ViewerContext,
         predicates: List<Predicate<Entity>>,
-        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+        spec: DeleteMutationSpec<Entity, Candidate>,
         promoteDriverNotPersisted: Boolean,
     ): MutationResult<Int> = execution.execute { attempt ->
         check(driver.inTransaction) { "deleteMany phases require a transaction-scoped driver" }
@@ -151,10 +155,10 @@ class DeleteMutationExecutor<RuleClient>(
     }
 
     /** Compile and execute one raw DELETE_CANDIDATES query without applying LOAD privacy. */
-    private fun <Entity : EntEntity<*>, Candidate> selectMany(
+    private fun selectMany(
         viewerContext: ViewerContext,
         predicates: List<Predicate<Entity>>,
-        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+        spec: DeleteMutationSpec<Entity, Candidate>,
     ): DeleteSelection<Entity> {
         val query = spec.newQuery()
         for (predicate in predicates) query.where(predicate)
@@ -176,11 +180,11 @@ class DeleteMutationExecutor<RuleClient>(
         )
     }
 
-    private fun <Entity : EntEntity<*>, Candidate> deleteLoaded(
+    private fun deleteLoaded(
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
         entity: Entity,
-        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+        spec: DeleteMutationSpec<Entity, Candidate>,
     ): Boolean {
         val postWriteState = if (driver.inTransaction) {
             MutationWriteState.TransactionPending
@@ -206,59 +210,44 @@ class DeleteMutationExecutor<RuleClient>(
         return deleted
     }
 
-    private fun <Entity : EntEntity<*>, Candidate> evaluatePrivacy(
+    private fun evaluatePrivacy(
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
         candidates: List<DeleteRuleCandidate<Entity, Candidate>>,
-        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+        spec: DeleteMutationSpec<Entity, Candidate>,
     ) {
-        val decisions = spec.privacy.evaluate(viewerContext, ruleClient, candidates)
-        check(decisions.size == candidates.size) {
-            "DELETE privacy returned ${decisions.size} decisions for ${candidates.size} candidates"
-        }
-        val deniedIndex = decisions.indexOfFirst { it !is PrivacyDecision.Allow }
-        if (deniedIndex < 0) return
-        val reason = when (val decision = decisions[deniedIndex]) {
-            PrivacyDecision.Allow -> error("allowed DELETE candidate selected as denied")
-            is PrivacyDecision.Deny -> decision.reason
-            PrivacyDecision.Continue -> "no delete rule allowed access"
-        }
-        val entity = candidates[deniedIndex].entity
+        val denial = privacyEvaluator.evaluate(viewerContext, candidates).firstDeniedOrNull() ?: return
+        val entity = denial.subject.entity
         attempt.reject(
             EntMutationPrivacyDeniedException(
                 writeState = MutationWriteState.NotPersisted,
                 entityType = spec.entity.entityName,
                 operation = EntOperation.DELETE,
                 entityKey = EntityKey("id", entity.id),
-                reason = reason,
+                reason = denial.reason,
             ),
         )
     }
 
-    private fun <Entity : EntEntity<*>, Candidate> evaluateValidation(
+    private fun evaluateValidation(
         attempt: MutationAttempt,
         candidates: List<DeleteRuleCandidate<Entity, Candidate>>,
-        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+        spec: DeleteMutationSpec<Entity, Candidate>,
     ) {
-        val invalidsByCandidate = spec.validation.evaluate(ruleClient, candidates)
-        check(invalidsByCandidate.size == candidates.size) {
-            "DELETE validation returned ${invalidsByCandidate.size} results for " +
-                "${candidates.size} candidates"
-        }
-        invalidsByCandidate.firstOrNull { it.isNotEmpty() }?.let { invalids ->
+        validationEvaluator.evaluate(candidates).firstInvalidOrNull()?.let { invalid ->
             attempt.reject(
                 EntValidationException(
                     entityType = spec.entity.entityName,
                     operation = EntOperation.DELETE,
-                    violations = invalids.map { it.toValidationViolation() },
+                    violations = invalid.violations.map { it.toValidationViolation() },
                 ),
             )
         }
     }
 
-    private fun <Entity : EntEntity<*>, Candidate> classifyDriverFailure(
+    private fun classifyDriverFailure(
         exception: Exception,
-        spec: DeleteMutationSpec<Entity, Candidate, RuleClient>,
+        spec: DeleteMutationSpec<Entity, Candidate>,
         fallback: MutationWriteState,
     ) = driver.classifyMutationException(
         exception,

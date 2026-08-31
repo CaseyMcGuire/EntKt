@@ -9,9 +9,9 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
-import entkt.runtime.query.execution.LoadPrivacyEvaluation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.PrivacyDenial
@@ -82,7 +82,7 @@ class ReadQueryExecutorTest {
                     entity: EntityMapping<Entity>,
                     viewerContext: ViewerContext,
                     entities: List<Entity>,
-                ): List<LoadPrivacyEvaluation<Entity>> = error("LOAD privacy is not configured")
+                ): PrivacyEvaluation<Entity> = error("LOAD privacy is not configured")
             },
         )
 

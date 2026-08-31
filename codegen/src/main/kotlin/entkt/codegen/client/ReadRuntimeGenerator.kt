@@ -6,7 +6,6 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
@@ -22,19 +21,13 @@ import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.VIEWER_CONTEXT
 
-private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
+private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
 private val LIST = ClassName("kotlin.collections", "List")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val ENT_ENTITY = ClassName("entkt.runtime.entity", "EntEntity")
 private val ENTITY_MAPPING = ClassName("entkt.runtime.entity", "EntityMapping")
 private val READ_QUERY_EXECUTION_HOST =
     ClassName("entkt.runtime.query.execution", "ReadQueryExecutionHost")
-private val LOAD_PRIVACY_EVALUATION =
-    ClassName("entkt.runtime.query.execution", "LoadPrivacyEvaluation")
-private val CORRELATE_LOAD_PRIVACY_EVALUATIONS = MemberName(
-    "entkt.runtime.query.execution",
-    "correlateLoadPrivacyEvaluationsForInternalUse",
-)
 
 /**
  * Emits the generated read-runtime contract: `EntReadRuntime` plus one
@@ -44,7 +37,7 @@ private val CORRELATE_LOAD_PRIVACY_EVALUATIONS = MemberName(
  * host — the read-execution guard, the `@EntktInternal` interceptor
  * registry, and one accessor per entity
  * typed to that entity's read surface (`hasLoadPrivacy()` /
- * `loadDenials(...)`, the only repo members query terminals
+ * `evaluateLoadPrivacy(...)`, the only repo members query terminals
  * call). Both `EntClient` and `ReadOnlyEntClientImpl` implement it, so generated query and
  * index-stage constructors can accept the contract instead of the full
  * client.
@@ -92,17 +85,12 @@ internal class ReadRuntimeGenerator(
                 addModifiers(KModifier.ABSTRACT)
             }
             function(
-                "loadDenials",
-                returnType = LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true)),
+                "evaluateLoadPrivacy",
+                returnType = PRIVACY_EVALUATION.parameterizedBy(entityClass),
             ) {
                 addModifiers(KModifier.ABSTRACT)
                 parameter("viewerContext", VIEWER_CONTEXT)
                 parameter("entities", LIST.parameterizedBy(entityClass))
-            }
-            function("loadDenialOrNull", returnType = PRIVACY_DENIAL.copy(nullable = true)) {
-                addModifiers(KModifier.ABSTRACT)
-                parameter("viewerContext", VIEWER_CONTEXT)
-                parameter("entity", entityClass)
             }
         }
     }
@@ -151,17 +139,16 @@ internal class ReadRuntimeGenerator(
             add("return when (entity) {\n")
             for (input in sorted) {
                 add(
-                    "  %T.GeneratedEntityMapping -> %M(\n" +
-                        "    %S,\n" +
-                        "    entities,\n" +
-                        "    %L.loadDenials(viewerContext, entities as %T<%T>),\n" +
-                        "  )\n",
+                    "  %T.GeneratedEntityMapping -> %L.evaluateLoadPrivacy(\n" +
+                        "    viewerContext,\n" +
+                        "    entities as %T<%T>,\n" +
+                        "  ) as %T<%L>\n",
                     ClassName(packageName, "${input.name}Query"),
-                    CORRELATE_LOAD_PRIVACY_EVALUATIONS,
-                    "${input.name} LOAD privacy",
                     input.clientName,
                     LIST,
                     ClassName(packageName, input.name),
+                    PRIVACY_EVALUATION,
+                    entityType,
                 )
             }
             add(
@@ -172,7 +159,7 @@ internal class ReadRuntimeGenerator(
         }
         return function(
             "evaluate",
-            returnType = LIST.parameterizedBy(LOAD_PRIVACY_EVALUATION.parameterizedBy(entityType)),
+            returnType = PRIVACY_EVALUATION.parameterizedBy(entityType),
         ) {
             addAnnotation(
                 annotation(ClassName("kotlin", "Suppress")) {

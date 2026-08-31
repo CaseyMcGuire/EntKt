@@ -31,7 +31,7 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
 
     private val entityGraphLoader = EntityGraphLoader(
         storage = DatabaseGraphStorage(driver, queryCompiler),
-        loadPrivacyEvaluator = executionHost,
+        loadPrivacyDispatcher = executionHost,
     )
 
     /** Load root entities, authorize them, and recursively load their selected edges. */

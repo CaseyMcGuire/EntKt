@@ -7,10 +7,10 @@ import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import example.ent.ReadOnlyEntClient
 import example.ent.User
-import example.ent.UserDeletePrivacyItem
+import example.ent.UserDeleteRuleInput
 import example.ent.UserDeletePrivacyRule
 import example.ent.UserPolicyScope
-import example.ent.UserUpdatePrivacyItem
+import example.ent.UserUpdateRuleInput
 import example.ent.UserUpdatePrivacyRule
 
 object UserPolicy : EntityPolicy<User, UserPolicyScope> {
@@ -30,7 +30,7 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
 class AllowSelfUpdate : UserUpdatePrivacyRule {
     override fun run(
         context: PrivacyRuleContext<ReadOnlyEntClient>,
-        item: UserUpdatePrivacyItem,
+        item: UserUpdateRuleInput,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
@@ -43,7 +43,7 @@ class AllowSelfUpdate : UserUpdatePrivacyRule {
 class AllowSelfDelete : UserDeletePrivacyRule {
     override fun run(
         context: PrivacyRuleContext<ReadOnlyEntClient>,
-        item: UserDeletePrivacyItem,
+        item: UserDeleteRuleInput,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")

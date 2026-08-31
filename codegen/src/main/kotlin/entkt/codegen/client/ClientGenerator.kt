@@ -36,12 +36,6 @@ import entkt.codegen.metadata.ENTITY_SCHEMA
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val MUTATION_RUNTIME = ClassName("entkt.runtime.mutation.execution", "MutationRuntime")
-private val CREATE_MUTATION_EXECUTOR =
-    ClassName("entkt.runtime.mutation.execution", "CreateMutationExecutor")
-private val DELETE_MUTATION_EXECUTOR =
-    ClassName("entkt.runtime.mutation.execution", "DeleteMutationExecutor")
-private val UPDATE_MUTATION_EXECUTOR =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationExecutor")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "TransactionRequirement")
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime.mutation", "TransactionRequiredException")
@@ -311,57 +305,6 @@ internal class ClientGenerator(
             }
             addProperties(sorted.map { buildRepoProperty(it) })
             addProperty(buildReadOnlyClientProperty(sorted))
-            property(
-                "createMutations",
-                CREATE_MUTATION_EXECUTOR.parameterizedBy(
-                    ClassName(packageName, "ReadOnlyEntClient"),
-                ),
-            ) {
-                addAnnotation(ClassName("entkt.query", "EntktInternal"))
-                addModifiers(KModifier.INTERNAL)
-                delegate(
-                    "lazy { %T(\n" +
-                        "  driver = driver,\n" +
-                        "  mutationRuntime = this,\n" +
-                        "  ruleClient = readOnlyClient,\n" +
-                        ") }",
-                    CREATE_MUTATION_EXECUTOR,
-                )
-            }
-            property(
-                "deleteMutations",
-                DELETE_MUTATION_EXECUTOR.parameterizedBy(
-                    ClassName(packageName, "ReadOnlyEntClient"),
-                ),
-            ) {
-                addAnnotation(ClassName("entkt.query", "EntktInternal"))
-                addModifiers(KModifier.INTERNAL)
-                delegate(
-                    "lazy { %T(\n" +
-                        "  driver = driver,\n" +
-                        "  mutationRuntime = this,\n" +
-                        "  ruleClient = readOnlyClient,\n" +
-                        ") }",
-                    DELETE_MUTATION_EXECUTOR,
-                )
-            }
-            property(
-                "updateMutations",
-                UPDATE_MUTATION_EXECUTOR.parameterizedBy(
-                    ClassName(packageName, "ReadOnlyEntClient"),
-                ),
-            ) {
-                addAnnotation(ClassName("entkt.query", "EntktInternal"))
-                addModifiers(KModifier.INTERNAL)
-                delegate(
-                    "lazy { %T(\n" +
-                        "  driver = driver,\n" +
-                        "  mutationRuntime = this,\n" +
-                        "  ruleClient = readOnlyClient,\n" +
-                        ") }",
-                    UPDATE_MUTATION_EXECUTOR,
-                )
-            }
             function("checkReadExecution") {
                 addModifiers(KModifier.OVERRIDE)
                 statement("transactionExecutionGuard.checkClientOperation(transactionExecutionToken)")

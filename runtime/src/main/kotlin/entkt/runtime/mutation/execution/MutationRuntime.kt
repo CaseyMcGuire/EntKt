@@ -3,12 +3,12 @@
 package entkt.runtime.mutation.execution
 
 import entkt.query.EntktInternal
-import entkt.runtime.query.execution.LoadPrivacyEvaluator
+import entkt.runtime.query.execution.LoadPrivacyDispatcher
 import entkt.runtime.result.EntMutationException
 
 /** Client capabilities shared by generated mutation executors. */
 @EntktInternal
-interface MutationRuntime : LoadPrivacyEvaluator {
+interface MutationRuntime : LoadPrivacyDispatcher {
     /** Enforce the configured transaction requirement before lifecycle work begins. */
     fun checkTransactionRequirement(
         operation: String,

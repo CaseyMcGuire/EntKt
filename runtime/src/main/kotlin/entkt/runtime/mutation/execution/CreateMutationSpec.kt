@@ -14,7 +14,6 @@ class CreateMutationSpec<
     Draft : CreateMutationDraft<Entity>,
     Candidate,
     Entity : EntEntity<*>,
-    RuleClient,
     >(
     /** Generated identity, storage metadata, and row decoder for the created entity. */
     val entity: EntityMapping<Entity>,
@@ -37,9 +36,4 @@ class CreateMutationSpec<
     /** Report schema-field violations on a stable resolved write candidate. */
     val fieldViolations: (Candidate) -> List<ValidationViolation>,
 
-    /** CREATE-privacy rules evaluated against the resolved write candidates. */
-    val privacy: MutationPrivacyPhase<RuleClient, Candidate>,
-
-    /** CREATE-validation rules evaluated against the resolved write candidates. */
-    val validation: MutationValidationPhase<RuleClient, Candidate>,
 )

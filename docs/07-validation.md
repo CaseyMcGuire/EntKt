@@ -25,7 +25,7 @@ object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
 class RequireBodyForPublished : PostCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: PostCreateValidationItem,
+        item: PostCreateRuleInput,
     ): ValidationDecision =
         if (item.candidate.published && item.candidate.body.isNullOrBlank()) {
             ValidationDecision.Invalid("published posts must have a body", field = "body")
@@ -37,7 +37,7 @@ class RequireBodyForPublished : PostCreateValidationRule {
 class CannotDeletePublishedPost : PostDeleteValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: PostDeleteValidationItem,
+        item: PostDeleteRuleInput,
     ): ValidationDecision =
         if (item.entity.published) {
             ValidationDecision.Invalid("cannot delete a published post")
@@ -248,27 +248,28 @@ Register multiple batch rules with repeated calls. There are no
 `createBatch`-style methods. There is no `load` validation — validation guards
 writes, not reads.
 
-## Operation Items
+## Rule Inputs
 
 Every validator receives a shared `ValidationRuleContext` containing the
-read-only `ReadOnlyEntClient`. Generated items contain only values that
+read-only `ReadOnlyEntClient`. Generated mutation rule inputs are shared with
+privacy and contain only values that
 differ per candidate. The write surface does not exist on the shared client,
 so a validator that tries to create, update, or delete does not compile. One
 phase constructs one rule context and passes that exact instance to every
 validator; each validator still receives fresh defensive item snapshots.
 
-### CreateValidationItem
+### CreateRuleInput
 
 ```kotlin
-data class PostCreateValidationItem(
+data class PostCreateRuleInput(
     val candidate: PostWriteCandidate,
 )
 ```
 
-### UpdateValidationItem
+### UpdateRuleInput
 
 ```kotlin
-data class PostUpdateValidationItem(
+data class PostUpdateRuleInput(
     val before: Post,                    // current state of the entity (loaded by save())
     val requestedPatch: PostUpdatePatch, // caller/hook intent — FieldPatch entries
     val effectivePatch: PostUpdatePatch, // after framework update defaults
@@ -286,7 +287,7 @@ should read `candidate`.
 receive — one `EdgeChanges<TargetIdType>` per helper-eligible `throughLink`
 M2M edge, carrying both caller intent (`requestedSet?` / `requestedAdds` /
 `requestedRemoves`) and the computed database delta (`added` / `removed`).
-See [Privacy → UpdatePrivacyItem](06-privacy.md#updateprivacyitem)
+See [Privacy → UpdateRuleInput](06-privacy.md#updateruleinput)
 for the field semantics. A typical validator pattern: reject `remove` calls
 that name unknown / forbidden target ids by inspecting
 `item.edgeChanges.tags.requestedRemoves` — the literal call log surfaces
@@ -299,10 +300,10 @@ reaching entity validation. Validators can treat
 `FieldPatch.Set(value)` for required fields as having a non-null value
 and `FieldPatch.Unset` as "not in this update".
 
-### DeleteValidationItem
+### DeleteRuleInput
 
 ```kotlin
-data class PostDeleteValidationItem(
+data class PostDeleteRuleInput(
     val entity: Post,
     val candidate: PostWriteCandidate,
 )
@@ -453,7 +454,7 @@ of truth; the validator improves the error message.
 class UniqueSlug : PostCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: PostCreateValidationItem,
+        item: PostCreateRuleInput,
     ): ValidationDecision {
         val existing = context.client.posts.query {
             where(Post.slug eq item.candidate.slug)
@@ -466,7 +467,7 @@ class UniqueSlug : PostCreateValidationRule {
 class AuthorExists : PostCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: PostCreateValidationItem,
+        item: PostCreateRuleInput,
     ): ValidationDecision {
         val author = context.client.users
             .findById(context.readViewerContext, item.candidate.authorId)
@@ -487,7 +488,7 @@ Index helpers work too — they are query sugar and equally read-only:
 class UniqueEmail : UserCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: UserCreateValidationItem,
+        item: UserCreateRuleInput,
     ): ValidationDecision =
         if (context.client.users.indexes.email(item.candidate.email)
                 .find(context.readViewerContext).getOrThrow() != null
@@ -558,16 +559,16 @@ For each schema, entkt provides:
 | `{Entity}UpdateBatchValidationRule` | Typealias for batch update validation rules |
 | `{Entity}DeleteBatchValidationRule` | Typealias for batch delete validation rules |
 | `ValidationRuleContext<Client>` | Shared validation read client for one evaluation phase |
-| `{Entity}CreateValidationItem` | Per-candidate input for create validators |
-| `{Entity}UpdateValidationItem` | Per-entity input for update validators |
-| `{Entity}DeleteValidationItem` | Per-entity input for delete validators |
+| `{Entity}CreateRuleInput` | Shared per-candidate input for create privacy and validation rules |
+| `{Entity}UpdateRuleInput` | Shared per-entity input for update privacy and validation rules |
+| `{Entity}DeleteRuleInput` | Shared per-entity input for delete privacy and validation rules |
 | `{Entity}ValidationScope` | DSL scope inside `validation { }` |
 | `{Entity}ReadRepo` | Read-only repo exposed to validators (`findById`, `query { }`, index helpers) |
 | `ReadOnlyEntClient` | Stable read-only client shared by validation and privacy rule contexts; each terminal requires an explicit `ViewerContext` (schema-set-level) |
 
 The `{Entity}PolicyScope` gains a `validation { }` method alongside
 the existing `privacy { }` method. The `{Entity}WriteCandidate` is
-shared between privacy and validation items.
+shared between privacy and validation inputs.
 
 `ValidationRuleContext` exposes the read-only `ReadOnlyEntClient`.
 Validators can use its `findById`, `query { ... }`, and indexed
@@ -590,7 +591,7 @@ query helpers, but cannot create, update, or delete entities.
 class StartBeforeEnd : EventCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: EventCreateValidationItem,
+        item: EventCreateRuleInput,
     ): ValidationDecision =
         if (item.candidate.startTime >= item.candidate.endTime) {
             ValidationDecision.Invalid("start time must be before end time")
@@ -612,7 +613,7 @@ class ValidStatusTransition : OrderUpdateValidationRule {
 
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: OrderUpdateValidationItem,
+        item: OrderUpdateRuleInput,
     ): ValidationDecision {
         val from = item.before.status
         val to = item.candidate.status
@@ -630,7 +631,7 @@ class ValidStatusTransition : OrderUpdateValidationRule {
 class CannotDeleteWithOpenInvoices : UserDeleteValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: UserDeleteValidationItem,
+        item: UserDeleteRuleInput,
     ): ValidationDecision {
         val openCount = context.client.invoices.query {
             where(Invoice.userId eq item.entity.id and (Invoice.status eq Status.OPEN))

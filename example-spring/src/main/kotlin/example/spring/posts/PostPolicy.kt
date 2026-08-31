@@ -5,14 +5,14 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
 import example.ent.ReadOnlyEntClient
-import example.ent.PostCreatePrivacyItem
+import example.ent.PostCreateRuleInput
 import example.ent.PostCreatePrivacyRule
-import example.ent.PostDeletePrivacyItem
+import example.ent.PostDeleteRuleInput
 import example.ent.PostDeletePrivacyRule
 import example.ent.PostLoadPrivacyItem
 import example.ent.PostLoadPrivacyRule
 import example.ent.PostPolicyScope
-import example.ent.PostUpdatePrivacyItem
+import example.ent.PostUpdateRuleInput
 import example.ent.PostUpdatePrivacyRule
 import example.ent.Post
 
@@ -53,7 +53,7 @@ class AllowAuthorLoad : PostLoadPrivacyRule {
 class RequireAuthToCreate : PostCreatePrivacyRule {
     override fun run(
         context: PrivacyRuleContext<ReadOnlyEntClient>,
-        item: PostCreatePrivacyItem,
+        item: PostCreateRuleInput,
     ): PrivacyDecision =
         if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
         else PrivacyDecision.Allow
@@ -63,7 +63,7 @@ class RequireAuthToCreate : PostCreatePrivacyRule {
 class AllowAuthorUpdate : PostUpdatePrivacyRule {
     override fun run(
         context: PrivacyRuleContext<ReadOnlyEntClient>,
-        item: PostUpdatePrivacyItem,
+        item: PostUpdateRuleInput,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")
@@ -76,7 +76,7 @@ class AllowAuthorUpdate : PostUpdatePrivacyRule {
 class AllowAuthorDelete : PostDeletePrivacyRule {
     override fun run(
         context: PrivacyRuleContext<ReadOnlyEntClient>,
-        item: PostDeletePrivacyItem,
+        item: PostDeleteRuleInput,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User
             ?: return PrivacyDecision.Deny("authentication required")

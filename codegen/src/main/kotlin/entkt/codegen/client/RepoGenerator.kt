@@ -49,30 +49,34 @@ private val INT = Int::class.asClassName()
 private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
 private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_DENIAL = ClassName("entkt.runtime.result", "PrivacyDenial")
+private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
+private val LOAD_PRIVACY_EVALUATOR =
+    ClassName("entkt.runtime.privacy", "LoadPrivacyEvaluator")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
-private val LOAD_PRIVACY_PHASE =
-    ClassName("entkt.runtime.query.execution", "LoadPrivacyPhase")
-private val LOAD_PRIVACY_PHASE_FACTORY =
-    MemberName("entkt.runtime.query.execution", "loadPrivacyPhaseForInternalUse")
 private val CREATE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationSpec")
+private val CREATE_MUTATION_EXECUTOR =
+    ClassName("entkt.runtime.mutation.execution", "CreateMutationExecutor")
 private val CREATE_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "CreateOperation")
 private val DELETE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationSpec")
+private val DELETE_MUTATION_EXECUTOR =
+    ClassName("entkt.runtime.mutation.execution", "DeleteMutationExecutor")
 private val DELETE_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "DeleteOperation")
 private val DELETE_RULE_CANDIDATE =
     ClassName("entkt.runtime.mutation.execution", "DeleteRuleCandidate")
 private val MUTATION_HOOK_PHASE =
     MemberName("entkt.runtime.mutation.execution", "mutationHookPhaseForInternalUse")
-private val MUTATION_PRIVACY_PHASE =
-    MemberName("entkt.runtime.mutation.execution", "mutationPrivacyPhaseForInternalUse")
-private val MUTATION_VALIDATION_PHASE =
-    MemberName("entkt.runtime.mutation.execution", "mutationValidationPhaseForInternalUse")
-private val WITH_PRIVACY_FALLBACK =
-    MemberName("entkt.runtime.mutation.execution", "withPrivacyFallbackForInternalUse")
+private val LOAD_PRIVACY_EVALUATOR_FACTORY =
+    MemberName("entkt.runtime.privacy", "loadPrivacyEvaluatorForInternalUse")
+private val MUTATION_PRIVACY_EVALUATOR_FACTORY =
+    MemberName("entkt.runtime.privacy", "mutationPrivacyEvaluatorForInternalUse")
+private val PRIVACY_DECISION_EVALUATOR_FACTORY =
+    MemberName("entkt.runtime.privacy", "privacyDecisionEvaluatorForInternalUse")
+private val MUTATION_VALIDATION_EVALUATOR_FACTORY =
+    MemberName("entkt.runtime.validation", "mutationValidationEvaluatorForInternalUse")
 private val PENDING_CREATE_MUTATION =
     ClassName("entkt.runtime.mutation", "PendingCreateMutation")
 private val CREATE_MUTATION_REPOSITORY =
@@ -140,7 +144,7 @@ internal class RepoGenerator(
 
         val typeSpec = classType(className) {
             // The repo is the entity's read surface: query terminals reach
-            // `hasLoadPrivacy()` / `loadDenials(...)` through the
+            // `hasLoadPrivacy()` / `evaluateLoadPrivacy(...)` through the
             // EntReadRuntime contract's `${prop}: ${Entity}ReadSurface`
             // accessor, which EntClient overrides with this repo.
             addSuperinterface(ClassName(packageName, "${schemaName}ReadSurface"))
@@ -187,8 +191,8 @@ internal class RepoGenerator(
                 initializer("configuredValidation")
             }
             addProperty(
-                buildLoadPrivacyPhase(
-                    queryClass = queryClass,
+                buildLoadPrivacyEvaluator(
+                    schemaName = schemaName,
                     entityClass = entityClass,
                     loadItemClass = loadItemClass,
                     fields = fields,
@@ -200,8 +204,13 @@ internal class RepoGenerator(
                     createDraftClass = createDraftClass,
                     candidateClass = candidateClass,
                     entityClass = entityClass,
-                    privacyItemClass = ClassName(packageName, "${schemaName}CreatePrivacyItem"),
-                    validationItemClass = ClassName(packageName, "${schemaName}CreateValidationItem"),
+                ),
+            )
+            addProperty(
+                buildCreateMutationExecutor(
+                    schemaName = schemaName,
+                    entityClass = entityClass,
+                    candidateClass = candidateClass,
                 ),
             )
             addProperty(
@@ -214,8 +223,14 @@ internal class RepoGenerator(
             )
             addProperty(
                 buildDeleteMutationSpec(
-                    schemaName = schemaName,
                     queryClass = queryClass,
+                    entityClass = entityClass,
+                    candidateClass = candidateClass,
+                ),
+            )
+            addProperty(
+                buildDeleteMutationExecutor(
+                    schemaName = schemaName,
                     entityClass = entityClass,
                     candidateClass = candidateClass,
                     fields = fields,
@@ -313,8 +328,7 @@ internal class RepoGenerator(
             addFunction(buildHasPrivacy("hasCreatePrivacy"))
             addFunction(buildHasPrivacy("hasUpdatePrivacy"))
             addFunction(buildHasPrivacy("hasDeletePrivacy"))
-            addFunction(buildLoadDenials(entityClass))
-            addFunction(buildLoadDenialOrNull(entityClass))
+            addFunction(buildEvaluateLoadPrivacy(entityClass))
             addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
         }
 
@@ -432,18 +446,22 @@ internal class RepoGenerator(
             statement("return true")
         }
 
-    /** Bind schema-specific LOAD rules and item snapshots to the reusable runtime phase. */
-    private fun buildLoadPrivacyPhase(
-        queryClass: ClassName,
+    /** Bind schema-specific LOAD rules and item snapshots to the reusable runtime evaluator. */
+    private fun buildLoadPrivacyEvaluator(
+        schemaName: String,
         entityClass: ClassName,
         loadItemClass: ClassName,
         fields: List<Field>,
-    ): PropertySpec = property("loadPrivacyPhase", LOAD_PRIVACY_PHASE.parameterizedBy(entityClass)) {
+    ): PropertySpec = property(
+        "loadPrivacyEvaluator",
+        LOAD_PRIVACY_EVALUATOR.parameterizedBy(entityClass),
+    ) {
         addModifiers(KModifier.PRIVATE)
         initializer(codeBlock {
-            add("%M(\n", LOAD_PRIVACY_PHASE_FACTORY)
+            add("%M(\n", LOAD_PRIVACY_EVALUATOR_FACTORY)
             indent()
-            add("entity = %T.GeneratedEntityMapping,\n", queryClass)
+            add("lifecycle = %S,\n", "$schemaName LOAD privacy")
+            add("unresolvedReason = %S,\n", "no load rule allowed access")
             add("rules = privacyConfig.loadRules,\n")
             add("ruleClientProvider = { client.readOnlyClient },\n")
             add(
@@ -456,22 +474,14 @@ internal class RepoGenerator(
         })
     }
 
-    private fun buildLoadDenials(
+    private fun buildEvaluateLoadPrivacy(
         entityClass: ClassName,
     ): FunSpec =
-        function("loadDenials", LIST.parameterizedBy(PRIVACY_DENIAL.copy(nullable = true))) {
+        function("evaluateLoadPrivacy", PRIVACY_EVALUATION.parameterizedBy(entityClass)) {
             addModifiers(KModifier.OVERRIDE)
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entities", LIST.parameterizedBy(entityClass))
-            statement("return loadPrivacyPhase.denials(viewerContext, entities)")
-        }
-
-    private fun buildLoadDenialOrNull(entityClass: ClassName): FunSpec =
-        function("loadDenialOrNull", PRIVACY_DENIAL.copy(nullable = true)) {
-            addModifiers(KModifier.OVERRIDE)
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("entity", entityClass)
-            statement("return loadDenials(viewerContext, listOf(entity)).single()")
+            statement("return loadPrivacyEvaluator.evaluate(viewerContext, entities)")
         }
 
     private fun buildBuildDeleteCandidate(
@@ -518,14 +528,11 @@ internal class RepoGenerator(
         createDraftClass: ClassName,
         candidateClass: ClassName,
         entityClass: ClassName,
-        privacyItemClass: ClassName,
-        validationItemClass: ClassName,
     ): PropertySpec {
         val specType = CREATE_MUTATION_SPEC.parameterizedBy(
             createDraftClass,
             candidateClass,
             entityClass,
-            ClassName(packageName, "ReadOnlyEntClient"),
         )
         return property("createSpec", specType) {
             addModifiers(KModifier.PRIVATE)
@@ -539,18 +546,43 @@ internal class RepoGenerator(
                 add("beforeSave = %M(configuredHooks.beforeSave) { _, draft -> createBeforeSaveView(draft) },\n", MUTATION_HOOK_PHASE)
                 add("beforeCreate = %M(configuredHooks.beforeCreate, ::createBeforeCreateContext),\n", MUTATION_HOOK_PHASE)
                 add("afterCreate = configuredHooks.afterCreate,\n")
-                add(
-                    "privacy = %M(%S, privacyConfig.createRules) { candidate -> %T(snapshotCreateCandidate(candidate)) },\n",
-                    MUTATION_PRIVACY_PHASE,
-                    "${entityClass.simpleName} CREATE privacy",
-                    privacyItemClass,
-                )
-                add(
-                    "validation = %M(%S, validationConfig.createRules) { candidate -> %T(snapshotCreateCandidate(candidate)) },\n",
-                    MUTATION_VALIDATION_PHASE,
-                    "${entityClass.simpleName} CREATE validation",
-                    validationItemClass,
-                )
+                unindent()
+                add(")")
+            })
+        }
+    }
+
+    /** Bind this entity's CREATE privacy and validation evaluators directly to its executor. */
+    private fun buildCreateMutationExecutor(
+        schemaName: String,
+        entityClass: ClassName,
+        candidateClass: ClassName,
+    ): PropertySpec {
+        val ruleInputClass = ClassName(packageName, "${schemaName}CreateRuleInput")
+        return property("createExecutor", CREATE_MUTATION_EXECUTOR.parameterizedBy(candidateClass)) {
+            addModifiers(KModifier.PRIVATE)
+            initializer(codeBlock {
+                add("%T(\n", CREATE_MUTATION_EXECUTOR)
+                indent()
+                add("driver = driver,\n")
+                add("mutationRuntime = client,\n")
+                add("privacyEvaluator = %M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
+                indent()
+                add("lifecycle = %S,\n", "$schemaName CREATE privacy")
+                add("unresolvedReason = %S,\n", "no create rule allowed access")
+                add("rules = privacyConfig.createRules,\n")
+                add("ruleClientProvider = { client.readOnlyClient },\n")
+                add("freshItem = { candidate -> %T(snapshotCreateCandidate(candidate)) },\n", ruleInputClass)
+                unindent()
+                add("),\n")
+                add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
+                indent()
+                add("lifecycle = %S,\n", "$schemaName CREATE validation")
+                add("rules = validationConfig.createRules,\n")
+                add("ruleClientProvider = { client.readOnlyClient },\n")
+                add("freshItem = { candidate -> %T(snapshotCreateCandidate(candidate)) },\n", ruleInputClass)
+                unindent()
+                add("),\n")
                 unindent()
                 add(")")
             })
@@ -570,7 +602,7 @@ internal class RepoGenerator(
             delegate(codeBlock {
                 add("lazy({\n")
                 indent()
-                add("client.createMutations.operationForInternalUse(\n")
+                add("createExecutor.operationForInternalUse(\n")
                 indent()
                 add("spec = createSpec,\n")
                 if (idStrategyName(schema) != "EXPLICIT") {
@@ -601,23 +633,14 @@ internal class RepoGenerator(
 
     /** Capture schema-specific DELETE adapters while runtime owns lifecycle ordering. */
     private fun buildDeleteMutationSpec(
-        schemaName: String,
         queryClass: ClassName,
         entityClass: ClassName,
         candidateClass: ClassName,
-        fields: List<Field>,
     ): PropertySpec {
-        val deletePrivacyItem = ClassName(packageName, "${schemaName}DeletePrivacyItem")
-        val createPrivacyItem = ClassName(packageName, "${schemaName}CreatePrivacyItem")
-        val deleteValidationItem = ClassName(packageName, "${schemaName}DeleteValidationItem")
-        val entitySnapshot = lifecycleValueSnapshot("item.entity", fields, entityClass)
-        val candidateSnapshot = lifecycleValueSnapshot("item.candidate", fields, entityClass)
         val specType = DELETE_MUTATION_SPEC.parameterizedBy(
             entityClass,
             candidateClass,
-            ClassName(packageName, "ReadOnlyEntClient"),
         )
-        val ruleCandidateType = DELETE_RULE_CANDIDATE.parameterizedBy(entityClass, candidateClass)
         return property("deleteSpec", specType) {
             addModifiers(KModifier.PRIVATE)
             initializer(codeBlock {
@@ -627,30 +650,58 @@ internal class RepoGenerator(
                 add("idColumn = %T.SCHEMA.idColumn,\n", entityClass)
                 add("newQuery = { %T(driver, client) },\n", queryClass)
                 add("candidate = ::buildDeleteCandidate,\n")
-                add("privacy = %M(\n", MUTATION_PRIVACY_PHASE)
+                add("beforeDelete = configuredHooks.beforeDelete,\n")
+                add("afterDelete = configuredHooks.afterDelete,\n")
+                unindent()
+                add(")")
+            })
+        }
+    }
+
+    /** Bind this entity's DELETE privacy and validation evaluators directly to its executor. */
+    private fun buildDeleteMutationExecutor(
+        schemaName: String,
+        entityClass: ClassName,
+        candidateClass: ClassName,
+        fields: List<Field>,
+    ): PropertySpec {
+        val deleteRuleInput = ClassName(packageName, "${schemaName}DeleteRuleInput")
+        val createRuleInput = ClassName(packageName, "${schemaName}CreateRuleInput")
+        val entitySnapshot = lifecycleValueSnapshot("item.entity", fields, entityClass)
+        val candidateSnapshot = lifecycleValueSnapshot("item.candidate", fields, entityClass)
+        val ruleCandidateType = DELETE_RULE_CANDIDATE.parameterizedBy(entityClass, candidateClass)
+        val executorType = DELETE_MUTATION_EXECUTOR.parameterizedBy(entityClass, candidateClass)
+        return property("deleteExecutor", executorType) {
+            addModifiers(KModifier.PRIVATE)
+            initializer(codeBlock {
+                add("%T(\n", DELETE_MUTATION_EXECUTOR)
+                indent()
+                add("driver = driver,\n")
+                add("mutationRuntime = client,\n")
+                add("privacyEvaluator = %M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName DELETE privacy")
+                add("unresolvedReason = %S,\n", "no delete rule allowed access")
                 add("rules = privacyConfig.deleteRules,\n")
+                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { item: %T -> %T(%L, %L) },\n",
                     ruleCandidateType,
-                    deletePrivacyItem,
+                    deleteRuleInput,
                     entitySnapshot,
                     candidateSnapshot,
                 )
-                unindent()
-                add(").%M(\n", WITH_PRIVACY_FALLBACK)
-                indent()
                 add("fallback = if (privacyConfig.deleteDerivesFromCreate) {\n")
                 indent()
-                add("%M(\n", MUTATION_PRIVACY_PHASE)
+                add("%M(\n", PRIVACY_DECISION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName DELETE privacy")
                 add("rules = privacyConfig.createRules,\n")
+                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { item: %T -> %T(%L) },\n",
                     ruleCandidateType,
-                    createPrivacyItem,
+                    createRuleInput,
                     candidateSnapshot,
                 )
                 unindent()
@@ -661,21 +712,20 @@ internal class RepoGenerator(
                 add("},\n")
                 unindent()
                 add("),\n")
-                add("validation = %M(\n", MUTATION_VALIDATION_PHASE)
+                add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName DELETE validation")
                 add("rules = validationConfig.deleteRules,\n")
+                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { item: %T -> %T(%L, %L) },\n",
                     ruleCandidateType,
-                    deleteValidationItem,
+                    deleteRuleInput,
                     entitySnapshot,
                     candidateSnapshot,
                 )
                 unindent()
                 add("),\n")
-                add("beforeDelete = configuredHooks.beforeDelete,\n")
-                add("afterDelete = configuredHooks.afterDelete,\n")
                 unindent()
                 add(")")
             })
@@ -693,7 +743,7 @@ internal class RepoGenerator(
             delegate(codeBlock {
                 add("lazy({\n")
                 indent()
-                add("client.deleteMutations.operationForInternalUse(\n")
+                add("deleteExecutor.operationForInternalUse(\n")
                 indent()
                 add("spec = deleteSpec,\n")
                 add("ownedTransaction = { vc, predicates ->\n")

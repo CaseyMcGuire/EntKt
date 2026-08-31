@@ -6,7 +6,7 @@ import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.hook.runBatchHooksForInternalUse
-import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -17,21 +17,23 @@ import entkt.runtime.result.EntityKey
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.toValidationViolation
+import entkt.runtime.validation.MutationValidationEvaluator
 import java.util.concurrent.CancellationException
 
 /** Executes the reusable UPDATE lifecycle around generated schema adapters. */
 @EntktInternal
-class UpdateMutationExecutor<RuleClient>(
+class UpdateMutationExecutor<State>(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime,
-    private val ruleClient: RuleClient,
+    private val privacyEvaluator: MutationPrivacyEvaluator<State>,
+    private val validationEvaluator: MutationValidationEvaluator<State>,
 ) {
     private val execution = MutationExecutionSupport(mutationRuntime)
 
-    fun <State, Entity : EntEntity<*>> update(
+    fun <Entity : EntEntity<*>> update(
         viewerContext: ViewerContext,
         applyLoadPrivacy: Boolean,
-        spec: UpdateMutationSpec<State, Entity, RuleClient>,
+        spec: UpdateMutationSpec<State, Entity>,
     ): MutationResult<Entity> = execution.execute { attempt ->
         val postWriteState = if (driver.inTransaction) {
             MutationWriteState.TransactionPending
@@ -109,54 +111,45 @@ class UpdateMutationExecutor<RuleClient>(
         }
     }
 
-    private fun <State, Entity : EntEntity<*>> evaluatePrivacy(
+    private fun <Entity : EntEntity<*>> evaluatePrivacy(
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
         state: State,
-        spec: UpdateMutationSpec<State, Entity, RuleClient>,
+        spec: UpdateMutationSpec<State, Entity>,
     ) {
-        val decision = spec.privacy.evaluate(viewerContext, ruleClient, listOf(state)).singleOrNull()
-            ?: error("UPDATE privacy must return exactly one decision")
-        val reason = when (decision) {
-            PrivacyDecision.Allow -> null
-            is PrivacyDecision.Deny -> decision.reason
-            PrivacyDecision.Continue -> "no update rule allowed access"
-        }
-        reason?.let {
+        privacyEvaluator.evaluate(viewerContext, listOf(state)).firstDeniedOrNull()?.let { denial ->
             attempt.reject(
                 EntMutationPrivacyDeniedException(
                     writeState = MutationWriteState.NotPersisted,
                     entityType = spec.entity.entityName,
                     operation = EntOperation.UPDATE,
                     entityKey = EntityKey("id", spec.id),
-                    reason = it,
+                    reason = denial.reason,
                 ),
             )
         }
     }
 
-    private fun <State, Entity : EntEntity<*>> evaluateValidation(
+    private fun <Entity : EntEntity<*>> evaluateValidation(
         attempt: MutationAttempt,
         state: State,
-        spec: UpdateMutationSpec<State, Entity, RuleClient>,
+        spec: UpdateMutationSpec<State, Entity>,
     ) {
-        val invalids = spec.validation.evaluate(ruleClient, listOf(state)).singleOrNull()
-            ?: error("UPDATE validation must return exactly one result")
-        if (invalids.isNotEmpty()) {
+        validationEvaluator.evaluate(listOf(state)).firstInvalidOrNull()?.let { invalid ->
             attempt.reject(
                 EntValidationException(
                     entityType = spec.entity.entityName,
                     operation = EntOperation.UPDATE,
-                    violations = invalids.map { it.toValidationViolation() },
+                    violations = invalid.violations.map { it.toValidationViolation() },
                 ),
             )
         }
     }
 
-    private fun <State, Entity : EntEntity<*>> persistRelationships(
+    private fun <Entity : EntEntity<*>> persistRelationships(
         attempt: MutationAttempt,
         prepared: PreparedUpdate<State>,
-        spec: UpdateMutationSpec<State, Entity, RuleClient>,
+        spec: UpdateMutationSpec<State, Entity>,
         postWriteState: MutationWriteState,
     ) {
         val tracker = RelationshipWriteTracker()
@@ -179,41 +172,42 @@ class UpdateMutationExecutor<RuleClient>(
         if (tracker.wrote) attempt.writeState = postWriteState
     }
 
-    private fun <State, Entity : EntEntity<*>> evaluateReturnedEntityPrivacy(
+    private fun <Entity : EntEntity<*>> evaluateReturnedEntityPrivacy(
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
         entity: Entity,
-        spec: UpdateMutationSpec<State, Entity, RuleClient>,
+        spec: UpdateMutationSpec<State, Entity>,
     ) {
         val evaluation = mutationRuntime.evaluate(
             entity = spec.entity,
             viewerContext = viewerContext,
             entities = listOf(entity),
-        ).singleOrNull() ?: error("LOAD privacy must return exactly one update result")
-        evaluation.denialOrNull()?.let { denial ->
+        )
+        check(evaluation.size == 1) { "LOAD privacy must return exactly one update result" }
+        evaluation.firstDeniedOrNull()?.let { denied ->
             attempt.reject(
                 EntMutationPrivacyDeniedException(
                     writeState = attempt.writeState,
                     entityType = spec.entity.entityName,
                     operation = EntOperation.LOAD,
-                    entityKey = denial.entityKey,
-                    reason = denial.reason,
+                    entityKey = EntityKey("id", denied.subject.id),
+                    reason = denied.reason,
                 ),
             )
         }
     }
 
-    private fun <State, Entity : EntEntity<*>> preparationScope(
+    private fun <Entity : EntEntity<*>> preparationScope(
         attempt: MutationAttempt,
-        spec: UpdateMutationSpec<State, Entity, RuleClient>,
+        spec: UpdateMutationSpec<State, Entity>,
     ): UpdatePreparationScope = object : UpdatePreparationScope {
         override fun <Result> driverRead(block: () -> Result): Result =
             driverCall(attempt, spec, MutationWriteState.NotPersisted, block)
     }
 
-    private fun <Result, State, Entity : EntEntity<*>> driverCall(
+    private fun <Result, Entity : EntEntity<*>> driverCall(
         attempt: MutationAttempt,
-        spec: UpdateMutationSpec<State, Entity, RuleClient>,
+        spec: UpdateMutationSpec<State, Entity>,
         fallback: MutationWriteState,
         block: () -> Result,
     ): Result = try {
@@ -224,9 +218,9 @@ class UpdateMutationExecutor<RuleClient>(
         attempt.reject(classifyDriverFailure(e, spec, fallback))
     }
 
-    private fun <State, Entity : EntEntity<*>> classifyDriverFailure(
+    private fun <Entity : EntEntity<*>> classifyDriverFailure(
         exception: Exception,
-        spec: UpdateMutationSpec<State, Entity, RuleClient>,
+        spec: UpdateMutationSpec<State, Entity>,
         fallback: MutationWriteState,
     ) = driver.classifyMutationException(
         exception,

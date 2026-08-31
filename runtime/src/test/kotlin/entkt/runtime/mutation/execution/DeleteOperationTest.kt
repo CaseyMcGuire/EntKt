@@ -10,7 +10,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.query.execution.LoadPrivacyEvaluation
+import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntOperation
@@ -275,6 +275,6 @@ class DeleteOperationTest {
             entity: EntityMapping<Entity>,
             viewerContext: ViewerContext,
             entities: List<Entity>,
-        ): List<LoadPrivacyEvaluation<Entity>> = error("unused")
+        ): PrivacyEvaluation<Entity> = error("unused")
     }
 }

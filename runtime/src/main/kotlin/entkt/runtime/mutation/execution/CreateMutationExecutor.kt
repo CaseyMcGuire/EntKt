@@ -9,18 +9,20 @@ import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.runBatchHooksForInternalUse
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
-import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.EntValidationException
+import entkt.runtime.result.EntityKey
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.ValidationViolation
 import entkt.runtime.result.toValidationViolation
+import entkt.runtime.validation.MutationValidationEvaluator
 import java.util.concurrent.CancellationException
 
 /**
@@ -32,20 +34,20 @@ import java.util.concurrent.CancellationException
  * returned-entity LOAD privacy when the terminal exposes entities.
  */
 @EntktInternal
-class CreateMutationExecutor<RuleClient>(
+class CreateMutationExecutor<Candidate>(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime,
-    private val ruleClient: RuleClient,
+    private val privacyEvaluator: MutationPrivacyEvaluator<Candidate>,
+    private val validationEvaluator: MutationValidationEvaluator<Candidate>,
 ) {
     private val execution = MutationExecutionSupport(mutationRuntime)
 
     /** Bind an entity specification whose generated API exposes only scalar create. */
     fun <
         Draft : CreateMutationDraft<Entity>,
-        Candidate,
         Entity : EntEntity<*>,
         > operationForInternalUse(
-        spec: CreateMutationSpec<Draft, Candidate, Entity, RuleClient>,
+        spec: CreateMutationSpec<Draft, Candidate, Entity>,
     ): CreateOperation<Draft, Entity> = buildOperation(
         spec = spec,
         newDraft = null,
@@ -55,10 +57,9 @@ class CreateMutationExecutor<RuleClient>(
     /** Bind one generated entity specification to the reusable create operation. */
     fun <
         Draft : CreateMutationDraft<Entity>,
-        Candidate,
         Entity : EntEntity<*>,
         > operationForInternalUse(
-        spec: CreateMutationSpec<Draft, Candidate, Entity, RuleClient>,
+        spec: CreateMutationSpec<Draft, Candidate, Entity>,
         newDraft: () -> Draft,
         ownedTransaction: (
             ViewerContext,
@@ -74,10 +75,9 @@ class CreateMutationExecutor<RuleClient>(
     /** Construct the bound operation after selecting its optional bulk capability. */
     private fun <
         Draft : CreateMutationDraft<Entity>,
-        Candidate,
         Entity : EntEntity<*>,
         > buildOperation(
-        spec: CreateMutationSpec<Draft, Candidate, Entity, RuleClient>,
+        spec: CreateMutationSpec<Draft, Candidate, Entity>,
         newDraft: (() -> Draft)?,
         ownedTransaction: ((
             ViewerContext,
@@ -104,13 +104,12 @@ class CreateMutationExecutor<RuleClient>(
     /** Execute one create lifecycle and optionally authorize the returned entity. */
     fun <
         Draft : CreateMutationDraft<Entity>,
-        Candidate,
         Entity : EntEntity<*>,
         > create(
         viewerContext: ViewerContext,
         draft: Draft,
         spec: CreateMutationSpec<
-            Draft, Candidate, Entity, RuleClient,
+            Draft, Candidate, Entity,
         >,
         checkReturnedEntityPrivacy: Boolean,
     ): MutationResult<Entity> = execution.execute { attempt ->
@@ -139,13 +138,12 @@ class CreateMutationExecutor<RuleClient>(
     /** Execute the phase-major create lifecycle for inputs in an active transaction. */
     fun <
         Draft : CreateMutationDraft<Entity>,
-        Candidate,
         Entity : EntEntity<*>,
         > createMany(
         viewerContext: ViewerContext,
         drafts: List<Draft>,
         spec: CreateMutationSpec<
-            Draft, Candidate, Entity, RuleClient,
+            Draft, Candidate, Entity,
         >,
         promoteDriverNotPersisted: Boolean,
     ): MutationResult<List<Entity>> = execution.execute { attempt ->
@@ -166,14 +164,13 @@ class CreateMutationExecutor<RuleClient>(
     /** Run every scalar or batch create phase in lifecycle order. */
     private fun <
         Draft : CreateMutationDraft<Entity>,
-        Candidate,
         Entity : EntEntity<*>,
         > executeCreate(
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
         drafts: List<Draft>,
         spec: CreateMutationSpec<
-            Draft, Candidate, Entity, RuleClient,
+            Draft, Candidate, Entity,
         >,
         persistence: CreatePersistence,
         postWriteState: MutationWriteState,
@@ -204,13 +201,11 @@ class CreateMutationExecutor<RuleClient>(
             entityName = entityName,
             prepared = resolvedCreates,
             viewerContext = viewerContext,
-            privacy = spec.privacy,
         )
         evaluateCreateValidation(
             attempt = attempt,
             entityName = entityName,
             prepared = resolvedCreates,
-            validation = spec.validation,
         )
 
         val createdEntities = persistCreates(
@@ -247,13 +242,13 @@ class CreateMutationExecutor<RuleClient>(
     }
 
     /** Resolve every draft before any field, privacy, or rule validation runs. */
-    private fun <Draft, Candidate> resolveDrafts(
+    private fun <Draft> resolveDrafts(
         drafts: List<Draft>,
         resolveDraft: (Draft) -> PreparedCreate<Candidate>,
     ): List<PreparedCreate<Candidate>> = drafts.map(resolveDraft)
 
     /** Reject schema-field violations before CREATE privacy sees candidates. */
-    private fun <Candidate> rejectFieldViolations(
+    private fun rejectFieldViolations(
         attempt: MutationAttempt,
         entityName: String,
         prepared: List<PreparedCreate<Candidate>>,
@@ -273,70 +268,48 @@ class CreateMutationExecutor<RuleClient>(
     }
 
     /** Reject the entire create operation when any candidate is denied. */
-    private fun <Candidate> evaluateCreatePrivacy(
+    private fun evaluateCreatePrivacy(
         attempt: MutationAttempt,
         entityName: String,
         prepared: List<PreparedCreate<Candidate>>,
         viewerContext: ViewerContext,
-        privacy: MutationPrivacyPhase<RuleClient, Candidate>,
     ) {
-        val decisions = privacy.evaluate(
+        val denial = privacyEvaluator.evaluate(
             viewerContext = viewerContext,
-            ruleClient = ruleClient,
-            candidates = prepared.map { it.candidate },
-        )
-        check(decisions.size == prepared.size) {
-            "CREATE privacy returned ${decisions.size} decisions for " +
-                "${prepared.size} candidates"
-        }
-        val denialReason = decisions.firstNotNullOfOrNull { decision ->
-            when (decision) {
-                PrivacyDecision.Allow -> null
-                is PrivacyDecision.Deny -> decision.reason
-                PrivacyDecision.Continue -> "no create rule allowed access"
-            }
-        }
-        denialReason?.let { reason ->
+            states = prepared.map { it.candidate },
+        ).firstDeniedOrNull()
+        denial?.let {
             attempt.reject(
                 EntMutationPrivacyDeniedException(
                     writeState = MutationWriteState.NotPersisted,
                     entityType = entityName,
                     operation = EntOperation.CREATE,
                     entityKey = null,
-                    reason = reason,
+                    reason = it.reason,
                 ),
             )
         }
     }
 
     /** Reject the entire create operation when any candidate is invalid. */
-    private fun <Candidate> evaluateCreateValidation(
+    private fun evaluateCreateValidation(
         attempt: MutationAttempt,
         entityName: String,
         prepared: List<PreparedCreate<Candidate>>,
-        validation: MutationValidationPhase<RuleClient, Candidate>,
     ) {
-        val invalidsByCandidate = validation.evaluate(
-            ruleClient = ruleClient,
-            candidates = prepared.map { it.candidate },
-        )
-        check(invalidsByCandidate.size == prepared.size) {
-            "CREATE validation returned ${invalidsByCandidate.size} results for " +
-                "${prepared.size} candidates"
-        }
-        invalidsByCandidate.firstOrNull { it.isNotEmpty() }?.let { invalids ->
+        validationEvaluator.evaluate(prepared.map { it.candidate }).firstInvalidOrNull()?.let { invalid ->
             attempt.reject(
                 EntValidationException(
                     entityType = entityName,
                     operation = EntOperation.CREATE,
-                    violations = invalids.map { it.toValidationViolation() },
+                    violations = invalid.violations.map { it.toValidationViolation() },
                 ),
             )
         }
     }
 
     /** Persist prepared rows with the scalar or batch driver primitive. */
-    private fun <Candidate, Entity : EntEntity<*>> persistCreates(
+    private fun <Entity : EntEntity<*>> persistCreates(
         attempt: MutationAttempt,
         prepared: List<PreparedCreate<Candidate>>,
         entity: EntityMapping<Entity>,
@@ -427,7 +400,12 @@ class CreateMutationExecutor<RuleClient>(
             "LOAD privacy returned ${evaluations.size} decisions for " +
                 "${created.size} created entities"
         }
-        return evaluations.firstNotNullOfOrNull { it.denialOrNull() }
+        val denied = evaluations.firstDeniedOrNull() ?: return null
+        return PrivacyDenial(
+            entityType = entity.entityName,
+            entityKey = EntityKey("id", denied.subject.id),
+            reason = denied.reason,
+        )
     }
 }
 

@@ -11,15 +11,17 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
 import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
+import entkt.runtime.privacy.batchPrivacyRule
+import entkt.runtime.privacy.mutationPrivacyEvaluatorForInternalUse
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EntInterceptorsConfig
 import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.EntityQueryBuilder
 import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.query.execution.LoadPrivacyEvaluation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
@@ -30,6 +32,8 @@ import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.validation.ValidationDecision
+import entkt.runtime.validation.batchValidationRule
+import entkt.runtime.validation.mutationValidationEvaluatorForInternalUse
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -194,11 +198,11 @@ class DeleteMutationExecutorTest {
                 entity: EntityMapping<Entity>,
                 viewerContext: ViewerContext,
                 entities: List<Entity>,
-            ): List<LoadPrivacyEvaluation<Entity>> =
+            ): PrivacyEvaluation<Entity> =
                 error("DELETE candidate selection never evaluates LOAD privacy")
         }
 
-        val spec: DeleteMutationSpec<Widget, Candidate, Any> = DeleteMutationSpec(
+        val spec: DeleteMutationSpec<Widget, Candidate> = DeleteMutationSpec(
             entity = mapping,
             idColumn = "id",
             newQuery = { WidgetQuery(driver, queryHost, mapping) },
@@ -206,19 +210,49 @@ class DeleteMutationExecutorTest {
                 events += "candidate:${entity.id}"
                 Candidate(entity.name)
             },
-            privacy = MutationPrivacyPhase { context, client, candidates ->
-                events += "privacy:${candidates.joinToString { it.entity.id.toString() }}"
-                receivedViewerContexts += context
-                receivedRuleClients += client
-                privacyDecisions.ifEmpty { List(candidates.size) { PrivacyDecision.Allow } }
-            },
-            validation = MutationValidationPhase { client, candidates ->
-                events += "validation:${candidates.joinToString { it.entity.id.toString() }}"
-                receivedRuleClients += client
-                validationDecisions.ifEmpty { List(candidates.size) { emptyList() } }
-            },
             beforeDelete = listOf(Hook { entity -> events += "before:${entity.id}" }),
             afterDelete = listOf(Hook { entity -> events += "after:${entity.id}" }),
+        )
+
+        val privacyEvaluator = mutationPrivacyEvaluatorForInternalUse<
+            Any,
+            DeleteRuleCandidate<Widget, Candidate>,
+            DeleteRuleCandidate<Widget, Candidate>,
+            >(
+            lifecycle = "Widget DELETE privacy",
+            unresolvedReason = "no delete rule allowed access",
+            rules = listOf(
+                batchPrivacyRule<Any, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
+                    events += "privacy:${batch.joinToString { it.entity.id.toString() }}"
+                    receivedViewerContexts += context.viewerContext
+                    receivedRuleClients += context.client
+                    batch.decideEachIndexed { index, _ ->
+                        privacyDecisions.getOrNull(index) ?: PrivacyDecision.Allow
+                    }
+                },
+            ),
+            ruleClientProvider = { ruleClient },
+            freshItem = { it },
+        )
+
+        val validationEvaluator = mutationValidationEvaluatorForInternalUse<
+            Any,
+            DeleteRuleCandidate<Widget, Candidate>,
+            DeleteRuleCandidate<Widget, Candidate>,
+            >(
+            lifecycle = "Widget DELETE validation",
+            rules = listOf(
+                batchValidationRule<Any, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
+                    events += "validation:${batch.joinToString { it.entity.id.toString() }}"
+                    receivedRuleClients += context.client
+                    batch.decideEachIndexed { index, _ ->
+                        validationDecisions.getOrNull(index)?.firstOrNull()
+                            ?: ValidationDecision.Valid
+                    }
+                },
+            ),
+            ruleClientProvider = { ruleClient },
+            freshItem = { it },
         )
 
         val executor = DeleteMutationExecutor(
@@ -239,9 +273,10 @@ class DeleteMutationExecutorTest {
                     entity: EntityMapping<Entity>,
                     viewerContext: ViewerContext,
                     entities: List<Entity>,
-                ): List<LoadPrivacyEvaluation<Entity>> = error("DELETE never evaluates LOAD privacy")
+                ): PrivacyEvaluation<Entity> = error("DELETE never evaluates LOAD privacy")
             },
-            ruleClient = ruleClient,
+            privacyEvaluator = privacyEvaluator,
+            validationEvaluator = validationEvaluator,
         )
     }
 
@@ -338,13 +373,11 @@ class DeleteMutationExecutorTest {
         )) {
             val fixture = Fixture(inTransaction)
             val boom = IllegalStateException("after")
-            val failingSpec: DeleteMutationSpec<Widget, Candidate, Any> = DeleteMutationSpec(
+            val failingSpec: DeleteMutationSpec<Widget, Candidate> = DeleteMutationSpec(
                 entity = fixture.mapping,
                 idColumn = "id",
                 newQuery = fixture.spec.newQuery,
                 candidate = fixture.spec.candidate,
-                privacy = fixture.spec.privacy,
-                validation = fixture.spec.validation,
                 beforeDelete = emptyList(),
                 afterDelete = listOf(Hook<Widget> { throw boom }),
             )

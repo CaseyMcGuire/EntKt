@@ -9,7 +9,7 @@ import entkt.runtime.entity.EntityMapping
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.query.execution.LoadPrivacyEvaluation
+import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntUnexpectedMutationException
@@ -319,7 +319,7 @@ class CreateOperationTest {
             entity: EntityMapping<Entity>,
             viewerContext: ViewerContext,
             entities: List<Entity>,
-        ): List<LoadPrivacyEvaluation<Entity>> = error("unused")
+        ): PrivacyEvaluation<Entity> = error("unused")
     }
 
     private fun denial(): PrivacyDenial = PrivacyDenial(

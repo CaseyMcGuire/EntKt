@@ -10,6 +10,8 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.StorageQuerySpec
@@ -22,7 +24,6 @@ import entkt.runtime.query.InterceptScope
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.query.execution.LoadPrivacyEvaluation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntPrivacyDeniedException
@@ -175,19 +176,17 @@ class ReadQueryExecutorRootTest {
                 entity: EntityMapping<Entity>,
                 viewerContext: ViewerContext,
                 entities: List<Entity>,
-            ): List<LoadPrivacyEvaluation<Entity>> {
+            ): PrivacyEvaluation<Entity> {
                 assertSame(adapter as Any, entity as Any)
                 assertSame(adapter.viewerContext, viewerContext)
                 adapter.events += "load-privacy:${entities.joinToString { it.id.toString() }}"
                 val denials = adapter.denials.ifEmpty { List(entities.size) { null } }
-                return entities.mapIndexed { index, entityValue ->
-                    val denial = denials[index]
-                    if (denial == null) {
-                        LoadPrivacyEvaluation.Allowed(entityValue)
-                    } else {
-                        LoadPrivacyEvaluation.Denied(entityValue, denial)
-                    }
-                }
+                return privacyEvaluation(
+                    subjects = entities,
+                    decisions = denials.map { denial ->
+                        denial?.let { PrivacyDecision.Deny(it.reason) } ?: PrivacyDecision.Allow
+                    },
+                )
             }
         },
     )

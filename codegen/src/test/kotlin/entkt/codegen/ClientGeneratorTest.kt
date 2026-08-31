@@ -158,19 +158,18 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient supplies one stable read-only rule client to each mutation executor`() {
+    fun `EntClient exposes one stable read-only rule client for entity-local evaluators`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains(": EntReadRuntime, MutationRuntime, EntClientScope"))
         assert(output.contains("internal val readOnlyClient: ReadOnlyEntClient by lazy"))
         assert(output.contains("ReadOnlyEntClientImpl("))
-        assert(output.contains("CreateMutationExecutor<ReadOnlyEntClient>"))
-        assert(output.contains("DeleteMutationExecutor<ReadOnlyEntClient>"))
-        assert(output.contains("UpdateMutationExecutor<ReadOnlyEntClient>"))
-        assert(output.contains("internal val createMutations:"))
-        assert(output.contains("internal val deleteMutations:"))
-        assert(output.contains("internal val updateMutations:"))
-        assert(Regex("ruleClient = readOnlyClient").findAll(output).count() == 3)
+        assert(!output.contains("CreateMutationExecutor"))
+        assert(!output.contains("DeleteMutationExecutor"))
+        assert(!output.contains("UpdateMutationExecutor"))
+        assert(!output.contains("createMutations"))
+        assert(!output.contains("deleteMutations"))
+        assert(!output.contains("updateMutations"))
         assert(!output.contains("privacyReadClient") && !output.contains("validationReadClient"))
         assert(!output.contains("privacyRuleClient(") && !output.contains("validationRuleClient("))
         assert(!output.contains("evaluateCreatePrivacy") && !output.contains("evaluateCreateValidation")) {

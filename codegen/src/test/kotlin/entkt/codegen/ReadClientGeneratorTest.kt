@@ -97,30 +97,23 @@ class ReadClientGeneratorTest {
     }
 
     @Test
-    fun `read surface exposes positional LOAD batches and read repo delegates them to its host`() {
+    fun `read surface exposes correlated LOAD evaluation and read repo delegates it to its host`() {
         val runtimeOutput = readRuntimeOutput().replace("\\s+".toRegex(), " ")
         val clientOutput = readClientOutput().replace("\\s+".toRegex(), " ")
 
         assert(
             runtimeOutput.contains(
-                "public interface CarReadSurface { public fun hasLoadPrivacy(): Boolean public fun loadDenials(viewerContext: ViewerContext, entities: List<Car>): List<PrivacyDenial?> public fun loadDenialOrNull(",
+                "public interface CarReadSurface { public fun hasLoadPrivacy(): Boolean public fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Car>): PrivacyEvaluation<Car>",
             ),
         ) {
-            "CarReadSurface should expose the plural positional LOAD contract before its singleton projection\n$runtimeOutput"
+            "CarReadSurface should expose the correlated LOAD evaluation contract\n$runtimeOutput"
         }
         assert(
             clientOutput.contains(
-                "override fun loadDenials(viewerContext: ViewerContext, entities: List<Car>): List<PrivacyDenial?> = host.loadDenials(viewerContext, entities)",
+                "override fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Car>): PrivacyEvaluation<Car> = host.evaluateLoadPrivacy(viewerContext, entities)",
             ),
         ) {
-            "CarReadRepo should delegate the complete LOAD batch to its host surface\n$clientOutput"
-        }
-        assert(
-            clientOutput.contains(
-                "override fun loadDenialOrNull(viewerContext: ViewerContext, entity: Car): PrivacyDenial? = host.loadDenialOrNull(viewerContext, entity)",
-            ),
-        ) {
-            "CarReadRepo should keep singleton LOAD delegation behavior aligned with its host\n$clientOutput"
+            "CarReadRepo should delegate the complete LOAD evaluation to its host surface\n$clientOutput"
         }
     }
 
@@ -148,12 +141,11 @@ class ReadClientGeneratorTest {
         }
         assert(
             output.contains(
-                "CarQuery.GeneratedEntityMapping -> correlateLoadPrivacyEvaluationsForInternalUse( " +
-                    "\"Car LOAD privacy\", entities, " +
-                    "cars.loadDenials(viewerContext, entities as List<Car>), )",
+                "CarQuery.GeneratedEntityMapping -> cars.evaluateLoadPrivacy( " +
+                    "viewerContext, entities as List<Car>, ) as PrivacyEvaluation<Entity>",
             ),
         ) {
-            "recursive targets should correlate each entity with its LOAD denial\n$output"
+            "recursive targets should retain the evaluator's correlated result\n$output"
         }
     }
 

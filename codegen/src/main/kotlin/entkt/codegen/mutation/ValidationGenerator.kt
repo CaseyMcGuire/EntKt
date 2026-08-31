@@ -7,7 +7,6 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.TypeName
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.function
@@ -32,12 +31,12 @@ private val RESOLVED_ENTITY_VALIDATION_CONFIG =
  *
  * - `{Entity}ValidationConfig` — internal mutable config holding rule lists
  * - `{Entity}ValidationScope` — DSL scope for declaring rules per operation
- * - `{Entity}{Op}ValidationItem` — per-item snapshots for create/update/delete
  * - `{Entity}{Op}ValidationRule` and `{Entity}{Op}BatchValidationRule` — typealiases for each operation's rule types
  *
  * Unlike privacy, validation has no LOAD operation and its shared rule context
  * does not carry a [ViewerContext] — validation is viewer-agnostic. The
- * [WriteCandidate] is reused from the privacy generator.
+ * CREATE, UPDATE, and DELETE rules consume the same generated lifecycle input
+ * types as privacy rules.
  */
 internal class ValidationGenerator(
     private val packageName: String,
@@ -48,7 +47,6 @@ internal class ValidationGenerator(
         schema: EntSchema,
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
-        val entityClass = ClassName(packageName, schemaName)
         // The shared ValidationRuleContext exposes the stable read-only client,
         // not the full EntClient — validator writes are compile errors,
         // not a documentation convention. Generated evaluators reuse the
@@ -57,17 +55,12 @@ internal class ValidationGenerator(
         // type makes the privacy-bypass read posture visible in helper
         // signatures.
         val clientClass = ClassName(packageName, "ReadOnlyEntClient")
-        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
-        val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
-        val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
         val configClass = ClassName(packageName, "${schemaName}ValidationConfig")
         val scopeClass = ClassName(packageName, "${schemaName}ValidationScope")
 
-        // Operation item class names. The runtime ValidationRuleContext holds
-        // the shared read client once for the whole evaluation phase.
-        val createItem = ClassName(packageName, "${schemaName}CreateValidationItem")
-        val updateItem = ClassName(packageName, "${schemaName}UpdateValidationItem")
-        val deleteItem = ClassName(packageName, "${schemaName}DeleteValidationItem")
+        val createInput = ClassName(packageName, "${schemaName}CreateRuleInput")
+        val updateInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
+        val deleteInput = ClassName(packageName, "${schemaName}DeleteRuleInput")
 
         // Rule typealiases
         val createRule = "${schemaName}CreateValidationRule"
@@ -78,20 +71,13 @@ internal class ValidationGenerator(
         val deleteBatchRule = "${schemaName}DeleteBatchValidationRule"
 
         return kotlinFile(packageName, "${schemaName}Validation") {
-            typeAlias(createRule, VALIDATION_RULE.parameterizedBy(clientClass, createItem))
-            typeAlias(updateRule, VALIDATION_RULE.parameterizedBy(clientClass, updateItem))
-            typeAlias(deleteRule, VALIDATION_RULE.parameterizedBy(clientClass, deleteItem))
-            typeAlias(createBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, createItem))
-            typeAlias(updateBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, updateItem))
-            typeAlias(deleteBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, deleteItem))
+            typeAlias(createRule, VALIDATION_RULE.parameterizedBy(clientClass, createInput))
+            typeAlias(updateRule, VALIDATION_RULE.parameterizedBy(clientClass, updateInput))
+            typeAlias(deleteRule, VALIDATION_RULE.parameterizedBy(clientClass, deleteInput))
+            typeAlias(createBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, createInput))
+            typeAlias(updateBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, updateInput))
+            typeAlias(deleteBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, deleteInput))
 
-            addType(buildCreateItem(candidateClass, createItem))
-            addType(
-                buildUpdateItem(
-                    entityClass, candidateClass, patchClass, edgeChangesViewClass, updateItem,
-                ),
-            )
-            addType(buildDeleteItem(entityClass, candidateClass, deleteItem))
             addType(
                 buildValidationConfig(
                     configClass,
@@ -112,50 +98,6 @@ internal class ValidationGenerator(
                     ClassName(packageName, deleteBatchRule),
                 ),
             )
-        }
-    }
-
-    private fun buildCreateItem(
-        candidateClass: ClassName,
-        itemClass: ClassName,
-    ): TypeSpec = validationItem(itemClass, "candidate" to candidateClass)
-
-    private fun buildUpdateItem(
-        entityClass: ClassName,
-        candidateClass: ClassName,
-        patchClass: ClassName,
-        edgeChangesViewClass: ClassName,
-        itemClass: ClassName,
-    ): TypeSpec = validationItem(
-        itemClass,
-        "before" to entityClass,
-        "requestedPatch" to patchClass,
-        "effectivePatch" to patchClass,
-        "candidate" to candidateClass,
-        "edgeChanges" to edgeChangesViewClass,
-    )
-
-    private fun buildDeleteItem(
-        entityClass: ClassName,
-        candidateClass: ClassName,
-        itemClass: ClassName,
-    ): TypeSpec = validationItem(
-        itemClass,
-        "entity" to entityClass,
-        "candidate" to candidateClass,
-    )
-
-    /** Data shape shared by create, update, and delete validation items. */
-    private fun validationItem(
-        itemClass: ClassName,
-        vararg members: Pair<String, TypeName>,
-    ): TypeSpec = classType(itemClass) {
-        addModifiers(KModifier.DATA)
-        primaryConstructor {
-            for ((name, type) in members) parameter(name, type)
-        }
-        for ((name, type) in members) {
-            property(name, type) { initializer(name) }
         }
     }
 

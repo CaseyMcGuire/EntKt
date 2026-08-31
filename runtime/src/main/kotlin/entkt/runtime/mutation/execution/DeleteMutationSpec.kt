@@ -26,14 +26,11 @@ data class DeleteSelection<Entity : EntEntity<*>>(
 class DeleteMutationSpec<
     Entity : EntEntity<*>,
     Candidate,
-    RuleClient,
     >(
     val entity: EntityMapping<Entity>,
     val idColumn: String,
     val newQuery: () -> EntityQueryBuilder<Entity, *>,
     val candidate: (Entity) -> Candidate,
-    val privacy: MutationPrivacyPhase<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
-    val validation: MutationValidationPhase<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
     beforeDelete: List<BatchHook<Entity>>,
     afterDelete: List<BatchHook<Entity>>,
 ) {

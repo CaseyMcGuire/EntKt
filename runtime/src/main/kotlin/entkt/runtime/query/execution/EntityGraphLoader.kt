@@ -4,6 +4,7 @@ package entkt.runtime.query.execution
 
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.privacy.PrivacyOutcome
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EdgeSelection
 import entkt.runtime.query.EdgeStep
@@ -12,7 +13,9 @@ import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.EntityKey
 import entkt.runtime.result.LoadDenialOrigin
+import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.SelectedEdgeStep
 import kotlin.reflect.KClass
 
@@ -37,7 +40,7 @@ import kotlin.reflect.KClass
  */
 internal class EntityGraphLoader(
     private val storage: GraphStorage,
-    private val loadPrivacyEvaluator: LoadPrivacyEvaluator,
+    private val loadPrivacyDispatcher: LoadPrivacyDispatcher,
 ) {
     /** Load the root batch, then evaluate its recursively selected graph. */
     fun <Entity : EntEntity<*>> load(
@@ -148,33 +151,40 @@ internal class EntityGraphLoader(
             return entities
         }
 
-        if (!loadPrivacyEvaluator.isConfigured(entity)) {
+        if (!loadPrivacyDispatcher.isConfigured(entity)) {
             return entities
         }
-        val evaluations = loadPrivacyEvaluator.evaluate(entity, viewerContext, entities)
+        val evaluation = loadPrivacyDispatcher.evaluate(entity, viewerContext, entities)
+
+        fun denial(outcome: PrivacyOutcome.Denied<Node>) =
+            PrivacyDenial(
+                entity.entityName,
+                EntityKey("id", outcome.subject.id),
+                outcome.reason,
+            )
 
         return when (denialPolicy) {
             LoadDenialPolicy.FailRoot -> {
-                val rejected = evaluations.mapNotNull { it.denialOrNull() }
+                val rejected = evaluation.deniedOutcomes().map(::denial)
                 if (rejected.isNotEmpty()) {
                     throw EntPrivacyDeniedException(LoadDenialOrigin.Root, rejected)
                 }
-                evaluations.map { evaluation -> evaluation.entity }
+                evaluation.allowedSubjects()
             }
 
             is LoadDenialPolicy.FailEdge -> {
-                val denial = evaluations.firstNotNullOfOrNull { it.denialOrNull() }
-                if (denial != null) {
+                val firstDenied = evaluation.firstDeniedOrNull()
+                if (firstDenied != null) {
                     throw EntPrivacyDeniedException(
                         denialPolicy.origin,
-                        listOf(denial),
+                        listOf(denial(firstDenied)),
                     )
                 }
-                evaluations.map { evaluation -> evaluation.entity }
+                evaluation.allowedSubjects()
             }
 
             LoadDenialPolicy.FilterDeniedTargets ->
-                evaluations.mapNotNull { it.allowedEntityOrNull() }
+                evaluation.allowedSubjects()
         }
     }
 }

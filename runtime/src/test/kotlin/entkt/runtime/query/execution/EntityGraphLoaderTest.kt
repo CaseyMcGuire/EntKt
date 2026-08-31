@@ -4,6 +4,9 @@ package entkt.runtime.query.execution
 
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.privacyEvaluation
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EdgeMapping
@@ -16,9 +19,7 @@ import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.ToManyEdgeMapping
 import entkt.runtime.result.EntPrivacyDeniedException
-import entkt.runtime.result.EntityKey
 import entkt.runtime.result.LoadDenialOrigin
-import entkt.runtime.result.PrivacyDenial
 import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -102,25 +103,22 @@ class EntityGraphLoaderTest {
         private val events: MutableList<String>,
         private val deniedIds: Set<Long> = emptySet(),
         private val configured: Boolean = true,
-    ) : LoadPrivacyEvaluator {
+    ) : LoadPrivacyDispatcher {
         override fun isConfigured(entity: EntityMapping<*>): Boolean = configured
 
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
             viewerContext: ViewerContext,
             entities: List<Entity>,
-        ): List<LoadPrivacyEvaluation<Entity>> {
+        ): PrivacyEvaluation<Entity> {
             events += "privacy:${entities.joinToString { it.id.toString() }}"
-            return entities.map { value ->
-                val denial = if (value.id in deniedIds) {
-                    PrivacyDenial(entity.entityName, EntityKey("id", value.id), "hidden")
-                } else null
-                if (denial == null) {
-                    LoadPrivacyEvaluation.Allowed(value)
-                } else {
-                    LoadPrivacyEvaluation.Denied(value, denial)
-                }
-            }
+            return privacyEvaluation(
+                subjects = entities,
+                decisions = entities.map { value ->
+                    if (value.id in deniedIds) PrivacyDecision.Deny("hidden")
+                    else PrivacyDecision.Allow
+                },
+            )
         }
     }
 
@@ -140,7 +138,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluator = RecordingPrivacy(events, configured = false),
+            loadPrivacyDispatcher = RecordingPrivacy(events, configured = false),
         )
         val notes = ItemEdge("notes")
         val children = ItemEdge("children")
@@ -192,7 +190,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluator = RecordingPrivacy(events, deniedIds = setOf(1L, 2L)),
+            loadPrivacyDispatcher = RecordingPrivacy(events, deniedIds = setOf(1L, 2L)),
         )
         val query = query(
             EdgeSelection(ItemEdge("children"), query(), EdgeVisibility.REQUIRE_VISIBLE),
@@ -217,7 +215,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluator = RecordingPrivacy(events, deniedIds = setOf(2L)),
+            loadPrivacyDispatcher = RecordingPrivacy(events, deniedIds = setOf(2L)),
         )
         val query = query(
             EdgeSelection(ItemEdge("children"), query(), EdgeVisibility.FILTER_INVISIBLE),
@@ -245,7 +243,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluator = RecordingPrivacy(events, deniedIds = setOf(3L)),
+            loadPrivacyDispatcher = RecordingPrivacy(events, deniedIds = setOf(3L)),
         )
         val query = query(
             EdgeSelection(
@@ -280,7 +278,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyEvaluator = RecordingPrivacy(events),
+            loadPrivacyDispatcher = RecordingPrivacy(events),
         )
         val query = query(
             EdgeSelection(ItemEdge("children"), query(), EdgeVisibility.REQUIRE_VISIBLE),
