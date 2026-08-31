@@ -222,6 +222,7 @@ to read and write users:
 | `UserCreateDraft` | Mutable create input used by `client.users.create { ... }` and later `configure { ... }` blocks |
 | `UserUpdateDraft` | Mutable update patch used by `client.users.update(id) { ... }` and later `configure { ... }` blocks |
 | `PendingCreateMutation<UserCreateDraft, User>` / `PendingUpdateMutation<UserUpdateDraft, User>` | Single-use runtime operations returned by `create` and `update`; they supply `configure`, `save`, and `saveAndLoad` and are not generated per entity |
+| `PendingMutation<Draft, Entity>` | Shared abstract mutation lifecycle for code that accepts either a pending create or update operation |
 | `UserQuery` | Filtering, ordering, pagination, traversal, edge loading, and result-bearing read terminals |
 | `UserRepo` | Entry points such as `create`, `update`, `query`, `findById`, and the delete methods |
 | `UserIndexes` | Typed exact and range helpers generated when `User` declares an eligible index |

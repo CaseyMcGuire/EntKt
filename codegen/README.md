@@ -31,9 +31,10 @@ happens only through the `PendingUpdateMutation` returned by the repository.
 
 `PendingCreateMutation<Draft, Entity>` and
 `PendingUpdateMutation<Draft, Entity>` are runtime classes, not generated
-classes. They own the single-use `configure`, `save`, and `saveAndLoad`
-operation lifecycle while generated repositories supply the schema-specific
-draft and persistence adapter:
+classes. Both extend `PendingMutation<Draft, Entity>`, which owns the
+single-use `configure`, `save`, and `saveAndLoad` lifecycle. Their generated
+draft types implement operation-specific contracts derived from
+`MutationDraft<Entity>`, while generated repositories supply persistence:
 
 ```kotlin
 val creation: PendingCreateMutation<UserCreateDraft, User> =
@@ -78,9 +79,10 @@ are framework integration details. See [Ent Viewer](../docs/11-ent-viewer.md).
 ### Runtime types used by the generated API
 
 The generated surface also refers to ordinary runtime types including
-`PendingCreateMutation`, `PendingUpdateMutation`, `ReadResult`, `MutationResult`,
-`ViewerContext`, `EntityHooks`, and the privacy/validation rule interfaces.
-They are shared implementations and are therefore not regenerated per schema.
+`PendingMutation`, `PendingCreateMutation`, `PendingUpdateMutation`,
+`MutationDraft`, `ReadResult`, `MutationResult`, `ViewerContext`, `EntityHooks`,
+and the privacy/validation rule interfaces. They are shared implementations
+and are therefore not regenerated per schema.
 
 ## Lifecycle hooks
 

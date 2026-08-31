@@ -5,50 +5,17 @@ package entkt.runtime.mutation
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.result.EntMutationAlreadyConsumedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.MutationResult
-import entkt.runtime.result.MutationWriteState
 
-/**
- * A configurable create mutation awaiting its one permitted save terminal.
- *
- * Pending describes this object's pre-terminal lifecycle; it does not mean
- * [MutationWriteState.TransactionPending], which describes a write inside an unresolved transaction.
- */
+/** A pending mutation that creates one [Entity]. */
 class PendingCreateMutation<Draft : CreateMutationDraft<Entity>, Entity : EntEntity<*>> @EntktInternal constructor(
-    private val draft: Draft,
+    draft: Draft,
     private val repository: CreateMutationRepository<Draft, Entity>,
-) {
-    private var consumed = false
+) : PendingMutation<Draft, Entity>(draft, EntOperation.CREATE) {
+    override fun executeSave(viewerContext: ViewerContext): MutationResult<Unit> =
+        repository.saveCreation(viewerContext, draft)
 
-    /** Apply additional changes before this mutation is consumed. */
-    fun configure(block: Draft.() -> Unit): PendingCreateMutation<Draft, Entity> {
-        requireAvailable("configure")
-        draft.block()
-        return this
-    }
-
-    /** Persist the configured draft without disclosing the created entity. */
-    fun save(viewerContext: ViewerContext): MutationResult<Unit> {
-        consume("save")
-        return repository.saveCreation(viewerContext, draft)
-    }
-
-    /** Persist the configured draft and return the created entity under LOAD privacy. */
-    fun saveAndLoad(viewerContext: ViewerContext): MutationResult<Entity> {
-        consume("saveAndLoad")
-        return repository.saveAndLoadCreation(viewerContext, draft)
-    }
-
-    private fun consume(action: String) {
-        requireAvailable(action)
-        consumed = true
-    }
-
-    private fun requireAvailable(action: String) {
-        if (consumed) {
-            throw EntMutationAlreadyConsumedException(EntOperation.CREATE, action)
-        }
-    }
+    override fun executeSaveAndLoad(viewerContext: ViewerContext): MutationResult<Entity> =
+        repository.saveAndLoadCreation(viewerContext, draft)
 }

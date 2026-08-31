@@ -47,7 +47,7 @@ class PendingCreateMutationTest {
     fun `configuration remains mutable until the first terminal`() {
         val draft = Draft("first")
         val repository = RecordingRepository()
-        val mutation = PendingCreateMutation(draft, repository)
+        val mutation: PendingMutation<Draft, Article> = PendingCreateMutation(draft, repository)
 
         val returned = mutation.configure { title = title.orEmpty() + " second" }
         val result = mutation.saveAndLoad(viewerContext)
