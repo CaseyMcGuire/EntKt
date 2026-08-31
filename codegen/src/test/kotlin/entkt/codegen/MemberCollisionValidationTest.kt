@@ -134,7 +134,7 @@ class MemberCollisionValidationTest {
         val errors = validate("S" to S())
         assertTrue(
             errors.none { it.contains("SUpdateDraft") && it.contains("'saveAndLoad'") },
-            "saveAndLoad belongs to UpdateMutation, not SUpdateDraft: ${errors.joinToString()}",
+            "saveAndLoad belongs to PendingUpdateMutation, not SUpdateDraft: ${errors.joinToString()}",
         )
     }
 

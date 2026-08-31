@@ -5,7 +5,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.MutationResult
 
-/** Repository operations used by the generic [CreateMutation] wrapper. */
+/** Repository operations used by the generic [PendingCreateMutation] wrapper. */
 @EntktInternal
 interface CreateMutationRepository<Draft : CreateMutationDraft<Entity>, Entity : EntEntity<*>> {
     /** Persist a draft without disclosing the created entity. */

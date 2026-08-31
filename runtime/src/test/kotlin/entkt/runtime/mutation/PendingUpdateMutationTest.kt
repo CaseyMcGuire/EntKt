@@ -14,7 +14,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-class UpdateMutationTest {
+class PendingUpdateMutationTest {
     private val viewerContext = ViewerContext.privacyBypass_DANGEROUS("test")
 
     private data class Article(
@@ -51,7 +51,7 @@ class UpdateMutationTest {
             consistency = UpdateConsistency.Pessimistic,
             relationshipLocking = RelationshipLocking.Canonical,
         )
-        val mutation = UpdateMutation(request, repository)
+        val mutation = PendingUpdateMutation(request, repository)
 
         val returned = mutation.configure { title = title.orEmpty() + " second" }
         val result = mutation.saveAndLoad(viewerContext)
@@ -69,7 +69,7 @@ class UpdateMutationTest {
     @Test
     fun `save discards the internal entity and skips LOAD privacy`() {
         val repository = RecordingRepository()
-        val mutation = UpdateMutation(
+        val mutation = PendingUpdateMutation(
             request = UpdateMutationRequest(
                 id = 3L,
                 draft = Draft("saved"),
@@ -86,7 +86,7 @@ class UpdateMutationTest {
     @Test
     fun `a failed configuration block retains its earlier assignments`() {
         val draft = Draft()
-        val mutation = UpdateMutation(
+        val mutation = PendingUpdateMutation(
             request = UpdateMutationRequest(
                 id = 1L,
                 draft = draft,
@@ -110,7 +110,7 @@ class UpdateMutationTest {
 
     @Test
     fun `configuration and terminals fail after the mutation is consumed`() {
-        val mutation = UpdateMutation(
+        val mutation = PendingUpdateMutation(
             request = UpdateMutationRequest(
                 id = 1L,
                 draft = Draft("saved"),

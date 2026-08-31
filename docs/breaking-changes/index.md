@@ -42,13 +42,13 @@ above it.
 - **Separate update drafts from executable update mutations** (`codegen`, `runtime`)
   Generated `${Entity}Update` classes are replaced by state-only
   `${Entity}UpdateDraft` values. Repository `update(id) { ... }` now returns a
-  generic `UpdateMutation<Draft, Entity>` whose `configure { ... }`, `save()`,
+  generic `PendingUpdateMutation<Draft, Entity>` whose `configure { ... }`, `save()`,
   and `saveAndLoad()` methods own the operation. The mutation is single-use,
-  matching `CreateMutation`; its first save terminal consumes it.
+  matching `PendingCreateMutation`; its first save terminal consumes it.
   _Migration:_ replace explicit `${Entity}Update` type references with
   `${Entity}UpdateDraft`, keep configuration inside `update { ... }` or
   `.configure { ... }`, and invoke `save(viewerContext)` or
-  `saveAndLoad(viewerContext)` on the returned `UpdateMutation`.
+  `saveAndLoad(viewerContext)` on the returned `PendingUpdateMutation`.
 
 - **Remove generated raw query terminals** (`codegen`)
   Generated query builders no longer expose `rawCount`, `rawExists`,
@@ -113,7 +113,7 @@ above it.
 - **Separate create drafts from executable create mutations** (`codegen`, `runtime`)
   Generated `${Entity}Create` builders are replaced by state-only
   `${Entity}CreateDraft` values. Repository `create { ... }` now returns a
-  generic `CreateMutation<Draft, Entity>` whose `configure { ... }`, `save()`,
+  generic `PendingCreateMutation<Draft, Entity>` whose `configure { ... }`, `save()`,
   and `saveAndLoad()` methods own the executable operation. Draft fields are
   nullable while the draft is incomplete, reading an unspecified field returns
   `null`, and `isSet(Entity.field)` distinguishes unspecified from explicitly

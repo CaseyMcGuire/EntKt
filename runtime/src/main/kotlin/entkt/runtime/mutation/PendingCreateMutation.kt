@@ -4,20 +4,26 @@ package entkt.runtime.mutation
 
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationAlreadyConsumedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.MutationResult
-import entkt.runtime.privacy.ViewerContext
+import entkt.runtime.result.MutationWriteState
 
-/** A configurable create operation that can be consumed by exactly one save terminal. */
-class CreateMutation<Draft : CreateMutationDraft<Entity>, Entity : EntEntity<*>> @EntktInternal constructor(
+/**
+ * A configurable create mutation awaiting its one permitted save terminal.
+ *
+ * Pending describes this object's pre-terminal lifecycle; it does not mean
+ * [MutationWriteState.TransactionPending], which describes a write inside an unresolved transaction.
+ */
+class PendingCreateMutation<Draft : CreateMutationDraft<Entity>, Entity : EntEntity<*>> @EntktInternal constructor(
     private val draft: Draft,
     private val repository: CreateMutationRepository<Draft, Entity>,
 ) {
     private var consumed = false
 
     /** Apply additional changes before this mutation is consumed. */
-    fun configure(block: Draft.() -> Unit): CreateMutation<Draft, Entity> {
+    fun configure(block: Draft.() -> Unit): PendingCreateMutation<Draft, Entity> {
         requireAvailable("configure")
         draft.block()
         return this

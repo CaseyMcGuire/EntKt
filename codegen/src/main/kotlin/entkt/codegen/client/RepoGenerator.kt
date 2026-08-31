@@ -73,10 +73,12 @@ private val MUTATION_VALIDATION_PHASE =
     MemberName("entkt.runtime.mutation.execution", "mutationValidationPhaseForInternalUse")
 private val WITH_PRIVACY_FALLBACK =
     MemberName("entkt.runtime.mutation.execution", "withPrivacyFallbackForInternalUse")
-private val CREATE_MUTATION = ClassName("entkt.runtime.mutation", "CreateMutation")
+private val PENDING_CREATE_MUTATION =
+    ClassName("entkt.runtime.mutation", "PendingCreateMutation")
 private val CREATE_MUTATION_REPOSITORY =
     ClassName("entkt.runtime.mutation", "CreateMutationRepository")
-private val UPDATE_MUTATION = ClassName("entkt.runtime.mutation", "UpdateMutation")
+private val PENDING_UPDATE_MUTATION =
+    ClassName("entkt.runtime.mutation", "PendingUpdateMutation")
 private val UPDATE_MUTATION_REQUEST =
     ClassName("entkt.runtime.mutation", "UpdateMutationRequest")
 private val UPDATE_MUTATION_REPOSITORY =
@@ -279,7 +281,7 @@ internal class RepoGenerator(
             // sets otherwise).
             function(
                 "update",
-                UPDATE_MUTATION.parameterizedBy(updateDraftClass, entityClass),
+                PENDING_UPDATE_MUTATION.parameterizedBy(updateDraftClass, entityClass),
             ) {
                 parameter("id", idType)
                 parameter("consistency", UPDATE_CONSISTENCY) {
@@ -297,7 +299,7 @@ internal class RepoGenerator(
                     "val request = %T(id, draft, consistency, relationshipLocking)",
                     UPDATE_MUTATION_REQUEST,
                 )
-                statement("return %T(request, this)", UPDATE_MUTATION)
+                statement("return %T(request, this)", PENDING_UPDATE_MUTATION)
             }
             addFunction(buildExecuteUpdate(updateDraftClass, entityClass))
             addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "client"))
@@ -723,14 +725,14 @@ internal class RepoGenerator(
         createLambda: LambdaTypeName,
     ): FunSpec {
         val idStrategy = idStrategyName(schema)
-        return function("create", CREATE_MUTATION.parameterizedBy(createDraftClass, entityClass)) {
+        return function("create", PENDING_CREATE_MUTATION.parameterizedBy(createDraftClass, entityClass)) {
             if (idStrategy == "EXPLICIT") {
                 parameter("id", schema.id().type.toTypeName())
             }
             parameter("block", createLambda)
             val createArgs = if (idStrategy == "EXPLICIT") "id = id" else ""
             statement("val draft = %T($createArgs).apply(block)", createDraftClass)
-            statement("return %T(draft, this)", CREATE_MUTATION)
+            statement("return %T(draft, this)", PENDING_CREATE_MUTATION)
         }
     }
 

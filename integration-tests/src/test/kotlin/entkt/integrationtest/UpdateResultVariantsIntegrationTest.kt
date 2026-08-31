@@ -11,7 +11,7 @@ import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
-import entkt.runtime.mutation.UpdateMutation
+import entkt.runtime.mutation.PendingUpdateMutation
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -77,7 +77,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
             email = "update-operation@example.com"
         }.saveAndLoad(testViewerContext).getOrThrow()
 
-        val mutation: UpdateMutation<UserUpdateDraft, User> = client.users.update(user.id) {
+        val mutation: PendingUpdateMutation<UserUpdateDraft, User> = client.users.update(user.id) {
             name = "Configured"
         }
         mutation.configure { name = "$name again" }

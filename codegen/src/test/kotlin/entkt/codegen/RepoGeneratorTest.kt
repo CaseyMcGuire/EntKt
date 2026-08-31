@@ -122,11 +122,11 @@ class RepoGeneratorTest {
             "Should have query with optional DSL block\n$output"
         }
         assert(output.contains("fun create(block: CarCreateDraft.() -> Unit):") &&
-            output.contains("CreateMutation<CarCreateDraft, Car>")) {
+            output.contains("PendingCreateMutation<CarCreateDraft, Car>")) {
             "Should have create taking DSL block\n$output"
         }
-        assert(output.contains("fun update(\n    id: Int,\n    consistency: UpdateConsistency = client.defaultUpdateConsistency,\n    relationshipLocking: RelationshipLocking = client.defaultRelationshipLocking,\n    block: CarUpdateDraft.() -> Unit,\n  ): UpdateMutation<CarUpdateDraft, Car>")) {
-            "Should return a generic UpdateMutation configured through CarUpdateDraft\n$output"
+        assert(output.contains("fun update(\n    id: Int,\n    consistency: UpdateConsistency = client.defaultUpdateConsistency,\n    relationshipLocking: RelationshipLocking = client.defaultRelationshipLocking,\n    block: CarUpdateDraft.() -> Unit,\n  ): PendingUpdateMutation<CarUpdateDraft, Car>")) {
+            "Should return a generic PendingUpdateMutation configured through CarUpdateDraft\n$output"
         }
     }
 
@@ -326,7 +326,7 @@ class RepoGeneratorTest {
         assert(output.contains("val draft = CarCreateDraft().apply(block)")) {
             "create should configure a fresh draft\n$output"
         }
-        assert(output.contains("return CreateMutation(draft, this)")) {
+        assert(output.contains("return PendingCreateMutation(draft, this)")) {
             "the generic mutation wrapper should retain the draft and repo\n$output"
         }
     }
@@ -342,7 +342,7 @@ class RepoGeneratorTest {
         }
         assert(output.contains("val draft = CarUpdateDraft().apply(block)") &&
             output.contains("val request = UpdateMutationRequest(id, draft, consistency, relationshipLocking)") &&
-            output.contains("return UpdateMutation(request, this)")) {
+            output.contains("return PendingUpdateMutation(request, this)")) {
             "update should capture only per-operation state in the draft and request\n$output"
         }
         assert(output.contains("override fun executeUpdate(") &&
@@ -844,7 +844,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Session", session).toString()
 
         assert(output.contains("fun create(id: String, block: SessionCreateDraft.() -> Unit):") &&
-            output.contains("CreateMutation<SessionCreateDraft, Session>")) {
+            output.contains("PendingCreateMutation<SessionCreateDraft, Session>")) {
             "create() should take id as first parameter for EXPLICIT strategy\n$output"
         }
     }

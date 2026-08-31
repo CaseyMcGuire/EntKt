@@ -108,7 +108,7 @@ class BuildMemberManifestTest {
 
         // Update drafts contain only caller-configurable mutation state.
         // Execution settings and terminals live on the generic runtime
-        // UpdateMutation wrapper; unsetTitle remains hook-facing only.
+        // PendingUpdateMutation wrapper; unsetTitle remains hook-facing only.
         assertNotNull(byArtifact["NotebookUpdateDraft"])
         assertEquals(setOf("title", "dirtyFields"), byArtifact["NotebookUpdateDraft"])
         assertTrue(

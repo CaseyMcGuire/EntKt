@@ -188,7 +188,7 @@ class EntktPluginTest {
             assertTrue(repoContent.contains("driver: DatabaseDriver"), "Should take DatabaseDriver in constructor")
             assertTrue(
                 repoContent.contains("fun create(block: PetCreateDraft.() -> Unit):") &&
-                    repoContent.contains("CreateMutation<PetCreateDraft, Pet>"),
+                    repoContent.contains("PendingCreateMutation<PetCreateDraft, Pet>"),
                 "Repo should expose create(block)",
             )
             // transaction locking: `update(...)` accepts an optional UpdateConsistency
@@ -207,8 +207,8 @@ class EntktPluginTest {
                 "update should take a draft block",
             )
             assertTrue(
-                repoFlat.contains("): UpdateMutation<PetUpdateDraft, Pet>"),
-                "update should return UpdateMutation<PetUpdateDraft, Pet>",
+                repoFlat.contains("): PendingUpdateMutation<PetUpdateDraft, Pet>"),
+                "update should return PendingUpdateMutation<PetUpdateDraft, Pet>",
             )
             assertTrue(
                 repoContent.contains("fun query(block: PetQuery.() -> Unit = {}): PetQuery"),

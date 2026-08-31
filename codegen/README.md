@@ -15,8 +15,8 @@ example; `{Entity}` is replaced by each schema class name.
 | Generated artifact | Purpose |
 |---|---|
 | `User.kt` / `User` | Immutable entity data class. Its companion exposes typed query columns and schema metadata, and its nested `Edges` class stores eager-loaded relationships as `EdgeState` values. |
-| `UserCreateDraft.kt` / `UserCreateDraft` | Mutable, potentially incomplete create input. It tracks which fields were assigned. Application code receives it as the `create { ... }` or `CreateMutation.configure { ... }` DSL receiver rather than constructing it directly. |
-| `UserUpdateDraft.kt` / `UserUpdateDraft` | Mutable update patch. It records assignments, unsets, and relationship changes without executing them. Application code receives it through `update(id) { ... }` or `UpdateMutation.configure { ... }`. |
+| `UserCreateDraft.kt` / `UserCreateDraft` | Mutable, potentially incomplete create input. It tracks which fields were assigned. Application code receives it as the `create { ... }` or `PendingCreateMutation.configure { ... }` DSL receiver rather than constructing it directly. |
+| `UserUpdateDraft.kt` / `UserUpdateDraft` | Mutable update patch. It records assignments, unsets, and relationship changes without executing them. Application code receives it through `update(id) { ... }` or `PendingUpdateMutation.configure { ... }`. |
 | `UserMutation.kt` / `UserMutation` | Mutable field interface received by `beforeSave`. `UserCreateMutationView` and `UserUpdateMutationView` are the operation-specific mutation views exposed by hook contexts. These are hook contracts, not executable mutation objects. |
 | `UserQuery.kt` / `UserQuery` | Typed query DSL for predicates, ordering, pagination, traversal, and edge selection. `all(viewerContext)` and `firstOrNull(viewerContext)` execute the captured query. |
 | `UserRepo.kt` / `UserRepo` | Entity entry points exposed as `client.users`: `create`, `update`, `query`, `findById`, deletes, and supported bulk operations. `create` and `update` return runtime mutation operations; delete methods execute immediately. |
@@ -27,15 +27,16 @@ example; `{Entity}` is replaced by each schema class name.
 `UserCreateDraft` does not implement `UserMutation`. Create hooks receive
 generated mutation-view adapters so lifecycle code sees only the intended hook
 contract. `UserUpdateDraft` implements `UserMutation`, but persistence still
-happens only through the `UpdateMutation` returned by the repository.
+happens only through the `PendingUpdateMutation` returned by the repository.
 
-`CreateMutation<Draft, Entity>` and `UpdateMutation<Draft, Entity>` are runtime
-classes, not generated classes. They own the single-use `configure`, `save`,
-and `saveAndLoad` operation lifecycle while generated repositories supply the
-schema-specific draft and persistence adapter:
+`PendingCreateMutation<Draft, Entity>` and
+`PendingUpdateMutation<Draft, Entity>` are runtime classes, not generated
+classes. They own the single-use `configure`, `save`, and `saveAndLoad`
+operation lifecycle while generated repositories supply the schema-specific
+draft and persistence adapter:
 
 ```kotlin
-val creation: CreateMutation<UserCreateDraft, User> =
+val creation: PendingCreateMutation<UserCreateDraft, User> =
     client.users.create { name = "Ada" }
 
 creation.configure { email = "ada@example.com" }
@@ -77,7 +78,7 @@ are framework integration details. See [Ent Viewer](../docs/11-ent-viewer.md).
 ### Runtime types used by the generated API
 
 The generated surface also refers to ordinary runtime types including
-`CreateMutation`, `UpdateMutation`, `ReadResult`, `MutationResult`,
+`PendingCreateMutation`, `PendingUpdateMutation`, `ReadResult`, `MutationResult`,
 `ViewerContext`, `EntityHooks`, and the privacy/validation rule interfaces.
 They are shared implementations and are therefore not regenerated per schema.
 

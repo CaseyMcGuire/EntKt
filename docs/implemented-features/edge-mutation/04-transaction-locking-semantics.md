@@ -41,7 +41,7 @@ with [RFC #5 Link-Table M2M Mutation Helpers](05-link-table-helpers.md).
   `UnsupportedDriverCapabilityException`. EntClient exposes
   `defaultUpdateConsistency`; the generated `update(id, consistency =
   client.defaultUpdateConsistency, block)` factory takes an optional
-  per-save override. `UpdateMutation.save()` runs two preflights
+  per-save override. `PendingUpdateMutation.save()` runs two preflights
   for `Pessimistic` (no transaction → `TransactionRequiredException`,
   driver without `supportsReadRowForUpdate` →
   `UnsupportedDriverCapabilityException`) and routes the internal

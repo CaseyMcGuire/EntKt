@@ -221,7 +221,7 @@ to read and write users:
 | `User` | Typed entity properties and query columns such as `User.name` and `User.age` |
 | `UserCreateDraft` | Mutable create input used by `client.users.create { ... }` and later `configure { ... }` blocks |
 | `UserUpdateDraft` | Mutable update patch used by `client.users.update(id) { ... }` and later `configure { ... }` blocks |
-| `CreateMutation<UserCreateDraft, User>` / `UpdateMutation<UserUpdateDraft, User>` | Single-use runtime operations returned by `create` and `update`; they supply `configure`, `save`, and `saveAndLoad` and are not generated per entity |
+| `PendingCreateMutation<UserCreateDraft, User>` / `PendingUpdateMutation<UserUpdateDraft, User>` | Single-use runtime operations returned by `create` and `update`; they supply `configure`, `save`, and `saveAndLoad` and are not generated per entity |
 | `UserQuery` | Filtering, ordering, pagination, traversal, edge loading, and result-bearing read terminals |
 | `UserRepo` | Entry points such as `create`, `update`, `query`, `findById`, and the delete methods |
 | `UserIndexes` | Typed exact and range helpers generated when `User` declares an eligible index |

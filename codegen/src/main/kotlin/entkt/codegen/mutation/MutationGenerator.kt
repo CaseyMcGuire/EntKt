@@ -60,7 +60,7 @@ import entkt.schema.EntSchema
  *   adapter whose runtime type implements only this view. The generated
  *   repository forwards its reads and writes to the state-only
  *   `${SchemaName}CreateDraft`; neither the draft nor its executable
- *   `CreateMutation` wrapper is exposed to the hook.
+ *   `PendingCreateMutation` wrapper is exposed to the hook.
  *
  * - `${SchemaName}UpdateMutationView` — the typed surface for
  *   `beforeUpdate` hook lambdas (via `ctx.mutation`). Adds

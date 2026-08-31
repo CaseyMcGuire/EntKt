@@ -516,7 +516,7 @@ class UpdateGeneratorTest {
             "The execution adapter should delegate the lifecycle to UpdateMutationExecutor\n$output"
         }
         assert(!output.contains("public fun save(") && !output.contains("public fun saveAndLoad(")) {
-            "Save terminals belong to the generic runtime UpdateMutation, not the generated draft\n$output"
+            "Save terminals belong to the generic runtime PendingUpdateMutation, not the generated draft\n$output"
         }
         assert(!output.contains("_validationFailed") && !output.contains("_classifyDriverFailure") &&
             !output.contains("MutationResult.failedForInternalUse")) {

@@ -5,7 +5,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.MutationResult
 
-/** Per-operation state passed from [UpdateMutation] to an entity repository. */
+/** Per-operation state passed from [PendingUpdateMutation] to an entity repository. */
 @EntktInternal
 data class UpdateMutationRequest<Draft : UpdateMutationDraft<*>>(
     val id: Any,
@@ -14,7 +14,7 @@ data class UpdateMutationRequest<Draft : UpdateMutationDraft<*>>(
     val relationshipLocking: RelationshipLocking,
 )
 
-/** Repository operation used by the generic [UpdateMutation] wrapper. */
+/** Repository operation used by the generic [PendingUpdateMutation] wrapper. */
 @EntktInternal
 fun interface UpdateMutationRepository<Draft : UpdateMutationDraft<Entity>, Entity : EntEntity<*>> {
     /** Execute one update, optionally enforcing LOAD privacy on the returned entity. */

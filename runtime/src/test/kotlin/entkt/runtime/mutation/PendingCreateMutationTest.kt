@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 
-class CreateMutationTest {
+class PendingCreateMutationTest {
     private val viewerContext = ViewerContext.privacyBypass_DANGEROUS("test")
 
     private data class Article(
@@ -47,7 +47,7 @@ class CreateMutationTest {
     fun `configuration remains mutable until the first terminal`() {
         val draft = Draft("first")
         val repository = RecordingRepository()
-        val mutation = CreateMutation(draft, repository)
+        val mutation = PendingCreateMutation(draft, repository)
 
         val returned = mutation.configure { title = title.orEmpty() + " second" }
         val result = mutation.saveAndLoad(viewerContext)
@@ -60,7 +60,7 @@ class CreateMutationTest {
     @Test
     fun `a failed configuration block retains its earlier assignments`() {
         val draft = Draft()
-        val mutation = CreateMutation(draft, RecordingRepository())
+        val mutation = PendingCreateMutation(draft, RecordingRepository())
 
         assertFailsWith<IllegalArgumentException> {
             mutation.configure {
@@ -76,7 +76,7 @@ class CreateMutationTest {
 
     @Test
     fun `configuration and terminals fail after the mutation is consumed`() {
-        val mutation = CreateMutation(Draft("saved"), RecordingRepository())
+        val mutation = PendingCreateMutation(Draft("saved"), RecordingRepository())
         mutation.save(viewerContext)
 
         val configureFailure = assertFailsWith<EntMutationAlreadyConsumedException> {
