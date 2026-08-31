@@ -132,7 +132,6 @@ internal class UpdateSaveEmitter(
             initializer(codeBlock {
                 add("%T(\n", UPDATE_MUTATION_SPEC)
                 indent()
-                add("entity = %T.GeneratedEntityMapping,\n", queryClass)
                 add("begin = ::_beginUpdate,\n")
                 add("end = ::_endUpdate,\n")
                 add("before = ::_runBeforeUpdateHooks,\n")
@@ -483,6 +482,7 @@ internal class UpdateSaveEmitter(
             indent()
             add("viewerContext = viewerContext,\n")
             add("request = request,\n")
+            add("entity = %T.GeneratedEntityMapping,\n", queryClass)
             add("applyLoadPrivacy = applyLoadPrivacy,\n")
             add("spec = updateSpec,\n")
             if (helperEligibleEdges.isNotEmpty()) {

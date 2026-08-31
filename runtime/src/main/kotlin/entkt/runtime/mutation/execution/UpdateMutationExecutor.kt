@@ -5,6 +5,7 @@ package entkt.runtime.mutation.execution
 import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.runBatchHooksForInternalUse
 import entkt.runtime.mutation.TransactionRequiredException
 import entkt.runtime.mutation.RelationshipLocking
@@ -39,6 +40,7 @@ class UpdateMutationExecutor<State>(
     fun <Entity : EntEntity<*>, Draft : UpdateMutationDraft<Entity>> update(
         viewerContext: ViewerContext,
         request: UpdateMutationRequest<Draft>,
+        entity: EntityMapping<Entity>,
         applyLoadPrivacy: Boolean,
         spec: UpdateMutationSpec<State, Entity>,
         relationshipRequirements: UpdateRelationshipRequirements = UpdateRelationshipRequirements.None,
@@ -48,46 +50,46 @@ class UpdateMutationExecutor<State>(
         } else {
             MutationWriteState.Committed
         }
-        mutationRuntime.checkTransactionRequirement("${spec.entity.entityName} update")
-        checkConsistency(request.consistency, spec.entity.entityName)
+        mutationRuntime.checkTransactionRequirement("${entity.entityName} update")
+        checkConsistency(request.consistency, entity.entityName)
         checkRelationshipRequirements(
             request.relationshipLocking,
             relationshipRequirements,
-            spec.entity.entityName,
+            entity.entityName,
         )
         acquireCanonicalRelationshipLocks(request.relationshipLocking, relationshipRequirements)
 
-        val row = driverCall(attempt, spec, MutationWriteState.NotPersisted) {
-            loadOwnerRow(request, relationshipRequirements, spec)
+        val row = driverCall(attempt, entity, MutationWriteState.NotPersisted) {
+            loadOwnerRow(request, relationshipRequirements, entity)
         }
             ?: attempt.reject(
                 EntTargetAbsentException(
-                    entityType = spec.entity.entityName,
+                    entityType = entity.entityName,
                     key = EntityKey("id", request.id),
                 ),
             )
-        val before = spec.entity.decode(row)
+        val before = entity.decode(row)
 
         spec.begin()
         try {
             spec.before(viewerContext, before)
-            val prepared = when (val preparation = spec.prepare(before, preparationScope(attempt, spec))) {
+            val prepared = when (val preparation = spec.prepare(before, preparationScope(attempt, entity))) {
                 is UpdatePreparation.Ready -> preparation.value
                 is UpdatePreparation.Invalid -> attempt.reject(
                     EntValidationException(
-                        entityType = spec.entity.entityName,
+                        entityType = entity.entityName,
                         operation = EntOperation.UPDATE,
                         violations = preparation.violations,
                     ),
                 )
             }
 
-            evaluatePrivacy(attempt, viewerContext, request.id, prepared.state, spec)
-            evaluateValidation(attempt, prepared.state, spec)
+            evaluatePrivacy(attempt, viewerContext, request.id, prepared.state, entity)
+            evaluateValidation(attempt, prepared.state, entity)
 
             if (prepared.isNoOp) {
                 if (applyLoadPrivacy) {
-                    evaluateReturnedEntityPrivacy(attempt, viewerContext, before, spec)
+                    evaluateReturnedEntityPrivacy(attempt, viewerContext, before, entity)
                 }
                 return@execute before
             }
@@ -97,29 +99,30 @@ class UpdateMutationExecutor<State>(
             } else {
                 val updatedRow = driverCall(
                     attempt,
-                    spec,
+                    entity,
                     MutationWriteState.PersistenceUnknown,
                 ) {
-                    driver.update(spec.entity.table, request.id, prepared.values)
+                    driver.update(entity.table, request.id, prepared.values)
                 } ?: attempt.reject(
                     EntTargetAbsentException(
-                        entityType = spec.entity.entityName,
+                        entityType = entity.entityName,
                         key = EntityKey("id", request.id),
                     ),
                 )
                 attempt.writeState = postWriteState
-                spec.entity.decode(updatedRow)
+                entity.decode(updatedRow)
             }
 
             persistRelationships(
                 attempt = attempt,
                 prepared = prepared,
                 spec = spec,
+                entity = entity,
                 postWriteState = postWriteState,
             )
             runBatchHooksForInternalUse(listOf(updated), spec.afterUpdate)
             if (applyLoadPrivacy) {
-                evaluateReturnedEntityPrivacy(attempt, viewerContext, updated, spec)
+                evaluateReturnedEntityPrivacy(attempt, viewerContext, updated, entity)
             }
             updated
         } finally {
@@ -190,15 +193,15 @@ class UpdateMutationExecutor<State>(
     private fun <Entity : EntEntity<*>, Draft : UpdateMutationDraft<Entity>> loadOwnerRow(
         request: UpdateMutationRequest<Draft>,
         relationshipRequirements: UpdateRelationshipRequirements,
-        spec: UpdateMutationSpec<State, Entity>,
+        entity: EntityMapping<Entity>,
     ): Map<String, Any?>? = when {
         request.consistency == UpdateConsistency.Pessimistic ->
-            driver.readRowForUpdate(spec.entity.table, request.id)
+            driver.readRowForUpdate(entity.table, request.id)
         relationshipRequirements.hasPendingWrites && driver.supportsReadRowForUpdate ->
-            driver.readRowForUpdate(spec.entity.table, request.id)
+            driver.readRowForUpdate(entity.table, request.id)
         relationshipRequirements.hasPendingWrites ->
-            driver.serializeOwnerEdgeAndRead(spec.entity.table, request.id)
-        else -> driver.byId(spec.entity.table, request.id)
+            driver.serializeOwnerEdgeAndRead(entity.table, request.id)
+        else -> driver.byId(entity.table, request.id)
     }
 
     private fun <Entity : EntEntity<*>> evaluatePrivacy(
@@ -206,13 +209,13 @@ class UpdateMutationExecutor<State>(
         viewerContext: ViewerContext,
         id: Any,
         state: State,
-        spec: UpdateMutationSpec<State, Entity>,
+        entity: EntityMapping<Entity>,
     ) {
         privacyEvaluator.evaluate(viewerContext, listOf(state)).firstDeniedOrNull()?.let { denial ->
             attempt.reject(
                 EntMutationPrivacyDeniedException(
                     writeState = MutationWriteState.NotPersisted,
-                    entityType = spec.entity.entityName,
+                    entityType = entity.entityName,
                     operation = EntOperation.UPDATE,
                     entityKey = EntityKey("id", id),
                     reason = denial.reason,
@@ -224,12 +227,12 @@ class UpdateMutationExecutor<State>(
     private fun <Entity : EntEntity<*>> evaluateValidation(
         attempt: MutationAttempt,
         state: State,
-        spec: UpdateMutationSpec<State, Entity>,
+        entity: EntityMapping<Entity>,
     ) {
         validationEvaluator.evaluate(listOf(state)).firstInvalidOrNull()?.let { invalid ->
             attempt.reject(
                 EntValidationException(
-                    entityType = spec.entity.entityName,
+                    entityType = entity.entityName,
                     operation = EntOperation.UPDATE,
                     violations = invalid.violations.map { it.toValidationViolation() },
                 ),
@@ -241,6 +244,7 @@ class UpdateMutationExecutor<State>(
         attempt: MutationAttempt,
         prepared: PreparedUpdate<State>,
         spec: UpdateMutationSpec<State, Entity>,
+        entity: EntityMapping<Entity>,
         postWriteState: MutationWriteState,
     ) {
         val tracker = RelationshipWriteTracker()
@@ -249,7 +253,7 @@ class UpdateMutationExecutor<State>(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            val classified = classifyDriverFailure(e, spec, MutationWriteState.TransactionPending)
+            val classified = classifyDriverFailure(e, entity, MutationWriteState.TransactionPending)
             val reported = if (
                 (attempt.writeState != MutationWriteState.NotPersisted || tracker.wrote) &&
                 classified.writeState == MutationWriteState.NotPersisted
@@ -266,20 +270,20 @@ class UpdateMutationExecutor<State>(
     private fun <Entity : EntEntity<*>> evaluateReturnedEntityPrivacy(
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
-        entity: Entity,
-        spec: UpdateMutationSpec<State, Entity>,
+        result: Entity,
+        entity: EntityMapping<Entity>,
     ) {
         val evaluation = mutationRuntime.evaluate(
-            entity = spec.entity,
+            entity = entity,
             viewerContext = viewerContext,
-            entities = listOf(entity),
+            entities = listOf(result),
         )
         check(evaluation.size == 1) { "LOAD privacy must return exactly one update result" }
         evaluation.firstDeniedOrNull()?.let { denied ->
             attempt.reject(
                 EntMutationPrivacyDeniedException(
                     writeState = attempt.writeState,
-                    entityType = spec.entity.entityName,
+                    entityType = entity.entityName,
                     operation = EntOperation.LOAD,
                     entityKey = EntityKey("id", denied.subject.id),
                     reason = denied.reason,
@@ -290,15 +294,15 @@ class UpdateMutationExecutor<State>(
 
     private fun <Entity : EntEntity<*>> preparationScope(
         attempt: MutationAttempt,
-        spec: UpdateMutationSpec<State, Entity>,
+        entity: EntityMapping<Entity>,
     ): UpdatePreparationScope = object : UpdatePreparationScope {
         override fun <Result> driverRead(block: () -> Result): Result =
-            driverCall(attempt, spec, MutationWriteState.NotPersisted, block)
+            driverCall(attempt, entity, MutationWriteState.NotPersisted, block)
     }
 
     private fun <Result, Entity : EntEntity<*>> driverCall(
         attempt: MutationAttempt,
-        spec: UpdateMutationSpec<State, Entity>,
+        entity: EntityMapping<Entity>,
         fallback: MutationWriteState,
         block: () -> Result,
     ): Result = try {
@@ -306,16 +310,16 @@ class UpdateMutationExecutor<State>(
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        attempt.reject(classifyDriverFailure(e, spec, fallback))
+        attempt.reject(classifyDriverFailure(e, entity, fallback))
     }
 
     private fun <Entity : EntEntity<*>> classifyDriverFailure(
         exception: Exception,
-        spec: UpdateMutationSpec<State, Entity>,
+        entity: EntityMapping<Entity>,
         fallback: MutationWriteState,
     ) = driver.classifyMutationException(
         exception,
-        spec.entity.entityName,
+        entity.entityName,
         EntOperation.UPDATE,
     ) ?: EntUnexpectedMutationException(fallback, exception)
 

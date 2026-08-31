@@ -2,7 +2,6 @@ package entkt.runtime.mutation.execution
 
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
-import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.BatchHook
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.ValidationViolation
@@ -52,7 +51,6 @@ class UpdateMutationSpec<
     State,
     Entity : EntEntity<*>,
     >(
-    val entity: EntityMapping<Entity>,
     val begin: () -> Unit,
     val end: () -> Unit,
     val before: (ViewerContext, Entity) -> Unit,

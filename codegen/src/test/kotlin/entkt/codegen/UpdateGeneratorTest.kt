@@ -314,8 +314,16 @@ class UpdateGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("request = request")) {
-            "The generated adapter should pass the complete request to UpdateMutationExecutor\n$output"
+        assert(output.contains("request = request") &&
+            output.contains("entity = UserQuery.GeneratedEntityMapping")) {
+            "The generated adapter should pass the request and entity mapping to UpdateMutationExecutor\n$output"
+        }
+        val specBlock = output.substring(
+            output.indexOf("UpdateMutationSpec("),
+            output.indexOf("private val updateExecutor"),
+        )
+        assert(!specBlock.contains("GeneratedEntityMapping")) {
+            "EntityMapping must be a direct update() argument, not UpdateMutationSpec state\n$output"
         }
         assert(!output.contains("driver.byId(User.TABLE") &&
             !output.contains("driver.readRowForUpdate(User.TABLE")) {

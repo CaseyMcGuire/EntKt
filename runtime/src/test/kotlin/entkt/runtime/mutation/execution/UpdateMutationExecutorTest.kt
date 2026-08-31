@@ -202,7 +202,6 @@ class UpdateMutationExecutorTest {
 
         val spec: UpdateMutationSpec<State, Widget>
             get() = UpdateMutationSpec(
-                entity = mapping,
                 begin = { events += "begin" },
                 end = { events += "end" },
                 before = { context, entity ->
@@ -267,6 +266,7 @@ class UpdateMutationExecutorTest {
         val result = fixture.executor.update(
             fixture.viewerContext,
             fixture.request,
+            fixture.mapping,
             applyLoadPrivacy = true,
             fixture.spec,
         )
@@ -303,6 +303,7 @@ class UpdateMutationExecutorTest {
         val transactionResult = missingTransaction.executor.update(
             missingTransaction.viewerContext,
             missingTransaction.request.copy(consistency = UpdateConsistency.Pessimistic),
+            missingTransaction.mapping,
             false,
             missingTransaction.spec,
         )
@@ -317,6 +318,7 @@ class UpdateMutationExecutorTest {
         val capabilityResult = missingCapability.executor.update(
             missingCapability.viewerContext,
             missingCapability.request.copy(consistency = UpdateConsistency.Pessimistic),
+            missingCapability.mapping,
             false,
             missingCapability.spec,
         )
@@ -347,6 +349,7 @@ class UpdateMutationExecutorTest {
         val result = fixture.executor.update(
             viewerContext = fixture.viewerContext,
             request = fixture.request.copy(relationshipLocking = RelationshipLocking.Canonical),
+            entity = fixture.mapping,
             applyLoadPrivacy = false,
             spec = fixture.spec,
             relationshipRequirements = requirements,
@@ -374,6 +377,7 @@ class UpdateMutationExecutorTest {
         rowLockFixture.executor.update(
             rowLockFixture.viewerContext,
             rowLockFixture.request,
+            rowLockFixture.mapping,
             false,
             rowLockFixture.spec,
             requirements,
@@ -389,6 +393,7 @@ class UpdateMutationExecutorTest {
         ownerSerializationFixture.executor.update(
             ownerSerializationFixture.viewerContext,
             ownerSerializationFixture.request,
+            ownerSerializationFixture.mapping,
             false,
             ownerSerializationFixture.spec,
             requirements,
@@ -415,6 +420,7 @@ class UpdateMutationExecutorTest {
         val result = fixture.executor.update(
             fixture.viewerContext,
             fixture.request,
+            fixture.mapping,
             false,
             fixture.spec,
             requirements,
@@ -436,7 +442,13 @@ class UpdateMutationExecutorTest {
             PreparedUpdate(State("before"), emptyMap(), isNoOp = true),
         )
 
-        val result = fixture.executor.update(fixture.viewerContext, fixture.request, true, fixture.spec)
+        val result = fixture.executor.update(
+            fixture.viewerContext,
+            fixture.request,
+            fixture.mapping,
+            true,
+            fixture.spec,
+        )
 
         assertEquals(MutationResult.Success(Widget(1L, "before")), result)
         assertTrue("privacy:before" in fixture.events)
@@ -451,7 +463,13 @@ class UpdateMutationExecutorTest {
         val fixture = Fixture()
         fixture.loadedRow = null
 
-        val result = fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
+        val result = fixture.executor.update(
+            fixture.viewerContext,
+            fixture.request,
+            fixture.mapping,
+            false,
+            fixture.spec,
+        )
 
         val failure = assertIs<EntTargetAbsentException>(
             assertIs<MutationResult.Failed>(result).exception,
@@ -468,7 +486,13 @@ class UpdateMutationExecutorTest {
             listOf(ValidationViolation("name is required", field = "name")),
         )
 
-        val result = fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
+        val result = fixture.executor.update(
+            fixture.viewerContext,
+            fixture.request,
+            fixture.mapping,
+            false,
+            fixture.spec,
+        )
 
         val failure = assertIs<EntValidationException>(
             assertIs<MutationResult.Failed>(result).exception,
@@ -486,6 +510,7 @@ class UpdateMutationExecutorTest {
         val privacyResult = privacyFixture.executor.update(
             privacyFixture.viewerContext,
             privacyFixture.request,
+            privacyFixture.mapping,
             false,
             privacyFixture.spec,
         )
@@ -501,6 +526,7 @@ class UpdateMutationExecutorTest {
         val validationResult = validationFixture.executor.update(
             validationFixture.viewerContext,
             validationFixture.request,
+            validationFixture.mapping,
             false,
             validationFixture.spec,
         )
@@ -519,7 +545,13 @@ class UpdateMutationExecutorTest {
         fixture.driver.updateFailure = driverFailure
         fixture.driver.classifiedFailure = classified
 
-        val result = fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
+        val result = fixture.executor.update(
+            fixture.viewerContext,
+            fixture.request,
+            fixture.mapping,
+            false,
+            fixture.spec,
+        )
 
         assertSame(classified, assertIs<MutationResult.Failed>(result).exception)
         assertSame(classified, fixture.failures.single())
@@ -543,7 +575,13 @@ class UpdateMutationExecutorTest {
             throw relationshipFailure
         }
 
-        val result = fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
+        val result = fixture.executor.update(
+            fixture.viewerContext,
+            fixture.request,
+            fixture.mapping,
+            false,
+            fixture.spec,
+        )
 
         val failure = assertIs<EntUnexpectedMutationException>(
             assertIs<MutationResult.Failed>(result).exception,
@@ -561,6 +599,7 @@ class UpdateMutationExecutorTest {
         val afterResult = afterFixture.executor.update(
             afterFixture.viewerContext,
             afterFixture.request,
+            afterFixture.mapping,
             false,
             afterFixture.spec,
         )
@@ -575,6 +614,7 @@ class UpdateMutationExecutorTest {
         val loadResult = loadFixture.executor.update(
             loadFixture.viewerContext,
             loadFixture.request,
+            loadFixture.mapping,
             true,
             loadFixture.spec,
         )
@@ -592,7 +632,13 @@ class UpdateMutationExecutorTest {
         fixture.relationshipAction = { _, _ -> throw cancellation }
 
         val thrown = assertFailsWith<CancellationException> {
-            fixture.executor.update(fixture.viewerContext, fixture.request, false, fixture.spec)
+            fixture.executor.update(
+                fixture.viewerContext,
+                fixture.request,
+                fixture.mapping,
+                false,
+                fixture.spec,
+            )
         }
 
         assertSame(cancellation, thrown)
