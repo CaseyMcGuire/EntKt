@@ -7,6 +7,7 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.runBatchHooksForInternalUse
+import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.ViewerContext
@@ -39,7 +40,11 @@ class CreateMutationExecutor<RuleClient>(
     private val execution = MutationExecutionSupport(mutationRuntime)
 
     /** Bind an entity specification whose generated API exposes only scalar create. */
-    fun <Draft, Candidate, Entity : EntEntity<*>> operationForInternalUse(
+    fun <
+        Draft : CreateMutationDraft<Entity>,
+        Candidate,
+        Entity : EntEntity<*>,
+        > operationForInternalUse(
         spec: CreateMutationSpec<Draft, Candidate, Entity, RuleClient>,
     ): CreateOperation<Draft, Entity> = buildOperation(
         spec = spec,
@@ -48,7 +53,11 @@ class CreateMutationExecutor<RuleClient>(
     )
 
     /** Bind one generated entity specification to the reusable create operation. */
-    fun <Draft, Candidate, Entity : EntEntity<*>> operationForInternalUse(
+    fun <
+        Draft : CreateMutationDraft<Entity>,
+        Candidate,
+        Entity : EntEntity<*>,
+        > operationForInternalUse(
         spec: CreateMutationSpec<Draft, Candidate, Entity, RuleClient>,
         newDraft: () -> Draft,
         ownedTransaction: (
@@ -63,7 +72,11 @@ class CreateMutationExecutor<RuleClient>(
     )
 
     /** Construct the bound operation after selecting its optional bulk capability. */
-    private fun <Draft, Candidate, Entity : EntEntity<*>> buildOperation(
+    private fun <
+        Draft : CreateMutationDraft<Entity>,
+        Candidate,
+        Entity : EntEntity<*>,
+        > buildOperation(
         spec: CreateMutationSpec<Draft, Candidate, Entity, RuleClient>,
         newDraft: (() -> Draft)?,
         ownedTransaction: ((
@@ -90,7 +103,7 @@ class CreateMutationExecutor<RuleClient>(
 
     /** Execute one create lifecycle and optionally authorize the returned entity. */
     fun <
-        Draft,
+        Draft : CreateMutationDraft<Entity>,
         Candidate,
         Entity : EntEntity<*>,
         > create(
@@ -125,7 +138,7 @@ class CreateMutationExecutor<RuleClient>(
 
     /** Execute the phase-major create lifecycle for inputs in an active transaction. */
     fun <
-        Draft,
+        Draft : CreateMutationDraft<Entity>,
         Candidate,
         Entity : EntEntity<*>,
         > createMany(
@@ -152,7 +165,7 @@ class CreateMutationExecutor<RuleClient>(
 
     /** Run every scalar or batch create phase in lifecycle order. */
     private fun <
-        Draft,
+        Draft : CreateMutationDraft<Entity>,
         Candidate,
         Entity : EntEntity<*>,
         > executeCreate(

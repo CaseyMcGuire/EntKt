@@ -6,6 +6,7 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.execution.LoadPrivacyEvaluation
@@ -27,7 +28,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class CreateOperationTest {
-    private class Draft {
+    private class Draft : CreateMutationDraft<Widget> {
         var name: String = ""
     }
 

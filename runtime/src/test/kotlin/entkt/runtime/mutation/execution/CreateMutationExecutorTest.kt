@@ -7,6 +7,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
+import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -188,7 +189,7 @@ class CreateMutationExecutorTest {
 
     private class RecordingInput(
         private val events: MutableList<String>,
-    ) {
+    ) : CreateMutationDraft<Widget> {
         var requiredViolations: List<ValidationViolation> = emptyList()
         var prepared: PreparedCreate<Candidate> = PreparedCreate(
             values = mapOf("name" to "Ada"),

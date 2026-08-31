@@ -5,6 +5,7 @@ package entkt.runtime.mutation.execution
 import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -26,7 +27,10 @@ import java.util.concurrent.CancellationException
  * LOAD disclosure, and mutation failure classification.
  */
 @EntktInternal
-class CreateOperation<Draft, Entity : EntEntity<*>> internal constructor(
+class CreateOperation<
+    Draft : CreateMutationDraft<Entity>,
+    Entity : EntEntity<*>,
+    > internal constructor(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime,
     private val entityName: String,

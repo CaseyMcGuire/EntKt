@@ -4,13 +4,14 @@ import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.BatchHook
+import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.result.ValidationViolation
 
 /** Immutable entity-specific inputs used by the generic create lifecycle. */
 @EntktInternal
 class CreateMutationSpec<
-    Draft,
+    Draft : CreateMutationDraft<Entity>,
     Candidate,
     Entity : EntEntity<*>,
     RuleClient,
