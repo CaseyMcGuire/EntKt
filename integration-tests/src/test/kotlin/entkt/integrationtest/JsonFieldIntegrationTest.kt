@@ -242,7 +242,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `update hook and rule snapshots cannot mutate the pending JSON write`() {
+    fun `update hooks share JSON references until preparation snapshots the pending write`() {
         val driver = resetAndDriver()
         val system = EntClient(driver)
         val author = system.users.create {
@@ -305,12 +305,15 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             metadata = ArticleMeta("after", replacementTags)
         }.saveAndLoad(viewerContext).getOrThrow()
 
-        assertEquals(listOf(listOf("before")), hookBeforeSeen)
-        assertEquals(listOf(listOf("replacement")), hookPatchSeen)
-        assertEquals(listOf("replacement", "captured alias mutation"), replacementTags)
-        assertEquals(listOf("replacement"), ruleCandidateSeen)
-        assertEquals(listOf("replacement"), updated.metadata!!.tags)
+        assertEquals(listOf(listOf("before", "before mutation")), hookBeforeSeen)
+        assertEquals(listOf(listOf("replacement", "patch mutation")), hookPatchSeen)
+        assertEquals(
+            listOf("replacement", "patch mutation", "captured alias mutation"),
+            replacementTags,
+        )
+        assertEquals(listOf("replacement", "patch mutation"), ruleCandidateSeen)
+        assertEquals(listOf("replacement", "patch mutation"), updated.metadata!!.tags)
         val stored = system.articles.findById(testViewerContext, original.id).getOrThrow()!!
-        assertEquals(listOf("replacement"), stored.metadata!!.tags)
+        assertEquals(listOf("replacement", "patch mutation"), stored.metadata!!.tags)
     }
 }
