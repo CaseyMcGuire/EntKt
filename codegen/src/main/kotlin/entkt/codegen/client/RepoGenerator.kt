@@ -113,6 +113,7 @@ internal class RepoGenerator(
         val createDraftClass = ClassName(packageName, "${schemaName}CreateDraft")
         val updateDraftClass = ClassName(packageName, "${schemaName}UpdateDraft")
         val updateAdapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
+        val entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor")
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val indexesClass = ClassName(packageName, "${schemaName}Indexes")
         val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
@@ -198,7 +199,7 @@ internal class RepoGenerator(
             )
             addProperty(
                 buildCreateMutationSpec(
-                    queryClass = queryClass,
+                    entityDescriptorClass = entityDescriptorClass,
                     createDraftClass = createDraftClass,
                     candidateClass = candidateClass,
                     entityClass = entityClass,
@@ -224,6 +225,7 @@ internal class RepoGenerator(
             )
             addProperty(
                 buildDeleteMutationSpec(
+                    entityDescriptorClass = entityDescriptorClass,
                     queryClass = queryClass,
                     entityClass = entityClass,
                     candidateClass = candidateClass,
@@ -520,7 +522,7 @@ internal class RepoGenerator(
 
     /** Capture the immutable inputs consumed by the shared runtime create lifecycle. */
     private fun buildCreateMutationSpec(
-        queryClass: ClassName,
+        entityDescriptorClass: ClassName,
         createDraftClass: ClassName,
         candidateClass: ClassName,
         entityClass: ClassName,
@@ -535,7 +537,7 @@ internal class RepoGenerator(
             initializer(codeBlock {
                 add("%T(\n", CREATE_MUTATION_SPEC)
                 indent()
-                add("entity = %T.GeneratedEntityMapping,\n", queryClass)
+                add("entity = %T,\n", entityDescriptorClass)
                 add("requiredInputViolations = ::requiredInputViolations,\n")
                 add("resolveDraft = ::resolve,\n")
                 add("fieldViolations = ::createFieldViolations,\n")
@@ -640,6 +642,7 @@ internal class RepoGenerator(
 
     /** Capture schema-specific DELETE adapters while runtime owns lifecycle ordering. */
     private fun buildDeleteMutationSpec(
+        entityDescriptorClass: ClassName,
         queryClass: ClassName,
         entityClass: ClassName,
         candidateClass: ClassName,
@@ -653,7 +656,7 @@ internal class RepoGenerator(
             initializer(codeBlock {
                 add("%T(\n", DELETE_MUTATION_SPEC)
                 indent()
-                add("entity = %T.GeneratedEntityMapping,\n", queryClass)
+                add("entity = %T,\n", entityDescriptorClass)
                 add("idColumn = %T.SCHEMA.idColumn,\n", entityClass)
                 add("newQuery = { %T(driver, client) },\n", queryClass)
                 add("candidate = ::buildDeleteCandidate,\n")

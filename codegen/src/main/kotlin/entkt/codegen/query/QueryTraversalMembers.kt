@@ -65,9 +65,9 @@ private fun buildTraversalMethod(
         )
         statement("val target = %T(driver, client)", edge.targetQueryClass)
         statement(
-            "target.setEntityQuerySource(%T.Traversal(source, %L))",
+            "target.setEntityQuerySource(%T.Traversal(source, %T))",
             QUERY_SOURCE,
-            edge.mappingName,
+            edge.edgeDescriptorClass,
         )
         statement("return target.apply(block)")
     }

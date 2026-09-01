@@ -248,10 +248,6 @@ private val FIXED_QUERY_FUNCTIONS: List<String> = listOf(
     "where",
 )
 
-private val FIXED_QUERY_NESTED_TYPES: List<String> = listOf(
-    "GeneratedEntityMapping",
-)
-
 /**
  * `${name}Query` — the fixed query surface plus, per edge, the
  * declaration-derived members: `query{Stem}` traversal, `load{Stem}`
@@ -275,9 +271,6 @@ private fun addQueryClassMembers(
     }
     for (fixed in FIXED_QUERY_FUNCTIONS) {
         manifest.add(artifact, fixed, GeneratedMemberKind.FUNCTION, "fixed query member")
-    }
-    for (fixed in FIXED_QUERY_NESTED_TYPES) {
-        manifest.add(artifact, fixed, GeneratedMemberKind.NESTED_TYPE, "fixed query nested type")
     }
     for (edge in allEdges) {
         val stem = edge.apiName.generatedStem()

@@ -39,14 +39,19 @@ private class M2mMembershipSchema : EntSchema("memberships", clientName = "m2mMe
 // Derived-name collision fixtures. Entity names come from the class, so
 // each class is literally named after the collision it provokes:
 // `Account` + `AccountCreateDraft` collide on the generated AccountCreateDraft.kt
-// file, and `Post` + `PostLoadBatchPrivacyRule` collide on a generated
-// top-level alias.
+// file, `Account` + `AccountDescriptor` collide on the generated descriptor,
+// and `Post` + `PostLoadBatchPrivacyRule` collide on a generated top-level alias.
 private class Account : EntSchema("artifact_bases", clientName = "accounts") {
     override fun id() = EntId.int()
     val name by string("name")
 }
 
 private class AccountCreateDraft : EntSchema("artifact_suffixed", clientName = "accountCreateDrafts") {
+    override fun id() = EntId.int()
+    val note by string("note")
+}
+
+private class AccountDescriptor : EntSchema("artifact_descriptors", clientName = "accountDescriptors") {
     override fun id() = EntId.int()
     val note by string("note")
 }
@@ -97,21 +102,23 @@ class EntGeneratorTest {
         )
         val files = generator.generate(schemas)
 
-        // Per schema: entity, three hook-state files, create, update, query,
-        // repo, privacy, validation, and one same-named rule-input file for
-        // each mutation lifecycle.
+        // Per schema: entity, descriptor, one descriptor per edge, three
+        // hook-state files, create, update, query, repo, privacy, validation,
+        // and one same-named rule-input file for each mutation lifecycle.
         // The schema-set-level files are EntReadRuntime, ReadOnlyEntClient, the
         // public client DSL/facades, and three immutable resolved-config types.
         // User additionally gets an index-helper file; Car has no eligible
         // indexes and therefore has no corresponding file.
-        assertEquals(13 * schemas.size + 13 + 1, files.size)
+        assertEquals(13 * schemas.size + 13 + 1 + 4, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
-                "Car", "CarBeforeSaveState", "CarBeforeCreateState", "CarBeforeUpdateState",
+                "Car", "CarDescriptor", "CarUserEdgeDescriptor",
+                "CarBeforeSaveState", "CarBeforeCreateState", "CarBeforeUpdateState",
                 "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
                 "CarCreateRuleInput", "CarUpdateRuleInput", "CarDeleteRuleInput",
-                "User", "UserBeforeSaveState", "UserBeforeCreateState", "UserBeforeUpdateState",
+                "User", "UserDescriptor", "UserCarsEdgeDescriptor",
+                "UserBeforeSaveState", "UserBeforeCreateState", "UserBeforeUpdateState",
                 "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
                 "UserCreateRuleInput", "UserUpdateRuleInput", "UserDeleteRuleInput",
                 "UserIndexes",
@@ -164,6 +171,24 @@ class EntGeneratorTest {
             )
         }
         assertContains(error.message!!, "AccountCreateDraft.kt")
+    }
+
+    @Test
+    fun `schema name colliding with an entity descriptor is rejected`() {
+        val base = Account()
+        val descriptorNamedEntity = AccountDescriptor()
+        finalize(base, descriptorNamedEntity)
+
+        val error = assertFailsWith<IllegalStateException> {
+            generator.generate(
+                listOf(
+                    SchemaInput(base),
+                    SchemaInput(descriptorNamedEntity),
+                ),
+            )
+        }
+
+        assertContains(error.message!!, "AccountDescriptor.kt")
     }
 
     @Test

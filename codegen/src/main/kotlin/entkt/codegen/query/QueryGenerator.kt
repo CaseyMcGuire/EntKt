@@ -81,7 +81,6 @@ internal class QueryGenerator(
             addProperty(buildEntityQuerySourceProperty(entityClass))
             addProperties(eagerEdgeSpecs.map { it.property })
             addProperties(eagerEdgeSpecs.map { it.filterVisibleProperty })
-            addTypes(buildEntityQueryMappings(resolved))
             addFunctions(eagerEdgeSpecs.map { it.loadMethod })
             addFunction(buildSetEntityQuerySource(entityClass))
             addFunction(buildCaptureEntityQuery(resolved))

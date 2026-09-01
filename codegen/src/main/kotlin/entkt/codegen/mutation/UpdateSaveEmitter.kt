@@ -80,6 +80,7 @@ internal class UpdateSaveEmitter(
     private val helperEligibleEdges: List<HelperEligibleM2M>,
 ) {
     private val entityClass = ClassName(packageName, schemaName)
+    private val entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor")
     private val queryClass = ClassName(packageName, "${schemaName}Query")
     private val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
     private val draftClass = ClassName(packageName, "${schemaName}UpdateDraft")
@@ -562,7 +563,7 @@ internal class UpdateSaveEmitter(
             indent()
             add("viewerContext = viewerContext,\n")
             add("request = request,\n")
-            add("entity = %T.GeneratedEntityMapping,\n", queryClass)
+            add("entity = %T,\n", entityDescriptorClass)
             add("applyLoadPrivacy = applyLoadPrivacy,\n")
             unindent()
             add(")\n")

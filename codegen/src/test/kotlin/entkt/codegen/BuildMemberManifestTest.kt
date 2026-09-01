@@ -83,7 +83,6 @@ class BuildMemberManifestTest {
                 "readRootQuery" to GeneratedMemberKind.FUNCTION,
                 "setEntityQuerySource" to GeneratedMemberKind.FUNCTION,
                 "where" to GeneratedMemberKind.FUNCTION,
-                "GeneratedEntityMapping" to GeneratedMemberKind.NESTED_TYPE,
             ),
             entries
                 .filter { it.artifact == "NotebookQuery" }

@@ -20,6 +20,7 @@ import entkt.codegen.mutation.LifecycleRuleInputGenerator
 import entkt.codegen.mutation.MutationGenerator
 import entkt.codegen.mutation.UpdateGenerator
 import entkt.codegen.mutation.ValidationGenerator
+import entkt.codegen.query.EntityDescriptorGenerator
 import entkt.codegen.query.IndexHelperGenerator
 import entkt.codegen.query.QueryGenerator
 import entkt.schema.EdgeKind
@@ -760,6 +761,7 @@ class EntGenerator(
     private val mutationGenerator = MutationGenerator(packageName)
     private val createGenerator = CreateGenerator(packageName)
     private val updateGenerator = UpdateGenerator(packageName)
+    private val entityDescriptorGenerator = EntityDescriptorGenerator(packageName)
     private val queryGenerator = QueryGenerator(packageName)
     private val repoGenerator = RepoGenerator(packageName)
     private val indexHelperGenerator = IndexHelperGenerator(packageName)
@@ -834,6 +836,7 @@ class EntGenerator(
                 addAll(mutationGenerator.generate(name, schema, schemaNames))
                 add(createGenerator.generate(name, schema, schemaNames))
                 add(updateGenerator.generate(name, schema, schemaNames))
+                addAll(entityDescriptorGenerator.generate(name, schema, schemaNames))
                 add(queryGenerator.generate(name, schema, schemaNames))
                 add(repoGenerator.generate(name, schema, schemaNames))
                 // Index helpers: only emitted when the schema has at least
@@ -865,9 +868,10 @@ class EntGenerator(
                 "Generated file collisions detected:\n" +
                     fileCollisions.keys.joinToString("\n") { (_, name) ->
                         "  - more than one artifact generates '$name.kt' — a schema name " +
-                            "collides with a derived artifact name (<Schema>Mutation/CreateDraft/" +
-                            "UpdateDraft/Query/Repo/Privacy/Validation/CreateRuleInput/" +
-                            "UpdateRuleInput/DeleteRuleInput/Indexes/Hooks) or a " +
+                            "collides with a derived artifact name (<Schema>Descriptor/" +
+                            "<Schema><Edge>EdgeDescriptor/CreateDraft/UpdateDraft/Query/Repo/" +
+                            "Privacy/Validation/CreateRuleInput/UpdateRuleInput/" +
+                            "DeleteRuleInput/Indexes/Hooks) or a " +
                             "generated client-support file"
                     },
             )

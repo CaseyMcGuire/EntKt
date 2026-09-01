@@ -115,8 +115,8 @@ internal class ReadRuntimeGenerator(
             add("return when (entity) {\n")
             for (input in sorted) {
                 add(
-                    "  %T.GeneratedEntityMapping -> %L.hasLoadPrivacy()\n",
-                    ClassName(packageName, "${input.name}Query"),
+                    "  %T -> %L.hasLoadPrivacy()\n",
+                    ClassName(packageName, "${input.name}Descriptor"),
                     input.clientName,
                 )
             }
@@ -139,11 +139,11 @@ internal class ReadRuntimeGenerator(
             add("return when (entity) {\n")
             for (input in sorted) {
                 add(
-                    "  %T.GeneratedEntityMapping -> %L.evaluateLoadPrivacy(\n" +
+                    "  %T -> %L.evaluateLoadPrivacy(\n" +
                         "    viewerContext,\n" +
                         "    entities as %T<%T>,\n" +
                         "  ) as %T<%L>\n",
-                    ClassName(packageName, "${input.name}Query"),
+                    ClassName(packageName, "${input.name}Descriptor"),
                     input.clientName,
                     LIST,
                     ClassName(packageName, input.name),

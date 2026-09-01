@@ -247,8 +247,8 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
 
         assert(output.contains("request = request") &&
-            output.contains("entity = UserQuery.GeneratedEntityMapping")) {
-            "The generated adapter should pass the request and entity mapping to UpdateMutationExecutor\n$output"
+            output.contains("entity = UserDescriptor")) {
+            "The generated adapter should pass the request and entity descriptor to UpdateMutationExecutor\n$output"
         }
         assert(!output.contains("UpdateMutationSpec")) {
             "UpdateMutationSpec should be removed from generated updates\n$output"

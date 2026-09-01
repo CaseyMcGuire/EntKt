@@ -15,7 +15,7 @@ import entkt.schema.EntSchema
 
 /**
  * Names, joins, and inverses for one generated query class, resolved
- * once per [QueryGenerator.generate] call.
+ * once per generated entity/query pair.
  *
  * Edge loading, edge-predicate interception, and
  * `queryX()` traversal all key off the same per-edge metadata: the
@@ -53,6 +53,7 @@ internal class ResolvedQuerySchema(
      */
     val sourceName: String?,
     val entityClass: ClassName,
+    val entityDescriptorClass: ClassName,
     val queryClass: ClassName,
     /** In `schema.edges()` order, restricted to codegen-visible targets. */
     val edges: List<ResolvedQueryEdge>,
@@ -72,7 +73,10 @@ internal class ResolvedQueryEdge(
      */
     val targetClientName: String,
     val targetClass: ClassName,
+    val targetDescriptorClass: ClassName,
     val targetQueryClass: ClassName,
+    /** Top-level generated descriptor for this relationship. */
+    val edgeDescriptorClass: ClassName,
     /** Backing property holding the selected edge-load sub-query: `eagerX`. */
     val eagerPropName: String,
     /** Edge-load DSL entry point: `loadX`. */
@@ -105,7 +109,7 @@ internal class ResolvedQueryEdge(
      * Null for direct edges.
      */
     val junctionEntityClass: ClassName?,
-    val junctionQueryClass: ClassName?,
+    val junctionDescriptorClass: ClassName?,
     /** FK properties available on the target entity for typed edge correlation. */
     val targetEdgeFks: List<EdgeFk>,
 ) {
@@ -124,9 +128,6 @@ internal class ResolvedQueryEdge(
      * wrote `queryCurator()` must not be told about `legacy_owner`.
      */
     val publicName: String get() = edge.apiName
-
-    /** Generated typed mapping for this relationship. */
-    val mappingName: String get() = "Generated${edge.apiName.generatedStem()}EdgeMapping"
 
     val isManyToMany: Boolean get() = edge.kind is EdgeKind.ManyToMany
 }
@@ -170,7 +171,12 @@ internal fun resolveQuerySchema(
             targetName = targetName,
             targetClientName = edge.target.clientName,
             targetClass = ClassName(packageName, targetName),
+            targetDescriptorClass = ClassName(packageName, "${targetName}Descriptor"),
             targetQueryClass = ClassName(packageName, "${targetName}Query"),
+            edgeDescriptorClass = ClassName(
+                packageName,
+                "${schemaName}${edge.apiName.generatedStem()}EdgeDescriptor",
+            ),
             eagerPropName = "eager${edge.apiName.generatedStem()}",
             loadMethodName = "load${edge.apiName.generatedStem()}",
             queryMethodName = "query${edge.apiName.generatedStem()}",
@@ -178,7 +184,9 @@ internal fun resolveQuerySchema(
             join = join,
             inverse = inverse,
             junctionEntityClass = junctionName?.let { ClassName(packageName, it) },
-            junctionQueryClass = junctionName?.let { ClassName(packageName, "${it}Query") },
+            junctionDescriptorClass = junctionName?.let {
+                ClassName(packageName, "${it}Descriptor")
+            },
             targetEdgeFks = computeEdgeFks(edge.target, schemaNames),
         )
     }
@@ -187,6 +195,7 @@ internal fun resolveQuerySchema(
         schema = schema,
         sourceName = sourceName,
         entityClass = ClassName(packageName, schemaName),
+        entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor"),
         queryClass = ClassName(packageName, "${schemaName}Query"),
         edges = edges,
         edgeFks = computeEdgeFks(schema, schemaNames),

@@ -1499,7 +1499,7 @@ class EdgeCodegenTest {
         }
         assert(
             output.contains(
-                "target.setEntityQuerySource(QuerySource.Traversal(source, GeneratedPetsEdgeMapping))",
+                "target.setEntityQuerySource(QuerySource.Traversal(source, OwnerPetsEdgeDescriptor))",
             ),
         ) {
             "Traversal should pass its typed edge and source tree to runtime\n$output"
@@ -1520,7 +1520,7 @@ class EdgeCodegenTest {
         }
         assert(
             output.contains(
-                "target.setEntityQuerySource(QuerySource.Traversal(source, GeneratedOwnerEdgeMapping))",
+                "target.setEntityQuerySource(QuerySource.Traversal(source, PetOwnerEdgeDescriptor))",
             ),
         ) {
             "from-side traversal should pass its typed recursive source to runtime\n$output"
@@ -1625,7 +1625,7 @@ class EdgeCodegenTest {
         }
         assert(
             output.contains(
-                "target.setEntityQuerySource(QuerySource.Traversal(source, GeneratedMembersEdgeMapping))",
+                "target.setEntityQuerySource(QuerySource.Traversal(source, TeamMembersEdgeDescriptor))",
             ),
         ) {
             "M2M traversal should preserve its typed source relationship for runtime lowering\n$output"

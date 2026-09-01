@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import entkt.codegen.query.EntityDescriptorGenerator
 import entkt.codegen.query.QueryGenerator
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
@@ -25,6 +26,7 @@ private class OneBadge : EntSchema("one_badges", clientName = "oneBadges") {
 class QueryGeneratorTest {
 
     private val generator = QueryGenerator("com.example.ent")
+    private val descriptorGenerator = EntityDescriptorGenerator("com.example.ent")
 
     @Test
     fun `does not generate storage aggregate terminals`() {
@@ -269,7 +271,7 @@ class QueryGeneratorTest {
         }
         assert(
             output.contains(
-                "edge = GeneratedCarsEdgeMapping, " +
+                "edge = UserCarsEdgeDescriptor, " +
                     "target = selectedQuery.captureEntityQuery(), " +
                     "visibility = if (eagerCarsFilterVisible) " +
                     "EdgeVisibility.FILTER_INVISIBLE else EdgeVisibility.REQUIRE_VISIBLE",
@@ -279,34 +281,34 @@ class QueryGeneratorTest {
         }
         assert(
             output.contains(
-                "return EntityQuery( entity = GeneratedEntityMapping, " +
+                "return EntityQuery( entity = UserDescriptor, " +
                     "source = entityQuerySource, predicates = predicates, " +
                     "orderBy = orderFields, limit = queryLimit, offset = queryOffset, " +
                     "edges = selectedEdges, structuralPredicates = structuralPredicates, )",
             ),
         ) {
-            "query capture should contain only caller query state and generated mappings\n$output"
+            "query capture should contain only caller query state and generated descriptors\n$output"
         }
     }
 
     @Test
-    fun `generates typed entity and direct-edge mappings`() {
+    fun `generates typed entity and direct-edge descriptors`() {
         val car = Car()
         val user = User()
         finalize(car, user)
         val names = mapOf<EntSchema, String>(car to "Car", user to "User")
-        val output = generator.generate("User", user, names).toString()
+        val output = descriptorGenerator.generate("User", user, names).joinToString("\n")
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("internal object GeneratedEntityMapping : EntityMapping<User>")) {
-            "each query should expose one generated typed entity mapping\n$output"
+        assert(output.contains("internal object UserDescriptor : EntityDescriptor<User, UUID>")) {
+            "each entity should expose one canonical typed descriptor\n$output"
         }
         assert(output.contains("override val entityName: String = \"User\"")) {
-            "entity mapping should carry the generated entity identity\n$output"
+            "entity descriptor should carry the generated entity identity\n$output"
         }
         assert(
             output.contains(
-                "internal object GeneratedCarsEdgeMapping : ToManyEdgeMapping<User, Car>",
+                "internal object UserCarsEdgeDescriptor : ToManyEdgeMapping<User, Car>",
             ),
         ) {
             "hasMany should generate a typed to-many mapping\n$output"
@@ -318,7 +320,7 @@ class QueryGeneratorTest {
                     "sourceKey = { it.id }, targetForeignKey = { it.userId })",
             ),
         ) {
-            "direct edge mapping should carry typed correlation instead of only column names\n$output"
+            "direct edge descriptor should carry typed correlation instead of only column names\n$output"
         }
         assert(
             output.contains(
@@ -326,7 +328,7 @@ class QueryGeneratorTest {
                     "source.copy(edges = source.edges.copy(cars = EdgeState.Loaded(targets)))",
             ),
         ) {
-            "edge mapping should own immutable attachment to the generated entity shape\n$output"
+            "edge descriptor should own immutable attachment to the generated entity shape\n$output"
         }
     }
 
@@ -341,7 +343,7 @@ class QueryGeneratorTest {
 
         assert(
             output.contains(
-                "target.setEntityQuerySource(QuerySource.Traversal(source, GeneratedCarsEdgeMapping))",
+                "target.setEntityQuerySource(QuerySource.Traversal(source, UserCarsEdgeDescriptor))",
             ),
         ) {
             "queryCars should retain the immutable source query and typed relationship\n$output"
@@ -385,12 +387,12 @@ class QueryGeneratorTest {
             pet to "Pet",
             owner to "Owner",
         )
-        val output = generator.generate("Team", team, names).toString()
+        val output = descriptorGenerator.generate("Team", team, names).joinToString("\n")
             .replace("\\s+".toRegex(), " ")
 
         assert(
             output.contains(
-                "internal object GeneratedMembersEdgeMapping : ToManyEdgeMapping<Team, Pet>",
+                "internal object TeamMembersEdgeDescriptor : ToManyEdgeMapping<Team, Pet>",
             ),
         ) {
             "many-to-many should generate a typed to-many mapping\n$output"
@@ -400,11 +402,11 @@ class QueryGeneratorTest {
                 "EdgeStorage.Junction<Team, Pet, TeamMember, Int, Int>(" +
                     "table = \"team_members\", sourceColumn = \"team_id\", " +
                     "targetColumn = \"member_id\", " +
-                    "junctionEntity = TeamMemberQuery.GeneratedEntityMapping, " +
+                    "junctionEntity = TeamMemberDescriptor, " +
                     "sourceKey = { it.id }, targetKey = { it.id })",
             ),
         ) {
-            "junction storage should name its generated entity mapping and typed keys\n$output"
+            "junction storage should name its generated entity descriptor and typed keys\n$output"
         }
     }
 

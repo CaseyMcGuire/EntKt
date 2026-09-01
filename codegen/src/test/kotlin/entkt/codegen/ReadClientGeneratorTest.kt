@@ -118,7 +118,7 @@ class ReadClientGeneratorTest {
     }
 
     @Test
-    fun `read runtime dispatches recursive LOAD privacy by typed entity mapping`() {
+    fun `read runtime dispatches recursive LOAD privacy by entity descriptor`() {
         val output = readRuntimeOutput().replace("\\s+".toRegex(), " ")
 
         assert(
@@ -134,14 +134,14 @@ class ReadClientGeneratorTest {
         assert(!output.contains("currentViewerContext") && !output.contains("ViewerContextProvider"))
         assert(
             output.contains(
-                "CarQuery.GeneratedEntityMapping -> cars.hasLoadPrivacy()",
+                "CarDescriptor -> cars.hasLoadPrivacy()",
             ),
         ) {
-            "LOAD configuration should dispatch through generated mapping identity\n$output"
+            "LOAD configuration should dispatch through generated descriptor identity\n$output"
         }
         assert(
             output.contains(
-                "CarQuery.GeneratedEntityMapping -> cars.evaluateLoadPrivacy( " +
+                "CarDescriptor -> cars.evaluateLoadPrivacy( " +
                     "viewerContext, entities as List<Car>, ) as PrivacyEvaluation<Entity>",
             ),
         ) {
