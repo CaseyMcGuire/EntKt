@@ -1,18 +1,22 @@
 package entkt.runtime.mutation.execution
 
 import entkt.query.EntktInternal
+import entkt.runtime.entity.EntEntity
 import entkt.runtime.hook.HookRunner
 import entkt.runtime.hook.MutationHookRunner
+import entkt.runtime.mutation.BeforeSaveHookState
+import entkt.runtime.mutation.BeforeUpdateHookState
+import entkt.runtime.mutation.UpdatePendingEdges
 import entkt.runtime.privacy.ViewerContext
 
 /** Converts and runs the hooks associated with one update lifecycle. */
 @EntktInternal
 class UpdateMutationHooks<
     Draft,
-    Entity,
-    PendingEdges,
-    BeforeSaveState,
-    BeforeUpdateState,
+    Entity : EntEntity<*>,
+    PendingEdges : UpdatePendingEdges<Entity>,
+    BeforeSaveState : BeforeSaveHookState<Entity>,
+    BeforeUpdateState : BeforeUpdateHookState<Entity>,
     >(
     private val converter:
         UpdateMutationHookStateConverter<

@@ -259,6 +259,9 @@ class PrivacyGeneratorTest {
         assert(output.contains("public class UserPendingEdgeOps()")) {
             "Empty aggregator should be a no-fields class with explicit no-arg constructor\n$output"
         }
+        assert(output.contains(": UpdatePendingEdges<User>")) {
+            "Empty aggregator should implement the update pending-edges marker\n$output"
+        }
         assert(!output.contains("public data class UserPendingEdgeOps")) {
             "Empty aggregator must not be a data class\n$output"
         }
@@ -272,6 +275,9 @@ class PrivacyGeneratorTest {
         // defaulting to empty (so callers can construct without args).
         assert(output.contains("public data class PrivM2MPostPendingEdgeOps")) {
             "Non-empty aggregator should be a data class\n$output"
+        }
+        assert(output.contains(": UpdatePendingEdges<PrivM2MPost>")) {
+            "Non-empty aggregator should implement the update pending-edges marker\n$output"
         }
         assert(output.contains("public val tags: PendingEdgeOps<UUID>")) {
             "Should expose `tags: PendingEdgeOps<UUID>` field for the M2M target id type\n$output"
@@ -294,6 +300,21 @@ class PrivacyGeneratorTest {
         }
         assert(output.contains("public val pendingEdges: UserPendingEdgeOps")) {
             "BeforeUpdateState.pendingEdges should be a public val\n$output"
+        }
+        assert(output.contains(": BeforeUpdateHookState<User>")) {
+            "BeforeUpdateState should implement its lifecycle marker\n$output"
+        }
+    }
+
+    @Test
+    fun `beforeSave state implements its lifecycle marker`() {
+        val user = User()
+        finalize(user, Car())
+        val output = MutationGenerator("com.example.ent").generate("User", user)
+            .single { it.name == "UserBeforeSaveState" }.toString()
+
+        assert(output.contains(": BeforeSaveHookState<User>")) {
+            "BeforeSaveState should implement its lifecycle marker\n$output"
         }
     }
 

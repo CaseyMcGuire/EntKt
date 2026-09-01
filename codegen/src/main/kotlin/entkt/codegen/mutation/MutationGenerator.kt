@@ -20,6 +20,10 @@ import entkt.codegen.metadata.toTypeName
 import entkt.schema.EntSchema
 
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
+private val BEFORE_SAVE_HOOK_STATE =
+    ClassName("entkt.runtime.mutation", "BeforeSaveHookState")
+private val BEFORE_UPDATE_HOOK_STATE =
+    ClassName("entkt.runtime.mutation", "BeforeUpdateHookState")
 
 /** Generates the immutable, schema-typed states transformed by before hooks. */
 internal class MutationGenerator(
@@ -76,15 +80,18 @@ internal class MutationGenerator(
         val beforeSaveClass = ClassName(packageName, "${schemaName}BeforeSaveState")
         val beforeCreateClass = ClassName(packageName, "${schemaName}BeforeCreateState")
         val beforeUpdateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
+        val entityClass = ClassName(packageName, schemaName)
 
         return listOf(
             stateFile(
                 stateClass = beforeSaveClass,
+                marker = BEFORE_SAVE_HOOK_STATE.parameterizedBy(entityClass),
                 context = emptyList(),
                 assignments = mutableAssignments,
             ),
             stateFile(
                 stateClass = beforeCreateClass,
+                marker = null,
                 context = listOf(
                     StateProperty("client", ClassName(packageName, "EntClientScope")),
                     StateProperty("viewerContext", VIEWER_CONTEXT),
@@ -93,10 +100,11 @@ internal class MutationGenerator(
             ),
             stateFile(
                 stateClass = beforeUpdateClass,
+                marker = BEFORE_UPDATE_HOOK_STATE.parameterizedBy(entityClass),
                 context = listOf(
                     StateProperty("client", ClassName(packageName, "EntClientScope")),
                     StateProperty("viewerContext", VIEWER_CONTEXT),
-                    StateProperty("before", ClassName(packageName, schemaName)),
+                    StateProperty("before", entityClass),
                     StateProperty(
                         "pendingEdges",
                         ClassName(packageName, "${schemaName}PendingEdgeOps"),
@@ -109,10 +117,12 @@ internal class MutationGenerator(
 
     private fun stateFile(
         stateClass: ClassName,
+        marker: TypeName?,
         context: List<StateProperty>,
         assignments: List<Assignment>,
     ): FileSpec {
         val stateType = classType(stateClass.simpleName) {
+            marker?.let(::addSuperinterface)
             primaryConstructor {
                 addAnnotation(ENTKT_INTERNAL)
                 context.forEach { parameter(it.name, it.type) }

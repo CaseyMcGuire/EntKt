@@ -49,6 +49,8 @@ private val UPDATE_WRITE_TRACKER =
     ClassName("entkt.runtime.mutation.execution", "UpdateWriteTracker")
 private val UPDATE_RELATIONSHIP_REQUIREMENTS =
     ClassName("entkt.runtime.mutation.execution", "UpdateRelationshipRequirements")
+private val PREPARED_UPDATE_STATE =
+    ClassName("entkt.runtime.mutation", "PreparedUpdateState")
 private val MUTATION_PRIVACY_EVALUATOR_FACTORY =
     MemberName("entkt.runtime.privacy", "mutationPrivacyEvaluatorForInternalUse")
 private val PRIVACY_DECISION_EVALUATOR_FACTORY =
@@ -116,6 +118,7 @@ internal class UpdateSaveEmitter(
         parameters.forEach { (name, type) -> constructor.addParameter(name, type) }
         return TypeSpec.classBuilder(preparedStateClass.simpleName)
             .addModifiers(KModifier.INTERNAL, KModifier.DATA)
+            .addSuperinterface(PREPARED_UPDATE_STATE.parameterizedBy(entityClass))
             .primaryConstructor(constructor.build())
             .addProperties(
                 parameters.map { (name, type) ->

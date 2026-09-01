@@ -6,12 +6,16 @@ import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.mutation.BeforeSaveHookState
+import entkt.runtime.mutation.BeforeUpdateHookState
+import entkt.runtime.mutation.PreparedUpdateState
 import entkt.runtime.mutation.TransactionRequiredException
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.runtime.mutation.UpdateConsistency
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.UpdateMutationRequest
+import entkt.runtime.mutation.UpdatePendingEdges
 import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -31,17 +35,17 @@ import java.util.concurrent.CancellationException
 class UpdateMutationExecutor<
     Draft : UpdateMutationDraft<Entity>,
     Entity : EntEntity<*>,
-    PendingEdges,
-    State,
-    BeforeSaveState,
-    BeforeUpdateState,
+    PendingEdges : UpdatePendingEdges<Entity>,
+    PreparedState : PreparedUpdateState<Entity>,
+    BeforeSaveState : BeforeSaveHookState<Entity>,
+    BeforeUpdateState : BeforeUpdateHookState<Entity>,
     >(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime,
-    private val privacyEvaluator: MutationPrivacyEvaluator<State>,
-    private val validationEvaluator: MutationValidationEvaluator<State>,
+    private val privacyEvaluator: MutationPrivacyEvaluator<PreparedState>,
+    private val validationEvaluator: MutationValidationEvaluator<PreparedState>,
     private val adapter:
-        UpdateMutationAdapter<Draft, Entity, PendingEdges, State, BeforeUpdateState>,
+        UpdateMutationAdapter<Draft, Entity, PendingEdges, PreparedState, BeforeUpdateState>,
     private val hooks:
         UpdateMutationHooks<
             Draft,
@@ -102,7 +106,7 @@ class UpdateMutationExecutor<
         request: UpdateMutationRequest<Draft>,
         before: Entity,
         entity: EntityMapping<Entity>,
-    ): PreparedUpdate<State> {
+    ): PreparedUpdate<PreparedState> {
         val pendingEdges = adapter.capturePendingEdges(request.draft)
         val beforeUpdateState = hooks.runBefore(
             viewerContext = viewerContext,
@@ -236,7 +240,7 @@ class UpdateMutationExecutor<
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
         id: Any,
-        state: State,
+        state: PreparedState,
         entity: EntityMapping<Entity>,
     ) {
         privacyEvaluator.evaluate(viewerContext, listOf(state)).firstDeniedOrNull()?.let { denial ->
@@ -254,7 +258,7 @@ class UpdateMutationExecutor<
 
     private fun evaluateValidation(
         attempt: MutationAttempt,
-        state: State,
+        state: PreparedState,
         entity: EntityMapping<Entity>,
     ) {
         validationEvaluator.evaluate(listOf(state)).firstInvalidOrNull()?.let { invalid ->
@@ -272,7 +276,7 @@ class UpdateMutationExecutor<
         attempt: MutationAttempt,
         request: UpdateMutationRequest<Draft>,
         before: Entity,
-        prepared: PreparedUpdate<State>,
+        prepared: PreparedUpdate<PreparedState>,
         entity: EntityMapping<Entity>,
         postWriteState: MutationWriteState,
     ): Entity {
@@ -314,7 +318,7 @@ class UpdateMutationExecutor<
     private fun persistRelationships(
         attempt: MutationAttempt,
         request: UpdateMutationRequest<Draft>,
-        prepared: PreparedUpdate<State>,
+        prepared: PreparedUpdate<PreparedState>,
         entity: EntityMapping<Entity>,
         postWriteState: MutationWriteState,
     ) {

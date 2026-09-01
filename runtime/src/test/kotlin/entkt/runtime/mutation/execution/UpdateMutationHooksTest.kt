@@ -2,10 +2,14 @@
 
 package entkt.runtime.mutation.execution
 
+import entkt.runtime.entity.EntEntity
 import entkt.runtime.hook.Hook
 import entkt.runtime.hook.HookRunner
 import entkt.runtime.hook.MutationHook
 import entkt.runtime.hook.MutationHookRunner
+import entkt.runtime.mutation.BeforeSaveHookState
+import entkt.runtime.mutation.BeforeUpdateHookState
+import entkt.runtime.mutation.UpdatePendingEdges
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import kotlin.test.Test
@@ -13,35 +17,54 @@ import kotlin.test.assertEquals
 import kotlin.test.assertSame
 
 class UpdateMutationHooksTest {
+    private data class Widget(
+        override val id: Long,
+        val description: String,
+    ) : EntEntity.LongId
+
+    private data class PendingEdges(val description: String) : UpdatePendingEdges<Widget>
+
+    private data class BeforeSaveState(val description: String) : BeforeSaveHookState<Widget>
+
+    private data class BeforeUpdateState(val description: String) : BeforeUpdateHookState<Widget>
+
     @Test
     fun `before phases convert and transform state in lifecycle order`() {
         val events = mutableListOf<String>()
         val expectedViewerContext = ViewerContext(Viewer.User(7L))
         val hooks = UpdateMutationHooks(
             converter = object :
-                UpdateMutationHookStateConverter<String, String, String, String, String> {
-                override fun toBeforeSaveState(draft: String): String {
+                UpdateMutationHookStateConverter<
+                    String,
+                    Widget,
+                    PendingEdges,
+                    BeforeSaveState,
+                    BeforeUpdateState,
+                > {
+                override fun toBeforeSaveState(draft: String): BeforeSaveState {
                     events += "convert-save:$draft"
-                    return draft
+                    return BeforeSaveState(draft)
                 }
 
                 override fun toBeforeUpdateState(
                     viewerContext: ViewerContext,
-                    before: String,
-                    pendingEdges: String,
-                    beforeSaveState: String,
-                ): String {
+                    before: Widget,
+                    pendingEdges: PendingEdges,
+                    beforeSaveState: BeforeSaveState,
+                ): BeforeUpdateState {
                     assertSame(expectedViewerContext, viewerContext)
-                    events += "convert-update:$before:$pendingEdges:$beforeSaveState"
-                    return beforeSaveState
+                    events +=
+                        "convert-update:${before.description}:${pendingEdges.description}:" +
+                            beforeSaveState.description
+                    return BeforeUpdateState(beforeSaveState.description)
                 }
             },
             beforeSave = MutationHookRunner(
                 lifecycle = "Test.beforeSave",
                 hooks = listOf(
                     MutationHook { state ->
-                        events += "before-save:$state"
-                        "$state-save"
+                        events += "before-save:${state.description}"
+                        BeforeSaveState("${state.description}-save")
                     },
                 ),
             ),
@@ -49,8 +72,8 @@ class UpdateMutationHooksTest {
                 lifecycle = "Test.beforeUpdate",
                 hooks = listOf(
                     MutationHook { state ->
-                        events += "before-update:$state"
-                        "$state-update"
+                        events += "before-update:${state.description}"
+                        BeforeUpdateState("${state.description}-update")
                     },
                 ),
             ),
@@ -60,11 +83,11 @@ class UpdateMutationHooksTest {
         val result = hooks.runBefore(
             viewerContext = expectedViewerContext,
             draft = "draft",
-            before = "entity",
-            pendingEdges = "edges",
+            before = Widget(1L, "entity"),
+            pendingEdges = PendingEdges("edges"),
         )
 
-        assertEquals("draft-save-update", result)
+        assertEquals("draft-save-update", result.description)
         assertEquals(
             listOf(
                 "convert-save:draft",
@@ -78,26 +101,33 @@ class UpdateMutationHooksTest {
 
     @Test
     fun `after phase delegates the updated entity to its runner`() {
-        val seen = mutableListOf<String>()
+        val seen = mutableListOf<Widget>()
         val hooks = UpdateMutationHooks(
             converter = object :
-                UpdateMutationHookStateConverter<Unit, String, Unit, Unit, Unit> {
-                override fun toBeforeSaveState(draft: Unit) = Unit
+                UpdateMutationHookStateConverter<
+                    Unit,
+                    Widget,
+                    PendingEdges,
+                    BeforeSaveState,
+                    BeforeUpdateState,
+                > {
+                override fun toBeforeSaveState(draft: Unit) = BeforeSaveState("unused")
 
                 override fun toBeforeUpdateState(
                     viewerContext: ViewerContext,
-                    before: String,
-                    pendingEdges: Unit,
-                    beforeSaveState: Unit,
-                ) = Unit
+                    before: Widget,
+                    pendingEdges: PendingEdges,
+                    beforeSaveState: BeforeSaveState,
+                ) = BeforeUpdateState("unused")
             },
             beforeSave = MutationHookRunner("Test.beforeSave", emptyList()),
             beforeUpdate = MutationHookRunner("Test.beforeUpdate", emptyList()),
             afterUpdate = HookRunner(listOf(Hook(seen::add))),
         )
 
-        hooks.runAfter("updated")
+        val updated = Widget(1L, "updated")
+        hooks.runAfter(updated)
 
-        assertEquals(listOf("updated"), seen)
+        assertEquals(listOf(updated), seen)
     }
 }

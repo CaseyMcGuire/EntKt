@@ -57,6 +57,17 @@ class UpdateGeneratorTest {
     }
 
     @Test
+    fun `prepared update state implements its runtime marker`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+
+        assert(output.contains(": PreparedUpdateState<User>")) {
+            "PreparedState should implement the prepared-update marker\n$output"
+        }
+    }
+
+    @Test
     fun `update draft is annotated as DSL scope`() {
         val user = User()
         finalize(user, Car())

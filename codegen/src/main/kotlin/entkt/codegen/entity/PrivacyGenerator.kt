@@ -38,6 +38,8 @@ private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val PENDING_EDGE_OPS = ClassName("entkt.runtime.mutation", "PendingEdgeOps")
+private val UPDATE_PENDING_EDGES =
+    ClassName("entkt.runtime.mutation", "UpdatePendingEdges")
 private val EDGE_CHANGES = ClassName("entkt.runtime.mutation", "EdgeChanges")
 private val PRIVACY_ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val RESOLVED_ENTITY_PRIVACY_CONFIG =
@@ -132,7 +134,13 @@ internal class PrivacyGenerator(
         // helper-eligible M2M edges still
         // get a type — a no-fields class — so hook authors can write
         // `ctx.pendingEdges` without entity-conditional types.
-            addType(buildPendingEdgeOpsAggregator(pendingEdgeOpsClass, helperEligibleEdges))
+            addType(
+                buildPendingEdgeOpsAggregator(
+                    pendingEdgeOpsClass,
+                    entityClass,
+                    helperEligibleEdges,
+                ),
+            )
 
         // EdgeChangesView aggregator.
         // One typed `EdgeChanges<TargetIdType>` per helper-eligible M2M
@@ -284,13 +292,18 @@ internal class PrivacyGenerator(
      */
     private fun buildPendingEdgeOpsAggregator(
         aggregatorClass: ClassName,
+        entityClass: ClassName,
         helperEligibleEdges: List<HelperEligibleM2M>,
     ): TypeSpec {
         if (helperEligibleEdges.isEmpty()) {
-            return classType(aggregatorClass) { primaryConstructor {} }
+            return classType(aggregatorClass) {
+                addSuperinterface(UPDATE_PENDING_EDGES.parameterizedBy(entityClass))
+                primaryConstructor {}
+            }
         }
         return classType(aggregatorClass) {
             addModifiers(KModifier.DATA)
+            addSuperinterface(UPDATE_PENDING_EDGES.parameterizedBy(entityClass))
             primaryConstructor {
                 for (edge in helperEligibleEdges) {
                     parameter(
