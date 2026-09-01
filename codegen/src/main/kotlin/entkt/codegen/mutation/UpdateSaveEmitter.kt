@@ -5,6 +5,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.LIST
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
@@ -34,6 +35,8 @@ private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val UPDATE_MUTATION_EXECUTOR =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationExecutor")
+private val UPDATE_MUTATION_HOOKS =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationHooks")
 private val UPDATE_MUTATION_REQUEST =
     ClassName("entkt.runtime.mutation", "UpdateMutationRequest")
 private val PREPARED_UPDATE =
@@ -68,7 +71,6 @@ internal data class UpdateSaveArtifacts(
 internal class UpdateSaveEmitter(
     private val packageName: String,
     private val schemaName: String,
-    private val clientName: String,
     private val preparedStateClass: ClassName,
     private val allFields: List<Field>,
     private val edgeFks: List<EdgeFk>,
@@ -80,10 +82,10 @@ internal class UpdateSaveEmitter(
     private val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
     private val draftClass = ClassName(packageName, "${schemaName}UpdateDraft")
     private val pendingEdgesClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
-    private val mutationClass = ClassName(packageName, "${schemaName}Mutation")
+    private val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
+    private val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
     private val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
     private val edgeChangesClass = ClassName(packageName, "${schemaName}EdgeChangesView")
-    private val updateHookContextClass = ClassName(packageName, "${schemaName}UpdateHookContext")
     private val mutableFields = allFields.filterNot { it.immutable }
 
     fun build(): UpdateSaveArtifacts = UpdateSaveArtifacts(
@@ -94,6 +96,8 @@ internal class UpdateSaveEmitter(
                 add(buildRelationshipRequirementsFunction())
             }
             add(buildCapturePendingEdgesFunction())
+            add(buildRequiredHookStateViolationsFunction())
+            add(buildRequestedPatchFunction())
             add(buildPrepareFunction())
             add(buildRelationshipFunction())
             add(buildExecuteFunction())
@@ -131,8 +135,8 @@ internal class UpdateSaveEmitter(
                 entityClass,
                 pendingEdgesClass,
                 preparedStateClass,
-                mutationClass,
-                updateHookContextClass,
+                beforeSaveStateClass,
+                beforeUpdateStateClass,
             ),
         ) {
             addModifiers(KModifier.PRIVATE)
@@ -145,7 +149,7 @@ internal class UpdateSaveEmitter(
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE privacy")
                 add("unresolvedReason = %S,\n", "no update rule allowed access")
-                add("rules = client.%L.privacyConfig.updateRules,\n", clientName)
+                add("rules = configuredPrivacy.updateRules,\n")
                 add("ruleClientProvider = { client.readOnlyClient },\n")
                 add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
                 indent()
@@ -156,12 +160,12 @@ internal class UpdateSaveEmitter(
                 add("%L,\n", edgeChangesSnapshot("state.edgeChanges"))
                 unindent()
                 add(") },\n")
-                add("fallback = if (client.%L.privacyConfig.updateDerivesFromCreate) {\n", clientName)
+                add("fallback = if (configuredPrivacy.updateDerivesFromCreate) {\n")
                 indent()
                 add("%M(\n", PRIVACY_DECISION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE privacy")
-                add("rules = client.%L.privacyConfig.createRules,\n", clientName)
+                add("rules = configuredPrivacy.createRules,\n")
                 add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { state: %T -> %T(%L) },\n",
@@ -180,7 +184,7 @@ internal class UpdateSaveEmitter(
                 add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE validation")
-                add("rules = client.%L.validationConfig.updateRules,\n", clientName)
+                add("rules = configuredValidation.updateRules,\n")
                 add("ruleClientProvider = { client.readOnlyClient },\n")
                 add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
                 indent()
@@ -191,12 +195,12 @@ internal class UpdateSaveEmitter(
                 add("%L,\n", edgeChangesSnapshot("state.edgeChanges"))
                 unindent()
                 add(") },\n")
-                add("additional = if (client.%L.validationConfig.updateDerivesFromCreate) {\n", clientName)
+                add("additional = if (configuredValidation.updateDerivesFromCreate) {\n")
                 indent()
                 add("%M(\n", VALIDATION_DECISION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE validation")
-                add("rules = client.%L.validationConfig.createRules,\n", clientName)
+                add("rules = configuredValidation.createRules,\n")
                 add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { state: %T -> %T(%L) },\n",
@@ -213,10 +217,14 @@ internal class UpdateSaveEmitter(
                 unindent()
                 add("),\n")
                 add("adapter = this,\n")
-                add("hookInputConverter = HookInputConverter(driver, client),\n")
-                add("beforeSaveHookRunner = beforeSaveHookRunner,\n")
-                add("beforeUpdateHookRunner = beforeUpdateHookRunner,\n")
-                add("afterUpdateHookRunner = afterUpdateHookRunner,\n")
+                add("hooks = %T(\n", UPDATE_MUTATION_HOOKS)
+                indent()
+                add("converter = UpdateHookStateConverter(client),\n")
+                add("beforeSave = beforeSaveHookRunner,\n")
+                add("beforeUpdate = beforeUpdateHookRunner,\n")
+                add("afterUpdate = afterUpdateHookRunner,\n")
+                unindent()
+                add("),\n")
                 unindent()
                 add(")")
             })
@@ -256,6 +264,92 @@ internal class UpdateSaveEmitter(
         statement("return draft._buildPendingEdgeOps()")
     }
 
+    /** Validate required assignments after every immutable hook transformation. */
+    private fun buildRequiredHookStateViolationsFunction(): FunSpec = function(
+        "requiredHookStateViolations",
+        LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION),
+    ) {
+        addModifiers(KModifier.PRIVATE)
+        parameter("state", beforeUpdateStateClass)
+        mutableFields.filterNot { it.nullable }.forEach { field ->
+            val property = field.apiName
+            statement(
+                "if (state.%L is %T.Set && state.%L.value == null) " +
+                    "return·listOf(%T(%S, field = %S))",
+                property,
+                FIELD_PATCH,
+                property,
+                MUTATION_VALIDATION_VIOLATION,
+                "$property is required",
+                property,
+            )
+        }
+        edgeFks.filter { it.required }.forEach { fk ->
+            statement(
+                "if (state.%L is %T.Set && state.%L.value == null) " +
+                    "return·listOf(%T(%S, field = %S))",
+                fk.propertyName,
+                FIELD_PATCH,
+                fk.propertyName,
+                MUTATION_VALIDATION_VIOLATION,
+                "${fk.propertyName} is required",
+                fk.propertyName,
+            )
+        }
+        statement("return emptyList()")
+    }
+
+    /** Lower the final hook state into the canonical typed update patch. */
+    private fun buildRequestedPatchFunction(): FunSpec = function(
+        "buildRequestedPatch",
+        patchClass,
+    ) {
+        addModifiers(KModifier.PRIVATE)
+        parameter("state", beforeUpdateStateClass)
+        addCode(codeBlock {
+            add("val patch = %T(\n", patchClass)
+            indent()
+            mutableFields.forEach { field ->
+                if (field.nullable) {
+                    add("%L = state.%L,\n", field.apiName, field.apiName)
+                } else {
+                    add(
+                        "%L = when (val entry = state.%L) { " +
+                            "%T.Unset -> %T.Unset; is %T.Set -> %T.Set(checkNotNull(entry.value)) },\n",
+                        field.apiName,
+                        field.apiName,
+                        FIELD_PATCH,
+                        FIELD_PATCH,
+                        FIELD_PATCH,
+                        FIELD_PATCH,
+                    )
+                }
+            }
+            edgeFks.forEach { fk ->
+                if (fk.required) {
+                    add(
+                        "%L = when (val entry = state.%L) { " +
+                            "%T.Unset -> %T.Unset; is %T.Set -> %T.Set(checkNotNull(entry.value)) },\n",
+                        fk.propertyName,
+                        fk.propertyName,
+                        FIELD_PATCH,
+                        FIELD_PATCH,
+                        FIELD_PATCH,
+                        FIELD_PATCH,
+                    )
+                } else {
+                    add("%L = state.%L,\n", fk.propertyName, fk.propertyName)
+                }
+            }
+            unindent()
+            add(")\n")
+        })
+        statement(
+            "return %L",
+            lifecyclePatchSnapshot("patch", mutableFields, entityClass),
+        )
+    }
+
     private fun buildPrepareFunction(): FunSpec = function(
         "prepare",
         UPDATE_PREPARATION.parameterizedBy(preparedStateClass),
@@ -264,14 +358,29 @@ internal class UpdateSaveEmitter(
         parameter("request", UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass))
         parameter("before", entityClass)
         parameter("pendingEdges", pendingEdgesClass)
+        parameter("hookState", beforeUpdateStateClass)
         parameter("scope", UPDATE_PREPARATION_SCOPE)
-        statement("val draft = request.draft")
-        statement("val requiredViolations = draft._checkRequiredNotNull()")
+        statement("val requiredViolations = requiredHookStateViolations(hookState)")
         statement(
             "if (requiredViolations.isNotEmpty()) return·%T.Invalid(requiredViolations)",
             UPDATE_PREPARATION,
         )
-        statement("val requestedPatch = draft._buildRequestedPatch(driver)")
+        statement("val requestedPatch = buildRequestedPatch(hookState)")
+        val hasAssignments = codeBlock {
+            val properties = buildList {
+                mutableFields.forEach { add(it.apiName) }
+                edgeFks.forEach { add(it.propertyName) }
+            }
+            if (properties.isEmpty()) {
+                add("false")
+            } else {
+                properties.forEachIndexed { index, property ->
+                    if (index > 0) add(" || ")
+                    add("(requestedPatch.%L is %T.Set)", property, FIELD_PATCH)
+                }
+            }
+        }
+        statement("val hasFieldAssignments = %L", hasAssignments)
         if (helperEligibleEdges.isNotEmpty()) {
             statement("val edgeChanges = scope.driverRead { _buildEdgeChanges(request.id, pendingEdges) }")
         } else {
@@ -279,9 +388,9 @@ internal class UpdateSaveEmitter(
         }
 
         val emptyCondition = if (helperEligibleEdges.isEmpty()) {
-            "!draft._hasFieldAssignments()"
+            "!hasFieldAssignments"
         } else {
-            "!draft._hasFieldAssignments() && !draft._hasPendingLinkTableM2MOps()"
+            "!hasFieldAssignments && !request.draft._hasPendingLinkTableM2MOps()"
         }
         beginControlFlow("if ($emptyCondition)")
         statement("val effectivePatch = requestedPatch")

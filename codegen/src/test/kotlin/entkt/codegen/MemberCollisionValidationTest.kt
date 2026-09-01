@@ -61,9 +61,7 @@ class MemberCollisionValidationTest {
         }
 
         val errors = validate("S" to S())
-        // The clash lands on the update mutation view, where unset
-        // methods live.
-        assertCollision(errors, "SUpdateMutationView", "unsetName")
+        assertCollision(errors, "SBeforeSaveState", "unsetName")
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -195,9 +193,9 @@ class MemberCollisionValidationTest {
         }
 
         val errors = validate("S" to S())
-        val diag = errors.first { it.contains("SUpdateMutationView") && it.contains("'unsetName'") }
+        val diag = errors.first { it.contains("SBeforeSaveState") && it.contains("'unsetName'") }
         assertTrue("Schema 'S'" in diag, "Diagnostic should name the schema: $diag")
-        assertTrue("SUpdateMutationView" in diag, "Diagnostic should name the artifact: $diag")
+        assertTrue("SBeforeSaveState" in diag, "Diagnostic should name the artifact: $diag")
         assertTrue("'unsetName'" in diag, "Diagnostic should name the member: $diag")
         assertTrue(
             "field 'unsetName'" in diag,
@@ -205,8 +203,8 @@ class MemberCollisionValidationTest {
                 "(the storage column 'unset_name' is not what the author changes): $diag",
         )
         assertTrue(
-            "unset method for field 'name'" in diag,
-            "Diagnostic should reference the generated unset method source: $diag",
+            "field 'name' unset transformation" in diag,
+            "Diagnostic should reference the generated unset transformation source: $diag",
         )
     }
 
@@ -220,14 +218,14 @@ class MemberCollisionValidationTest {
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `field 'pending_edges' collides with the fixed UpdateMutationView pendingEdges member`() {
+    fun `field 'pending_edges' collides with the fixed beforeUpdate pendingEdges member`() {
         class S : EntSchema("s", clientName = "ses") {
             override fun id() = EntId.long()
             val pendingEdges by string("pending_edges")
         }
 
         val errors = validate("S" to S())
-        assertCollision(errors, "SUpdateMutationView", "pendingEdges")
+        assertCollision(errors, "SBeforeUpdateState", "pendingEdges")
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -363,7 +361,7 @@ class MemberCollisionValidationTest {
         // both hit a platform declaration clash. Source names differ, so
         // only JVM-signature modelling catches it.
         val errors = validate("IsPrefix" to IsPrefix())
-        assertCollision(errors, "IsPrefixMutation", "setActive(…)")
+        assertCollision(errors, "IsPrefixCreateDraft", "setActive(…)")
     }
 
     @Test

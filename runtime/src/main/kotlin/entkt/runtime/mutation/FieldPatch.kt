@@ -1,16 +1,17 @@
 package entkt.runtime.mutation
 
 /**
- * A tri-state patch entry for one field or FK in a generated update.
+ * A tri-state assignment for one field or FK in generated mutation state.
  *
- * `Unset` means the entry is absent — the builder and hooks didn't touch
+ * `Unset` means the entry is absent — the caller and hooks didn't assign
  * the field, so the database write must skip it. `Set(value)` means the
  * entry is present with that value; for nullable fields, `Set(null)` is
  * an explicit clear, distinct from `Unset`.
  *
- * Generated update drafts lower their dirty state into a per-entity
- * patch type whose fields are `FieldPatch<T>`. Update privacy and validation
- * items expose the requested patch (caller/hook intent) and the
+ * Generated drafts lower their assignments into immutable before-hook states.
+ * Updates also lower the final hook state into a per-entity patch type whose
+ * fields are `FieldPatch<T>`. Update privacy and validation items expose the
+ * requested patch (caller/hook intent) and the
  * effective patch (after framework update defaults). The driver write
  * set is the effective patch's `Set` entries only.
  */

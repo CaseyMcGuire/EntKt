@@ -3,12 +3,12 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.EntClientInterceptors
 import entkt.integrationtest.ent.User
-import entkt.integrationtest.ent.UserCreateHookContext
+import entkt.integrationtest.ent.UserBeforeCreateState
+import entkt.integrationtest.ent.UserBeforeSaveState
+import entkt.integrationtest.ent.UserBeforeUpdateState
 import entkt.integrationtest.ent.UserCreateValidationRule
 import entkt.integrationtest.ent.UserLoadPrivacyRule
-import entkt.integrationtest.ent.UserMutation
 import entkt.integrationtest.ent.UserPolicyScope
-import entkt.integrationtest.ent.UserUpdateHookContext
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.hook.EntityHooks
 import entkt.runtime.privacy.EntityPolicy
@@ -28,7 +28,7 @@ class ClientConfigurationSnapshotIntegrationTest : PostgresTestBase() {
     @Test
     fun `retained configuration scopes cannot mutate an existing client or its derived clients`() {
         lateinit var retainedHooks:
-            EntityHooks<UserMutation, UserCreateHookContext, UserUpdateHookContext, User>
+            EntityHooks<UserBeforeSaveState, UserBeforeCreateState, UserBeforeUpdateState, User>
         lateinit var retainedPolicy: UserPolicyScope
         lateinit var retainedInterceptors: EntClientInterceptors
 

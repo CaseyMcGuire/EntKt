@@ -8,6 +8,8 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
 import entkt.runtime.hook.HookRunner
+import entkt.runtime.hook.MutationHook
+import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacyEvaluation
@@ -138,29 +140,6 @@ class CreateMutationExecutorTest {
                 events += "field-validation"
                 schemaFieldViolations
             },
-            beforeSave = mutationHookPhaseForInternalUse(
-                runner = HookRunner(listOf(Hook { value: String -> events += "before-save:$value" })),
-                value = { _, input -> input.beforeSaveHookValue() },
-            ),
-            beforeCreate = mutationHookPhaseForInternalUse(
-                runner = HookRunner(
-                    listOf(
-                        Hook { value: String ->
-                            events += "before-create:$value"
-                            beforeCreateAction()
-                        },
-                    ),
-                ),
-                value = { _, input -> input.beforeCreateHookValue() },
-            ),
-            afterCreate = HookRunner(
-                listOf(
-                    Hook { value ->
-                        events += "after-create:${value.id}"
-                        afterCreateAction(value)
-                    },
-                ),
-            ),
             )
 
         val privacyEvaluator = mutationPrivacyEvaluatorForInternalUse<Unit, Candidate, Candidate>(
@@ -619,6 +598,49 @@ class CreateMutationExecutorTest {
             },
             privacyEvaluator = spec.privacyEvaluator,
             validationEvaluator = spec.validationEvaluator,
+            hookStateConverter = object :
+                CreateMutationHookStateConverter<RecordingInput, String, String> {
+                override fun toBeforeSaveState(draft: RecordingInput): String =
+                    draft.beforeSaveHookValue()
+
+                override fun toBeforeCreateState(
+                    viewerContext: ViewerContext,
+                    draft: RecordingInput,
+                    beforeSaveState: String,
+                ): String = draft.beforeCreateHookValue()
+
+                override fun toPreparationDraft(
+                    originalDraft: RecordingInput,
+                    state: String,
+                ): RecordingInput = originalDraft
+            },
+            beforeSaveHookRunner = MutationHookRunner(
+                lifecycle = "Widget.beforeSave",
+                hooks = listOf(
+                    MutationHook { value: String ->
+                        events += "before-save:$value"
+                        value
+                    },
+                ),
+            ),
+            beforeCreateHookRunner = MutationHookRunner(
+                lifecycle = "Widget.beforeCreate",
+                hooks = listOf(
+                    MutationHook { value: String ->
+                        events += "before-create:$value"
+                        spec.beforeCreateAction()
+                        value
+                    },
+                ),
+            ),
+            afterCreateHookRunner = HookRunner(
+                listOf(
+                    Hook { value ->
+                        events += "after-create:${value.id}"
+                        spec.afterCreateAction(value)
+                    },
+                ),
+            ),
         )
         return Fixture(
             events = events,
@@ -636,7 +658,8 @@ class CreateMutationExecutorTest {
         val driver: RecordingDriver,
         val spec: RecordingSpec,
         val input: RecordingInput,
-        val executor: CreateMutationExecutor<Candidate>,
+        val executor:
+            CreateMutationExecutor<RecordingInput, Candidate, Widget, String, String>,
         val viewerContext: ViewerContext,
         val recordedFailures: MutableList<EntMutationException>,
     )

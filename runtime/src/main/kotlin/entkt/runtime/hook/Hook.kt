@@ -33,8 +33,8 @@ fun interface Hook<in T> : BatchHook<T> {
  * registration storage and scalar-hook adaptation in runtime code:
  *
  * ```kotlin
- * beforeCreate { context -> /* ... */ }
- * beforeCreate(batchHook)
+ * afterCreate { entity -> /* ... */ }
+ * afterCreate(batchHook)
  * ```
  *
  * This registry is the mutable construction surface for an `EntClient`

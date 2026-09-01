@@ -336,7 +336,7 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private val updateAdapter: CarUpdateAdapter = CarUpdateAdapter(driver, client, configuredHooks.beforeSave, configuredHooks.beforeUpdate, configuredHooks.afterUpdate)")) {
+        assert(output.contains("private val updateAdapter: CarUpdateAdapter = CarUpdateAdapter(driver, client, configuredPrivacy, configuredValidation, configuredHooks.beforeSave, configuredHooks.beforeUpdate, configuredHooks.afterUpdate)")) {
             "repo should construct one stable schema-specific update adapter\n$output"
         }
         assert(output.contains("val draft = CarUpdateDraft().apply(block)") &&
@@ -381,10 +381,10 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("configuredHooks: ResolvedEntityHooks<CarMutation, CarCreateHookContext, CarUpdateHookContext, Car>")) {
+        assert(output.contains("configuredHooks: ResolvedEntityHooks<CarBeforeSaveState, CarBeforeCreateState, CarBeforeUpdateState, Car>")) {
             "The constructor should receive resolved entity hooks\n$output"
         }
-        assert(output.contains("beforeSave = mutationHookPhaseForInternalUse(configuredHooks.beforeSave)")) {
+        assert(output.contains("beforeSaveHookRunner = configuredHooks.beforeSave")) {
             "Should use the resolved beforeSave hooks directly\n$output"
         }
         assert(output.contains("afterDelete = configuredHooks.afterDelete")) {

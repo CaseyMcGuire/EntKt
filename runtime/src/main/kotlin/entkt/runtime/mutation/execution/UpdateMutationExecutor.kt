@@ -6,7 +6,6 @@ import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.hook.HookRunner
 import entkt.runtime.mutation.TransactionRequiredException
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
@@ -34,25 +33,23 @@ class UpdateMutationExecutor<
     Entity : EntEntity<*>,
     PendingEdges,
     State,
-    BeforeSaveHookInput,
-    BeforeUpdateHookInput,
+    BeforeSaveState,
+    BeforeUpdateState,
     >(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime,
     private val privacyEvaluator: MutationPrivacyEvaluator<State>,
     private val validationEvaluator: MutationValidationEvaluator<State>,
-    private val adapter: UpdateMutationAdapter<Draft, Entity, PendingEdges, State>,
-    private val hookInputConverter:
-        UpdateHookInputConverter<
+    private val adapter:
+        UpdateMutationAdapter<Draft, Entity, PendingEdges, State, BeforeUpdateState>,
+    private val hooks:
+        UpdateMutationHooks<
             Draft,
             Entity,
             PendingEdges,
-            BeforeSaveHookInput,
-            BeforeUpdateHookInput,
+            BeforeSaveState,
+            BeforeUpdateState,
         >,
-    private val beforeSaveHookRunner: HookRunner<BeforeSaveHookInput>,
-    private val beforeUpdateHookRunner: HookRunner<BeforeUpdateHookInput>,
-    private val afterUpdateHookRunner: HookRunner<Entity>,
 ) {
     private val execution = MutationExecutionSupport(mutationRuntime)
 
@@ -89,24 +86,18 @@ class UpdateMutationExecutor<
         val before = entity.decode(row)
 
         val pendingEdges = adapter.capturePendingEdges(request.draft)
-        beforeSaveHookRunner.run(
-            listOf(hookInputConverter.beforeSaveInput(request.draft)),
+        val beforeUpdateState = hooks.runBefore(
+            viewerContext = viewerContext,
+            draft = request.draft,
+            before = before,
+            pendingEdges = pendingEdges,
         )
-        beforeUpdateHookRunner.runFresh {
-            listOf(
-                hookInputConverter.beforeUpdateInput(
-                    viewerContext,
-                    request.draft,
-                    before,
-                    pendingEdges,
-                ),
-            )
-        }
         val prepared = when (
             val preparation = adapter.prepare(
                 request,
                 before,
                 pendingEdges,
+                beforeUpdateState,
                 preparationScope(attempt, entity),
             )
         ) {
@@ -156,7 +147,7 @@ class UpdateMutationExecutor<
             entity = entity,
             postWriteState = postWriteState,
         )
-        afterUpdateHookRunner.run(listOf(updated))
+        hooks.runAfter(updated)
         if (applyLoadPrivacy) {
             evaluateReturnedEntityPrivacy(attempt, viewerContext, updated, entity)
         }

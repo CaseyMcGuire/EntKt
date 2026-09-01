@@ -140,7 +140,7 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
         val client = EntClient(driver) {
             hooks {
                 users {
-                    beforeUpdate { hookFired = true }
+                    beforeUpdate { state -> hookFired = true; state }
                 }
             }
         }

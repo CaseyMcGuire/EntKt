@@ -66,7 +66,7 @@ class BatchLifecycleCodegenCompileTest {
                 package com.example.app
 
                 import com.example.ent.Car
-                import com.example.ent.CarCreateHookContext
+                import com.example.ent.CarBeforeCreateState
                 import com.example.ent.CarCreateRuleInput
                 import com.example.ent.CarCreateValidationRule
                 import com.example.ent.CarCreateBatchValidationRule
@@ -77,8 +77,8 @@ class BatchLifecycleCodegenCompileTest {
                 import com.example.ent.EntClient
                 import com.example.ent.ReadOnlyEntClient
                 import entkt.runtime.driver.DatabaseDriver
-                import entkt.runtime.hook.Hook
-                import entkt.runtime.hook.batchHook
+                import entkt.runtime.hook.MutationHook
+                import entkt.runtime.hook.batchMutationHook
                 import entkt.runtime.privacy.EntityPolicy
                 import entkt.runtime.privacy.PrivacyDecision
                 import entkt.runtime.privacy.allowAll
@@ -128,10 +128,10 @@ class BatchLifecycleCodegenCompileTest {
                     policies { cars(MixedPolicy) }
                     hooks {
                         cars {
-                            beforeCreate { _ -> }
-                            beforeCreate(Hook<CarCreateHookContext> { })
-                            beforeCreate(batchHook<CarCreateHookContext> { })
-                            beforeCreate { _ -> }
+                            beforeCreate { state -> state }
+                            beforeCreate(MutationHook<CarBeforeCreateState> { it })
+                            beforeCreate(batchMutationHook<CarBeforeCreateState> { it })
+                            beforeCreate { state -> state }
                         }
                     }
                 }

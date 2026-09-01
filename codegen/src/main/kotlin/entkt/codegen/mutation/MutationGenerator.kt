@@ -1,192 +1,180 @@
 package entkt.codegen.mutation
 
-import entkt.codegen.apiName
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
-import com.squareup.kotlinpoet.FunSpec
-import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
+import entkt.codegen.apiName
+import entkt.codegen.kotlinpoet.classType
+import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.function
-import entkt.codegen.kotlinpoet.interfaceType
 import entkt.codegen.kotlinpoet.kotlinFile
+import entkt.codegen.kotlinpoet.parameter
+import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
 import entkt.schema.EntSchema
 
-/**
- * Generates a `${SchemaName}Mutation` interface per entity. Both the
- * generated create and update drafts implement this interface, which
- * exposes all **mutable** field properties (immutable fields are excluded
- * since they can't be changed on update). Edge FK properties are included.
- *
- * This lets users register `onBeforeSave` hooks that fire on both create
- * and update — validation, timestamp injection, etc. — without
- * duplicating the logic.
- *
- * **Conceptually write-only.** The `Mutation` interface is intentionally
- * the *shared writable surface* for `beforeSave` hooks. It has no
- * patch-model operations (`unset{Field}()`, reading pending-state)
- * because those are update-specific — creates don't have a `dirtyFields`
- * patch to unset from. Reading property getters is allowed by the
- * Kotlin type system (declared `var`) but the read semantics differ
- * between Create and Update implementations:
- *
- * - On Create, `m.title` returns the staged value (or `null` if nothing
- *   has been assigned).
- * - On Update, `m.title` **throws** when the field is not in
- *   `dirtyFields`, because a default-null getter would conflate
- *   `Unset` and explicit `Set(null)` (see the id-based update roots
- *   contract). Hooks that need to inspect pending update state should use
- *   `beforeUpdate` and read `ctx.patch.title`, which has explicit
- *   `FieldPatch.Unset` / `Set` / `Set(null)` semantics.
- *
- * In short: use `beforeSave` when you only need to **write**
- * field/FK values that apply uniformly to create and update. Use
- * `beforeCreate` / `beforeUpdate` for phase-specific reads, patch
- * inspection, or `unset{Field}()`.
- *
- * Also generates two restricted hook-facing views that extend the
- * shared `Mutation` interface. Both views are
- * **runtime-enforced** through private anonymous adapters generated at
- * the lifecycle boundary:
- *
- * - `${SchemaName}CreateMutationView` — the typed surface for
- *   `beforeCreate` hook lambdas. Adds immutable scalar fields
- *   (writable on create only). The hook receives a private
- *   adapter whose runtime type implements only this view. The generated
- *   repository forwards its reads and writes to the state-only
- *   `${SchemaName}CreateDraft`; neither the draft nor its executable
- *   `PendingCreateMutation` wrapper is exposed to the hook.
- *
- * - `${SchemaName}UpdateMutationView` — the typed surface for
- *   `beforeUpdate` hook lambdas (via `ctx.mutation`). Adds
- *   `unset{Field}()` patch operations and the `pendingEdges`
- *   aggregator. Same private-adapter pattern as the create
- *   side: a hook that casts `ctx.mutation` to `${SchemaName}Update`
- *   throws `ClassCastException`.
- *
- * `beforeSave` hooks on both create and update receive a
- * `${SchemaName}Mutation`-typed adapter — the shared writable surface,
- * with no view-specific extensions reachable.
- *
- * The Update view's `unset` methods live only on the update side because
- * the patch model they remove from is update-specific.
- */
+private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
+
+/** Generates the immutable, schema-typed states transformed by before hooks. */
 internal class MutationGenerator(
     private val packageName: String,
 ) {
-
     fun generate(
         schemaName: String,
         schema: EntSchema,
         schemaNames: Map<EntSchema, String> = emptyMap(),
-    ): FileSpec {
-        val interfaceName = "${schemaName}Mutation"
-        val createViewName = "${schemaName}CreateMutationView"
-        val updateViewName = "${schemaName}UpdateMutationView"
-        val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
-        // Backing FK columns flow through `edgeFks` so the interface
-        // exposes them with relationship nullability (required → non-null).
+    ): List<FileSpec> {
         val fields = scalarFields(schema)
-        val mutableFields = fields.filter { !it.immutable }
-        val immutableFields = fields.filter { it.immutable }
         val edgeFks = computeEdgeFks(schema, schemaNames)
-        // Field-backed FKs inherit backing-field immutability. Immutable
-        // FKs are create-only writable — they belong on `CreateMutationView`
-        // (which extends `Mutation`) but not on `Mutation` itself or on
-        // `UpdateMutationView`.
-        val mutableEdgeFks = edgeFks.filter { !it.immutable }
-        val immutableEdgeFks = edgeFks.filter { it.immutable }
-
-        val mutationInterface = interfaceType(interfaceName) {
-            for (field in mutableFields) {
-                addProperty(
-                    mutableMutationProperty(
-                        field.apiName,
-                        field.resolvedTypeName().copy(nullable = true),
-                        field.comment,
+        val mutableAssignments = buildList {
+            fields.filterNot { it.immutable }.forEach { field ->
+                add(
+                    Assignment(
+                        name = field.apiName,
+                        valueType = field.resolvedTypeName().copy(nullable = true),
+                        comment = field.comment,
                     ),
                 )
             }
-            for (fk in mutableEdgeFks) {
-                addProperty(
-                    mutableMutationProperty(
-                        fk.propertyName,
-                        fk.idType.toTypeName().copy(nullable = !fk.required),
-                        fk.comment,
+            edgeFks.filterNot { it.immutable }.forEach { fk ->
+                add(
+                    Assignment(
+                        name = fk.propertyName,
+                        valueType = fk.idType.toTypeName().copy(nullable = true),
+                        comment = fk.comment,
+                    ),
+                )
+            }
+        }
+        val createAssignments = buildList {
+            fields.forEach { field ->
+                add(
+                    Assignment(
+                        name = field.apiName,
+                        valueType = field.resolvedTypeName().copy(nullable = true),
+                        comment = field.comment,
+                    ),
+                )
+            }
+            edgeFks.forEach { fk ->
+                add(
+                    Assignment(
+                        name = fk.propertyName,
+                        valueType = fk.idType.toTypeName().copy(nullable = true),
+                        comment = fk.comment,
                     ),
                 )
             }
         }
 
-        // The restricted hook-facing view passed to `beforeCreate`.
-        // Extends `Mutation` and adds the create-only writable surface:
-        // immutable scalar fields plus immutable field-backed FKs.
-        // Hides draft assignment inspection, staging fields, and every other
-        // concrete-draft surface that hooks must not reach.
-        val createView = interfaceType(createViewName) {
-            addSuperinterface(ClassName(packageName, interfaceName))
-            for (field in immutableFields) {
-                addProperty(
-                    mutableMutationProperty(
-                        field.apiName,
-                        field.resolvedTypeName().copy(nullable = true),
-                        field.comment,
+        val beforeSaveClass = ClassName(packageName, "${schemaName}BeforeSaveState")
+        val beforeCreateClass = ClassName(packageName, "${schemaName}BeforeCreateState")
+        val beforeUpdateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
+
+        return listOf(
+            stateFile(
+                stateClass = beforeSaveClass,
+                context = emptyList(),
+                assignments = mutableAssignments,
+            ),
+            stateFile(
+                stateClass = beforeCreateClass,
+                context = listOf(
+                    StateProperty("client", ClassName(packageName, "EntClientScope")),
+                    StateProperty("viewerContext", VIEWER_CONTEXT),
+                ),
+                assignments = createAssignments,
+            ),
+            stateFile(
+                stateClass = beforeUpdateClass,
+                context = listOf(
+                    StateProperty("client", ClassName(packageName, "EntClientScope")),
+                    StateProperty("viewerContext", VIEWER_CONTEXT),
+                    StateProperty("before", ClassName(packageName, schemaName)),
+                    StateProperty(
+                        "pendingEdges",
+                        ClassName(packageName, "${schemaName}PendingEdgeOps"),
                     ),
-                )
+                ),
+                assignments = mutableAssignments,
+            ),
+        )
+    }
+
+    private fun stateFile(
+        stateClass: ClassName,
+        context: List<StateProperty>,
+        assignments: List<Assignment>,
+    ): FileSpec {
+        val stateType = classType(stateClass.simpleName) {
+            primaryConstructor {
+                addAnnotation(ENTKT_INTERNAL)
+                context.forEach { parameter(it.name, it.type) }
+                assignments.forEach { assignment ->
+                    parameter(assignment.name, assignment.patchType)
+                }
             }
-            for (fk in immutableEdgeFks) {
-                addProperty(
-                    mutableMutationProperty(
-                        fk.propertyName,
-                        fk.idType.toTypeName().copy(nullable = !fk.required),
-                        fk.comment,
-                    ),
-                )
+            context.forEach { member ->
+                property(member.name, member.type) { initializer(member.name) }
+            }
+            assignments.forEach { assignment ->
+                property(assignment.name, assignment.patchType) {
+                    initializer(assignment.name)
+                    assignment.comment?.let { addKdoc("%L", it) }
+                }
+                addFunction(replacementFunction(stateClass, context, assignments, assignment, set = true))
+                addFunction(replacementFunction(stateClass, context, assignments, assignment, set = false))
             }
         }
-
-        // The restricted hook-facing view passed to `beforeUpdate`
-        // (via `ctx.mutation`). Extends `Mutation` and adds unset
-        // semantics only for mutable scalars and mutable FKs — there's
-        // no update surface for immutable values.
-        val updateView = interfaceType(updateViewName) {
-            addSuperinterface(ClassName(packageName, interfaceName))
-            for (field in mutableFields) addFunction(unsetSpec(field.apiName))
-            for (fk in mutableEdgeFks) addFunction(unsetSpec(fk.propertyName))
-            // Read-only `pendingEdges` aggregator on the
-            // hook-facing view. Hooks read pending link-table M2M edge ops
-            // through `ctx.mutation.pendingEdges` (or `ctx.pendingEdges`);
-            // they cannot mutate the underlying op log — the view does NOT
-            // expose the per-edge mutator surface (`add`/`remove`/`set`).
-            property("pendingEdges", pendingEdgeOpsClass)
-        }
-
-        return kotlinFile(packageName, interfaceName) {
-            addType(mutationInterface)
-            addType(createView)
-            addType(updateView)
+        return kotlinFile(packageName, stateClass.simpleName) {
+            addAnnotation(entktInternalFileOptIn())
+            addType(stateType)
         }
     }
 
-    /** Property shape shared by the mutation interfaces' writable fields. */
-    private fun mutableMutationProperty(
-        name: String,
-        type: TypeName,
-        kdoc: String?,
-    ): PropertySpec = property(name, type) {
-        mutable(true)
-        if (kdoc != null) addKdoc("%L", kdoc)
+    private fun replacementFunction(
+        stateClass: ClassName,
+        context: List<StateProperty>,
+        assignments: List<Assignment>,
+        target: Assignment,
+        set: Boolean,
+    ) = function(
+        (if (set) "set" else "unset") + target.name.replaceFirstChar { it.uppercaseChar() },
+        stateClass,
+    ) {
+        if (set) parameter("value", target.valueType)
+        addCode(codeBlock {
+            add("return %T(\n", stateClass)
+            indent()
+            context.forEach { member -> add("%L = %L,\n", member.name, member.name) }
+            assignments.forEach { assignment ->
+                when {
+                    assignment != target -> add("%L = %L,\n", assignment.name, assignment.name)
+                    set -> add("%L = %T.Set(value),\n", assignment.name, FIELD_PATCH)
+                    else -> add("%L = %T.Unset,\n", assignment.name, FIELD_PATCH)
+                }
+            }
+            unindent()
+            add(")\n")
+        })
     }
 
-    private fun unsetSpec(prop: String): FunSpec {
-        val name = "unset${prop.replaceFirstChar { it.uppercaseChar() }}"
-        return function(name) {
-            addModifiers(KModifier.ABSTRACT)
-        }
+    private data class StateProperty(
+        val name: String,
+        val type: TypeName,
+    )
+
+    private data class Assignment(
+        val name: String,
+        val valueType: TypeName,
+        val comment: String?,
+    ) {
+        val patchType: TypeName = FIELD_PATCH.parameterizedBy(valueType)
     }
 }

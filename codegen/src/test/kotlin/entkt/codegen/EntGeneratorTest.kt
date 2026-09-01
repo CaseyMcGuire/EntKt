@@ -97,19 +97,22 @@ class EntGeneratorTest {
         )
         val files = generator.generate(schemas)
 
-        // Per schema: entity, mutation, create, update, query, repo, privacy, validation,
-        // and one same-named rule-input file for each mutation lifecycle.
+        // Per schema: entity, three hook-state files, create, update, query,
+        // repo, privacy, validation, and one same-named rule-input file for
+        // each mutation lifecycle.
         // The schema-set-level files are EntReadRuntime, ReadOnlyEntClient, the
         // public client DSL/facades, and three immutable resolved-config types.
         // User additionally gets an index-helper file; Car has no eligible
         // indexes and therefore has no corresponding file.
-        assertEquals(11 * schemas.size + 13 + 1, files.size)
+        assertEquals(13 * schemas.size + 13 + 1, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
-                "Car", "CarMutation", "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
+                "Car", "CarBeforeSaveState", "CarBeforeCreateState", "CarBeforeUpdateState",
+                "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
                 "CarCreateRuleInput", "CarUpdateRuleInput", "CarDeleteRuleInput",
-                "User", "UserMutation", "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
+                "User", "UserBeforeSaveState", "UserBeforeCreateState", "UserBeforeUpdateState",
+                "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
                 "UserCreateRuleInput", "UserUpdateRuleInput", "UserDeleteRuleInput",
                 "UserIndexes",
                 "EntReadRuntime",
@@ -299,7 +302,9 @@ class EntGeneratorTest {
 
             val packageDir = outputDir.resolve("com/example/ent")
             assertTrue(Files.exists(packageDir.resolve("Car.kt")))
-            assertTrue(Files.exists(packageDir.resolve("CarMutation.kt")))
+            assertTrue(Files.exists(packageDir.resolve("CarBeforeSaveState.kt")))
+            assertTrue(Files.exists(packageDir.resolve("CarBeforeCreateState.kt")))
+            assertTrue(Files.exists(packageDir.resolve("CarBeforeUpdateState.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarCreateDraft.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarUpdateDraft.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarQuery.kt")))
@@ -310,7 +315,9 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("CarUpdateRuleInput.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarDeleteRuleInput.kt")))
             assertTrue(Files.exists(packageDir.resolve("User.kt")))
-            assertTrue(Files.exists(packageDir.resolve("UserMutation.kt")))
+            assertTrue(Files.exists(packageDir.resolve("UserBeforeSaveState.kt")))
+            assertTrue(Files.exists(packageDir.resolve("UserBeforeCreateState.kt")))
+            assertTrue(Files.exists(packageDir.resolve("UserBeforeUpdateState.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserCreateDraft.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserUpdateDraft.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserQuery.kt")))

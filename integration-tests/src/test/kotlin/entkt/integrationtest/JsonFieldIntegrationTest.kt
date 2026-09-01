@@ -287,13 +287,15 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
                         @Suppress("UNCHECKED_CAST")
                         (context.before.metadata!!.tags as MutableList<String>) += "before mutation"
                         @Suppress("UNCHECKED_CAST")
-                        (((context.patch.metadata as FieldPatch.Set<ArticleMeta?>).value!!)
+                        (((context.metadata as FieldPatch.Set<ArticleMeta?>).value!!)
                             .tags as MutableList<String>) += "patch mutation"
+                        context
                     }
                     beforeUpdate { context ->
                         hookBeforeSeen += context.before.metadata!!.tags.toList()
-                        val patch = context.patch.metadata as FieldPatch.Set<ArticleMeta?>
+                        val patch = context.metadata as FieldPatch.Set<ArticleMeta?>
                         hookPatchSeen += patch.value!!.tags.toList()
+                        context
                     }
                 }
             }

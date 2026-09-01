@@ -97,9 +97,6 @@ class BuildMemberManifestTest {
             byArtifact["Notebook.Companion"],
         )
 
-        // Mutation interface — just the mutable scalar (no FK on this schema)
-        assertEquals(setOf("title"), byArtifact["NotebookMutation"])
-
         // Create drafts contain mutable state plus assignment inspection.
         assertEquals(
             setOf("title", "assignedFields", "isSet"),
@@ -108,25 +105,29 @@ class BuildMemberManifestTest {
 
         // Update drafts contain only caller-configurable mutation state.
         // Execution settings and terminals live on the generic runtime
-        // PendingUpdateMutation wrapper; unsetTitle remains hook-facing only.
+        // PendingUpdateMutation wrapper.
         assertNotNull(byArtifact["NotebookUpdateDraft"])
         assertEquals(setOf("title", "dirtyFields"), byArtifact["NotebookUpdateDraft"])
         assertTrue(
             "unsetTitle" !in byArtifact["NotebookUpdateDraft"]!!,
-            "unset methods must NOT appear on the public update draft; they live on UpdateMutationView only",
+            "functional hook transformations must not appear on the mutable update draft",
         )
 
-        // Update mutation view — title + unsetTitle + pendingEdges.
-        // pendingEdges is unconditionally emitted by MutationGenerator
-        // even on schemas without helper-eligible M2M (the property
-        // exists as an empty-shape `${name}PendingEdgeOps`), so the
-        // manifest must register it unconditionally too — otherwise
-        // a `val pendingEdges = string(...)` on a non-M2M schema
-        // slips past the collision check.
-        assertNotNull(byArtifact["NotebookUpdateMutationView"])
-        assertTrue("title" in byArtifact["NotebookUpdateMutationView"]!!)
-        assertTrue("unsetTitle" in byArtifact["NotebookUpdateMutationView"]!!)
-        assertTrue("pendingEdges" in byArtifact["NotebookUpdateMutationView"]!!)
+        assertEquals(
+            setOf("title", "setTitle", "unsetTitle"),
+            byArtifact["NotebookBeforeSaveState"],
+        )
+        assertEquals(
+            setOf("client", "viewerContext", "title", "setTitle", "unsetTitle"),
+            byArtifact["NotebookBeforeCreateState"],
+        )
+        assertEquals(
+            setOf(
+                "client", "viewerContext", "before", "pendingEdges",
+                "title", "setTitle", "unsetTitle",
+            ),
+            byArtifact["NotebookBeforeUpdateState"],
+        )
     }
 
     @Test
@@ -145,25 +146,16 @@ class BuildMemberManifestTest {
         assertTrue("title" in entity)
         assertTrue("authorId" in entity, "implicit FK property should land on entity as authorId")
 
-        // Mutation interface: only mutable scalars + mutable FKs.
-        // createdAt is immutable, so it should NOT be on Mutation.
-        val mutation = byArtifact["ArticleMutation"]!!
-        assertTrue("title" in mutation)
-        assertTrue("authorId" in mutation)
-        assertTrue("createdAt" !in mutation, "immutable scalar should not appear on Mutation")
+        val beforeCreate = byArtifact["ArticleBeforeCreateState"]!!
+        assertTrue("createdAt" in beforeCreate)
+        assertTrue("setCreatedAt" in beforeCreate)
 
-        // Create view: adds the immutable createdAt (create-only writable).
-        val createView = byArtifact["ArticleCreateMutationView"]!!
-        assertTrue("createdAt" in createView)
-
-        // Update mutation view: title + unsetTitle, authorId + unsetAuthorId.
-        // createdAt absent (immutable).
-        val updateView = byArtifact["ArticleUpdateMutationView"]!!
-        assertTrue("title" in updateView)
-        assertTrue("unsetTitle" in updateView)
-        assertTrue("authorId" in updateView)
-        assertTrue("unsetAuthorId" in updateView)
-        assertTrue("createdAt" !in updateView)
+        val beforeUpdate = byArtifact["ArticleBeforeUpdateState"]!!
+        assertTrue("title" in beforeUpdate)
+        assertTrue("unsetTitle" in beforeUpdate)
+        assertTrue("authorId" in beforeUpdate)
+        assertTrue("unsetAuthorId" in beforeUpdate)
+        assertTrue("createdAt" !in beforeUpdate)
     }
 
     // Helper-eligible M2M coverage is exercised end-to-end in

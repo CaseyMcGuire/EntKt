@@ -366,9 +366,11 @@ class LinkTableM2MPostgresIntegrationTest {
                             pending.requestedAdds,
                             pending.requestedRemoves,
                         )
+                        context
                     }
                     beforeUpdate { context ->
                         hookSnapshots += checkNotNull(context.pendingEdges.tags.requestedSet).toSet()
+                        context
                     }
                 }
             }

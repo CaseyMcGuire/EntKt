@@ -182,7 +182,7 @@ class ClientGeneratorTest {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("hooks = ResolvedEntClientHooks(hooksConfig)"))
-        assert(output.contains("source.cars.resolveForInternalUse()"))
+        assert(output.contains("source.cars.resolveForInternalUse(\"Car\")"))
         assert(output.contains("policies = ResolvedEntClientPolicies(policiesConfig)"))
         assert(output.contains("source.usersPrivacyConfig.resolveForInternalUse()"))
         assert(output.contains("source.usersValidationConfig.resolveForInternalUse()"))
@@ -338,8 +338,8 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("EntityHooks<CarMutation, CarCreateHookContext, CarUpdateHookContext, Car>"))
-        assert(output.contains("EntityHooks<UserMutation, UserCreateHookContext, UserUpdateHookContext, User>"))
+        assert(output.contains("EntityHooks<CarBeforeSaveState, CarBeforeCreateState, CarBeforeUpdateState, Car>"))
+        assert(output.contains("EntityHooks<UserBeforeSaveState, UserBeforeCreateState, UserBeforeUpdateState, User>"))
         assert(!output.contains("class CarHooks") && !output.contains("class UserHooks"))
     }
 
@@ -348,7 +348,7 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("ResolvedEntityHooks<CarMutation, CarCreateHookContext, CarUpdateHookContext, Car>"))
+        assert(output.contains("ResolvedEntityHooks<CarBeforeSaveState, CarBeforeCreateState, CarBeforeUpdateState, Car>"))
         assert(!output.contains("beforeCreateHooks") && !output.contains("beforeCreateBatchHook"))
     }
 
@@ -360,10 +360,10 @@ class ClientGeneratorTest {
         assert(output.contains("class EntClientHooks")) {
             "Should generate EntClientHooks\n$output"
         }
-        assert(output.contains("fun cars(block: EntityHooks<CarMutation, CarCreateHookContext, CarUpdateHookContext, Car>.() -> Unit)")) {
+        assert(output.contains("fun cars(block: EntityHooks<CarBeforeSaveState, CarBeforeCreateState, CarBeforeUpdateState, Car>.() -> Unit)")) {
             "Should have cars method on EntClientHooks\n$output"
         }
-        assert(output.contains("fun users(block: EntityHooks<UserMutation, UserCreateHookContext, UserUpdateHookContext, User>.() -> Unit)")) {
+        assert(output.contains("fun users(block: EntityHooks<UserBeforeSaveState, UserBeforeCreateState, UserBeforeUpdateState, User>.() -> Unit)")) {
             "Should have users method on EntClientHooks\n$output"
         }
     }

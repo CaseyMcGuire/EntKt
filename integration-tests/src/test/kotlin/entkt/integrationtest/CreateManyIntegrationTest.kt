@@ -5,18 +5,20 @@ import entkt.query.Predicate
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.ReadOnlyEntClient
 import entkt.integrationtest.ent.User
-import entkt.integrationtest.ent.UserCreateHookContext
+import entkt.integrationtest.ent.UserBeforeCreateState
+import entkt.integrationtest.ent.UserBeforeSaveState
 import entkt.integrationtest.ent.UserCreateRuleInput
 import entkt.integrationtest.ent.UserCreatePrivacyRule
 import entkt.integrationtest.ent.UserLoadPrivacyItem
 import entkt.integrationtest.ent.UserLoadPrivacyRule
-import entkt.integrationtest.ent.UserMutation
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.hook.batchHook
+import entkt.runtime.hook.batchMutationHook
+import entkt.runtime.mutation.orElse
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -170,8 +172,8 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             policies { users(OpenUser) }
             hooks {
                 users {
-                    beforeSave { hookCalls++ }
-                    beforeCreate { hookCalls++ }
+                    beforeSave { state -> hookCalls++; state }
+                    beforeCreate { state -> hookCalls++; state }
                     afterCreate { hookCalls++ }
                 }
             }
@@ -250,12 +252,14 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             policies { users(policy) }
             hooks {
                 users {
-                    beforeSave(batchHook<UserMutation> { mutations ->
-                        events += "beforeSave:${mutations.joinToString { it.name!! }}"
+                    beforeSave(batchMutationHook<UserBeforeSaveState> { states ->
+                        events += "beforeSave:${states.joinToString { it.name.orElse(null)!! }}"
+                        states
                     })
-                    beforeCreate(batchHook<UserCreateHookContext> { contexts ->
-                        contexts.forEach { assertSame(capturedPrivacy, it.viewerContext) }
-                        events += "beforeCreate:${contexts.joinToString { it.mutation.name!! }}"
+                    beforeCreate(batchMutationHook<UserBeforeCreateState> { states ->
+                        states.forEach { assertSame(capturedPrivacy, it.viewerContext) }
+                        events += "beforeCreate:${states.joinToString { it.name.orElse(null)!! }}"
+                        states
                     })
                     afterCreate(batchHook<User> { entities ->
                         // Hydration and the set-based write both precede the full-batch callback.
@@ -347,7 +351,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val client = EntClient(recording) {
 
             policies { users(OpenUser) }
-            hooks { users { beforeCreate { creates++ } } }
+            hooks { users { beforeCreate { state -> creates++; state } } }
         }
         client.users.create { name = "Existing"; email = "dup@example.com" }.save(viewerContext).getOrThrow()
         creates = 0
@@ -825,6 +829,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                             val nested = context.client.users.create { }.save(context.viewerContext)
                             nestedFailure = assertIs<MutationResult.Failed>(nested).exception
                         }
+                        context
                     }
                 }
             }

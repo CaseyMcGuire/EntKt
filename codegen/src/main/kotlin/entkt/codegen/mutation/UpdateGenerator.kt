@@ -15,7 +15,8 @@ import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
-import entkt.codegen.lifecyclePatchSnapshot
+import entkt.codegen.client.resolvedEntityPrivacyConfigType
+import entkt.codegen.client.resolvedEntityValidationConfigType
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
 import entkt.codegen.metadata.VIEWER_CONTEXT
@@ -26,7 +27,6 @@ import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.stagingFieldName
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.kotlinpoet.annotation
-import entkt.codegen.kotlinpoet.anonymousType
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.function
@@ -56,9 +56,10 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UPDATE_MUTATION_ADAPTER =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationAdapter")
-private val UPDATE_HOOK_INPUT_CONVERTER =
-    ClassName("entkt.runtime.mutation.execution", "UpdateHookInputConverter")
+private val UPDATE_MUTATION_HOOK_STATE_CONVERTER =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationHookStateConverter")
 private val HOOK_RUNNER = ClassName("entkt.runtime.hook", "HookRunner")
+private val MUTATION_HOOK_RUNNER = ClassName("entkt.runtime.hook", "MutationHookRunner")
 
 
 internal class UpdateGenerator(
@@ -87,25 +88,23 @@ internal class UpdateGenerator(
         val draftClass = ClassName(packageName, className)
         val adapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
         val preparedStateClass = adapterClass.nestedClass("PreparedState")
-        val mutationClass = ClassName(packageName, "${schemaName}Mutation")
-        val updateMutationViewClass = ClassName(packageName, "${schemaName}UpdateMutationView")
+        val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
+        val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
-        val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
+        val privacyConfigType = resolvedEntityPrivacyConfigType(packageName, schemaName)
+        val validationConfigType = resolvedEntityValidationConfigType(packageName, schemaName)
 
-        val beforeSaveHookType = HOOK_RUNNER.parameterizedBy(mutationClass)
-        val beforeUpdateHookType = HOOK_RUNNER.parameterizedBy(updateHookCtxClass)
+        val beforeSaveHookType = MUTATION_HOOK_RUNNER.parameterizedBy(beforeSaveStateClass)
+        val beforeUpdateHookType = MUTATION_HOOK_RUNNER.parameterizedBy(beforeUpdateStateClass)
         val afterUpdateHookType = HOOK_RUNNER.parameterizedBy(entityClass)
 
-        // Helper-eligible link-table M2M edges. Each gets a
-        // nested mutator class on the update draft and a public
-        // property bound to it. The mutator is NOT propagated to the
-        // hook-facing `${schemaName}UpdateMutationView` — hooks see
-        // pending edge ops through a read-only sidecar.
+        // Helper-eligible link-table M2M edges. Each gets a nested mutator
+        // class on the update draft. Before-update hook states expose the
+        // captured operations through their read-only pendingEdges property.
         val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
         val saveArtifacts = UpdateSaveEmitter(
             packageName = packageName,
             schemaName = schemaName,
-            clientName = schema.clientName,
             preparedStateClass = preparedStateClass,
             allFields = allFields,
             edgeFks = edgeFks,
@@ -115,7 +114,6 @@ internal class UpdateGenerator(
 
         val draftType = classType(className) {
             addAnnotation(annotation(ENTKT_DSL))
-            addSuperinterface(mutationClass)
             addSuperinterface(UPDATE_MUTATION_DRAFT.parameterizedBy(entityClass))
             primaryConstructor {
                 addAnnotation(ENTKT_INTERNAL)
@@ -141,11 +139,9 @@ internal class UpdateGenerator(
                     addProperty(buildEdgeMutatorProperty(edge, draftClass))
                 }
             }
-            addFunction(buildBuildRequestedPatchFunction(schemaName, mutableFields, edgeFks))
-            addFunction(buildCheckRequiredNotNullFunction(schemaName, mutableFields, edgeFks))
+            addFunction(buildBeforeSaveStateFunction(schemaName, mutableFields, edgeFks))
             addFunction(buildBuildPendingEdgeOpsFunction(schemaName, helperEligibleEdges))
             addFunction(buildHasFieldAssignmentsFunction())
-            addFunction(buildUnsetFieldFunction())
             run {
                 if (helperEligibleEdges.isNotEmpty()) {
                     addFunction(buildHasPendingLinkTableM2MOpsFunction(helperEligibleEdges))
@@ -160,12 +156,11 @@ internal class UpdateGenerator(
         }
 
         val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
-        val hookInputConverterType = buildHookInputConverterType(
+        val hookStateConverterType = buildHookStateConverterType(
             draftClass = draftClass,
             entityClass = entityClass,
-            mutationClass = mutationClass,
-            updateMutationViewClass = updateMutationViewClass,
-            updateHookContextClass = updateHookCtxClass,
+            beforeSaveStateClass = beforeSaveStateClass,
+            beforeUpdateStateClass = beforeUpdateStateClass,
             clientClass = clientClass,
             pendingEdgeOpsClass = pendingEdgeOpsClass,
             mutableFields = mutableFields,
@@ -179,11 +174,14 @@ internal class UpdateGenerator(
                     entityClass,
                     pendingEdgeOpsClass,
                     preparedStateClass,
+                    beforeUpdateStateClass,
                 ),
             )
             primaryConstructor {
                 parameter("driver", DRIVER)
                 parameter("client", clientClass)
+                parameter("configuredPrivacy", privacyConfigType)
+                parameter("configuredValidation", validationConfigType)
                 parameter("beforeSaveHookRunner", beforeSaveHookType)
                 parameter("beforeUpdateHookRunner", beforeUpdateHookType)
                 parameter("afterUpdateHookRunner", afterUpdateHookType)
@@ -200,7 +198,7 @@ internal class UpdateGenerator(
             addProperty(saveArtifacts.executorProperty)
             saveArtifacts.functions.forEach(::addFunction)
             addType(saveArtifacts.preparedStateType)
-            addType(hookInputConverterType)
+            addType(hookStateConverterType)
         }
 
         return kotlinFile(packageName, className) {
@@ -210,72 +208,60 @@ internal class UpdateGenerator(
         }
     }
 
-    private fun buildHookInputConverterType(
+    private fun buildHookStateConverterType(
         draftClass: ClassName,
         entityClass: ClassName,
-        mutationClass: ClassName,
-        updateMutationViewClass: ClassName,
-        updateHookContextClass: ClassName,
+        beforeSaveStateClass: ClassName,
+        beforeUpdateStateClass: ClassName,
         clientClass: ClassName,
         pendingEdgeOpsClass: ClassName,
         mutableFields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): TypeSpec {
-        val converterType = UPDATE_HOOK_INPUT_CONVERTER.parameterizedBy(
+        val converterType = UPDATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
             draftClass,
             entityClass,
             pendingEdgeOpsClass,
-            mutationClass,
-            updateHookContextClass,
+            beforeSaveStateClass,
+            beforeUpdateStateClass,
         )
-        return classType("HookInputConverter") {
+        return classType("UpdateHookStateConverter") {
             addModifiers(KModifier.PRIVATE)
             addSuperinterface(converterType)
             primaryConstructor {
-                parameter("driver", DRIVER)
                 parameter("client", clientClass)
-            }
-            property("driver", DRIVER) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("driver")
             }
             property("client", clientClass) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("client")
             }
-            addFunction(
-                buildMutationViewFunction(
-                    updateMutationViewClass = updateMutationViewClass,
-                    draftClass = draftClass,
-                    mutableFields = mutableFields,
-                    edgeFks = edgeFks,
-                    pendingEdgeOpsClass = pendingEdgeOpsClass,
-                ),
-            )
-            addFunction(
-                buildBeforeSaveAdapterFunction(
-                    mutationClass = mutationClass,
-                    draftClass = draftClass,
-                    mutableFields = mutableFields,
-                    edgeFks = edgeFks,
-                ),
-            )
-            function("beforeSaveInput", mutationClass) {
+            function("toBeforeSaveState", beforeSaveStateClass) {
                 addModifiers(KModifier.OVERRIDE)
                 parameter("draft", draftClass)
-                statement("return _buildBeforeSaveView(draft)")
+                statement("return draft._buildBeforeSaveState()")
             }
-            function("beforeUpdateInput", updateHookContextClass) {
+            function("toBeforeUpdateState", beforeUpdateStateClass) {
                 addModifiers(KModifier.OVERRIDE)
                 parameter("viewerContext", VIEWER_CONTEXT)
-                parameter("draft", draftClass)
                 parameter("before", entityClass)
                 parameter("pendingEdges", pendingEdgeOpsClass)
-                statement("val snapshot = draft._buildRequestedPatch(driver)")
-                statement(
-                    "return %T(client.hookClientScopeForInternalUse, viewerContext, before, snapshot, pendingEdges, _buildMutationView(draft, pendingEdges))",
-                    updateHookContextClass,
-                )
+                parameter("beforeSaveState", beforeSaveStateClass)
+                addCode(codeBlock {
+                    add("return %T(\n", beforeUpdateStateClass)
+                    indent()
+                    add("client = client.hookClientScopeForInternalUse,\n")
+                    add("viewerContext = viewerContext,\n")
+                    add("before = before,\n")
+                    add("pendingEdges = pendingEdges,\n")
+                    mutableFields.forEach { field ->
+                        add("%L = beforeSaveState.%L,\n", field.apiName, field.apiName)
+                    }
+                    edgeFks.forEach { fk ->
+                        add("%L = beforeSaveState.%L,\n", fk.propertyName, fk.propertyName)
+                    }
+                    unindent()
+                    add(")\n")
+                })
             }
         }
     }
@@ -284,27 +270,18 @@ internal class UpdateGenerator(
         val prop = field.apiName
         val typeName = field.resolvedTypeName().copy(nullable = true)
         return property(prop, typeName) {
-            addModifiers(KModifier.OVERRIDE)
             mutable(true)
             initializer("null")
             // Reading an untouched update field must throw (by contract). The
             // draft has no current-state value before save(); for nullable
             // fields, a default-null getter would also collapse Unset and
-            // explicit Set(null) into the same observable value. Hooks that
-            // need to inspect pending state should read from `ctx.patch`,
-            // which has explicit Unset / Set / Set(null) semantics.
-            //
-            // Note: this means a `beforeSave` hook that reads `m.title`
-            // works on creates (returns the staged value) but throws on
-            // updates with untouched fields. `beforeSave` is the shared
-            // write-only surface; for phase-specific reads use
-            // `beforeCreate` (`m.title` returns staged) or `beforeUpdate`
-            // (`ctx.patch.title` returns FieldPatch state).
+            // explicit Set(null) into the same observable value. Before hooks
+            // receive immutable states with explicit FieldPatch entries.
             getter {
                 statement(
                         "if (%S !in dirtyFields) throw IllegalStateException(%S)",
                         prop,
-                        "$prop is not set in this update; read ctx.patch.$prop instead",
+                        "$prop is not set in this update",
                 )
                 statement("return field")
             }
@@ -322,23 +299,18 @@ internal class UpdateGenerator(
             // Required FKs:
             //   - public property is non-null typed (by contract "Public Types")
             //   - private nullable staging field holds the value until assigned
-            //   - getter throws on untouched read (by contract); reading
-            //     pending update state goes through `ctx.patch.authorId`
+            //   - getter throws on untouched read (by contract)
             //   - setter rejects null at entry so Java/platform callers
             //     can't put the builder into a dirty+null state
-            //   - `_checkRequiredNotNull()` still runs as a backstop for
-            //     setter-bypassing paths (reflection writing the backing
-            //     field directly)
             val nonNullType = fk.idType.toTypeName().copy(nullable = false)
             val stagingName = stagingFieldName(fk.propertyName)
             return property(fk.propertyName, nonNullType) {
-                addModifiers(KModifier.OVERRIDE)
                 mutable(true)
                 getter {
                     statement(
                             "if (%S !in dirtyFields) throw IllegalStateException(%S)",
                             fk.propertyName,
-                            "${fk.propertyName} is not set in this update; read ctx.patch.${fk.propertyName} instead",
+                            "${fk.propertyName} is not set in this update",
                         )
                     statement(
                             "return %L ?: throw IllegalStateException(%S)",
@@ -363,14 +335,13 @@ internal class UpdateGenerator(
         }
         val typeName = fk.idType.toTypeName().copy(nullable = true)
         return property(fk.propertyName, typeName) {
-            addModifiers(KModifier.OVERRIDE)
             mutable(true)
             initializer("null")
             getter {
                 statement(
                         "if (%S !in dirtyFields) throw IllegalStateException(%S)",
                         fk.propertyName,
-                        "${fk.propertyName} is not set in this update; read ctx.patch.${fk.propertyName} instead",
+                        "${fk.propertyName} is not set in this update",
                     )
                 statement("return field")
             }
@@ -392,242 +363,42 @@ internal class UpdateGenerator(
         }
     }
 
-    /**
-     * Build the private `_buildMutationView` factory for the adapter hooks see as
-     * `ctx.mutation`. The adapter implements [updateMutationViewClass]
-     * by forwarding each [mutationClass] field/FK property to the
-     * supplied draft (so reads go through the throw-on-untouched
-     * getter and writes flow through the dirty-tracking setter) and
-     * declaring `unset{Field}()` overrides that clear the corresponding
-     * draft assignment. Keeping the factory private keeps `unset` off
-     * the public DSL surface and captures the runtime-owned edge snapshot.
-     */
-    private fun buildMutationViewFunction(
-        updateMutationViewClass: ClassName,
-        draftClass: ClassName,
-        mutableFields: List<Field>,
-        edgeFks: List<EdgeFk>,
-        pendingEdgeOpsClass: ClassName,
-    ): FunSpec {
-        val adapter = anonymousType {
-            addSuperinterface(updateMutationViewClass)
-            // Forward each mutation field/FK property to the operation draft.
-            for (field in mutableFields) {
-                val propName = field.apiName
-                val typeName = field.resolvedTypeName().copy(nullable = true)
-                addProperty(buildAdapterForwarderProperty(propName, typeName))
-            }
-            for (fk in edgeFks) {
-                // Forwarder property type matches the interface (required → non-null).
-                val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-                addProperty(buildAdapterForwarderProperty(fk.propertyName, typeName))
-            }
-            for (field in mutableFields) {
-                addFunction(buildAdapterUnsetFunction(field.apiName))
-            }
-            for (fk in edgeFks) {
-                addFunction(buildAdapterUnsetFunction(fk.propertyName))
-            }
-            // The runtime-owned snapshot is captured by this per-save view.
-            property("pendingEdges", pendingEdgeOpsClass) {
-                addModifiers(KModifier.OVERRIDE)
-                getter {
-                    statement("return pendingEdgesSnapshot")
-                }
-            }
-        }
-        return function("_buildMutationView", updateMutationViewClass) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("draft", draftClass)
-            parameter("pendingEdgesSnapshot", pendingEdgeOpsClass)
-            statement("return %L", adapter)
-        }
-    }
-
-    /**
-     * Build the private `_beforeSaveView`
-     * adapter. Implements ONLY `${Schema}Mutation` — the shared
-     * write surface — without the `pendingEdges` read, the
-     * `unsetX()` patch operations, or any other update-specific
-     * surface that `${Schema}UpdateMutationView` adds. beforeSave
-     * hooks receive this adapter, so a misbehaving hook trying
-     * `mutation as ${Schema}UpdateMutationView` fails at runtime.
-     *
-     * The adapter forwards each mutable scalar field and mutable
-     * edge FK property to the supplied update draft, same as the
-     * update mutation-view forwarders.
-     */
-    private fun buildBeforeSaveAdapterFunction(
-        mutationClass: ClassName,
-        draftClass: ClassName,
-        mutableFields: List<Field>,
-        edgeFks: List<EdgeFk>,
-    ): FunSpec {
-        val adapter = anonymousType {
-            addSuperinterface(mutationClass)
-            for (field in mutableFields) {
-                val propName = field.apiName
-                val typeName = field.resolvedTypeName().copy(nullable = true)
-                addProperty(buildAdapterForwarderProperty(propName, typeName))
-            }
-            for (fk in edgeFks) {
-                val typeName = fk.idType.toTypeName().copy(nullable = !fk.required)
-                addProperty(buildAdapterForwarderProperty(fk.propertyName, typeName))
-            }
-        }
-        return function("_buildBeforeSaveView", mutationClass) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("draft", draftClass)
-            statement("return %L", adapter)
-        }
-    }
-
-    private fun buildAdapterForwarderProperty(
-        prop: String,
-        typeName: com.squareup.kotlinpoet.TypeName,
-    ): PropertySpec {
-        return property(prop, typeName) {
-            addModifiers(KModifier.OVERRIDE)
-            mutable(true)
-            getter { statement("return draft.%L", prop) }
-            setter {
-                parameter("value", typeName)
-                statement("draft.%L = value", prop)
-            }
-        }
-    }
-
-    private fun buildAdapterUnsetFunction(prop: String): FunSpec {
-        val name = "unset${prop.replaceFirstChar { it.uppercaseChar() }}"
-        return function(name) {
-            addModifiers(KModifier.OVERRIDE)
-            statement("draft._unsetFieldForInternalUse(%S)", prop)
-        }
-    }
-
-    /**
-     * Generate an internal `_buildRequestedPatch()` member that constructs
-     * the requested patch from the current `dirtyFields` snapshot. Used
-     * (a) before each beforeUpdate hook to capture the per-hook patch
-     * snapshot, and (b) once after all hooks to capture the canonical
-     * requested patch fed into update defaults / privacy / validation.
-     *
-     * The helper is **lenient**: a required field/FK that's been
-     * explicitly assigned `null` is represented as `Unset` in the patch
-     * rather than throwing. The patch type is `FieldPatch<T>` for
-     * required fields (T is non-nullable), so `Set(null)` is not even
-     * representable. Hooks that want to inspect the underlying state
-     * can read `ctx.mutation.foo` directly. The required-null check
-     * fires once after all hooks have run, before the canonical patch
-     * is built — this matches the "field-shape checks after
-     * hooks" ordering and lets a hook repair a null assignment via
-     * `mutation.unsetFoo()` or by reassigning `mutation.foo`.
-     */
-    private fun buildBuildRequestedPatchFunction(
+    /** Lower the caller's mutable draft into the first immutable hook state. */
+    private fun buildBeforeSaveStateFunction(
         schemaName: String,
         mutableFields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): FunSpec {
-        val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
-        val code = codeBlock {
-            add("val snapshot = %T(\n", patchClass)
-            for (field in mutableFields) {
-                val prop = field.apiName
-                if (field.nullable) {
-                    // Nullable: Set(this.foo) — Set(null) is an explicit clear.
+        val stateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
+        return function("_buildBeforeSaveState", stateClass) {
+            addModifiers(KModifier.INTERNAL)
+            addCode(codeBlock {
+                add("return %T(\n", stateClass)
+                indent()
+                mutableFields.forEach { field ->
                     add(
-                        "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
-                        prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
-                    )
-                } else {
-                    // Required: skip the Set entry if the value is null. The
-                    // post-hook required-null check (called from save()
-                    // before the canonical patch is built) catches unrepaired
-                    // nulls.
-                    add(
-                        "  %L = if (%S in dirtyFields && this.%L != null) %T.Set(this.%L!!) else %T.Unset,\n",
-                        prop, prop, prop, FIELD_PATCH, prop, FIELD_PATCH,
+                        "%L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
+                        field.apiName,
+                        field.apiName,
+                        FIELD_PATCH,
+                        field.apiName,
+                        FIELD_PATCH,
                     )
                 }
-            }
-            for (fk in edgeFks) {
-                if (fk.required) {
-                    // Required FKs read from the private staging field rather
-                    // than the throw-on-untouched getter, so a corrupted
-                    // dirty+null state (setter-bypassing reflection) lowers
-                    // to `Unset` here and is caught by
-                    // `_checkRequiredNotNull()` before the canonical patch.
-                    val stagingName = stagingFieldName(fk.propertyName)
+                edgeFks.forEach { fk ->
+                    val value = if (fk.required) stagingFieldName(fk.propertyName) else fk.propertyName
                     add(
-                        "  %L = if (%S in dirtyFields && this.%L != null) %T.Set(this.%L!!) else %T.Unset,\n",
-                        fk.propertyName, fk.propertyName, stagingName, FIELD_PATCH, stagingName, FIELD_PATCH,
-                    )
-                } else {
-                    add(
-                        "  %L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
-                        fk.propertyName, fk.propertyName, FIELD_PATCH, fk.propertyName, FIELD_PATCH,
+                        "%L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
+                        fk.propertyName,
+                        fk.propertyName,
+                        FIELD_PATCH,
+                        value,
+                        FIELD_PATCH,
                     )
                 }
-            }
-            add(")\n")
-        }
-        return function("_buildRequestedPatch", patchClass) {
-            addModifiers(KModifier.INTERNAL)
-            parameter("driver", DRIVER)
-            addCode(code)
-            statement(
-                "return %L",
-                lifecyclePatchSnapshot("snapshot", mutableFields, ClassName(packageName, schemaName)),
-            )
-        }
-    }
-
-    /**
-     * Generate an internal `_checkRequiredNotNull()` member that returns
-     * the violation for any required field or required edge FK
-     * that has been assigned `null` and not repaired (empty list =
-     * all required shapes hold). Called from the save pipeline after
-     * all `beforeUpdate` hooks complete, before the canonical
-     * requested patch is built; a non-empty result becomes
-     * `UpdatePreparation.Invalid`, which the runtime executor turns into a
-     * typed `EntValidationException`. A hook can clear the bad assignment via
-     * `mutation.unsetFoo()` (removes the entry from `dirtyFields`) or
-     * by reassigning a non-null value. Short-circuits on the first
-     * failure (matches the existing single-violation shape;
-     * collect-all is left as a future improvement).
-     */
-    private fun buildCheckRequiredNotNullFunction(
-        schemaName: String,
-        mutableFields: List<Field>,
-        edgeFks: List<EdgeFk>,
-    ): FunSpec {
-        return function(
-            "_checkRequiredNotNull",
-            LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION),
-        ) {
-            addModifiers(KModifier.INTERNAL)
-            for (field in mutableFields) {
-                if (field.nullable) continue
-                val prop = field.apiName
-                statement(
-                    "if (%S in dirtyFields && this.%L == null) return·listOf(%T(%S, field = %S))",
-                    prop, prop,
-                    MUTATION_VALIDATION_VIOLATION, "$prop is required", prop,
-                )
-            }
-            for (fk in edgeFks) {
-                if (!fk.required) continue
-                // Read the private staging field directly so a corrupted
-                // dirty+null state is caught here rather than triggering the
-                // throw-on-untouched getter (which would mask the diagnostic).
-                val stagingName = stagingFieldName(fk.propertyName)
-                statement(
-                    "if (%S in dirtyFields && this.%L == null) return·listOf(%T(%S, field = %S))",
-                    fk.propertyName, stagingName,
-                    MUTATION_VALIDATION_VIOLATION, "${fk.propertyName} is required", fk.propertyName,
-                )
-            }
-            statement("return emptyList()")
+                unindent()
+                add(")\n")
+            })
         }
     }
 
@@ -661,7 +432,7 @@ internal class UpdateGenerator(
      *    junction-read decision.
      *  - `snapshotOps(): PendingEdgeOps<ID>` — used by
      *    `_buildPendingEdgeOps` to materialize the immutable
-     *    aggregator the hook context / privacy / validation surfaces
+     *    aggregator the hook state / privacy / validation surfaces
      *    consume.
      *
      * The constructor is `internal` so callers cannot construct a
@@ -822,8 +593,7 @@ internal class UpdateGenerator(
      * Build `_buildPendingEdgeOps()`, a private method
      * that snapshots each per-edge mutator's op log into the per-entity
      * `${Schema}PendingEdgeOps` aggregator. The result is the read-only
-     * view that hooks see through `ctx.pendingEdges` and
-     * `ctx.mutation.pendingEdges`.
+     * value that hooks see through `state.pendingEdges`.
      *
      * Dedup happens inside the mutator's `snapshotOps()` accessor,
      * which converts the private `_requestedSet: List<ID>?` / `_adds`
@@ -940,11 +710,5 @@ internal class UpdateGenerator(
             addModifiers(KModifier.INTERNAL)
             statement("return dirtyFields.isNotEmpty()")
         }
-
-    private fun buildUnsetFieldFunction(): FunSpec = function("_unsetFieldForInternalUse") {
-        addModifiers(KModifier.INTERNAL)
-        parameter("field", STRING)
-        statement("dirtyFields.remove(field)")
-    }
 
 }

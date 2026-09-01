@@ -8,6 +8,8 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
 import entkt.runtime.hook.HookRunner
+import entkt.runtime.hook.MutationHook
+import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.RelationshipLockKey
 import entkt.runtime.mutation.TransactionRequiredException
@@ -203,7 +205,7 @@ class UpdateMutationExecutorTest {
             freshItem = { it },
         )
 
-        val adapter = object : UpdateMutationAdapter<Draft, Widget, String, State> {
+        val adapter = object : UpdateMutationAdapter<Draft, Widget, String, State, String> {
             override fun relationshipRequirements(draft: Draft): UpdateRelationshipRequirements =
                 currentRelationshipRequirements
 
@@ -216,6 +218,7 @@ class UpdateMutationExecutorTest {
                 request: UpdateMutationRequest<Draft>,
                 before: Widget,
                 pendingEdges: String,
+                hookState: String,
                 scope: UpdatePreparationScope,
             ): UpdatePreparation<State> {
                 events += "prepare:${before.name}:$pendingEdges"
@@ -265,32 +268,36 @@ class UpdateMutationExecutorTest {
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
             adapter = adapter,
-            hookInputConverter = object :
-                UpdateHookInputConverter<Draft, Widget, String, String, String> {
-                override fun beforeSaveInput(draft: Draft): String = "before-save:before"
+            hooks = UpdateMutationHooks(
+                converter = object :
+                    UpdateMutationHookStateConverter<Draft, Widget, String, String, String> {
+                    override fun toBeforeSaveState(draft: Draft): String = "before-save:before"
 
-                override fun beforeUpdateInput(
-                    viewerContext: ViewerContext,
-                    draft: Draft,
-                    before: Widget,
-                    pendingEdges: String,
-                ): String {
-                    receivedContexts += viewerContext
-                    return "before:${before.name}:$pendingEdges"
-                }
-            },
-            beforeSaveHookRunner = HookRunner(
-                listOf(Hook { events += it }),
-            ),
-            beforeUpdateHookRunner = HookRunner(
-                listOf(Hook { events += it }),
-            ),
-            afterUpdateHookRunner = HookRunner(
-                listOf(
-                    Hook { entity ->
-                        events += "after:${entity.name}"
-                        afterAction(entity)
-                    },
+                    override fun toBeforeUpdateState(
+                        viewerContext: ViewerContext,
+                        before: Widget,
+                        pendingEdges: String,
+                        beforeSaveState: String,
+                    ): String {
+                        receivedContexts += viewerContext
+                        return "before:${before.name}:$pendingEdges"
+                    }
+                },
+                beforeSave = MutationHookRunner(
+                    lifecycle = "Widget.beforeSave",
+                    hooks = listOf(MutationHook { value: String -> events += value; value }),
+                ),
+                beforeUpdate = MutationHookRunner(
+                    lifecycle = "Widget.beforeUpdate",
+                    hooks = listOf(MutationHook { value: String -> events += value; value }),
+                ),
+                afterUpdate = HookRunner(
+                    listOf(
+                        Hook { entity ->
+                            events += "after:${entity.name}"
+                            afterAction(entity)
+                        },
+                    ),
                 ),
             ),
         )

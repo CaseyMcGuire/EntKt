@@ -403,7 +403,7 @@ internal class ClientGenerator(
         }
         for (input in schemas) {
             property(input.clientName, resolvedEntityHooksType(packageName, input.name)) {
-                initializer("source.%L.resolveForInternalUse()", input.clientName)
+                initializer("source.%L.resolveForInternalUse(%S)", input.clientName, input.name)
             }
         }
     }
@@ -626,7 +626,7 @@ internal class ClientGenerator(
     }
 
     /**
-     * Actual object handed to hook contexts. Although both public clients
+     * Actual object handed to hook states. Although both public clients
      * implement [clientScopeClass], passing either concrete client would let
      * application code cast back to it and recover broader capabilities. This
      * private facade exposes only the common interface while delegating to the

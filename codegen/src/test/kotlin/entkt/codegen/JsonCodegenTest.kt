@@ -121,15 +121,15 @@ class JsonCodegenTest {
             """FieldPatch.Set(driver.copyJsonValue(JsonArticle.TABLE, "metadata", entry.value))""" in update,
             update,
         )
-        assertTrue("val snapshot = JsonArticleUpdatePatch(" in update, update)
-        assertTrue("metadata = when (val entry = snapshot.metadata)" in update, update)
+        assertTrue("val patch = JsonArticleUpdatePatch(" in update, update)
+        assertTrue("metadata = state.metadata" in update, update)
         assertTrue(
             """driver.copyJsonValue(JsonArticle.TABLE, "metadata",""" in update,
             update,
         )
-        assertTrue("val beforeSnapshot = before.copy(" in update, update)
+        assertTrue("state.before.copy(" in update, update)
         assertTrue(
-            """metadata = driver.copyJsonValue(JsonArticle.TABLE, "metadata", before.metadata)""" in update,
+            """metadata = driver.copyJsonValue(JsonArticle.TABLE, "metadata", state.before.metadata)""" in update,
             update,
         )
     }
@@ -190,7 +190,8 @@ class JsonCodegenTest {
         assertTrue(""""rects" to _entktPreparedRects,""" in create, create)
         assertTrue("rects = _entktPreparedRects" in create, create)
         assertFalse("copyJsonValue(JsonBoard.TABLE, \"rects\", rects) as List<Meta>" in create, create)
-        assertTrue("rects: List<Meta>" in create, create)
+        val state = genGeneric().getValue("JsonBoardBeforeCreateState")
+        assertTrue("rects: FieldPatch<List<Meta>?>" in state, state)
     }
 
     @Test

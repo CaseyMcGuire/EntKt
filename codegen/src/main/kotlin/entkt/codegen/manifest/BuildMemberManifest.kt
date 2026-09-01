@@ -32,26 +32,18 @@ import entkt.schema.EntSchema
  * - **entity Edges class** (`${name}.Edges`) — one property per
  *   declared edge (`edge.apiName`) plus the data-class synthesized
  *   members. Only present when the schema declares edges.
- * - **mutation interface** (`${name}Mutation`) — mutable scalar
- *   field properties, mutable FK properties.
  * - **create draft** (`${name}CreateDraft`) — every scalar and FK
  *   setter plus explicit-assignment inspection.
  * - **update draft** (`${name}UpdateDraft`) — mutable scalar field
  *   setters, mutable FK setters, helper-eligible M2M mutator
- *   properties, and private assignment tracking. **NOT `unset{X}()` methods** — those live
- *   only on the private hook-facing adapter and are surfaced via
- *   `${name}UpdateMutationView`, never on the public builder.
- * - **create mutation view** (`${name}CreateMutationView`) —
- *   inherited mutation props + create-only immutable scalar /
- *   immutable FK setters.
- * - **update mutation view** (`${name}UpdateMutationView`) —
- *   inherited mutation props + `unset{X}()` methods + the fixed
- *   `pendingEdges` aggregator (unconditionally emitted by
- *   MutationGenerator, regardless of whether the schema has any
- *   helper-eligible M2M edge — so the manifest registers it
- *   unconditionally). **NOT M2M mutator properties** — those
- *   live on the public `${name}UpdateDraft`, never on this
- *   view.
+ *   properties, and private assignment tracking.
+ * - **before-save state** (`${name}BeforeSaveState`) — immutable
+ *   mutable-field/FK patches and functional transformations.
+ * - **before-create state** (`${name}BeforeCreateState`) — fixed client and
+ *   viewer context, every scalar/FK patch, and functional transformations.
+ * - **before-update state** (`${name}BeforeUpdateState`) — fixed client,
+ *   viewer context, prior entity, and pending-edge context plus mutable
+ *   scalar/FK patches and functional transformations.
  *
  * Storage names (DB column names, table names) are intentionally
  * absent — those don't share a Kotlin member namespace with
@@ -67,10 +59,8 @@ internal fun buildMemberManifest(
 
     val scalars = scalarFields(schema)
     val mutableScalars = scalars.filter { !it.immutable }
-    val immutableScalars = scalars.filter { it.immutable }
     val fks = computeEdgeFks(schema, schemaNames)
     val mutableFks = fks.filter { !it.immutable }
-    val immutableFks = fks.filter { it.immutable }
     // Non-belongsTo edges (hasMany / hasOne / M2M) — collected to
     // detect collisions with FK property names on the entity class.
     val nonFkEdges = schema.edges().filter { it.kind !is EdgeKind.BelongsTo }
@@ -79,11 +69,11 @@ internal fun buildMemberManifest(
     addEdgesClassMembers(manifest, schemaName, schema.edges())
     addQueryClassMembers(manifest, schemaName, schema.edges())
     addEntityCompanionMembers(manifest, schemaName, scalars, fks, schema.edges())
-    addMutationInterfaceMembers(manifest, schemaName, mutableScalars, mutableFks)
     addCreateDraftMembers(manifest, schemaName, scalars, fks)
     addUpdateDraftMembers(manifest, schemaName, mutableScalars, mutableFks, helperEligibleM2M)
-    addCreateMutationViewMembers(manifest, schemaName, immutableScalars, immutableFks)
-    addUpdateMutationViewMembers(manifest, schemaName, mutableScalars, mutableFks, helperEligibleM2M)
+    addBeforeSaveStateMembers(manifest, schemaName, mutableScalars, mutableFks)
+    addBeforeCreateStateMembers(manifest, schemaName, scalars, fks)
+    addBeforeUpdateStateMembers(manifest, schemaName, mutableScalars, mutableFks)
 
     return manifest
 }
@@ -94,16 +84,19 @@ private fun entityArtifact(name: String): String = name
 private fun companionArtifact(name: String): String = "$name.Companion"
 private fun edgesArtifact(name: String): String = "$name.Edges"
 private fun queryArtifact(name: String): String = "${name}Query"
-private fun mutationInterfaceArtifact(name: String): String = "${name}Mutation"
 private fun createDraftArtifact(name: String): String = "${name}CreateDraft"
 private fun updateDraftArtifact(name: String): String = "${name}UpdateDraft"
-private fun createViewArtifact(name: String): String = "${name}CreateMutationView"
-private fun updateViewArtifact(name: String): String = "${name}UpdateMutationView"
+private fun beforeSaveStateArtifact(name: String): String = "${name}BeforeSaveState"
+private fun beforeCreateStateArtifact(name: String): String = "${name}BeforeCreateState"
+private fun beforeUpdateStateArtifact(name: String): String = "${name}BeforeUpdateState"
 
 // ── Name derivation helpers ───────────────────────────────────────
 
 private fun unsetMethodName(propertyName: String): String =
     "unset${propertyName.replaceFirstChar { it.uppercaseChar() }}"
+
+private fun setMethodName(propertyName: String): String =
+    "set${propertyName.replaceFirstChar { it.uppercaseChar() }}"
 
 // ── Entity class ─────────────────────────────────────────────────
 
@@ -374,31 +367,6 @@ private fun addEntityCompanionMembers(
 
 // ── Mutation interface (the shared writable surface) ─────────────
 
-private fun addMutationInterfaceMembers(
-    manifest: GeneratedMemberManifest,
-    schemaName: String,
-    mutableScalars: List<entkt.schema.Field>,
-    mutableFks: List<EdgeFk>,
-) {
-    val artifact = mutationInterfaceArtifact(schemaName)
-    for (field in mutableScalars) {
-        manifest.add(
-            artifact,
-            field.apiName,
-            GeneratedMemberKind.MUTABLE_PROPERTY,
-            "mutable field '${field.apiName}'",
-        )
-    }
-    for (fk in mutableFks) {
-        manifest.add(
-            artifact,
-            fk.propertyName,
-            GeneratedMemberKind.MUTABLE_PROPERTY,
-            "mutable FK for edge '${fk.edgeApiName}'",
-        )
-    }
-}
-
 // ── Create draft ─────────────────────────────────────────────────
 
 private fun addCreateDraftMembers(
@@ -477,10 +445,8 @@ private fun addUpdateDraftMembers(
         )
     }
 
-    // Link-table M2M mutator properties live on
-    // the *public* update draft, not on the UpdateMutationView
-    // interface — hooks must not reach add/remove/set through
-    // ctx.mutation.
+    // Link-table M2M mutators live on the public update draft. Hook states
+    // expose only the captured PendingEdgeOps snapshot.
     for (m2m in helperEligibleM2M) {
         manifest.add(
             artifact,
@@ -490,105 +456,102 @@ private fun addUpdateDraftMembers(
         )
     }
 
-    // No `unset{X}()` here. The public update draft
-    // intentionally does NOT expose unset methods — they live only
-    // on the private hook-facing adapter (typed as
-    // `${name}UpdateMutationView`), so callers can't write
-    // `client.posts.update(id) { unsetName() }`.
 }
 
 // ── Create mutation view ─────────────────────────────────────────
 
-private fun addCreateMutationViewMembers(
-    manifest: GeneratedMemberManifest,
-    schemaName: String,
-    immutableScalars: List<entkt.schema.Field>,
-    immutableFks: List<EdgeFk>,
-) {
-    val artifact = createViewArtifact(schemaName)
-    // The create view extends `${name}Mutation`, so mutable
-    // scalars and mutable FKs are already in the parent namespace.
-    // What it ADDS is the create-only writable surface: immutable
-    // scalars and immutable field-backed FKs.
-    for (field in immutableScalars) {
-        manifest.add(
-            artifact,
-            field.apiName,
-            GeneratedMemberKind.MUTABLE_PROPERTY,
-            "immutable field '${field.apiName}' (create-only writable)",
-        )
-    }
-    for (fk in immutableFks) {
-        manifest.add(
-            artifact,
-            fk.propertyName,
-            GeneratedMemberKind.MUTABLE_PROPERTY,
-            "immutable FK setter for edge '${fk.edgeApiName}' (create-only writable)",
-        )
-    }
-}
-
-// ── Update mutation view ─────────────────────────────────────────
-
-private fun addUpdateMutationViewMembers(
+private fun addBeforeSaveStateMembers(
     manifest: GeneratedMemberManifest,
     schemaName: String,
     mutableScalars: List<entkt.schema.Field>,
     mutableFks: List<EdgeFk>,
-    helperEligibleM2M: List<HelperEligibleM2M>,
 ) {
-    val artifact = updateViewArtifact(schemaName)
+    addStateAssignmentMembers(
+        manifest,
+        beforeSaveStateArtifact(schemaName),
+        mutableScalars,
+        mutableFks,
+    )
+}
 
-    // Mutable scalars + mutable FKs come through the inherited
-    // `${name}Mutation` interface; they're also added here so the
-    // artifact namespace is complete and a user-declared field
-    // colliding with one of them on THIS artifact fires the
-    // diagnostic. (Mutation interface coverage handles the
-    // separate concern of two mutables sharing a name there.)
-    for (field in mutableScalars) {
-        val prop = field.apiName
-        manifest.add(artifact, prop, GeneratedMemberKind.MUTABLE_PROPERTY, "mutable field '${field.apiName}'")
-        manifest.add(
+// ── Update mutation view ─────────────────────────────────────────
+
+private fun addBeforeCreateStateMembers(
+    manifest: GeneratedMemberManifest,
+    schemaName: String,
+    scalars: List<entkt.schema.Field>,
+    fks: List<EdgeFk>,
+) {
+    val artifact = beforeCreateStateArtifact(schemaName)
+    addStateContextMember(manifest, artifact, "client", "fixed hook-scoped client")
+    addStateContextMember(manifest, artifact, "viewerContext", "fixed hook viewer context")
+    addStateAssignmentMembers(manifest, artifact, scalars, fks)
+}
+
+private fun addBeforeUpdateStateMembers(
+    manifest: GeneratedMemberManifest,
+    schemaName: String,
+    mutableScalars: List<entkt.schema.Field>,
+    mutableFks: List<EdgeFk>,
+) {
+    val artifact = beforeUpdateStateArtifact(schemaName)
+    addStateContextMember(manifest, artifact, "client", "fixed hook-scoped client")
+    addStateContextMember(manifest, artifact, "viewerContext", "fixed hook viewer context")
+    addStateContextMember(manifest, artifact, "before", "fixed pre-update entity")
+    addStateContextMember(manifest, artifact, "pendingEdges", "fixed pending-edge snapshot")
+    addStateAssignmentMembers(manifest, artifact, mutableScalars, mutableFks)
+}
+
+private fun addStateContextMember(
+    manifest: GeneratedMemberManifest,
+    artifact: String,
+    name: String,
+    source: String,
+) {
+    manifest.add(artifact, name, GeneratedMemberKind.PROPERTY, source)
+}
+
+private fun addStateAssignmentMembers(
+    manifest: GeneratedMemberManifest,
+    artifact: String,
+    scalars: List<entkt.schema.Field>,
+    fks: List<EdgeFk>,
+) {
+    for (field in scalars) {
+        addStateAssignmentMembers(
+            manifest,
             artifact,
-            unsetMethodName(prop),
-            GeneratedMemberKind.FUNCTION,
-            "unset method for field '${field.apiName}'",
+            field.apiName,
+            "field '${field.apiName}'",
         )
     }
-    for (fk in mutableFks) {
-        manifest.add(
+    for (fk in fks) {
+        addStateAssignmentMembers(
+            manifest,
             artifact,
             fk.propertyName,
-            GeneratedMemberKind.MUTABLE_PROPERTY,
-            "mutable FK for edge '${fk.edgeApiName}'",
-        )
-        manifest.add(
-            artifact,
-            unsetMethodName(fk.propertyName),
-            GeneratedMemberKind.FUNCTION,
-            "unset method for FK edge '${fk.edgeApiName}'",
+            "FK for edge '${fk.edgeApiName}'",
         )
     }
+}
 
-    // `pendingEdges` aggregator — unconditionally emitted on
-    // UpdateMutationView by MutationGenerator.kt:153 regardless of
-    // whether the schema has any helper-eligible M2M edge. Even a
-    // schema with no link-table M2M ends up with an empty-shape
-    // `pendingEdges: ${name}PendingEdgeOps` property on the
-    // interface, so the manifest must register it unconditionally
-    // — otherwise `val pendingEdges = string(...)` on a non-M2M
-    // schema would slip past the collision check and surface as a
-    // Kotlin compile error downstream.
-    //
-    // The per-edge mutator properties (`tags.add(...)` etc.)
-    // intentionally do NOT land here — they live on the public
-    // `${name}UpdateDraft`, not on UpdateMutationView. See
-    // [addUpdateDraftMembers].
-    @Suppress("UNUSED_PARAMETER") helperEligibleM2M
+private fun addStateAssignmentMembers(
+    manifest: GeneratedMemberManifest,
+    artifact: String,
+    propertyName: String,
+    source: String,
+) {
+    manifest.add(artifact, propertyName, GeneratedMemberKind.PROPERTY, "$source patch")
     manifest.add(
         artifact,
-        "pendingEdges",
-        GeneratedMemberKind.PROPERTY,
-        "fixed update-mutation-view pendingEdges aggregator",
+        setMethodName(propertyName),
+        GeneratedMemberKind.FUNCTION,
+        "$source set transformation",
+    )
+    manifest.add(
+        artifact,
+        unsetMethodName(propertyName),
+        GeneratedMemberKind.FUNCTION,
+        "$source unset transformation",
     )
 }

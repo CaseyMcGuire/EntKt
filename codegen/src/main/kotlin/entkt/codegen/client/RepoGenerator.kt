@@ -13,20 +13,18 @@ import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STAR
+import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.lifecycleValueSnapshot
 import entkt.codegen.kotlinpoet.annotation
-import entkt.codegen.kotlinpoet.anonymousType
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.function
-import entkt.codegen.kotlinpoet.getter
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
-import entkt.codegen.kotlinpoet.setter
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.idStrategyName
@@ -35,7 +33,6 @@ import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.mutation.MUTATION_RESULT
-import entkt.codegen.mutation.MUTATION_VALIDATION_VIOLATION
 import entkt.codegen.mutation.CreateGenerator
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
@@ -57,6 +54,8 @@ private val CREATE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationSpec")
 private val CREATE_MUTATION_EXECUTOR =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationExecutor")
+private val CREATE_MUTATION_HOOK_STATE_CONVERTER =
+    ClassName("entkt.runtime.mutation.execution", "CreateMutationHookStateConverter")
 private val CREATE_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "CreateOperation")
 private val DELETE_MUTATION_SPEC =
@@ -67,8 +66,7 @@ private val DELETE_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "DeleteOperation")
 private val DELETE_RULE_CANDIDATE =
     ClassName("entkt.runtime.mutation.execution", "DeleteRuleCandidate")
-private val MUTATION_HOOK_PHASE =
-    MemberName("entkt.runtime.mutation.execution", "mutationHookPhaseForInternalUse")
+private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val LOAD_PRIVACY_EVALUATOR_FACTORY =
     MemberName("entkt.runtime.privacy", "loadPrivacyEvaluatorForInternalUse")
 private val MUTATION_PRIVACY_EVALUATOR_FACTORY =
@@ -117,8 +115,8 @@ internal class RepoGenerator(
         val updateAdapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val indexesClass = ClassName(packageName, "${schemaName}Indexes")
-        val mutationClass = ClassName(packageName, "${schemaName}Mutation")
-        val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
+        val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
+        val beforeCreateStateClass = ClassName(packageName, "${schemaName}BeforeCreateState")
         val entityHooksType = resolvedEntityHooksType(packageName, schemaName)
         val privacyConfigType = resolvedEntityPrivacyConfigType(packageName, schemaName)
         val validationConfigType = resolvedEntityValidationConfigType(packageName, schemaName)
@@ -176,7 +174,7 @@ internal class RepoGenerator(
             property("updateAdapter", updateAdapterClass) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(
-                    "%T(driver, client, configuredHooks.beforeSave, configuredHooks.beforeUpdate, configuredHooks.afterUpdate)",
+                    "%T(driver, client, configuredPrivacy, configuredValidation, configuredHooks.beforeSave, configuredHooks.beforeUpdate, configuredHooks.afterUpdate)",
                     updateAdapterClass,
                 )
             }
@@ -209,8 +207,11 @@ internal class RepoGenerator(
             addProperty(
                 buildCreateMutationExecutor(
                     schemaName = schemaName,
+                    createDraftClass = createDraftClass,
                     entityClass = entityClass,
                     candidateClass = candidateClass,
+                    beforeSaveStateClass = beforeSaveStateClass,
+                    beforeCreateStateClass = beforeCreateStateClass,
                 ),
             )
             addProperty(
@@ -255,21 +256,16 @@ internal class RepoGenerator(
             addFunction(buildRepoCreate(schema, entityClass, createDraftClass, createLambda))
             addFunction(buildSaveCreation(createDraftClass))
             addFunction(buildSaveAndLoadCreation(createDraftClass, entityClass))
-            addFunction(
-                buildCreateBeforeSaveView(
-                    createDraftClass,
-                    mutationClass,
-                    fields.filter { !it.immutable },
-                    edgeFks.filter { !it.immutable },
-                ),
-            )
-            addFunction(
-                buildBeforeCreateContext(
-                    createDraftClass,
-                    createHookCtxClass,
-                    ClassName(packageName, "${schemaName}CreateMutationView"),
-                    fields,
-                    edgeFks,
+            addType(
+                buildCreateHookStateConverter(
+                    schema = schema,
+                    schemaName = schemaName,
+                    createDraftClass = createDraftClass,
+                    entityClass = entityClass,
+                    beforeSaveStateClass = beforeSaveStateClass,
+                    beforeCreateStateClass = beforeCreateStateClass,
+                    fields = fields,
+                    edgeFks = edgeFks,
                 ),
             )
             val createGenerator = CreateGenerator(packageName)
@@ -543,9 +539,6 @@ internal class RepoGenerator(
                 add("requiredInputViolations = ::requiredInputViolations,\n")
                 add("resolveDraft = ::resolve,\n")
                 add("fieldViolations = ::createFieldViolations,\n")
-                add("beforeSave = %M(configuredHooks.beforeSave) { _, draft -> createBeforeSaveView(draft) },\n", MUTATION_HOOK_PHASE)
-                add("beforeCreate = %M(configuredHooks.beforeCreate, ::createBeforeCreateContext),\n", MUTATION_HOOK_PHASE)
-                add("afterCreate = configuredHooks.afterCreate,\n")
                 unindent()
                 add(")")
             })
@@ -555,11 +548,21 @@ internal class RepoGenerator(
     /** Bind this entity's CREATE privacy and validation evaluators directly to its executor. */
     private fun buildCreateMutationExecutor(
         schemaName: String,
+        createDraftClass: ClassName,
         entityClass: ClassName,
         candidateClass: ClassName,
+        beforeSaveStateClass: ClassName,
+        beforeCreateStateClass: ClassName,
     ): PropertySpec {
         val ruleInputClass = ClassName(packageName, "${schemaName}CreateRuleInput")
-        return property("createExecutor", CREATE_MUTATION_EXECUTOR.parameterizedBy(candidateClass)) {
+        val executorType = CREATE_MUTATION_EXECUTOR.parameterizedBy(
+            createDraftClass,
+            candidateClass,
+            entityClass,
+            beforeSaveStateClass,
+            beforeCreateStateClass,
+        )
+        return property("createExecutor", executorType) {
             addModifiers(KModifier.PRIVATE)
             initializer(codeBlock {
                 add("%T(\n", CREATE_MUTATION_EXECUTOR)
@@ -583,6 +586,10 @@ internal class RepoGenerator(
                 add("freshItem = { candidate -> %T(snapshotCreateCandidate(candidate)) },\n", ruleInputClass)
                 unindent()
                 add("),\n")
+                add("hookStateConverter = CreateHookStateConverter(client),\n")
+                add("beforeSaveHookRunner = configuredHooks.beforeSave,\n")
+                add("beforeCreateHookRunner = configuredHooks.beforeCreate,\n")
+                add("afterCreateHookRunner = configuredHooks.afterCreate,\n")
                 unindent()
                 add(")")
             })
@@ -820,92 +827,130 @@ internal class RepoGenerator(
             )
         }
 
-    private fun buildCreateBeforeSaveView(
+    /** Generated conversion only; runtime owns hook sequencing and state folding. */
+    private fun buildCreateHookStateConverter(
+        schema: EntSchema,
+        schemaName: String,
         createDraftClass: ClassName,
-        mutationClass: ClassName,
+        entityClass: ClassName,
+        beforeSaveStateClass: ClassName,
+        beforeCreateStateClass: ClassName,
         fields: List<Field>,
         edgeFks: List<EdgeFk>,
-    ): FunSpec {
-        val adapter = anonymousType {
-            addSuperinterface(mutationClass)
-            fields.forEach { field ->
-                addProperty(createDraftForwarder(
-                    field.apiName,
-                    field.resolvedTypeName().copy(nullable = true),
-                ))
-            }
-            edgeFks.forEach { fk ->
-                addProperty(createDraftForwarder(
-                    fk.propertyName,
-                    fk.idType.toTypeName().copy(nullable = !fk.required),
-                    required = fk.required,
-                ))
-            }
-        }
-        return function("createBeforeSaveView", mutationClass) {
+    ): TypeSpec {
+        val mutableFields = fields.filterNot { it.immutable }
+        val mutableEdgeFks = edgeFks.filterNot { it.immutable }
+        val converterType = CREATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
+            createDraftClass,
+            beforeSaveStateClass,
+            beforeCreateStateClass,
+        )
+        return classType("CreateHookStateConverter") {
             addModifiers(KModifier.PRIVATE)
-            parameter("draft", createDraftClass)
-            statement("return %L", adapter)
-        }
-    }
-
-    private fun buildBeforeCreateContext(
-        createDraftClass: ClassName,
-        createHookContextClass: ClassName,
-        createMutationViewClass: ClassName,
-        fields: List<Field>,
-        edgeFks: List<EdgeFk>,
-    ): FunSpec {
-        val adapter = anonymousType {
-            addSuperinterface(createMutationViewClass)
-            fields.forEach { field ->
-                addProperty(createDraftForwarder(
-                    field.apiName,
-                    field.resolvedTypeName().copy(nullable = true),
-                ))
+            addSuperinterface(converterType)
+            primaryConstructor { parameter("client", ClassName(packageName, ENT_CLIENT_NAME)) }
+            property("client", ClassName(packageName, ENT_CLIENT_NAME)) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("client")
             }
-            edgeFks.forEach { fk ->
-                addProperty(createDraftForwarder(
-                    fk.propertyName,
-                    fk.idType.toTypeName().copy(nullable = !fk.required),
-                    required = fk.required,
-                ))
+            function("toBeforeSaveState", beforeSaveStateClass) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("draft", createDraftClass)
+                addCode(codeBlock {
+                    add("return %T(\n", beforeSaveStateClass)
+                    indent()
+                    mutableFields.forEach { field ->
+                        add(
+                            "%L = if (draft.isSet(%T.%L)) %T.Set(draft.%L) else %T.Unset,\n",
+                            field.apiName,
+                            entityClass,
+                            field.apiName,
+                            FIELD_PATCH,
+                            field.apiName,
+                            FIELD_PATCH,
+                        )
+                    }
+                    mutableEdgeFks.forEach { fk ->
+                        add(
+                            "%L = if (draft.isSet(%T.%L)) %T.Set(draft.%L) else %T.Unset,\n",
+                            fk.propertyName,
+                            entityClass,
+                            fk.propertyName,
+                            FIELD_PATCH,
+                            fk.propertyName,
+                            FIELD_PATCH,
+                        )
+                    }
+                    unindent()
+                    add(")\n")
+                })
             }
-        }
-        return function("createBeforeCreateContext", createHookContextClass) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("draft", createDraftClass)
-            statement(
-                "return %T(client.hookClientScopeForInternalUse, viewerContext, %L)",
-                createHookContextClass,
-                adapter,
-            )
-        }
-    }
-
-    private fun createDraftForwarder(
-        propertyName: String,
-        type: com.squareup.kotlinpoet.TypeName,
-        required: Boolean = false,
-    ): PropertySpec {
-        return property(propertyName, type) {
-            addModifiers(KModifier.OVERRIDE)
-            mutable(true)
-            getter {
-                if (required) {
-                    statement(
-                        "return draft.%L ?: throw IllegalStateException(%S)",
-                        propertyName,
-                        "$propertyName is required",
-                    )
+            function("toBeforeCreateState", beforeCreateStateClass) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("viewerContext", VIEWER_CONTEXT)
+                parameter("draft", createDraftClass)
+                parameter("beforeSaveState", beforeSaveStateClass)
+                addCode(codeBlock {
+                    add("return %T(\n", beforeCreateStateClass)
+                    indent()
+                    add("client = client.hookClientScopeForInternalUse,\n")
+                    add("viewerContext = viewerContext,\n")
+                    fields.forEach { field ->
+                        if (field.immutable) {
+                            add(
+                                "%L = if (draft.isSet(%T.%L)) %T.Set(draft.%L) else %T.Unset,\n",
+                                field.apiName,
+                                entityClass,
+                                field.apiName,
+                                FIELD_PATCH,
+                                field.apiName,
+                                FIELD_PATCH,
+                            )
+                        } else {
+                            add("%L = beforeSaveState.%L,\n", field.apiName, field.apiName)
+                        }
+                    }
+                    edgeFks.forEach { fk ->
+                        if (fk.immutable) {
+                            add(
+                                "%L = if (draft.isSet(%T.%L)) %T.Set(draft.%L) else %T.Unset,\n",
+                                fk.propertyName,
+                                entityClass,
+                                fk.propertyName,
+                                FIELD_PATCH,
+                                fk.propertyName,
+                                FIELD_PATCH,
+                            )
+                        } else {
+                            add("%L = beforeSaveState.%L,\n", fk.propertyName, fk.propertyName)
+                        }
+                    }
+                    unindent()
+                    add(")\n")
+                })
+            }
+            function("toPreparationDraft", createDraftClass) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("originalDraft", createDraftClass)
+                parameter("state", beforeCreateStateClass)
+                if (idStrategyName(schema) == "EXPLICIT") {
+                    statement("val draft = %T(originalDraft.id)", createDraftClass)
                 } else {
-                    statement("return draft.%L", propertyName)
+                    statement("val draft = %T()", createDraftClass)
                 }
-            }
-            setter {
-                parameter("value", type)
-                statement("draft.%L = value", propertyName)
+                (fields.map { it.apiName } + edgeFks.map { it.propertyName }).forEach { property ->
+                    addCode(
+                        "when (val entry = state.%L) {\n" +
+                            "  %T.Unset -> Unit\n" +
+                            "  is %T.Set -> draft.%L = entry.value\n" +
+                            "}\n",
+                        property,
+                        FIELD_PATCH,
+                        FIELD_PATCH,
+                        property,
+                    )
+                }
+                statement("return draft")
             }
         }
     }

@@ -76,6 +76,43 @@ class EntBatchRuleContractException(
 }
 
 /**
+ * A batch mutation hook returned states that were not derived from the batch
+ * supplied for its current invocation. [foreignBatchResult] means the hook
+ * returned a `MutationBatch` created for a different invocation; a null
+ * [actualSize] means a Java or unchecked implementation returned null.
+ */
+class EntBatchMutationHookContractException(
+    val lifecycle: String,
+    val expectedSize: Int,
+    val actualSize: Int?,
+    val foreignBatchResult: Boolean = false,
+) : EntException(
+    when {
+        foreignBatchResult ->
+            "Batch mutation-hook contract violation for $lifecycle: states belong to a different mutation batch"
+        actualSize == null ->
+            "Batch mutation-hook contract violation for $lifecycle: expected $expectedSize states but received null"
+        else ->
+            "Batch mutation-hook contract violation for $lifecycle: expected $expectedSize states but received $actualSize"
+    },
+) {
+    init {
+        require(lifecycle.isNotBlank()) { "lifecycle must not be blank" }
+        require(expectedSize >= 0) { "expectedSize must not be negative" }
+        require(actualSize == null || actualSize >= 0) { "actualSize must not be negative" }
+        require(
+            when {
+                foreignBatchResult -> actualSize != null
+                actualSize == null -> true
+                else -> actualSize != expectedSize
+            },
+        ) {
+            "batch mutation-hook contract diagnostics describe contradictory states"
+        }
+    }
+}
+
+/**
  * Marker for framework-classified privacy denials. Implemented by both
  * read and mutation denial exceptions so application boundaries can
  * apply one non-disclosure policy without erasing their distinct

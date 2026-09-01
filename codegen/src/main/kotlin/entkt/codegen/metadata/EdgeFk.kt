@@ -74,7 +74,7 @@ data class EdgeFk(
     val sensitive: Boolean = false,
     /**
      * KDoc applied to every generated FK property (entity, create/update
-     * builders, mutation interface). For field-backed edges this is the
+     * builders, hook states). For field-backed edges this is the
      * backing field's `.comment(...)` if set, falling back to the edge's
      * own `.comment(...)`. For implicit edges this is the edge's
      * `.comment(...)`.

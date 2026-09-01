@@ -66,23 +66,16 @@ internal class PrivacyGenerator(
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
         val entityClass = ClassName(packageName, schemaName)
-        // Hook contexts keep a write-capable repository scope but omit
-        // transaction entry and configuration APIs. Privacy rule contexts get
-        // the stable read-only client plus the caller's explicit
+        // Privacy rule contexts get the stable read-only client plus the caller's explicit
         // viewerContext — rule writes are compile errors, and nested rule reads
         // pass that context to their terminals. The concrete type makes the
         // viewer-scoped read posture visible in helper signatures.
-        val hookClientScopeClass = ClassName(packageName, "EntClientScope")
         val readClientClass = ClassName(packageName, "ReadOnlyEntClient")
         val configClass = ClassName(packageName, "${schemaName}PrivacyConfig")
         val privacyScopeClass = ClassName(packageName, "${schemaName}PrivacyScope")
         val policyScopeClass = ClassName(packageName, "${schemaName}PolicyScope")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
-        val updateMutationViewClass = ClassName(packageName, "${schemaName}UpdateMutationView")
-        val updateHookCtxClass = ClassName(packageName, "${schemaName}UpdateHookContext")
-        val createMutationViewClass = ClassName(packageName, "${schemaName}CreateMutationView")
-        val createHookCtxClass = ClassName(packageName, "${schemaName}CreateHookContext")
         val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
         val edgeChangesViewClass = ClassName(packageName, "${schemaName}EdgeChangesView")
 
@@ -94,9 +87,8 @@ internal class PrivacyGenerator(
 
         // Helper-eligible link-table M2M edges. Each
         // contributes a typed `PendingEdgeOps<ID>` field on the per-entity
-        // aggregator surfaced through the update hook context and the
-        // update mutation view. Empty list → empty aggregator (uniform
-        // hook context shape across entities).
+        // aggregator surfaced through the before-update hook state. Empty
+        // list → empty aggregator (uniform hook-state shape across entities).
         val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
 
         // Operation input class names. The runtime PrivacyRuleContext holds
@@ -136,8 +128,8 @@ internal class PrivacyGenerator(
 
         // PendingEdgeOps aggregator. One typed
         // `PendingEdgeOps<TargetIdType>` per helper-eligible M2M edge,
-        // exposed read-only on the update hook context and the update
-        // mutation view. Schemas without helper-eligible M2M edges still
+        // exposed read-only on the before-update hook state. Schemas without
+        // helper-eligible M2M edges still
         // get a type — a no-fields class — so hook authors can write
         // `ctx.pendingEdges` without entity-conditional types.
             addType(buildPendingEdgeOpsAggregator(pendingEdgeOpsClass, helperEligibleEdges))
@@ -149,30 +141,6 @@ internal class PrivacyGenerator(
         // fallback for schemas without helper-eligible edges so the
         // privacy/validation item shape is uniform.
             addType(buildEdgeChangesViewAggregator(edgeChangesViewClass, helperEligibleEdges))
-
-        // UpdateHookContext (received by beforeUpdate hooks)
-            addType(
-            buildUpdateHookContext(
-                ctxClass = updateHookCtxClass,
-                clientClass = hookClientScopeClass,
-                entityClass = entityClass,
-                patchClass = patchClass,
-                mutationClass = updateMutationViewClass,
-                pendingEdgesClass = pendingEdgeOpsClass,
-            ),
-            )
-
-        // CreateHookContext (received by beforeCreate hooks). Mirrors
-        // the update side: a restricted writable view plus `client` so
-        // hooks can query the DB. The view hides the concrete builder's
-        // save()/driver/hook-list surface.
-            addType(
-            buildCreateHookContext(
-                ctxClass = createHookCtxClass,
-                clientClass = hookClientScopeClass,
-                mutationClass = createMutationViewClass,
-            ),
-            )
 
         // PrivacyConfig
             addType(
@@ -258,58 +226,6 @@ internal class PrivacyGenerator(
     }
 
     /**
-     * Hook context for `beforeUpdate` hooks. Carries the loaded `before`
-     * row, a snapshot of the requested patch accumulated up to this
-     * hook, and a restricted writable mutation view.
-     * `patch` is a snapshot — writes through `mutation` do not change
-     * `patch` within the same hook; later hooks see those writes
-     * through their own snapshots.
-     *
-     * `mutation` is typed as `${schemaName}UpdateMutationView`, which
-     * exposes only the field/FK setters and `unset{Field}()` methods.
-     * The update execution adapter's lifecycle state, including the loaded
-     * entity, owner `id`, and private patch helpers, is not visible to
-     * hooks — that prevents reentrancy and other out-of-contract use.
-     */
-    private fun buildUpdateHookContext(
-        ctxClass: ClassName,
-        clientClass: ClassName,
-        entityClass: ClassName,
-        patchClass: ClassName,
-        mutationClass: ClassName,
-        pendingEdgesClass: ClassName,
-    ): TypeSpec = immutableValueType(
-        ctxClass,
-        listOf(
-            "client" to clientClass,
-            "viewerContext" to VIEWER_CONTEXT,
-            "before" to entityClass,
-            "patch" to patchClass,
-            "pendingEdges" to pendingEdgesClass,
-            "mutation" to mutationClass,
-        ),
-    )
-
-    /**
-     * Hook context for `beforeCreate` hooks. Carries the restricted
-     * writable [mutationClass] view plus the [clientClass] reference for
-     * DB queries. Creates have no `before` row and no patch model, so
-     * the context is narrower than [buildUpdateHookContext].
-     */
-    private fun buildCreateHookContext(
-        ctxClass: ClassName,
-        clientClass: ClassName,
-        mutationClass: ClassName,
-    ): TypeSpec = immutableValueType(
-        ctxClass,
-        listOf(
-            "client" to clientClass,
-            "viewerContext" to VIEWER_CONTEXT,
-            "mutation" to mutationClass,
-        ),
-    )
-
-    /**
      * Per-entity update patch type. Each mutable field and edge FK is a
      * `FieldPatch<T>` defaulting to `Unset`. Immutable fields are excluded
      * because the generated update path never writes them. Privacy and
@@ -363,7 +279,7 @@ internal class PrivacyGenerator(
      * For schemas with zero helper-eligible M2M edges, the aggregator
      * is an empty class (`class ${Schema}PendingEdgeOps`) — `data class`
      * doesn't allow zero parameters, but the type still exists so the
-     * update hook context can carry a non-null `pendingEdges` field
+     * before-update hook state can carry a non-null `pendingEdges` field
      * with a uniform shape across entities.
      */
     private fun buildPendingEdgeOpsAggregator(

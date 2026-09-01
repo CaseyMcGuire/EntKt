@@ -17,14 +17,4 @@ class HookRunner<T>(hooks: List<BatchHook<T>>) {
             hook.runBatch(snapshot)
         }
     }
-
-    /** Rebuild the hook values immediately before each hook runs. */
-    fun runFresh(elements: () -> List<T>) {
-        for (hook in hooks) {
-            val snapshot = immutableListCopy(elements())
-            if (snapshot.isNotEmpty()) {
-                hook.runBatch(snapshot)
-            }
-        }
-    }
 }

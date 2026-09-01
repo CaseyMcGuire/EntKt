@@ -6,6 +6,8 @@ import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.hook.HookRunner
+import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.MutationPrivacyEvaluator
@@ -33,19 +35,27 @@ import java.util.concurrent.CancellationException
  * returned-entity LOAD privacy when the terminal exposes entities.
  */
 @EntktInternal
-class CreateMutationExecutor<Candidate>(
+class CreateMutationExecutor<
+    Draft : CreateMutationDraft<Entity>,
+    Candidate,
+    Entity : EntEntity<*>,
+    BeforeSaveState,
+    BeforeCreateState,
+    >(
     private val driver: DatabaseDriver,
     private val mutationRuntime: MutationRuntime,
     private val privacyEvaluator: MutationPrivacyEvaluator<Candidate>,
     private val validationEvaluator: MutationValidationEvaluator<Candidate>,
+    private val hookStateConverter:
+        CreateMutationHookStateConverter<Draft, BeforeSaveState, BeforeCreateState>,
+    private val beforeSaveHookRunner: MutationHookRunner<BeforeSaveState>,
+    private val beforeCreateHookRunner: MutationHookRunner<BeforeCreateState>,
+    private val afterCreateHookRunner: HookRunner<Entity>,
 ) {
     private val execution = MutationExecutionSupport(mutationRuntime)
 
     /** Bind an entity specification whose generated API exposes only scalar create. */
-    fun <
-        Draft : CreateMutationDraft<Entity>,
-        Entity : EntEntity<*>,
-        > operationForInternalUse(
+    fun operationForInternalUse(
         spec: CreateMutationSpec<Draft, Candidate, Entity>,
     ): CreateOperation<Draft, Entity> = buildOperation(
         spec = spec,
@@ -54,10 +64,7 @@ class CreateMutationExecutor<Candidate>(
     )
 
     /** Bind one generated entity specification to the reusable create operation. */
-    fun <
-        Draft : CreateMutationDraft<Entity>,
-        Entity : EntEntity<*>,
-        > operationForInternalUse(
+    fun operationForInternalUse(
         spec: CreateMutationSpec<Draft, Candidate, Entity>,
         newDraft: () -> Draft,
         ownedTransaction: (
@@ -72,10 +79,7 @@ class CreateMutationExecutor<Candidate>(
     )
 
     /** Construct the bound operation after selecting its optional bulk capability. */
-    private fun <
-        Draft : CreateMutationDraft<Entity>,
-        Entity : EntEntity<*>,
-        > buildOperation(
+    private fun buildOperation(
         spec: CreateMutationSpec<Draft, Candidate, Entity>,
         newDraft: (() -> Draft)?,
         ownedTransaction: ((
@@ -101,15 +105,10 @@ class CreateMutationExecutor<Candidate>(
     )
 
     /** Execute one create lifecycle and optionally authorize the returned entity. */
-    fun <
-        Draft : CreateMutationDraft<Entity>,
-        Entity : EntEntity<*>,
-        > create(
+    fun create(
         viewerContext: ViewerContext,
         draft: Draft,
-        spec: CreateMutationSpec<
-            Draft, Candidate, Entity,
-        >,
+        spec: CreateMutationSpec<Draft, Candidate, Entity>,
         checkReturnedEntityPrivacy: Boolean,
     ): MutationResult<Entity> = execution.execute { attempt ->
         val postWriteState = if (driver.inTransaction) {
@@ -135,15 +134,10 @@ class CreateMutationExecutor<Candidate>(
     }
 
     /** Execute the phase-major create lifecycle for inputs in an active transaction. */
-    fun <
-        Draft : CreateMutationDraft<Entity>,
-        Entity : EntEntity<*>,
-        > createMany(
+    fun createMany(
         viewerContext: ViewerContext,
         drafts: List<Draft>,
-        spec: CreateMutationSpec<
-            Draft, Candidate, Entity,
-        >,
+        spec: CreateMutationSpec<Draft, Candidate, Entity>,
         promoteDriverNotPersisted: Boolean,
     ): MutationResult<List<Entity>> = execution.execute { attempt ->
         require(drafts.isNotEmpty()) { "createMany requires at least one draft" }
@@ -161,32 +155,39 @@ class CreateMutationExecutor<Candidate>(
     }
 
     /** Run every scalar or batch create phase in lifecycle order. */
-    private fun <
-        Draft : CreateMutationDraft<Entity>,
-        Entity : EntEntity<*>,
-        > executeCreate(
+    private fun executeCreate(
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
         drafts: List<Draft>,
-        spec: CreateMutationSpec<
-            Draft, Candidate, Entity,
-        >,
+        spec: CreateMutationSpec<Draft, Candidate, Entity>,
         persistence: CreatePersistence,
         postWriteState: MutationWriteState,
         promoteDriverNotPersisted: Boolean,
     ): List<Entity> {
-        spec.beforeSave.run(viewerContext, drafts)
-        spec.beforeCreate.run(viewerContext, drafts)
+        val beforeSaveStates = beforeSaveHookRunner.runBatch(
+            drafts.map(hookStateConverter::toBeforeSaveState),
+        )
+        val beforeCreateStates = beforeSaveStates.mapStatesIndexed { index, beforeSaveState ->
+            hookStateConverter.toBeforeCreateState(
+                viewerContext = viewerContext,
+                draft = drafts[index],
+                beforeSaveState = beforeSaveState,
+            )
+        }
+        val finalHookStates = beforeCreateHookRunner.runBatch(beforeCreateStates)
+        val preparationDrafts = finalHookStates.mapIndexed { index, state ->
+            hookStateConverter.toPreparationDraft(drafts[index], state)
+        }
 
         val entityName = spec.entity.entityName
         rejectRequiredInputViolations(
             attempt = attempt,
-            drafts = drafts,
+            drafts = preparationDrafts,
             entityName = entityName,
             requiredInputViolations = spec.requiredInputViolations,
         )
         val resolvedCreates = resolveDrafts(
-            drafts = drafts,
+            drafts = preparationDrafts,
             resolveDraft = spec.resolveDraft,
         )
         rejectFieldViolations(
@@ -215,7 +216,7 @@ class CreateMutationExecutor<Candidate>(
             postWriteState = postWriteState,
             promoteDriverNotPersisted = promoteDriverNotPersisted,
         )
-        spec.afterCreate.run(createdEntities)
+        afterCreateHookRunner.run(createdEntities)
 
         return createdEntities
     }
@@ -308,7 +309,7 @@ class CreateMutationExecutor<Candidate>(
     }
 
     /** Persist prepared rows with the scalar or batch driver primitive. */
-    private fun <Entity : EntEntity<*>> persistCreates(
+    private fun persistCreates(
         attempt: MutationAttempt,
         prepared: List<PreparedCreate<Candidate>>,
         entity: EntityMapping<Entity>,
@@ -365,7 +366,7 @@ class CreateMutationExecutor<Candidate>(
     }
 
     /** Apply returned-entity LOAD privacy under the context used by CREATE privacy. */
-    private fun <Entity : EntEntity<*>> evaluateReturnedEntityPrivacy(
+    private fun evaluateReturnedEntityPrivacy(
         attempt: MutationAttempt,
         viewerContext: ViewerContext,
         created: List<Entity>,
@@ -385,7 +386,7 @@ class CreateMutationExecutor<Candidate>(
     }
 
     /** Return the first LOAD denial without assigning a mutation write state. */
-    private fun <Entity : EntEntity<*>> returnedEntityDenial(
+    private fun returnedEntityDenial(
         viewerContext: ViewerContext,
         created: List<Entity>,
         entity: EntityMapping<Entity>,

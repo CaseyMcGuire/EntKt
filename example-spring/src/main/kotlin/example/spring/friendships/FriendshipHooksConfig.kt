@@ -3,9 +3,9 @@ package example.spring.friendships
 import entkt.runtime.mutation.orElse
 import entkt.runtime.hook.EntityHooks
 import example.ent.Friendship
-import example.ent.FriendshipCreateHookContext
-import example.ent.FriendshipMutation
-import example.ent.FriendshipUpdateHookContext
+import example.ent.FriendshipBeforeCreateState
+import example.ent.FriendshipBeforeSaveState
+import example.ent.FriendshipBeforeUpdateState
 import example.schema.FriendshipStatus
 import org.springframework.stereotype.Component
 
@@ -14,9 +14,9 @@ class FriendshipHooksConfig {
 
     fun apply(
         hooks: EntityHooks<
-            FriendshipMutation,
-            FriendshipCreateHookContext,
-            FriendshipUpdateHookContext,
+            FriendshipBeforeSaveState,
+            FriendshipBeforeCreateState,
+            FriendshipBeforeUpdateState,
             Friendship,
         >,
     ) {
@@ -25,34 +25,34 @@ class FriendshipHooksConfig {
         hooks.beforeUpdate(::enforceStatusTransition)
     }
 
-    fun requireValidParticipants(ctx: FriendshipCreateHookContext) {
-        // Required FK getters throw on unassigned reads, so no explicit
-        // null guard is needed here.
-        require(ctx.mutation.requesterId != ctx.mutation.recipientId) { "Cannot friend yourself" }
+    fun requireValidParticipants(state: FriendshipBeforeCreateState): FriendshipBeforeCreateState {
+        val requesterId = checkNotNull(state.requesterId.orElse(null))
+        val recipientId = checkNotNull(state.recipientId.orElse(null))
+        require(requesterId != recipientId) { "Cannot friend yourself" }
+        return state
     }
 
-    fun forbidDuplicateRequest(ctx: FriendshipCreateHookContext) {
-        val requesterId = ctx.mutation.requesterId
-        val recipientId = ctx.mutation.recipientId
-        val existing = ctx.client.friendships.query {
+    fun forbidDuplicateRequest(state: FriendshipBeforeCreateState): FriendshipBeforeCreateState {
+        val requesterId = checkNotNull(state.requesterId.orElse(null))
+        val recipientId = checkNotNull(state.recipientId.orElse(null))
+        val existing = state.client.friendships.query {
             where(
                 ((Friendship.requesterId eq requesterId) and (Friendship.recipientId eq recipientId))
                     or ((Friendship.requesterId eq recipientId) and (Friendship.recipientId eq requesterId)),
             )
-        }.all(ctx.viewerContext).getOrThrow()
+        }.all(state.viewerContext).getOrThrow()
         require(existing.isEmpty()) { "Friend request already exists" }
+        return state
     }
 
-    fun enforceStatusTransition(ctx: FriendshipUpdateHookContext) {
-        val oldStatus = ctx.before.status
-        // Read pending state from the patch (explicit Set / Unset),
-        // not from the mutation getter — the latter throws on untouched
-        // fields per the id-based update root contract.
-        val newStatus = ctx.patch.status.orElse(oldStatus)
+    fun enforceStatusTransition(state: FriendshipBeforeUpdateState): FriendshipBeforeUpdateState {
+        val oldStatus = state.before.status
+        val newStatus = state.status.orElse(oldStatus)
         if (oldStatus != newStatus) {
             require(oldStatus == FriendshipStatus.PENDING && newStatus == FriendshipStatus.ACCEPTED) {
                 "Can only transition from PENDING to ACCEPTED"
             }
         }
+        return state
     }
 }

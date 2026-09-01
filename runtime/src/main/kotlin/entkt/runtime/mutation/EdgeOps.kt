@@ -15,7 +15,7 @@ public fun <T> immutableSetSnapshotForInternalUse(values: Iterable<T>): Set<T> =
 /**
  * Read-only snapshot of pending link-table M2M edge operations for one
  * edge. Hooks receive this through the generated per-entity
- * `${Entity}PendingEdgeOps` aggregator on `${Entity}UpdateHookContext`,
+ * `${Entity}PendingEdgeOps` aggregator on `${Entity}BeforeUpdateState`,
  * so they can inspect what the caller has staged without seeing the
  * mutator surface itself.
  *

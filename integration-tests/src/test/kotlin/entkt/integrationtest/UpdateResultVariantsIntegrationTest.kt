@@ -217,7 +217,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
             policies { users(OpenUser); articles(AllowAll) }
             hooks {
                 users {
-                    beforeUpdate { beforeUpdates++ }
+                    beforeUpdate { state -> beforeUpdates++; state }
                     afterUpdate { afterUpdates++ }
                 }
             }

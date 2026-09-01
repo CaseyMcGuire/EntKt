@@ -981,8 +981,8 @@ class EdgeCodegenTest {
 
         val mutationOutput = MutationGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
-        assert(!mutationOutput.contains("/**")) {
-            "Mutation interface FK property should not carry framework KDoc\n$mutationOutput"
+        assert(!mutationOutput.contains("FK to")) {
+            "Hook-state FK property should not invent framework KDoc\n$mutationOutput"
         }
     }
 
@@ -1134,7 +1134,7 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `immutable field-backed FK omitted from UpdatePatch and UpdateMutationView`() {
+    fun `immutable field-backed FK appears only in create hook state`() {
         val parent = ImmutableFkParent()
         val child = ImmutableFkChild()
         finalize(parent, child)
@@ -1147,18 +1147,11 @@ class EdgeCodegenTest {
             "UpdatePatch must not include an FK slot for immutable FKs\n$privacyOutput"
         }
 
-        val mutationOutput = MutationGenerator("com.example.ent")
-            .generate("ImmutableFkChild", child, names).toString()
-        // Mutation interface must not declare immutable FKs (they're
-        // create-only writable; beforeSave hooks can't reach them).
-        // CreateMutationView exposes them; UpdateMutationView does not.
-        assert(mutationOutput.contains("public interface ImmutableFkChildCreateMutationView")) {
-            "Generator should emit CreateMutationView\n$mutationOutput"
-        }
-        // The unset method should not exist for an immutable FK.
-        assert(!mutationOutput.contains("unsetOwnerId")) {
-            "UpdateMutationView must not declare unsetOwnerId() for an immutable FK\n$mutationOutput"
-        }
+        val stateFiles = MutationGenerator("com.example.ent")
+            .generate("ImmutableFkChild", child, names).associateBy { it.name }
+        assert(stateFiles.getValue("ImmutableFkChildBeforeCreateState").toString().contains("ownerId: FieldPatch"))
+        assert(!stateFiles.getValue("ImmutableFkChildBeforeSaveState").toString().contains("ownerId: FieldPatch"))
+        assert(!stateFiles.getValue("ImmutableFkChildBeforeUpdateState").toString().contains("ownerId: FieldPatch"))
     }
 
     @Test
@@ -1190,26 +1183,20 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create specification adapts drafts to beforeCreate hook contexts`() {
+    fun `create executor receives generated immutable hook state adapter`() {
         val (_, names, byName) = createAllSchemas()
         val output = entkt.codegen.client.RepoGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // create-hook adapter: the CreateHookContext now wraps the private
-        // mutation-view adapter, not the concrete draft. This matches the runtime-enforced contract
-        // the update path has had since transaction locking and link-table M2M helpers — a hook
-        // attempting `ctx.mutation as PetCreateDraft` throws.
-        assert(output.contains("private fun createBeforeCreateContext(viewerContext: ViewerContext, draft: PetCreateDraft): PetCreateHookContext")) {
-            "the repo should construct the typed hook context for its create specification\n$output"
-        }
+        assert(output.contains("private class CreateHookStateConverter"))
+        assert(output.contains("CreateMutationHookStateConverter<PetCreateDraft, PetBeforeSaveState, PetBeforeCreateState>"))
         assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetWriteCandidate, Pet>")) {
             "the repo should pass a compact immutable specification to CreateMutationExecutor\n$output"
         }
-        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::resolve, fieldViolations = ::createFieldViolations, beforeSave = mutationHookPhaseForInternalUse(configuredHooks.beforeSave) { _, draft -> createBeforeSaveView(draft) }, beforeCreate = mutationHookPhaseForInternalUse(configuredHooks.beforeCreate, ::createBeforeCreateContext), afterCreate = configuredHooks.afterCreate, )")) {
-            "phase-local hook types should remain captured by typed adapters\n$output"
-        }
-        assert(output.contains("private val createExecutor: CreateMutationExecutor<PetWriteCandidate>") &&
+        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::resolve, fieldViolations = ::createFieldViolations"))
+        assert(!output.contains("beforeSave =") && !output.contains("beforeCreate ="))
+        assert(output.contains("CreateMutationExecutor<PetCreateDraft, PetWriteCandidate, Pet, PetBeforeSaveState, PetBeforeCreateState>") &&
             output.contains("privacyEvaluator = mutationPrivacyEvaluatorForInternalUse(")) {
             "rule evaluators should be injected directly into the typed executor\n$output"
         }
@@ -1226,15 +1213,20 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `MutationGenerator emits CreateMutationView extending Mutation`() {
+    fun `MutationGenerator emits separate immutable lifecycle state files`() {
         val (_, names, byName) = createAllSchemas()
-        val output = MutationGenerator("com.example.ent")
-            .generate("Pet", byName["Pet"]!!, names).toString()
-            .replace("\\s+".toRegex(), " ")
+        val files = MutationGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names)
+        val output = files.joinToString("\n").replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("public interface PetCreateMutationView : PetMutation")) {
-            "CreateMutationView should extend Mutation\n$output"
-        }
+        assertEquals(
+            setOf("PetBeforeSaveState", "PetBeforeCreateState", "PetBeforeUpdateState"),
+            files.map { it.name }.toSet(),
+        )
+        assert(output.contains("class PetBeforeCreateState"))
+        assert(output.contains("fun setName("))
+        assert(output.contains("class PetBeforeUpdateState"))
+        assert(!output.contains("MutationView"))
     }
 
     @Test
@@ -1298,7 +1290,7 @@ class EdgeCodegenTest {
             .generate("TeamMember", byName["TeamMember"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("override var teamId: Int ")) {
+        assert(output.contains("var teamId: Int ")) {
             "Field-backed required FK should be non-null typed on Update builder\n$output"
         }
         assert(output.contains("private var _teamIdStaging: Int?")) {
@@ -1345,7 +1337,7 @@ class EdgeCodegenTest {
         val output = UpdateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
-        assert(output.contains("override var ownerId: Long\n")) {
+        assert(output.contains("var ownerId: Long\n")) {
             "Required Update FK property should be non-null typed (Long, not Long?)\n$output"
         }
         assert(output.contains("private var _ownerIdStaging: Long?")) {
@@ -1389,11 +1381,11 @@ class EdgeCodegenTest {
 
         // Reading an untouched edge FK on the update builder must throw
         // (by contract) — a default-null getter would conflate Unset and
-        // explicit Set(null) for nullable FKs. Hooks should read
-        // pending state from `ctx.patch.ownerId` instead.
+        // explicit Set(null) for nullable FKs. Hooks receive an immutable
+        // state with a FieldPatch entry instead.
         assert(
             output.contains(
-                "get() { if (\"ownerId\" !in dirtyFields) throw IllegalStateException(\"ownerId is not set in this update; read ctx.patch.ownerId instead\") return field }",
+                "get() { if (\"ownerId\" !in dirtyFields) throw IllegalStateException(\"ownerId is not set in this update\") return field }",
             ),
         ) {
             "Edge FK getter must throw when the property is not in dirtyFields\n$output"

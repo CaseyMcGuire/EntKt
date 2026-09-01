@@ -4,8 +4,8 @@ import entkt.codegen.SchemaInput
 import entkt.codegen.metadata.helperEligibleM2MEdges
 /**
  * One generated Kotlin member that codegen will emit on a specific
- * generated artifact (an entity data class, a builder, a mutation
- * view, a patch type, etc.). The [GeneratedMemberManifest] collects
+ * generated artifact (an entity data class, a builder, a hook state,
+ * a patch type, etc.). The [GeneratedMemberManifest] collects
  * these and the validator rejects any artifact whose `(name, kind)`
  * grouping has more than one source — see contract
  * `docs/possible-features/edge-mutation/07-generated-member-name-collisions.md`.
@@ -22,7 +22,7 @@ import entkt.codegen.metadata.helperEligibleM2MEdges
 internal data class GeneratedMember(
     /**
      * The generated artifact this member lives on. Concrete strings
-     * (e.g. `"Post"`, `"PostUpdateMutationView"`,
+     * (e.g. `"Post"`, `"PostBeforeUpdateState"`,
      * `"Post.Companion"`) rather than an enum — V1 keeps the set
      * open so future codegen passes can register new artifacts
      * without a runtime enum change. The validator groups by this

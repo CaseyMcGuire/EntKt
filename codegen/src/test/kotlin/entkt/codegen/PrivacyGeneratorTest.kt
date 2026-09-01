@@ -1,6 +1,7 @@
 package entkt.codegen
 
 import entkt.codegen.entity.PrivacyGenerator
+import entkt.codegen.mutation.MutationGenerator
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
@@ -67,10 +68,8 @@ class PrivacyGeneratorTest {
         assert(!constructor.contains("client")) {
             "Load item must not duplicate the shared client\n$output"
         }
-        // Hook contexts are the deliberate exception: hooks may have side
-        // effects, so they keep the full client.
-        assert(output.contains("val client: EntClient")) {
-            "Hook contexts should keep the full EntClient\n$output"
+        assert(!output.contains("val client: EntClient")) {
+            "Privacy artifacts should not carry hook-only client state\n$output"
         }
     }
 
@@ -283,31 +282,29 @@ class PrivacyGeneratorTest {
     }
 
     @Test
-    fun `UpdateHookContext gains a pendingEdges field`() {
+    fun `beforeUpdate state gains a pendingEdges field`() {
         val user = User()
         finalize(user, Car())
-        val output = generator.generate("User", user).toString()
+        val output = MutationGenerator("com.example.ent").generate("User", user)
+            .single { it.name == "UserBeforeUpdateState" }.toString()
             .replace("\\s+".toRegex(), " ")
 
-        // pendingEdges sits between patch (read-only data) and mutation
-        // (the writable view) so the read-only sidecar is grouped with
-        // the other read-only fields.
         assert(output.contains("pendingEdges: UserPendingEdgeOps")) {
-            "UpdateHookContext should expose `pendingEdges: UserPendingEdgeOps`\n$output"
+            "BeforeUpdateState should expose `pendingEdges: UserPendingEdgeOps`\n$output"
         }
         assert(output.contains("public val pendingEdges: UserPendingEdgeOps")) {
-            "UpdateHookContext.pendingEdges should be a public val\n$output"
+            "BeforeUpdateState.pendingEdges should be a public val\n$output"
         }
     }
 
     @Test
-    fun `UpdateHookContext for entity with M2M edge is typed against per-entity aggregator`() {
-        val output = makeLinkM2MOutput()
+    fun `beforeUpdate state for entity with M2M edge is typed against per-entity aggregator`() {
+        val output = makeLinkM2MHookStateOutput()
 
         // The pendingEdges field is typed to the per-entity aggregator,
         // not the generic PendingEdgeOps<ID>.
         assert(output.contains("pendingEdges: PrivM2MPostPendingEdgeOps")) {
-            "PrivM2MPostUpdateHookContext should expose `pendingEdges: PrivM2MPostPendingEdgeOps`\n$output"
+            "PrivM2MPostBeforeUpdateState should expose `pendingEdges: PrivM2MPostPendingEdgeOps`\n$output"
         }
     }
 
@@ -384,6 +381,23 @@ private fun makeLinkM2MOutput(): String {
     val names = mapOf<EntSchema, String>(post to "PrivM2MPost", tag to "PrivM2MTag", postTag to "PrivM2MPostTagJunction")
     return PrivacyGenerator("com.example.ent")
         .generate("PrivM2MPost", post, names)
+        .toString()
+        .replace("\\s+".toRegex(), " ")
+}
+
+private fun makeLinkM2MHookStateOutput(): String {
+    val post = PrivM2MPost()
+    val tag = PrivM2MTag()
+    val postTag = PrivM2MPostTagJunction()
+    finalize(post, tag, postTag)
+    val names = mapOf<EntSchema, String>(
+        post to "PrivM2MPost",
+        tag to "PrivM2MTag",
+        postTag to "PrivM2MPostTagJunction",
+    )
+    return MutationGenerator("com.example.ent")
+        .generate("PrivM2MPost", post, names)
+        .single { it.name == "PrivM2MPostBeforeUpdateState" }
         .toString()
         .replace("\\s+".toRegex(), " ")
 }

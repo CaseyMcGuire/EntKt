@@ -831,7 +831,7 @@ class EntGenerator(
             val schema = input.schema
             buildList {
                 add(entityGenerator.generate(name, schema, schemaNames))
-                add(mutationGenerator.generate(name, schema, schemaNames))
+                addAll(mutationGenerator.generate(name, schema, schemaNames))
                 add(createGenerator.generate(name, schema, schemaNames))
                 add(updateGenerator.generate(name, schema, schemaNames))
                 add(queryGenerator.generate(name, schema, schemaNames))

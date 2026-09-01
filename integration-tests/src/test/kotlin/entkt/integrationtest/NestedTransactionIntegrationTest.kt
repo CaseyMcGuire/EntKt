@@ -85,7 +85,7 @@ class NestedTransactionIntegrationTest : PostgresTestBase() {
         val transactionOwner = EntClient(driver)
         var beforeCreateCalls = 0
         val capturedRoot = EntClient(driver) {
-            hooks { users { beforeCreate { beforeCreateCalls++ } } }
+            hooks { users { beforeCreate { state -> beforeCreateCalls++; state } } }
         }
 
         val result = transactionOwner.withTransaction {

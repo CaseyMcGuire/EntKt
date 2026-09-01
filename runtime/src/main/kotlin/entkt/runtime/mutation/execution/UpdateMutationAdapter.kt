@@ -12,6 +12,7 @@ interface UpdateMutationAdapter<
     Entity : EntEntity<*>,
     PendingEdges,
     State,
+    HookState,
     > {
     fun relationshipRequirements(draft: Draft): UpdateRelationshipRequirements =
         UpdateRelationshipRequirements.None
@@ -22,6 +23,7 @@ interface UpdateMutationAdapter<
         request: UpdateMutationRequest<Draft>,
         before: Entity,
         pendingEdges: PendingEdges,
+        hookState: HookState,
         scope: UpdatePreparationScope,
     ): UpdatePreparation<State>
 

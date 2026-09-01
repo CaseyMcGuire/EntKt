@@ -10,12 +10,19 @@ class EntityHooksTest {
     fun `resolution detaches and freezes every hook registry`() {
         val calls = mutableListOf<String>()
         val source = EntityHooks<Int, String, Double, Long>()
-        source.beforeSave { calls += "initial:$it" }
+        source.beforeSave { value ->
+            calls += "initial:$value"
+            value + 1
+        }
 
-        val resolved = source.resolveForInternalUse()
-        source.beforeSave { calls += "late:$it" }
+        val resolved = source.resolveForInternalUse("User")
+        source.beforeSave { value ->
+            calls += "late:$value"
+            value
+        }
 
-        resolved.beforeSave.run(listOf(1))
+        val result = resolved.beforeSave.run(1)
         assertEquals(listOf("initial:1"), calls)
+        assertEquals(2, result)
     }
 }

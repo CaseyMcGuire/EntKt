@@ -13,17 +13,17 @@ private val RESOLVED_ENTITY_VALIDATION_CONFIG =
 
 internal fun entityHooksType(packageName: String, schemaName: String): TypeName =
     ENTITY_HOOKS.parameterizedBy(
-        ClassName(packageName, "${schemaName}Mutation"),
-        ClassName(packageName, "${schemaName}CreateHookContext"),
-        ClassName(packageName, "${schemaName}UpdateHookContext"),
+        ClassName(packageName, "${schemaName}BeforeSaveState"),
+        ClassName(packageName, "${schemaName}BeforeCreateState"),
+        ClassName(packageName, "${schemaName}BeforeUpdateState"),
         ClassName(packageName, schemaName),
     )
 
 internal fun resolvedEntityHooksType(packageName: String, schemaName: String): TypeName =
     RESOLVED_ENTITY_HOOKS.parameterizedBy(
-        ClassName(packageName, "${schemaName}Mutation"),
-        ClassName(packageName, "${schemaName}CreateHookContext"),
-        ClassName(packageName, "${schemaName}UpdateHookContext"),
+        ClassName(packageName, "${schemaName}BeforeSaveState"),
+        ClassName(packageName, "${schemaName}BeforeCreateState"),
+        ClassName(packageName, "${schemaName}BeforeUpdateState"),
         ClassName(packageName, schemaName),
     )
 
