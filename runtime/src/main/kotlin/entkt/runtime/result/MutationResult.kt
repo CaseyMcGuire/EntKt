@@ -54,6 +54,13 @@ sealed interface MutationResult<out T> {
         ): MutationResult<Nothing> = Failed(exception)
     }
 
+    /** Discard only the success value after execution; preserve failures and their write state unchanged. */
+    @EntktInternal
+    fun withoutValue(): MutationResult<Unit> = when (this) {
+        is Success -> Success(Unit)
+        is Failed -> this
+    }
+
     /**
      * Return the successful value or throw the stored
      * [EntMutationException] directly — the same contract and name as

@@ -299,38 +299,37 @@ class MutationExecutorTest {
     }
 
     @Test
-    fun `projection is checked inside execution and does not access unavailable results`() {
-        val harness = Harness()
-        val cause = IllegalStateException("invalid result shape")
-        val projected = harness.operation.mapResult<String> { throw cause }
+    fun `discarding the result does not rerun an operation or open another transaction`() {
+        for (atomic in listOf(false, true)) {
+            val harness = Harness(atomic = atomic)
+            val tx = Harness(inTransaction = true)
+            harness.bindTransaction(tx)
 
-        val failure = unexpected(harness.executor.execute(projected, Input("Ada"), harness.ruleClient))
+            val result = harness.execute()
 
-        assertEquals(MutationWriteState.Committed, failure.writeState)
-        assertSame(cause, failure.cause)
-        for (completion in listOf(denied(), MutationCompletion.ReturnFailed(IllegalStateException("LOAD")))) {
-            harness.completion = completion
-            val unavailable = failed(harness.executor.execute(projected, Input("Ada"), harness.ruleClient))
-            assertFalse(unavailable.cause === cause)
+            assertEquals(MutationResult.Success(Unit), result.withoutValue())
+            assertEquals(MutationResult.Success("Ada"), result)
+            assertEquals(1, harness.calls.size + tx.calls.size)
+            assertEquals(1, harness.runtime.preflights.size)
+            assertEquals(if (atomic) 1 else 0, tx.calls.size)
         }
     }
 
     @Test
-    fun `projection failure in an owned operation fails its write phases`() {
-        val root = Harness(atomic = true)
-        val tx = Harness(inTransaction = true)
-        val cause = IllegalStateException("invalid result shape")
-        root.ownedTransaction = { input, capture ->
-            tx.executor.executeInOwnedTransactionForInternalUse(
-                tx.operation.mapResult<String> { throw cause }, input, tx.ruleClient, capture,
-            ).asTransactionResult()
+    fun `discarding owned execution results preserves return failures after commit`() {
+        for (completion in listOf(denied(), MutationCompletion.ReturnFailed(IllegalStateException("LOAD")))) {
+            val root = Harness(atomic = true)
+            val tx = Harness(inTransaction = true)
+            tx.completion = completion
+            root.bindTransaction(tx)
+
+            val result = root.execute()
+
+            assertSame<MutationResult<*>>(result, result.withoutValue())
+            assertEquals(MutationWriteState.Committed, failed(result).writeState)
+            assertSame(failed(result), root.runtime.failures.single())
+            assertTrue(tx.runtime.failures.isEmpty())
         }
-
-        val failure = unexpected(root.execute())
-
-        assertSame(cause, failure.cause)
-        assertEquals(MutationWriteState.NotPersisted, failure.writeState)
-        assertEquals(1, tx.runtime.failures.size)
     }
 
     @Test

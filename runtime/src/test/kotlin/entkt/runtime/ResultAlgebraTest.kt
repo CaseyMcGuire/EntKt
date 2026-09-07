@@ -111,6 +111,30 @@ class ResultAlgebraTest {
         assertEquals(MutationWriteState.PersistenceUnknown, thrown.writeState)
     }
 
+    @Test
+    fun `withoutValue replaces successful payloads with Unit`() {
+        for (value in listOf("created", true, false, null, Unit)) {
+            val result = MutationResult.Success(value)
+
+            assertEquals(MutationResult.Success(Unit), result.withoutValue())
+            assertEquals(value, result.value)
+        }
+    }
+
+    @Test
+    fun `withoutValue preserves the exact failure for every write state`() {
+        for (state in MutationWriteState.entries) {
+            val exception = EntUnexpectedMutationException(state, IllegalStateException("failed"))
+            val result: MutationResult<String> = MutationResult.failedForInternalUse(exception)
+
+            val discarded = result.withoutValue()
+
+            assertSame<MutationResult<*>>(result, discarded)
+            assertSame(exception, assertIs<MutationResult.Failed>(discarded).exception)
+            assertEquals(state, discarded.exception.writeState)
+        }
+    }
+
     // ---- TransactionResult projection ----
 
     @Test

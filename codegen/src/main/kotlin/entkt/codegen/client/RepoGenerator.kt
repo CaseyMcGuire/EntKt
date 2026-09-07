@@ -555,11 +555,11 @@ internal class RepoGenerator(
             addCode(codeBlock {
                 add("return mutationExecutor.execute(\n")
                 indent()
-                add("operation = deleteMutationOperation.mapResult { Unit },\n")
+                add("operation = deleteMutationOperation,\n")
                 add("ruleClient = client.readOnlyClient,\n")
                 add("input = %T(viewerContext, entity.id),\n", DELETE_MUTATION_INPUT)
                 unindent()
-                add(")\n")
+                add(").withoutValue()\n")
             })
         }
 
@@ -849,11 +849,11 @@ internal class RepoGenerator(
             addCode(codeBlock {
                 add("return mutationExecutor.execute(\n")
                 indent()
-                add("operation = createMutationOperation.mapResult { Unit },\n")
+                add("operation = createMutationOperation,\n")
                 add("ruleClient = client.readOnlyClient,\n")
                 add("input = %T(viewerContext, draft, checkReturnedEntityPrivacy = false),\n", CREATE_MUTATION_INPUT)
                 unindent()
-                add(")\n")
+                add(").withoutValue()\n")
             })
         }
 

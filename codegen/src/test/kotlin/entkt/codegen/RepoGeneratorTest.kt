@@ -294,9 +294,10 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("mutationExecutor.execute( operation = deleteMutationOperation.mapResult { Unit }, ruleClient = client.readOnlyClient, input = DeleteMutationInput(viewerContext, entity.id), )")) {
-            "delete should pass the handle to the bound runtime operation\n$output"
+        assert(output.contains("mutationExecutor.execute( operation = deleteMutationOperation, ruleClient = client.readOnlyClient, input = DeleteMutationInput(viewerContext, entity.id), ).withoutValue()")) {
+            "delete should execute the bound operation before discarding the acknowledgement\n$output"
         }
+        assert(!output.contains("mapResult")) { "delete should not wrap the operation\n$output" }
     }
 
     @Test
@@ -550,13 +551,14 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "mutationExecutor.execute( operation = createMutationOperation.mapResult { Unit }, " +
+                "mutationExecutor.execute( operation = createMutationOperation, " +
                     "ruleClient = client.readOnlyClient, " +
-                    "input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy = false), )",
+                    "input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy = false), ).withoutValue()",
             ),
         ) {
             "save should use the bound operation without returned LOAD disclosure\n$output"
         }
+        assert(!output.contains("mapResult")) { "save should not wrap the operation\n$output" }
         assert(
             output.contains(
                 "mutationExecutor.execute( operation = createMutationOperation, ruleClient = client.readOnlyClient, input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy = true), )",
