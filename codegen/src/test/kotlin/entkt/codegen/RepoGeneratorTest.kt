@@ -143,6 +143,34 @@ class RepoGeneratorTest {
     }
 
     @Test
+    fun `repository superclass arguments are consistently indented on separate lines`() {
+        val car = Car()
+        val session = Session()
+        finalize(car, User(), session)
+
+        for ((schema, superclass, idType) in listOf(
+            Triple(car, "GeneratedIdRepository", "Int"),
+            Triple(session, "ExplicitIdRepository", "String"),
+        )) {
+            val name = schema::class.simpleName!!
+            val output = generator.generate(name, schema).toString()
+            val expected = """
+                $superclass<$name, $idType, ${name}CreateDraft, ${name}UpdateDraft, ${name}Query, ReadOnlyEntClient>(
+                      entity = ${name}Descriptor,
+                      mutationExecutor = MutationExecutor(driver, client),
+                      defaultUpdateConsistency = client.defaultUpdateConsistency,
+                      defaultRelationshipLocking = client.defaultRelationshipLocking,
+                    ),
+                    ${name}ReadSurface {
+            """.trimIndent()
+
+            assert(output.contains(expected)) {
+                "Superclass arguments should keep names and values together with consistent indentation\n$output"
+            }
+        }
+    }
+
+    @Test
     fun `generated ID repo inherits the typed runtime entry points`() {
         val car = Car()
         finalize(car, User())

@@ -119,10 +119,15 @@ internal class RepoGenerator(
 
         val typeSpec = classType(className) {
             superclass(repositoryBase)
-            addSuperclassConstructorParameter("entity = %T", entityDescriptorClass)
-            addSuperclassConstructorParameter("mutationExecutor = %T(driver, client)", MUTATION_EXECUTOR)
-            addSuperclassConstructorParameter("defaultUpdateConsistency = client.defaultUpdateConsistency")
-            addSuperclassConstructorParameter("defaultRelationshipLocking = client.defaultRelationshipLocking")
+            addSuperclassConstructorParameter(codeBlock {
+                // KotlinPoet's four-space supertype continuation does not indent explicit newlines.
+                add("\n")
+                add("      entity = %T,\n", entityDescriptorClass)
+                add("      mutationExecutor = %T(driver, client),\n", MUTATION_EXECUTOR)
+                add("      defaultUpdateConsistency = client.defaultUpdateConsistency,\n")
+                add("      defaultRelationshipLocking = client.defaultRelationshipLocking,\n")
+                add("    ")
+            })
             // The repo is the entity's read surface: query terminals reach
             // `hasLoadPrivacy()` / `evaluateLoadPrivacy(...)` through the
             // EntReadRuntime contract's `${prop}: ${Entity}ReadSurface`
