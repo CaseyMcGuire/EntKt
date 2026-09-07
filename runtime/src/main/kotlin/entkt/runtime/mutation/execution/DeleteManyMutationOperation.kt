@@ -6,7 +6,8 @@ import entkt.query.EntktInternal
 import entkt.query.Predicate
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
-import entkt.runtime.hook.HookRunner
+import entkt.runtime.hook.BatchActionHook
+import entkt.runtime.hook.runActionHooks
 import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EntityQuery
@@ -29,8 +30,8 @@ class DeleteManyMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
     private val validationEvaluator:
         MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
     private val readQueryExecutor: ReadQueryExecutor<Entity>,
-    private val beforeDelete: HookRunner<Entity>,
-    private val afterDelete: HookRunner<Entity>,
+    private val beforeDelete: List<BatchActionHook<Entity>>,
+    private val afterDelete: List<BatchActionHook<Entity>>,
 ) : MutationOperation<RuleClient, DeleteManyMutationInput<Entity>, Int> {
     override fun requirements(input: DeleteManyMutationInput<Entity>): MutationRequirements =
         MutationRequirements(
@@ -70,7 +71,7 @@ class DeleteManyMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
         )
-        beforeDelete.run(entities)
+        runActionHooks(entities, beforeDelete)
 
         val approvedIds = entities.map { it.id }
         execution.markWritePending()
@@ -114,7 +115,7 @@ class DeleteManyMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         check(deletedEntities.size == deletedIdSnapshot.size) {
             "DatabaseDriver.deleteManyByIds acknowledgement could not be correlated to candidates"
         }
-        afterDelete.run(deletedEntities)
+        runActionHooks(deletedEntities, afterDelete)
         return deletedIdSnapshot.size
     }
 

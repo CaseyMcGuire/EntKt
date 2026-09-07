@@ -7,9 +7,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.ActionHook
-import entkt.runtime.hook.HookRunner
 import entkt.runtime.hook.TransformingHook
-import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacyEvaluation
@@ -774,32 +772,24 @@ class CreateMutationOperationTest {
                     state: String,
                 ): RecordingInput = originalDraft
             },
-            beforeSaveHookRunner = MutationHookRunner(
-                lifecycle = "Widget.beforeSave",
-                hooks = listOf(
-                    TransformingHook { value: String ->
-                        events += "before-save:$value"
-                        value
-                    },
-                ),
+            beforeSave = listOf(
+                TransformingHook { value: String ->
+                    events += "before-save:$value"
+                    value
+                },
             ),
-            beforeCreateHookRunner = MutationHookRunner(
-                lifecycle = "Widget.beforeCreate",
-                hooks = listOf(
-                    TransformingHook { value: String ->
-                        events += "before-create:$value"
-                        spec.beforeCreateAction()
-                        value
-                    },
-                ),
+            beforeCreate = listOf(
+                TransformingHook { value: String ->
+                    events += "before-create:$value"
+                    spec.beforeCreateAction()
+                    value
+                },
             ),
-            afterCreateHookRunner = HookRunner(
-                listOf(
-                    ActionHook { value ->
-                        events += "after-create:${value.id}"
-                        spec.afterCreateAction(value)
-                    },
-                ),
+            afterCreate = listOf(
+                ActionHook { value ->
+                    events += "after-create:${value.id}"
+                    spec.afterCreateAction(value)
+                },
             ),
         )
         return Fixture(

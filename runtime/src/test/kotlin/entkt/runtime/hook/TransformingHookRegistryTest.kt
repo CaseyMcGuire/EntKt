@@ -12,20 +12,24 @@ class TransformingHookRegistryTest {
         registry { it + 1 }
         registry(batchTransformingHook { states -> states.mapStates { it * 2 } })
 
-        val result = registry
-            .runnerForInternalUse("User.beforeCreate")
-            .runBatch(listOf(2, 1))
+        val result = runTransformingHooks(
+            lifecycle = "User.beforeCreate",
+            states = MutationBatch.from(listOf(2, 1)),
+            hooks = registry.snapshotForInternalUse(),
+        )
 
         assertEquals(listOf(6, 4), result)
     }
 
     @Test
-    fun `resolved runner is detached from later registrations`() {
+    fun `snapshot is detached from later registrations`() {
         val registry = TransformingHookRegistry<Int>()
         registry { it + 1 }
-        val runner = registry.runnerForInternalUse("User.beforeCreate")
+        val snapshot = registry.snapshotForInternalUse()
         registry { it * 100 }
 
-        assertEquals(2, runner.run(1))
+        val result = runTransformingHooks("User.beforeCreate", MutationBatch.from(listOf(1)), snapshot)
+
+        assertEquals(2, result.single())
     }
 }

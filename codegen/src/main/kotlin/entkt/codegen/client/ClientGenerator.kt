@@ -403,7 +403,7 @@ internal class ClientGenerator(
         }
         for (input in schemas) {
             property(input.clientName, resolvedEntityHooksType(packageName, input.name)) {
-                initializer("source.%L.resolveForInternalUse(%S)", input.clientName, input.name)
+                initializer("source.%L.resolveForInternalUse()", input.clientName)
             }
         }
     }

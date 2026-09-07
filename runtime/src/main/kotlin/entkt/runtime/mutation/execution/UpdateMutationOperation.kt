@@ -102,6 +102,7 @@ class UpdateMutationOperation<
     ): PreparedUpdate<PreparedState> {
         val pendingEdges = adapter.capturePendingEdges(request.draft)
         val beforeUpdateState = hooks.runBefore(
+            entity = entity,
             viewerContext = viewerContext,
             draft = request.draft,
             before = before,

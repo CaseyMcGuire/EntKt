@@ -17,14 +17,12 @@ public class EntityHooks<BeforeSave, BeforeCreate, BeforeUpdate, Entity> {
 
     /** Resolve this mutable construction value into a detached immutable value. */
     @EntktInternal
-    public fun resolveForInternalUse(
-        entityName: String,
-    ): ResolvedEntityHooks<BeforeSave, BeforeCreate, BeforeUpdate, Entity> =
+    public fun resolveForInternalUse(): ResolvedEntityHooks<BeforeSave, BeforeCreate, BeforeUpdate, Entity> =
         ResolvedEntityHooks(
-            beforeSave = beforeSave.runnerForInternalUse("$entityName.beforeSave"),
-            beforeCreate = beforeCreate.runnerForInternalUse("$entityName.beforeCreate"),
+            beforeSave = beforeSave.snapshotForInternalUse(),
+            beforeCreate = beforeCreate.snapshotForInternalUse(),
             afterCreate = afterCreate.snapshotForInternalUse(),
-            beforeUpdate = beforeUpdate.runnerForInternalUse("$entityName.beforeUpdate"),
+            beforeUpdate = beforeUpdate.snapshotForInternalUse(),
             afterUpdate = afterUpdate.snapshotForInternalUse(),
             beforeDelete = beforeDelete.snapshotForInternalUse(),
             afterDelete = afterDelete.snapshotForInternalUse(),

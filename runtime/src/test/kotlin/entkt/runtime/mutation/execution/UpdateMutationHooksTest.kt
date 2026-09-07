@@ -3,10 +3,9 @@
 package entkt.runtime.mutation.execution
 
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.ActionHook
-import entkt.runtime.hook.HookRunner
 import entkt.runtime.hook.TransformingHook
-import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.BeforeUpdateHookState
 import entkt.runtime.mutation.UpdatePendingEdges
@@ -21,6 +20,15 @@ class UpdateMutationHooksTest {
         override val id: Long,
         val description: String,
     ) : EntEntity.LongId
+
+    private val mapping = object : EntityMapping<Widget> {
+        override val entityName = "Widget"
+        override val clientName = "widgets"
+        override val entityClass = Widget::class
+        override val table = "widgets"
+        override fun decode(row: Map<String, Any?>): Widget = error("No decoding in hook tests")
+        override fun edgeByStorageName(storageName: String) = null
+    }
 
     private data class PendingEdges(val description: String) : UpdatePendingEdges<Widget>
 
@@ -59,28 +67,23 @@ class UpdateMutationHooksTest {
                     return BeforeUpdateState(beforeSaveState.description)
                 }
             },
-            beforeSave = MutationHookRunner(
-                lifecycle = "Test.beforeSave",
-                hooks = listOf(
-                    TransformingHook { state ->
-                        events += "before-save:${state.description}"
-                        BeforeSaveState("${state.description}-save")
-                    },
-                ),
+            beforeSave = listOf(
+                TransformingHook { state ->
+                    events += "before-save:${state.description}"
+                    BeforeSaveState("${state.description}-save")
+                },
             ),
-            beforeUpdate = MutationHookRunner(
-                lifecycle = "Test.beforeUpdate",
-                hooks = listOf(
-                    TransformingHook { state ->
-                        events += "before-update:${state.description}"
-                        BeforeUpdateState("${state.description}-update")
-                    },
-                ),
+            beforeUpdate = listOf(
+                TransformingHook { state ->
+                    events += "before-update:${state.description}"
+                    BeforeUpdateState("${state.description}-update")
+                },
             ),
-            afterUpdate = HookRunner(emptyList()),
+            afterUpdate = emptyList(),
         )
 
         val result = hooks.runBefore(
+            entity = mapping,
             viewerContext = expectedViewerContext,
             draft = "draft",
             before = Widget(1L, "entity"),
@@ -100,7 +103,7 @@ class UpdateMutationHooksTest {
     }
 
     @Test
-    fun `after phase delegates the updated entity to its runner`() {
+    fun `after phase runs the supplied hooks with the updated entity`() {
         val seen = mutableListOf<Widget>()
         val hooks = UpdateMutationHooks(
             converter = object :
@@ -120,9 +123,9 @@ class UpdateMutationHooksTest {
                     beforeSaveState: BeforeSaveState,
                 ) = BeforeUpdateState("unused")
             },
-            beforeSave = MutationHookRunner("Test.beforeSave", emptyList()),
-            beforeUpdate = MutationHookRunner("Test.beforeUpdate", emptyList()),
-            afterUpdate = HookRunner(listOf(ActionHook(seen::add))),
+            beforeSave = emptyList(),
+            beforeUpdate = emptyList(),
+            afterUpdate = listOf(ActionHook(seen::add)),
         )
 
         val updated = Widget(1L, "updated")

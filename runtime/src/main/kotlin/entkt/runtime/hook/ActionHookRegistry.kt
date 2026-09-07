@@ -1,6 +1,7 @@
 package entkt.runtime.hook
 
 import entkt.query.EntktInternal
+import entkt.runtime.internal.immutableListCopy
 
 /**
  * Ordered action-hook registrations used by generated configuration DSLs.
@@ -31,7 +32,7 @@ class ActionHookRegistry<T> @EntktInternal constructor() {
         registrations += hook
     }
 
-    /** Return an ordered copy detached from subsequent configuration changes. */
+    /** Return an immutable ordered copy detached from subsequent configuration changes. */
     @EntktInternal
-    fun snapshotForInternalUse(): List<BatchActionHook<T>> = registrations.toList()
+    fun snapshotForInternalUse(): List<BatchActionHook<T>> = immutableListCopy(registrations)
 }

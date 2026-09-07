@@ -21,6 +21,9 @@ import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
+import entkt.runtime.hook.batchActionHook
+import entkt.runtime.hook.batchTransformingHook
+import entkt.runtime.mutation.FieldPatch
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
@@ -35,7 +38,7 @@ import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/** Exercise generated mutation rule wiring without a database or per-rule copying. */
+/** Exercise generated mutation rule and hook wiring without a database or per-rule copying. */
 class MutationRuleInputTest {
     private val viewerContext = ViewerContext(Viewer.User(7L))
 
@@ -148,6 +151,77 @@ class MutationRuleInputTest {
             assertTrue(probe.createValidation.isEmpty())
             assertTrue(driver.jsonCopies.isEmpty())
             assertTrue(driver.rows.isEmpty())
+        }
+    }
+
+    @Test
+    fun `generated mutation wiring runs resolved hook lists in lifecycle order`() {
+        for (bulk in listOf(false, true)) {
+            val driver = RecordingDriver()
+            val events = mutableListOf<String>()
+            val client = EntClient(driver) {
+                policies { articles(RuleProbe()) }
+                hooks {
+                    articles {
+                        beforeSave { state ->
+                            events += "beforeSave"
+                            state.setTitle("saved")
+                        }
+                        beforeCreate(batchTransformingHook { states ->
+                            events += "beforeCreate:${states.size}"
+                            states.mapStates { state ->
+                                assertEquals(FieldPatch.Set("saved"), state.title)
+                                state.setTitle("created")
+                            }
+                        })
+                        afterCreate(batchActionHook { entities ->
+                            events += "afterCreate:${entities.size}"
+                            entities.forEach { assertEquals("created", driver.rows.getValue(it.id)["title"]) }
+                        })
+                        beforeUpdate { state ->
+                            events += "beforeUpdate"
+                            assertEquals("created", state.before.title)
+                            assertEquals(FieldPatch.Set("saved"), state.title)
+                            state.setTitle("updated")
+                        }
+                        afterUpdate { entity ->
+                            events += "afterUpdate"
+                            assertEquals("updated", driver.rows.getValue(entity.id)["title"])
+                        }
+                        beforeDelete(batchActionHook { entities ->
+                            events += "beforeDelete:${entities.size}"
+                            entities.forEach { assertTrue(it.id in driver.rows) }
+                        })
+                        afterDelete(batchActionHook { entities ->
+                            events += "afterDelete:${entities.size}"
+                            entities.forEach { assertTrue(it.id !in driver.rows) }
+                        })
+                    }
+                }
+            }
+            val draft: ArticleCreateDraft.() -> Unit = { title = "draft"; authorId = 7L }
+            val created = if (bulk) {
+                client.articles.createMany(viewerContext, draft, draft).getOrThrow()
+            } else {
+                listOf(client.articles.create(draft).saveAndLoad(viewerContext).getOrThrow())
+            }
+            val updated = client.articles.update(created.first().id) { title = "draft update" }
+                .saveAndLoad(viewerContext).getOrThrow()
+            assertEquals("updated", updated.title)
+
+            if (bulk) {
+                assertEquals(created.size, client.articles.deleteMany(viewerContext).getOrThrow())
+            } else {
+                assertTrue(client.articles.deleteById(viewerContext, updated.id).getOrThrow())
+            }
+            assertEquals(
+                List(created.size) { "beforeSave" } + listOf(
+                    "beforeCreate:${created.size}", "afterCreate:${created.size}",
+                    "beforeSave", "beforeUpdate", "afterUpdate",
+                    "beforeDelete:${created.size}", "afterDelete:${created.size}",
+                ),
+                events,
+            )
         }
     }
 

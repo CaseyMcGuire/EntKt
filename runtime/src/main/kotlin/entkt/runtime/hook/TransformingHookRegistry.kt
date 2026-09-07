@@ -1,6 +1,7 @@
 package entkt.runtime.hook
 
 import entkt.query.EntktInternal
+import entkt.runtime.internal.immutableListCopy
 
 /** Ordered transforming-hook registrations for a generated configuration DSL. */
 class TransformingHookRegistry<State> @EntktInternal constructor() {
@@ -16,8 +17,8 @@ class TransformingHookRegistry<State> @EntktInternal constructor() {
         registrations += hook
     }
 
-    /** Resolve this mutable registry into a detached ordered runner. */
+    /** Return an immutable ordered copy detached from subsequent configuration changes. */
     @EntktInternal
-    fun runnerForInternalUse(lifecycle: String): MutationHookRunner<State> =
-        MutationHookRunner(lifecycle, registrations)
+    fun snapshotForInternalUse(): List<BatchTransformingHook<State>> =
+        immutableListCopy(registrations)
 }

@@ -7,7 +7,7 @@ package entkt.runtime.hook
  * Implementations transform states through [MutationBatch.mapStates] or
  * [MutationBatch.mapStatesIndexed]. Those operations retain the batch's
  * identity, size, and encounter order. A batch returned from a different hook
- * invocation is rejected by [MutationHookRunner].
+ * invocation is rejected by [runTransformingHooks].
  */
 interface BatchTransformingHook<State> {
     fun transformBatch(states: MutationBatch<State>): MutationBatch<State>

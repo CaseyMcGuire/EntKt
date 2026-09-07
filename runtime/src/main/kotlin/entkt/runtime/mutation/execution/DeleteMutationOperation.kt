@@ -5,7 +5,8 @@ package entkt.runtime.mutation.execution
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
-import entkt.runtime.hook.HookRunner
+import entkt.runtime.hook.BatchActionHook
+import entkt.runtime.hook.runActionHooks
 import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntOperation
@@ -23,8 +24,8 @@ class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
     private val validationEvaluator:
         MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
-    private val beforeDelete: HookRunner<Entity>,
-    private val afterDelete: HookRunner<Entity>,
+    private val beforeDelete: List<BatchActionHook<Entity>>,
+    private val afterDelete: List<BatchActionHook<Entity>>,
 ) : MutationOperation<RuleClient, DeleteMutationInput, Boolean> {
     override fun requirements(input: DeleteMutationInput): MutationRequirements =
         MutationRequirements("${entity.entityName} delete")
@@ -77,7 +78,7 @@ class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
         )
-        beforeDelete.run(listOf(target))
+        runActionHooks(listOf(target), beforeDelete)
 
         val deleted = try {
             execution.driver.delete(entity.table, target.id)
@@ -90,7 +91,7 @@ class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         }
         if (deleted) {
             execution.markWriteSucceeded()
-            afterDelete.run(listOf(target))
+            runActionHooks(listOf(target), afterDelete)
         }
         return deleted
     }

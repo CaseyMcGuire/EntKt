@@ -13,7 +13,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.ActionHook
-import entkt.runtime.hook.HookRunner
+import entkt.runtime.hook.BatchActionHook
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
@@ -197,8 +197,8 @@ class DeleteMutationOperationTest {
             }
         }
 
-        val beforeDelete = HookRunner(listOf(ActionHook<Widget> { entity -> events += "before:${entity.id}" }))
-        val afterDelete = HookRunner(listOf(ActionHook<Widget> { entity -> events += "after:${entity.id}" }))
+        val beforeDelete = listOf(ActionHook<Widget> { entity -> events += "before:${entity.id}" })
+        val afterDelete = listOf(ActionHook<Widget> { entity -> events += "after:${entity.id}" })
 
         val privacyEvaluator = MutationPrivacyEvaluator<
             Any,
@@ -256,8 +256,8 @@ class DeleteMutationOperationTest {
         val mutationExecutor = MutationExecutor(driver, mutationRuntime)
 
         fun scalarOperation(
-            beforeDelete: HookRunner<Widget> = this.beforeDelete,
-            afterDelete: HookRunner<Widget> = this.afterDelete,
+            beforeDelete: List<BatchActionHook<Widget>> = this.beforeDelete,
+            afterDelete: List<BatchActionHook<Widget>> = this.afterDelete,
         ): DeleteMutationOperation<Any, Widget, Candidate> = DeleteMutationOperation(
             entity = mapping,
             converter = converter,
@@ -280,8 +280,8 @@ class DeleteMutationOperationTest {
         fun deleteById(
             viewerContext: ViewerContext,
             id: Any,
-            beforeDelete: HookRunner<Widget> = this.beforeDelete,
-            afterDelete: HookRunner<Widget> = this.afterDelete,
+            beforeDelete: List<BatchActionHook<Widget>> = this.beforeDelete,
+            afterDelete: List<BatchActionHook<Widget>> = this.afterDelete,
         ): MutationResult<Boolean> = mutationExecutor.execute(
             operation = scalarOperation(beforeDelete, afterDelete),
             ruleClient = ruleClient,
@@ -415,8 +415,8 @@ class DeleteMutationOperationTest {
             val result = fixture.deleteById(
                 fixture.viewerContext,
                 1L,
-                beforeDelete = HookRunner(emptyList()),
-                afterDelete = HookRunner(listOf(ActionHook<Widget> { throw boom })),
+                beforeDelete = emptyList(),
+                afterDelete = listOf(ActionHook<Widget> { throw boom }),
             )
 
             val failure = assertIs<EntUnexpectedMutationException>(

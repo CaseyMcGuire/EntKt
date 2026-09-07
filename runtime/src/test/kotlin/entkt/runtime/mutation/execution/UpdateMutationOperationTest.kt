@@ -7,9 +7,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.ActionHook
-import entkt.runtime.hook.HookRunner
 import entkt.runtime.hook.TransformingHook
-import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.BeforeUpdateHookState
 import entkt.runtime.mutation.PreparedUpdateState
@@ -302,31 +300,23 @@ class UpdateMutationOperationTest {
                         )
                     }
                 },
-                beforeSave = MutationHookRunner(
-                    lifecycle = "Widget.beforeSave",
-                    hooks = listOf(
-                        TransformingHook { value: BeforeSaveState ->
-                            events += value.description
-                            value
-                        },
-                    ),
+                beforeSave = listOf(
+                    TransformingHook { value: BeforeSaveState ->
+                        events += value.description
+                        value
+                    },
                 ),
-                beforeUpdate = MutationHookRunner(
-                    lifecycle = "Widget.beforeUpdate",
-                    hooks = listOf(
-                        TransformingHook { value: BeforeUpdateState ->
-                            events += value.description
-                            value
-                        },
-                    ),
+                beforeUpdate = listOf(
+                    TransformingHook { value: BeforeUpdateState ->
+                        events += value.description
+                        value
+                    },
                 ),
-                afterUpdate = HookRunner(
-                    listOf(
-                        ActionHook { entity ->
-                            events += "after:${entity.name}"
-                            afterAction(entity)
-                        },
-                    ),
+                afterUpdate = listOf(
+                    ActionHook { entity ->
+                        events += "after:${entity.name}"
+                        afterAction(entity)
+                    },
                 ),
             ),
         )

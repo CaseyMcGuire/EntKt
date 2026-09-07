@@ -182,7 +182,7 @@ class ClientGeneratorTest {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("hooks = ResolvedEntClientHooks(hooksConfig)"))
-        assert(output.contains("source.cars.resolveForInternalUse(\"Car\")"))
+        assert(output.contains("source.cars.resolveForInternalUse()"))
         assert(output.contains("policies = ResolvedEntClientPolicies(policiesConfig)"))
         assert(output.contains("source.usersPrivacyConfig.resolveForInternalUse()"))
         assert(output.contains("source.usersValidationConfig.resolveForInternalUse()"))

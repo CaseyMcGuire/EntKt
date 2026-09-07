@@ -24,7 +24,7 @@ sealed interface MutationBatch<out State> : List<State> {
     companion object {
         /**
          * Create a mutation batch for directly testing or composing batch
-         * hooks. A runner rejects this batch if a hook returns it for a
+         * hooks. Hook execution rejects this batch if a hook returns it for a
          * different invocation.
          */
         @JvmStatic

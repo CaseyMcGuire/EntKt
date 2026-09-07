@@ -30,6 +30,18 @@ above it.
 
 ## Unreleased
 
+- **Run hooks with top-level functions instead of runner objects** (`runtime`, `codegen`)
+  `HookRunner` and `MutationHookRunner` are removed. Mutation operations receive
+  hook lists and execute them through `runActionHooks` and `runTransformingHooks`,
+  both in `HookExecution.kt`. Hook registries produce immutable snapshots once
+  during configuration resolution; operations retain those lists directly.
+  _Migration:_ regenerate entity code. Handwritten internal wiring should pass
+  hook lists instead of runner instances. Use `EntityHooks.resolveForInternalUse()`
+  to obtain resolved registrations; it no longer takes an entity name, and
+  `ResolvedEntityHooks` construction is internal. Transforming-hook execution
+  takes a `MutationBatch` and preserves its correspondence. Lifecycle diagnostics
+  are derived from the operation's entity mapping; ordering and failures are unchanged.
+
 - **Construct UPDATE operations in repositories** (`codegen`)
   Generated repositories now construct `UpdateMutationOperation` directly,
   injecting the schema adapter, rule evaluators, and hooks. `${Entity}UpdateAdapter`

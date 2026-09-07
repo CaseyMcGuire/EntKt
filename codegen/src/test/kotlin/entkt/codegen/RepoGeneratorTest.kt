@@ -458,7 +458,7 @@ class RepoGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("afterUpdate = configuredHooks.afterUpdate")) {
-            "The repository should inject the afterUpdate runner into runtime hooks\n$output"
+            "The repository should inject the afterUpdate hook list into runtime hooks\n$output"
         }
         assert(!output.contains("override fun runAfterUpdate(")) {
             "Generated code should not implement afterUpdate execution\n$output"
@@ -502,13 +502,16 @@ class RepoGeneratorTest {
         assert(output.contains("configuredHooks: ResolvedEntityHooks<CarBeforeSaveState, CarBeforeCreateState, CarBeforeUpdateState, Car>")) {
             "The constructor should receive resolved entity hooks\n$output"
         }
-        assert(output.contains("beforeSaveHookRunner = configuredHooks.beforeSave")) {
+        assert(output.contains("beforeSave = configuredHooks.beforeSave")) {
             "Should use the resolved beforeSave hooks directly\n$output"
         }
         assert(output.contains("afterDelete = configuredHooks.afterDelete")) {
             "Should use the resolved afterDelete hooks directly\n$output"
         }
         assert(!output.contains("private val beforeSaveHooks") && !output.contains("private val afterDeleteHooks"))
+        assert(!output.contains("HookRunner")) {
+            "Repositories should pass resolved hook lists without constructing runner instances\n$output"
+        }
         assert(!output.contains("fun applyHooks"))
     }
 

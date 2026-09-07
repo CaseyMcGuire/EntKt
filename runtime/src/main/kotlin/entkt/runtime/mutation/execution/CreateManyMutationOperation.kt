@@ -5,8 +5,11 @@ package entkt.runtime.mutation.execution
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.hook.HookRunner
-import entkt.runtime.hook.MutationHookRunner
+import entkt.runtime.hook.BatchActionHook
+import entkt.runtime.hook.BatchTransformingHook
+import entkt.runtime.hook.MutationBatch
+import entkt.runtime.hook.runActionHooks
+import entkt.runtime.hook.runTransformingHooks
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.MutationPrivacyEvaluator
@@ -48,9 +51,9 @@ class CreateManyMutationOperation<
     private val validationEvaluator: MutationValidationEvaluator<RuleClient, Candidate>,
     private val hookStateConverter:
         CreateMutationHookStateConverter<Draft, BeforeSaveState, BeforeCreateState>,
-    private val beforeSaveHookRunner: MutationHookRunner<BeforeSaveState>,
-    private val beforeCreateHookRunner: MutationHookRunner<BeforeCreateState>,
-    private val afterCreateHookRunner: HookRunner<Entity>,
+    private val beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
+    private val beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
+    private val afterCreate: List<BatchActionHook<Entity>>,
 ) : MutationOperation<RuleClient, CreateManyMutationInput<Draft>, List<Entity>> {
     internal val entityName: String get() = entity.entityName
 
@@ -111,8 +114,10 @@ class CreateManyMutationOperation<
         persistence: CreatePersistence,
         promoteDriverNotPersisted: Boolean,
     ): List<Entity> {
-        val beforeSaveStates = beforeSaveHookRunner.runBatch(
-            drafts.map(hookStateConverter::toBeforeSaveState),
+        val beforeSaveStates = runTransformingHooks(
+            lifecycle = "$entityName.beforeSave",
+            states = MutationBatch.from(drafts.map(hookStateConverter::toBeforeSaveState)),
+            hooks = beforeSave,
         )
         val beforeCreateStates = beforeSaveStates.mapStatesIndexed { index, beforeSaveState ->
             hookStateConverter.toBeforeCreateState(
@@ -121,7 +126,11 @@ class CreateManyMutationOperation<
                 beforeSaveState = beforeSaveState,
             )
         }
-        val finalHookStates = beforeCreateHookRunner.runBatch(beforeCreateStates)
+        val finalHookStates = runTransformingHooks(
+            lifecycle = "$entityName.beforeCreate",
+            states = beforeCreateStates,
+            hooks = beforeCreate,
+        )
         val preparationDrafts = finalHookStates.mapIndexed { index, state ->
             hookStateConverter.toPreparationDraft(drafts[index], state)
         }
@@ -157,7 +166,7 @@ class CreateManyMutationOperation<
             persistence = persistence,
             promoteDriverNotPersisted = promoteDriverNotPersisted,
         )
-        afterCreateHookRunner.run(createdEntities)
+        runActionHooks(createdEntities, afterCreate)
 
         return createdEntities
     }
