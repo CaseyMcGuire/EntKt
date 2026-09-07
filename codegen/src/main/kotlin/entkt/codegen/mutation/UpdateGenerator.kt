@@ -15,11 +15,8 @@ import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
-import entkt.codegen.client.resolvedEntityPrivacyConfigType
-import entkt.codegen.client.resolvedEntityValidationConfigType
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
-import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
@@ -42,7 +39,6 @@ import entkt.schema.Field
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
-private val ENT_CLIENT_NAME = "EntClient"
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val UPDATE_MUTATION_DRAFT =
     ClassName("entkt.runtime.mutation", "UpdateMutationDraft")
@@ -56,10 +52,6 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UPDATE_MUTATION_ADAPTER =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationAdapter")
-private val UPDATE_MUTATION_HOOK_STATE_CONVERTER =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationHookStateConverter")
-private val HOOK_RUNNER = ClassName("entkt.runtime.hook", "HookRunner")
-private val MUTATION_HOOK_RUNNER = ClassName("entkt.runtime.hook", "MutationHookRunner")
 
 
 internal class UpdateGenerator(
@@ -88,15 +80,7 @@ internal class UpdateGenerator(
         val draftClass = ClassName(packageName, className)
         val adapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
         val preparedStateClass = adapterClass.nestedClass("PreparedState")
-        val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
         val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
-        val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
-        val privacyConfigType = resolvedEntityPrivacyConfigType(packageName, schemaName)
-        val validationConfigType = resolvedEntityValidationConfigType(packageName, schemaName)
-
-        val beforeSaveHookType = MUTATION_HOOK_RUNNER.parameterizedBy(beforeSaveStateClass)
-        val beforeUpdateHookType = MUTATION_HOOK_RUNNER.parameterizedBy(beforeUpdateStateClass)
-        val afterUpdateHookType = HOOK_RUNNER.parameterizedBy(entityClass)
 
         // Helper-eligible link-table M2M edges. Each gets a nested mutator
         // class on the update draft. Before-update hook states expose the
@@ -156,16 +140,6 @@ internal class UpdateGenerator(
         }
 
         val pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
-        val hookStateConverterType = buildHookStateConverterType(
-            draftClass = draftClass,
-            entityClass = entityClass,
-            beforeSaveStateClass = beforeSaveStateClass,
-            beforeUpdateStateClass = beforeUpdateStateClass,
-            clientClass = clientClass,
-            pendingEdgeOpsClass = pendingEdgeOpsClass,
-            mutableFields = mutableFields,
-            edgeFks = edgeFks,
-        )
         val adapterType = classType(adapterClass.simpleName) {
             addModifiers(KModifier.INTERNAL)
             addSuperinterface(
@@ -179,90 +153,20 @@ internal class UpdateGenerator(
             )
             primaryConstructor {
                 parameter("driver", DRIVER)
-                parameter("client", clientClass)
-                parameter("configuredPrivacy", privacyConfigType)
-                parameter("configuredValidation", validationConfigType)
-                parameter("beforeSaveHookRunner", beforeSaveHookType)
-                parameter("beforeUpdateHookRunner", beforeUpdateHookType)
-                parameter("afterUpdateHookRunner", afterUpdateHookType)
             }
             property("driver", DRIVER) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("driver")
             }
-            property("client", clientClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("client")
-            }
             addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
-            addProperty(saveArtifacts.operationProperty)
             saveArtifacts.functions.forEach(::addFunction)
             addType(saveArtifacts.preparedStateType)
-            addType(hookStateConverterType)
         }
 
         return kotlinFile(packageName, className) {
             addAnnotation(entktInternalFileOptIn())
             addType(draftType)
             addType(adapterType)
-        }
-    }
-
-    private fun buildHookStateConverterType(
-        draftClass: ClassName,
-        entityClass: ClassName,
-        beforeSaveStateClass: ClassName,
-        beforeUpdateStateClass: ClassName,
-        clientClass: ClassName,
-        pendingEdgeOpsClass: ClassName,
-        mutableFields: List<Field>,
-        edgeFks: List<EdgeFk>,
-    ): TypeSpec {
-        val converterType = UPDATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
-            draftClass,
-            entityClass,
-            pendingEdgeOpsClass,
-            beforeSaveStateClass,
-            beforeUpdateStateClass,
-        )
-        return classType("UpdateHookStateConverter") {
-            addModifiers(KModifier.PRIVATE)
-            addSuperinterface(converterType)
-            primaryConstructor {
-                parameter("client", clientClass)
-            }
-            property("client", clientClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("client")
-            }
-            function("toBeforeSaveState", beforeSaveStateClass) {
-                addModifiers(KModifier.OVERRIDE)
-                parameter("draft", draftClass)
-                statement("return draft._buildBeforeSaveState()")
-            }
-            function("toBeforeUpdateState", beforeUpdateStateClass) {
-                addModifiers(KModifier.OVERRIDE)
-                parameter("viewerContext", VIEWER_CONTEXT)
-                parameter("before", entityClass)
-                parameter("pendingEdges", pendingEdgeOpsClass)
-                parameter("beforeSaveState", beforeSaveStateClass)
-                addCode(codeBlock {
-                    add("return %T(\n", beforeUpdateStateClass)
-                    indent()
-                    add("client = client.hookClientScopeForInternalUse,\n")
-                    add("viewerContext = viewerContext,\n")
-                    add("before = before,\n")
-                    add("pendingEdges = pendingEdges,\n")
-                    mutableFields.forEach { field ->
-                        add("%L = beforeSaveState.%L,\n", field.apiName, field.apiName)
-                    }
-                    edgeFks.forEach { fk ->
-                        add("%L = beforeSaveState.%L,\n", fk.propertyName, fk.propertyName)
-                    }
-                    unindent()
-                    add(")\n")
-                })
-            }
         }
     }
 

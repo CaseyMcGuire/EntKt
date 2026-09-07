@@ -16,7 +16,6 @@ import entkt.codegen.columnName
 import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.parameter
-import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.lifecyclePatchSnapshot
 import entkt.codegen.metadata.EdgeFk
@@ -32,10 +31,6 @@ private val RELATIONSHIP_LOCK_KEY = ClassName("entkt.runtime.mutation", "Relatio
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UUID_CLASS = ClassName("java.util", "UUID")
-private val UPDATE_MUTATION_OPERATION =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationOperation")
-private val UPDATE_MUTATION_HOOKS =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationHooks")
 private val UPDATE_MUTATION_REQUEST =
     ClassName("entkt.runtime.mutation", "UpdateMutationRequest")
 private val PREPARED_UPDATE =
@@ -50,20 +45,10 @@ private val UPDATE_RELATIONSHIP_REQUIREMENTS =
     ClassName("entkt.runtime.mutation.execution", "UpdateRelationshipRequirements")
 private val PREPARED_UPDATE_STATE =
     ClassName("entkt.runtime.mutation", "PreparedUpdateState")
-private val MUTATION_PRIVACY_EVALUATOR =
-    ClassName("entkt.runtime.privacy", "MutationPrivacyEvaluator")
-private val PRIVACY_DECISION_EVALUATOR =
-    ClassName("entkt.runtime.privacy", "PrivacyDecisionEvaluator")
-private val PRIVACY_OPERATION = ClassName("entkt.runtime.privacy", "PrivacyOperation")
-private val MUTATION_VALIDATION_EVALUATOR =
-    ClassName("entkt.runtime.validation", "MutationValidationEvaluator")
-private val VALIDATION_DECISION_EVALUATOR =
-    ClassName("entkt.runtime.validation", "ValidationDecisionEvaluator")
 
 /** Schema-specific artifacts around the reusable runtime UPDATE lifecycle. */
 internal data class UpdateSaveArtifacts(
     val preparedStateType: TypeSpec,
-    val operationProperty: PropertySpec,
     val functions: List<FunSpec>,
 )
 
@@ -78,12 +63,10 @@ internal class UpdateSaveEmitter(
     private val helperEligibleEdges: List<HelperEligibleM2M>,
 ) {
     private val entityClass = ClassName(packageName, schemaName)
-    private val entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor")
     private val queryClass = ClassName(packageName, "${schemaName}Query")
     private val patchClass = ClassName(packageName, "${schemaName}UpdatePatch")
     private val draftClass = ClassName(packageName, "${schemaName}UpdateDraft")
     private val pendingEdgesClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
-    private val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
     private val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
     private val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
     private val edgeChangesClass = ClassName(packageName, "${schemaName}EdgeChangesView")
@@ -91,7 +74,6 @@ internal class UpdateSaveEmitter(
 
     fun build(): UpdateSaveArtifacts = UpdateSaveArtifacts(
         preparedStateType = buildPreparedStateType(),
-        operationProperty = buildOperationProperty(),
         functions = buildList {
             if (helperEligibleEdges.isNotEmpty()) {
                 add(buildRelationshipRequirementsFunction())
@@ -124,109 +106,6 @@ internal class UpdateSaveEmitter(
                 },
             )
             .build()
-    }
-
-    private fun buildOperationProperty(): PropertySpec {
-        val updateRuleInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
-        return property(
-            "updateOperation",
-            UPDATE_MUTATION_OPERATION.parameterizedBy(
-                ClassName(packageName, "ReadOnlyEntClient"),
-                draftClass,
-                entityClass,
-                pendingEdgesClass,
-                preparedStateClass,
-                beforeSaveStateClass,
-                beforeUpdateStateClass,
-            ),
-        ) {
-            initializer(codeBlock {
-                add("%T(\n", UPDATE_MUTATION_OPERATION)
-                indent()
-                add("entity = %T,\n", entityDescriptorClass)
-                add("mutationRuntime = client,\n")
-                add("privacyEvaluator = %T(\n", MUTATION_PRIVACY_EVALUATOR)
-                indent()
-                add("entity = %T,\n", entityDescriptorClass)
-                add("operation = %T.UPDATE,\n", PRIVACY_OPERATION)
-                add("primary = %T(\n", PRIVACY_DECISION_EVALUATOR)
-                indent()
-                add("rules = configuredPrivacy.updateRules,\n")
-                add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
-                indent()
-                add("state.before,\n")
-                add("state.requestedPatch,\n")
-                add("state.effectivePatch,\n")
-                add("state.candidate,\n")
-                add("state.edgeChanges,\n")
-                unindent()
-                add(") },\n")
-                unindent()
-                add("),\n")
-                add("fallback = if (configuredPrivacy.updateDerivesFromCreate) {\n")
-                indent()
-                add("%T(\n", PRIVACY_DECISION_EVALUATOR)
-                indent()
-                add("rules = configuredPrivacy.createRules,\n")
-                add(
-                    "freshItem = { state: %T -> state.candidate },\n",
-                    preparedStateClass,
-                )
-                unindent()
-                add(")\n")
-                unindent()
-                add("} else {\n")
-                add("  null\n")
-                add("},\n")
-                unindent()
-                add("),\n")
-                add("validationEvaluator = %T(\n", MUTATION_VALIDATION_EVALUATOR)
-                indent()
-                add("lifecycle = %S,\n", "$schemaName UPDATE validation")
-                add("primary = %T(\n", VALIDATION_DECISION_EVALUATOR)
-                indent()
-                add("rules = configuredValidation.updateRules,\n")
-                add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
-                indent()
-                add("state.before,\n")
-                add("state.requestedPatch,\n")
-                add("state.effectivePatch,\n")
-                add("state.candidate,\n")
-                add("state.edgeChanges,\n")
-                unindent()
-                add(") },\n")
-                unindent()
-                add("),\n")
-                add("additional = if (configuredValidation.updateDerivesFromCreate) {\n")
-                indent()
-                add("%T(\n", VALIDATION_DECISION_EVALUATOR)
-                indent()
-                add("rules = configuredValidation.createRules,\n")
-                add(
-                    "freshItem = { state: %T -> state.candidate },\n",
-                    preparedStateClass,
-                )
-                unindent()
-                add(")\n")
-                unindent()
-                add("} else {\n")
-                add("  null\n")
-                add("},\n")
-                unindent()
-                add("),\n")
-                add("adapter = this,\n")
-                add("hooks = %T(\n", UPDATE_MUTATION_HOOKS)
-                indent()
-                add("converter = UpdateHookStateConverter(client),\n")
-                add("beforeSave = beforeSaveHookRunner,\n")
-                add("beforeUpdate = beforeUpdateHookRunner,\n")
-                add("afterUpdate = afterUpdateHookRunner,\n")
-                unindent()
-                add("),\n")
-                unindent()
-                add(")")
-            })
-        }
     }
 
     private fun buildRelationshipRequirementsFunction(): FunSpec = function(

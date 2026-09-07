@@ -10,8 +10,10 @@ import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
+import entkt.codegen.apiName
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
@@ -21,12 +23,16 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
-import entkt.codegen.metadata.idStrategyName
-import entkt.codegen.metadata.toTypeName
+import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.VIEWER_CONTEXT
+import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.idStrategyName
+import entkt.codegen.metadata.scalarFields
+import entkt.codegen.metadata.toTypeName
 import entkt.codegen.mutation.MUTATION_RESULT
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
+import entkt.schema.Field
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
@@ -78,6 +84,12 @@ private val CREATE_MUTATION_REPOSITORY =
     ClassName("entkt.runtime.mutation", "CreateMutationRepository")
 private val PENDING_UPDATE_MUTATION =
     ClassName("entkt.runtime.mutation", "PendingUpdateMutation")
+private val UPDATE_MUTATION_OPERATION =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationOperation")
+private val UPDATE_MUTATION_HOOKS =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationHooks")
+private val UPDATE_MUTATION_HOOK_STATE_CONVERTER =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationHookStateConverter")
 private val UPDATE_MUTATION_REQUEST =
     ClassName("entkt.runtime.mutation", "UpdateMutationRequest")
 private val UPDATE_MUTATION_REPOSITORY =
@@ -109,7 +121,6 @@ internal class RepoGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val createDraftClass = ClassName(packageName, "${schemaName}CreateDraft")
         val updateDraftClass = ClassName(packageName, "${schemaName}UpdateDraft")
-        val updateAdapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
         val entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor")
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val indexesClass = ClassName(packageName, "${schemaName}Indexes")
@@ -170,13 +181,7 @@ internal class RepoGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("%T(driver, client)", MUTATION_EXECUTOR)
             }
-            property("updateAdapter", updateAdapterClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer(
-                    "%T(driver, client, configuredPrivacy, configuredValidation, configuredHooks.beforeSave, configuredHooks.beforeUpdate, configuredHooks.afterUpdate)",
-                    updateAdapterClass,
-                )
-            }
+            addProperty(buildUpdateMutationOperation(schemaName))
             addProperty(
                 buildLoadPrivacyEvaluator(
                     entityDescriptorClass = entityDescriptorClass,
@@ -309,6 +314,18 @@ internal class RepoGenerator(
             addFunction(buildHasPrivacy("hasUpdatePrivacy"))
             addFunction(buildHasPrivacy("hasDeletePrivacy"))
             addFunction(buildEvaluateLoadPrivacy(entityClass))
+            addType(
+                buildHookStateConverterType(
+                    draftClass = updateDraftClass,
+                    entityClass = entityClass,
+                    beforeSaveStateClass = beforeSaveStateClass,
+                    beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState"),
+                    clientClass = clientClass,
+                    pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps"),
+                    mutableFields = scalarFields(schema).filterNot { it.immutable },
+                    edgeFks = computeEdgeFks(schema, schemaNames).filterNot { it.immutable },
+                ),
+            )
         }
 
         // The repo class implements the `@EntktInternal`-guarded
@@ -321,6 +338,176 @@ internal class RepoGenerator(
                 addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
             })
             addType(typeSpec)
+        }
+    }
+
+    private fun buildUpdateMutationOperation(schemaName: String): PropertySpec {
+        val entityClass = ClassName(packageName, schemaName)
+        val entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor")
+        val draftClass = ClassName(packageName, "${schemaName}UpdateDraft")
+        val adapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
+        val pendingEdgesClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
+        val preparedStateClass = adapterClass.nestedClass("PreparedState")
+        val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
+        val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
+        val updateRuleInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
+        return property(
+            "updateMutationOperation",
+            UPDATE_MUTATION_OPERATION.parameterizedBy(
+                ClassName(packageName, "ReadOnlyEntClient"),
+                draftClass,
+                entityClass,
+                pendingEdgesClass,
+                preparedStateClass,
+                beforeSaveStateClass,
+                beforeUpdateStateClass,
+            ),
+        ) {
+            addModifiers(KModifier.PRIVATE)
+            initializer(codeBlock {
+                add("%T(\n", UPDATE_MUTATION_OPERATION)
+                indent()
+                add("entity = %T,\n", entityDescriptorClass)
+                add("mutationRuntime = client,\n")
+                add("privacyEvaluator = %T(\n", MUTATION_PRIVACY_EVALUATOR)
+                indent()
+                add("entity = %T,\n", entityDescriptorClass)
+                add("operation = %T.UPDATE,\n", PRIVACY_OPERATION)
+                add("primary = %T(\n", PRIVACY_DECISION_EVALUATOR)
+                indent()
+                add("rules = configuredPrivacy.updateRules,\n")
+                add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
+                indent()
+                add("state.before,\n")
+                add("state.requestedPatch,\n")
+                add("state.effectivePatch,\n")
+                add("state.candidate,\n")
+                add("state.edgeChanges,\n")
+                unindent()
+                add(") },\n")
+                unindent()
+                add("),\n")
+                add("fallback = if (configuredPrivacy.updateDerivesFromCreate) {\n")
+                indent()
+                add("%T(\n", PRIVACY_DECISION_EVALUATOR)
+                indent()
+                add("rules = configuredPrivacy.createRules,\n")
+                add(
+                    "freshItem = { state: %T -> state.candidate },\n",
+                    preparedStateClass,
+                )
+                unindent()
+                add(")\n")
+                unindent()
+                add("} else {\n")
+                add("  null\n")
+                add("},\n")
+                unindent()
+                add("),\n")
+                add("validationEvaluator = %T(\n", MUTATION_VALIDATION_EVALUATOR)
+                indent()
+                add("lifecycle = %S,\n", "$schemaName UPDATE validation")
+                add("primary = %T(\n", VALIDATION_DECISION_EVALUATOR)
+                indent()
+                add("rules = configuredValidation.updateRules,\n")
+                add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
+                indent()
+                add("state.before,\n")
+                add("state.requestedPatch,\n")
+                add("state.effectivePatch,\n")
+                add("state.candidate,\n")
+                add("state.edgeChanges,\n")
+                unindent()
+                add(") },\n")
+                unindent()
+                add("),\n")
+                add("additional = if (configuredValidation.updateDerivesFromCreate) {\n")
+                indent()
+                add("%T(\n", VALIDATION_DECISION_EVALUATOR)
+                indent()
+                add("rules = configuredValidation.createRules,\n")
+                add(
+                    "freshItem = { state: %T -> state.candidate },\n",
+                    preparedStateClass,
+                )
+                unindent()
+                add(")\n")
+                unindent()
+                add("} else {\n")
+                add("  null\n")
+                add("},\n")
+                unindent()
+                add("),\n")
+                add("adapter = %T(driver),\n", adapterClass)
+                add("hooks = %T(\n", UPDATE_MUTATION_HOOKS)
+                indent()
+                add("converter = UpdateHookStateConverter(client),\n")
+                add("beforeSave = configuredHooks.beforeSave,\n")
+                add("beforeUpdate = configuredHooks.beforeUpdate,\n")
+                add("afterUpdate = configuredHooks.afterUpdate,\n")
+                unindent()
+                add("),\n")
+                unindent()
+                add(")")
+            })
+        }
+    }
+
+    private fun buildHookStateConverterType(
+        draftClass: ClassName,
+        entityClass: ClassName,
+        beforeSaveStateClass: ClassName,
+        beforeUpdateStateClass: ClassName,
+        clientClass: ClassName,
+        pendingEdgeOpsClass: ClassName,
+        mutableFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): TypeSpec {
+        val converterType = UPDATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
+            draftClass,
+            entityClass,
+            pendingEdgeOpsClass,
+            beforeSaveStateClass,
+            beforeUpdateStateClass,
+        )
+        return classType("UpdateHookStateConverter") {
+            addModifiers(KModifier.PRIVATE)
+            addSuperinterface(converterType)
+            primaryConstructor {
+                parameter("client", clientClass)
+            }
+            property("client", clientClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("client")
+            }
+            function("toBeforeSaveState", beforeSaveStateClass) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("draft", draftClass)
+                statement("return draft._buildBeforeSaveState()")
+            }
+            function("toBeforeUpdateState", beforeUpdateStateClass) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("viewerContext", VIEWER_CONTEXT)
+                parameter("before", entityClass)
+                parameter("pendingEdges", pendingEdgeOpsClass)
+                parameter("beforeSaveState", beforeSaveStateClass)
+                addCode(codeBlock {
+                    add("return %T(\n", beforeUpdateStateClass)
+                    indent()
+                    add("client = client.hookClientScopeForInternalUse,\n")
+                    add("viewerContext = viewerContext,\n")
+                    add("before = before,\n")
+                    add("pendingEdges = pendingEdges,\n")
+                    mutableFields.forEach { field ->
+                        add("%L = beforeSaveState.%L,\n", field.apiName, field.apiName)
+                    }
+                    edgeFks.forEach { fk ->
+                        add("%L = beforeSaveState.%L,\n", fk.propertyName, fk.propertyName)
+                    }
+                    unindent()
+                    add(")\n")
+                })
+            }
         }
     }
 
@@ -342,7 +529,7 @@ internal class RepoGenerator(
         addCode(codeBlock {
             add("return mutationExecutor.execute(\n")
             indent()
-            add("operation = updateAdapter.updateOperation,\n")
+            add("operation = updateMutationOperation,\n")
             add("ruleClient = client.readOnlyClient,\n")
             add("input = %T(\n", ClassName("entkt.runtime.mutation.execution", "UpdateMutationInput"))
             indent()

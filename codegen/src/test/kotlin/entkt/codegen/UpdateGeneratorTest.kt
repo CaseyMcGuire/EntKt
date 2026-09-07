@@ -152,13 +152,15 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("converter = UpdateHookStateConverter(client)"))
+        val repo = RepoGenerator("com.example.ent").generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+        assert(repo.contains("converter = UpdateHookStateConverter(client)"))
         assert(
-            output.contains(
+            repo.contains(
                 "override fun toBeforeUpdateState( viewerContext: ViewerContext, before: User, pendingEdges: UserPendingEdgeOps, beforeSaveState: UserBeforeSaveState, ): UserBeforeUpdateState = UserBeforeUpdateState(",
             ),
         )
-        assert(output.contains("name = beforeSaveState.name"))
+        assert(repo.contains("name = beforeSaveState.name"))
 
         val checkCallSite = output.indexOf("val requiredViolations = requiredHookStateViolations(hookState)")
         val canonicalPatchPos = output.indexOf("val requestedPatch = buildRequestedPatch(hookState)")
@@ -241,13 +243,13 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `wires the descriptor into the runtime operation without executing requests`() {
+    fun `adapter leaves operation construction and owner selection to repo and runtime`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("entity = UserDescriptor") && !output.contains("MutationExecutor")) {
-            "The generated adapter should wire the descriptor without owning the execution boundary\n$output"
+        assert(!output.contains("entity = UserDescriptor") && !output.contains("MutationExecutor")) {
+            "The generated adapter should not wire the operation or own the execution boundary\n$output"
         }
         assert(!output.contains("UpdateMutationSpec")) {
             "UpdateMutationSpec should be removed from generated updates\n$output"
@@ -272,9 +274,9 @@ class UpdateGeneratorTest {
         assert(!output.contains("EntNoChangesException")) {
             "EntNoChangesException must be gone from the generated update\n$output"
         }
-        assert(output.contains("public val updateOperation: UpdateMutationOperation<") &&
+        assert(!output.contains("UpdateMutationOperation<") &&
             !output.contains("MutationExecutor") && !output.contains("fun execute(")) {
-            "the adapter should expose the wired operation without executing it\n$output"
+            "the adapter should neither construct nor execute the runtime operation\n$output"
         }
         assert(!output.contains("_loadUpdateRow") && !output.contains("loadRow =")) {
             "generated update code should not retain an owner-row callback\n$output"
@@ -292,14 +294,15 @@ class UpdateGeneratorTest {
     fun `beforeUpdate hooks receive immutable state converted from beforeSave state`() {
         val user = User()
         finalize(user, Car())
-        val output = generator.generate("User", user).toString()
+        val output = RepoGenerator("com.example.ent").generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("override fun toBeforeSaveState(draft: UserUpdateDraft): UserBeforeSaveState = draft._buildBeforeSaveState()"))
         assert(output.contains("override fun toBeforeUpdateState("))
         assert(output.contains("UserBeforeUpdateState("))
         assert(output.contains("name = beforeSaveState.name"))
-        assert(output.contains("val requestedPatch = buildRequestedPatch(hookState)"))
+        val adapter = generator.generate("User", user).toString()
+        assert(adapter.contains("val requestedPatch = buildRequestedPatch(hookState)"))
         assert(!output.contains("MutationView") && !output.contains("runFresh"))
     }
 
@@ -353,9 +356,9 @@ class UpdateGeneratorTest {
         assert(emptyBlock.contains("state = PreparedState(") && emptyBlock.contains("values = emptyMap()")) {
             "No-op preparation should retain the unchanged rule state without owner values\n$output"
         }
-        assert(output.contains("privacyEvaluator = MutationPrivacyEvaluator(") &&
-            output.contains("validationEvaluator = MutationValidationEvaluator(")) {
-            "updateOperation should pass the no-op state through runtime privacy and validation evaluators\n$output"
+        assert(!output.contains("MutationPrivacyEvaluator") &&
+            !output.contains("MutationValidationEvaluator")) {
+            "The adapter should only prepare the no-op state; runtime owns rule evaluation\n$output"
         }
     }
 
@@ -400,15 +403,15 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `generated update adapter wires its operation without an execution entry point`() {
+    fun `generated update adapter has no operation construction or execution entry point`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("public val updateOperation: UpdateMutationOperation<") &&
+        assert(!output.contains("UpdateMutationOperation<") &&
             !output.contains("MutationExecutor") && !output.contains("fun execute(")) {
-            "The adapter wires the operation; only the repository submits it to the executor\n$output"
+            "Only the repository should construct the operation and submit it to the executor\n$output"
         }
         assert(!output.contains("class Execution")) { "Generated updates should have no per-request execution holder\n$output" }
         assert(!output.contains("public fun save(") && !output.contains("public fun saveAndLoad(")) {
@@ -464,38 +467,29 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `adapter takes client and typed hook runners`() {
+    fun `adapter takes only the driver`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("client: EntClient")) {
-            "Should take client\n$output"
+        assert(output.contains("internal class UserUpdateAdapter( private val driver: DatabaseDriver, )")) {
+            "The schema adapter should receive only its storage dependency\n$output"
         }
-        assert(output.contains("beforeSaveHookRunner: MutationHookRunner<UserBeforeSaveState>")) {
-            "Should take a typed beforeSave runner\n$output"
-        }
-        assert(output.contains("beforeUpdateHookRunner: MutationHookRunner<UserBeforeUpdateState>")) {
-            "Should take a typed beforeUpdate runner\n$output"
-        }
-        assert(output.contains("afterUpdateHookRunner: HookRunner<User>")) {
-            "Should take a typed afterUpdate runner\n$output"
+        assert(!output.contains("configuredPrivacy") && !output.contains("configuredValidation") &&
+            !output.contains("HookRunner") && !output.contains("UpdateHookStateConverter")) {
+            "Rule and hook wiring belongs to the repository, not the schema adapter\n$output"
         }
     }
 
     @Test
-    fun `client is private on the stable adapter`() {
+    fun `draft and adapter have no client dependency`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        // Update hooks receive ctx.client via the hook context, and
-        // the DSL caller necessarily already has `client` in scope
-        // (they called `client.users.update(id) { ... }`). Exposing
-        // a public client on the update draft would add zero capability
-        // and surface area we don't want.
-        assert(output.contains("private val client: EntClient")) {
-            "client should be private on the update adapter\n$output"
+        assert(!output.contains("EntClient")) {
+            "The adapter should not retain a client to construct its own operation or hook converter\n$output"
         }
     }
 
@@ -509,81 +503,6 @@ class UpdateGeneratorTest {
             !output.contains("supportsReadRowForUpdate") &&
             !output.contains("readRowForUpdate(")) {
             "Pessimistic validation and row selection belong to UpdateMutationOperation\n$output"
-        }
-    }
-
-    @Test
-    fun `update binds concrete privacy and CREATE fallback with runtime-owned diagnostics`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString().replace("\\s+".toRegex(), " ")
-        val privacy = output.substringAfter("privacyEvaluator = ").substringBefore("validationEvaluator = ")
-
-        assert(privacy.contains("MutationPrivacyEvaluator( entity = UserDescriptor, operation = PrivacyOperation.UPDATE,"))
-        assert(privacy.contains("primary = PrivacyDecisionEvaluator( rules = configuredPrivacy.updateRules,"))
-        val validation = output.substringAfter("validationEvaluator = ").substringBefore("adapter = this")
-        assert(validation.contains("MutationValidationEvaluator( lifecycle = \"User UPDATE validation\","))
-        assert(validation.contains("primary = ValidationDecisionEvaluator( rules = configuredValidation.updateRules,"))
-        assert(validation.contains("ValidationDecisionEvaluator( rules = configuredValidation.createRules,"))
-        assert(!validation.contains("mutationValidationEvaluatorForInternalUse") &&
-            !validation.contains("validationDecisionEvaluatorForInternalUse"))
-        assert(validation.split("lifecycle =").size - 1 == 1) {
-            "The outer evaluator should supply its lifecycle to primary and additional rules\n$output"
-        }
-        assert(output.contains("UpdateMutationOperation<ReadOnlyEntClient,"))
-        assert(!output.contains("ruleClientProvider") && !output.contains("client.readOnlyClient")) {
-            "update adapter construction must not resolve or capture a read client\n$output"
-        }
-        assert(!output.contains("mutationPrivacyEvaluatorForInternalUse") &&
-            !output.contains("privacyDecisionEvaluatorForInternalUse"))
-        assert(!privacy.contains("lifecycle") && !privacy.contains("unresolvedReason")) {
-            "UPDATE privacy diagnostics should belong to the runtime evaluator\n$output"
-        }
-        val fallback = privacy.substringAfter("fallback = if (configuredPrivacy.updateDerivesFromCreate) {")
-            .substringBefore("} else {")
-        assert(fallback.contains("PrivacyDecisionEvaluator( rules = configuredPrivacy.createRules,"))
-        assert(!fallback.contains("ruleClientProvider")) {
-            "CREATE fallback should reuse the mutation's rule context\n$output"
-        }
-    }
-
-    @Test
-    fun `stable adapter supplies one runtime hook lifecycle to the executor`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(
-            output.contains(
-                "hooks = UpdateMutationHooks( converter = UpdateHookStateConverter(client), beforeSave = beforeSaveHookRunner, beforeUpdate = beforeUpdateHookRunner, afterUpdate = afterUpdateHookRunner, ),",
-            ),
-        ) {
-            "The generated adapter should inject one hook lifecycle into the executor\n$output"
-        }
-        assert(output.contains("private class UpdateHookStateConverter(")) {
-            "Update adapters should generate one schema-specific state converter implementation\n$output"
-        }
-        assert(!output.contains("ValueFactory")) {
-            "Generated update wiring should not use callback factories\n$output"
-        }
-    }
-
-    @Test
-    fun `stable adapter supplies after hooks to the runtime executor`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("afterUpdate = afterUpdateHookRunner")) {
-            "The generated adapter should inject the afterUpdate runner into runtime hooks\n$output"
-        }
-        assert(!output.contains("override fun runAfterUpdate(")) {
-            "Generated code should not implement afterUpdate execution\n$output"
-        }
-        assert(!output.contains("runBatchHooksForInternalUse(listOf(updatedEntity)")) {
-            "generated code should not execute afterUpdate hooks itself\n$output"
         }
     }
 
@@ -883,7 +802,7 @@ class UpdateGeneratorTest {
     @Test
     fun `update rule items share prepared values including edge changes`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = generator
+        val output = RepoGenerator("com.example.ent")
             .generate("M2MPost", post, names)
             .toString()
             .replace("\\s+".toRegex(), " ")
@@ -928,7 +847,7 @@ class UpdateGeneratorTest {
     @Test
     fun `beforeUpdate hook state exposes pending edge snapshots but not edge mutators`() {
         val (post, tag, postTag, names) = makeLinkM2MSchemas()
-        val output = generator.generate("M2MPost", post, names).toString()
+        val output = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("M2MPostBeforeUpdateState("))
@@ -1022,8 +941,10 @@ class UpdateGeneratorTest {
             output.contains("override fun prepare(")) {
             "The generated adapter should implement the typed runtime lifecycle contract\n$output"
         }
-        assert(output.contains("UpdateMutationHookStateConverter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostBeforeSaveState, M2MPostBeforeUpdateState>") &&
-            output.contains("converter = UpdateHookStateConverter(client)")) {
+        val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+        assert(repo.contains("UpdateMutationHookStateConverter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostBeforeSaveState, M2MPostBeforeUpdateState>") &&
+            repo.contains("converter = UpdateHookStateConverter(client)")) {
             "The runtime hook lifecycle should receive a typed schema-specific state converter\n$output"
         }
         assert(!output.contains("beforeSaveValueFactory") && !output.contains("beforeUpdateValueFactory")) {
@@ -1043,7 +964,9 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("override fun toBeforeSaveState(draft: M2MPostUpdateDraft): M2MPostBeforeSaveState = draft._buildBeforeSaveState()"))
+        val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
+            .replace("\\s+".toRegex(), " ")
+        assert(repo.contains("override fun toBeforeSaveState(draft: M2MPostUpdateDraft): M2MPostBeforeSaveState = draft._buildBeforeSaveState()"))
         val stateFunction = output.substring(
             output.indexOf("internal fun _buildBeforeSaveState"),
             output.indexOf("internal fun _buildPendingEdgeOps"),
@@ -1058,7 +981,7 @@ class UpdateGeneratorTest {
         // change the hook surface.
         val user = User()
         finalize(user, Car())
-        val output = generator.generate("User", user).toString()
+        val output = RepoGenerator("com.example.ent").generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("override fun toBeforeSaveState(draft: UserUpdateDraft): UserBeforeSaveState = draft._buildBeforeSaveState()"))
@@ -1081,7 +1004,7 @@ class UpdateGeneratorTest {
     @Test
     fun `beforeUpdate state constructor receives pendingEdges`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = generator.generate("M2MPost", post, names).toString()
+        val output = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("M2MPostBeforeUpdateState("))
@@ -1091,7 +1014,7 @@ class UpdateGeneratorTest {
     @Test
     fun `beforeUpdate state receives the runtime-owned pending-edge snapshot`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = generator.generate("M2MPost", post, names).toString()
+        val output = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("pendingEdges = pendingEdges"))
@@ -1125,8 +1048,9 @@ class UpdateGeneratorTest {
         assert(output.contains("override fun capturePendingEdges(draft: M2MPostUpdateDraft): M2MPostPendingEdgeOps = draft._buildPendingEdgeOps()")) {
             "the capture adapter should return the snapshot to runtime\n$output"
         }
-        assert(output.contains("adapter = this")) {
-            "the executor should receive the typed adapter once at construction\n$output"
+        val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
+        assert(repo.contains("adapter = M2MPostUpdateAdapter(driver)")) {
+            "The repository should inject the typed adapter into the operation\n$repo"
         }
     }
 
@@ -1512,7 +1436,7 @@ class UpdateGeneratorTest {
     @Test
     fun `privacy and validation adapters both receive edgeChanges`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = generator.generate("M2MPost", post, names).toString()
+        val output = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         val occurrences = output.split("state.edgeChanges,").size - 1

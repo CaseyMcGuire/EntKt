@@ -30,6 +30,15 @@ above it.
 
 ## Unreleased
 
+- **Construct UPDATE operations in repositories** (`codegen`)
+  Generated repositories now construct `UpdateMutationOperation` directly,
+  injecting the schema adapter, rule evaluators, and hooks. `${Entity}UpdateAdapter`
+  takes only a database driver and no longer exposes `updateOperation`.
+  The existing private hook-state converter now belongs to the repository.
+  _Migration:_ regenerate entity code. Handwritten internal wiring should
+  construct the operation directly with `${Entity}UpdateAdapter(driver)`.
+  Application update calls, hook ordering, and mutation behavior are unchanged.
+
 - **Name hook contracts by their return behavior** (`runtime`)
   `Hook<T>` / `BatchHook<T>` are now `ActionHook<T>` / `BatchActionHook<T>`;
   they perform work without returning replacement state. `MutationHook<T>` /

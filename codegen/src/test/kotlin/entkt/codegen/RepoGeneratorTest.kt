@@ -362,8 +362,17 @@ class RepoGeneratorTest {
             !output.contains("updateAdapter.execute(")) {
             "No operation or schema adapter should wrap the shared executor\n$output"
         }
-        assert(output.contains("private val updateAdapter: CarUpdateAdapter = CarUpdateAdapter(driver, client, configuredPrivacy, configuredValidation, configuredHooks.beforeSave, configuredHooks.beforeUpdate, configuredHooks.afterUpdate)")) {
-            "repo should construct one stable schema-specific update adapter\n$output"
+        assert(output.contains("private val updateMutationOperation: UpdateMutationOperation<") &&
+            output.contains("adapter = CarUpdateAdapter(driver)")) {
+            "repo should construct its operation with the schema-specific adapter\n$output"
+        }
+        assert(Regex("private val updateMutationOperation:").findAll(output).count() == 1)
+        assert(Regex("adapter = CarUpdateAdapter\\(driver\\)").findAll(output).count() == 1)
+        assert(!output.contains("private val updateAdapter:") && !output.contains("updateAdapter.updateOperation")) {
+            "repo should retain the operation directly, not an adapter that owns the operation\n$output"
+        }
+        assert(output.contains("entity = CarDescriptor, mutationRuntime = client,")) {
+            "UPDATE should receive its descriptor and runtime directly\n$output"
         }
         assert(output.contains("val draft = CarUpdateDraft().apply(block)") &&
             output.contains("val request = UpdateMutationRequest(id, draft, consistency, relationshipLocking)") &&
@@ -371,8 +380,91 @@ class RepoGeneratorTest {
             "update should capture only per-operation state in the draft and request\n$output"
         }
         assert(output.contains("override fun executeUpdate(") &&
-            output.contains("mutationExecutor.execute( operation = updateAdapter.updateOperation, ruleClient = client.readOnlyClient, input = UpdateMutationInput( viewerContext = viewerContext, request = request, applyLoadPrivacy = applyLoadPrivacy,")) {
+            output.contains("mutationExecutor.execute( operation = updateMutationOperation, ruleClient = client.readOnlyClient, input = UpdateMutationInput( viewerContext = viewerContext, request = request, applyLoadPrivacy = applyLoadPrivacy,")) {
             "repository execution should pass the complete request directly to the shared executor\n$output"
+        }
+    }
+
+    @Test
+    fun `update binds concrete privacy and CREATE fallback with runtime-owned diagnostics`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString().replace("\\s+".toRegex(), " ")
+        val operation = output.substringAfter("private val updateMutationOperation:")
+            .substringBefore("private val loadPrivacyEvaluator:")
+        val privacy = operation.substringAfter("privacyEvaluator = ").substringBefore("validationEvaluator = ")
+
+        assert(privacy.contains("MutationPrivacyEvaluator( entity = UserDescriptor, operation = PrivacyOperation.UPDATE,"))
+        assert(privacy.contains("primary = PrivacyDecisionEvaluator( rules = configuredPrivacy.updateRules,"))
+        val validation = operation.substringAfter("validationEvaluator = ").substringBefore("adapter = UserUpdateAdapter(driver)")
+        assert(validation.contains("MutationValidationEvaluator( lifecycle = \"User UPDATE validation\","))
+        assert(validation.contains("primary = ValidationDecisionEvaluator( rules = configuredValidation.updateRules,"))
+        assert(validation.contains("ValidationDecisionEvaluator( rules = configuredValidation.createRules,"))
+        assert(!validation.contains("mutationValidationEvaluatorForInternalUse") &&
+            !validation.contains("validationDecisionEvaluatorForInternalUse"))
+        assert(validation.split("lifecycle =").size - 1 == 1) {
+            "The outer evaluator should supply its lifecycle to primary and additional rules\n$output"
+        }
+        val ruleInput = "UserUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )"
+        assert(privacy.contains(ruleInput) && validation.contains(ruleInput)) {
+            "Both UPDATE evaluators must receive all prepared rule values\n$output"
+        }
+        assert(validation.contains("additional = if (configuredValidation.updateDerivesFromCreate)"))
+        assert(privacy.contains("-> state.candidate") && validation.contains("-> state.candidate"))
+        assert(output.contains("UpdateMutationOperation<ReadOnlyEntClient,"))
+        assert(!output.contains("ruleClientProvider") && !operation.contains("client.readOnlyClient")) {
+            "update operation construction must not resolve or capture a read client\n$output"
+        }
+        assert(!output.contains("mutationPrivacyEvaluatorForInternalUse") &&
+            !output.contains("privacyDecisionEvaluatorForInternalUse"))
+        assert(!privacy.contains("lifecycle") && !privacy.contains("unresolvedReason")) {
+            "UPDATE privacy diagnostics should belong to the runtime evaluator\n$output"
+        }
+        val fallback = privacy.substringAfter("fallback = if (configuredPrivacy.updateDerivesFromCreate) {")
+            .substringBefore("} else {")
+        assert(fallback.contains("PrivacyDecisionEvaluator( rules = configuredPrivacy.createRules,"))
+        assert(!fallback.contains("ruleClientProvider")) {
+            "CREATE fallback should reuse the mutation's rule context\n$output"
+        }
+    }
+
+    @Test
+    fun `repo supplies one runtime hook lifecycle to the update operation`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(
+            output.contains(
+                "hooks = UpdateMutationHooks( converter = UpdateHookStateConverter(client), beforeSave = configuredHooks.beforeSave, beforeUpdate = configuredHooks.beforeUpdate, afterUpdate = configuredHooks.afterUpdate, ),",
+            ),
+        ) {
+            "The repository should inject one hook lifecycle into the update operation\n$output"
+        }
+        assert(output.contains("private class UpdateHookStateConverter(")) {
+            "The repository should keep its schema-specific hook-state converter private\n$output"
+        }
+        assert(!output.contains("ValueFactory")) {
+            "Generated update wiring should not use callback factories\n$output"
+        }
+    }
+
+    @Test
+    fun `repo supplies after update hooks to the runtime operation`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString()
+            .replace("\\s+".toRegex(), " ")
+
+        assert(output.contains("afterUpdate = configuredHooks.afterUpdate")) {
+            "The repository should inject the afterUpdate runner into runtime hooks\n$output"
+        }
+        assert(!output.contains("override fun runAfterUpdate(")) {
+            "Generated code should not implement afterUpdate execution\n$output"
+        }
+        assert(!output.contains("runBatchHooksForInternalUse(listOf(updatedEntity)")) {
+            "generated code should not execute afterUpdate hooks itself\n$output"
         }
     }
 
@@ -835,14 +927,17 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo leaves update validation composition to the generated update adapter`() {
+    fun `repo constructs update validation without implementing its lifecycle`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(!output.contains("evaluateUpdateValidation") && !output.contains("UPDATE validation")) {
-            "repository code should not duplicate UPDATE validation lifecycle logic\n$output"
+        assert(output.contains("MutationValidationEvaluator( lifecycle = \"Car UPDATE validation\"")) {
+            "The repository should construct the UPDATE validation evaluator\n$output"
+        }
+        assert(!output.contains("evaluateUpdateValidation")) {
+            "Repository code should not implement UPDATE validation lifecycle logic\n$output"
         }
     }
 
