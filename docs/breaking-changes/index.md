@@ -30,6 +30,15 @@ above it.
 
 ## Unreleased
 
+- **Construct mutation privacy evaluators directly** (`runtime`, `codegen`)
+  `MutationPrivacyEvaluator` and `PrivacyDecisionEvaluator` are concrete runtime
+  classes. Their `*ForInternalUse` factories are removed. The mutation evaluator
+  derives diagnostics from its entity mapping and `PrivacyOperation`; CREATE-rule
+  fallbacks reuse the primary evaluation's rule context.
+  _Migration:_ regenerate entity code. Handwritten internal wiring should use
+  the constructors and pass `entity`/`operation` instead of diagnostic strings;
+  fallback wiring no longer takes a client provider or lifecycle label.
+
 - **Pass entities directly to LOAD privacy rules** (`codegen`, `runtime`)
   `${Entity}LoadPrivacyItem` is no longer generated. Scalar LOAD rules receive
   the entity itself, and batch LOAD rules receive `RuleBatch<Entity>`.

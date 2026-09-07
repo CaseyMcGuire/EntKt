@@ -51,10 +51,11 @@ private val UPDATE_RELATIONSHIP_REQUIREMENTS =
     ClassName("entkt.runtime.mutation.execution", "UpdateRelationshipRequirements")
 private val PREPARED_UPDATE_STATE =
     ClassName("entkt.runtime.mutation", "PreparedUpdateState")
-private val MUTATION_PRIVACY_EVALUATOR_FACTORY =
-    MemberName("entkt.runtime.privacy", "mutationPrivacyEvaluatorForInternalUse")
-private val PRIVACY_DECISION_EVALUATOR_FACTORY =
-    MemberName("entkt.runtime.privacy", "privacyDecisionEvaluatorForInternalUse")
+private val MUTATION_PRIVACY_EVALUATOR =
+    ClassName("entkt.runtime.privacy", "MutationPrivacyEvaluator")
+private val PRIVACY_DECISION_EVALUATOR =
+    ClassName("entkt.runtime.privacy", "PrivacyDecisionEvaluator")
+private val PRIVACY_OPERATION = ClassName("entkt.runtime.privacy", "PrivacyOperation")
 private val MUTATION_VALIDATION_EVALUATOR_FACTORY =
     MemberName("entkt.runtime.validation", "mutationValidationEvaluatorForInternalUse")
 private val VALIDATION_DECISION_EVALUATOR_FACTORY =
@@ -147,10 +148,10 @@ internal class UpdateSaveEmitter(
                 indent()
                 add("entity = %T,\n", entityDescriptorClass)
                 add("mutationRuntime = client,\n")
-                add("privacyEvaluator = %M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
+                add("privacyEvaluator = %T(\n", MUTATION_PRIVACY_EVALUATOR)
                 indent()
-                add("lifecycle = %S,\n", "$schemaName UPDATE privacy")
-                add("unresolvedReason = %S,\n", "no update rule allowed access")
+                add("entity = %T,\n", entityDescriptorClass)
+                add("operation = %T.UPDATE,\n", PRIVACY_OPERATION)
                 add("rules = configuredPrivacy.updateRules,\n")
                 add("ruleClientProvider = { client.readOnlyClient },\n")
                 add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
@@ -164,11 +165,9 @@ internal class UpdateSaveEmitter(
                 add(") },\n")
                 add("fallback = if (configuredPrivacy.updateDerivesFromCreate) {\n")
                 indent()
-                add("%M(\n", PRIVACY_DECISION_EVALUATOR_FACTORY)
+                add("%T(\n", PRIVACY_DECISION_EVALUATOR)
                 indent()
-                add("lifecycle = %S,\n", "$schemaName UPDATE privacy")
                 add("rules = configuredPrivacy.createRules,\n")
-                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { state: %T -> %T(%L) },\n",
                     preparedStateClass,

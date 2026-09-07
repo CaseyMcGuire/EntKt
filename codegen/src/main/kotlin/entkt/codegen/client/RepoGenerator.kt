@@ -70,10 +70,9 @@ private val DELETE_MUTATION_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationOperation")
 private val DELETE_RULE_CANDIDATE =
     ClassName("entkt.runtime.mutation.execution", "DeleteRuleCandidate")
-private val MUTATION_PRIVACY_EVALUATOR_FACTORY =
-    MemberName("entkt.runtime.privacy", "mutationPrivacyEvaluatorForInternalUse")
-private val PRIVACY_DECISION_EVALUATOR_FACTORY =
-    MemberName("entkt.runtime.privacy", "privacyDecisionEvaluatorForInternalUse")
+private val PRIVACY_DECISION_EVALUATOR =
+    ClassName("entkt.runtime.privacy", "PrivacyDecisionEvaluator")
+private val PRIVACY_OPERATION = ClassName("entkt.runtime.privacy", "PrivacyOperation")
 private val MUTATION_VALIDATION_EVALUATOR_FACTORY =
     MemberName("entkt.runtime.validation", "mutationValidationEvaluatorForInternalUse")
 private val PENDING_CREATE_MUTATION =
@@ -222,6 +221,7 @@ internal class RepoGenerator(
             addProperties(
                 buildDeleteEvaluators(
                     schemaName = schemaName,
+                    entityDescriptorClass = entityDescriptorClass,
                     entityClass = entityClass,
                     candidateClass = candidateClass,
                     fields = fields,
@@ -520,10 +520,10 @@ internal class RepoGenerator(
                 add("mutationRuntime = client,\n")
                 add("entity = %T,\n", entityDescriptorClass)
                 add("converter = createConverter,\n")
-                add("privacyEvaluator = %M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
+                add("privacyEvaluator = %T(\n", MUTATION_PRIVACY_EVALUATOR)
                 indent()
-                add("lifecycle = %S,\n", "$schemaName CREATE privacy")
-                add("unresolvedReason = %S,\n", "no create rule allowed access")
+                add("entity = %T,\n", entityDescriptorClass)
+                add("operation = %T.CREATE,\n", PRIVACY_OPERATION)
                 add("rules = configuredPrivacy.createRules,\n")
                 add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
@@ -581,6 +581,7 @@ internal class RepoGenerator(
     /** Share the already-bound evaluators without introducing a lifecycle object. */
     private fun buildDeleteEvaluators(
         schemaName: String,
+        entityDescriptorClass: ClassName,
         entityClass: ClassName,
         candidateClass: ClassName,
         fields: List<Field>,
@@ -591,13 +592,20 @@ internal class RepoGenerator(
         val candidateSnapshot = lifecycleValueSnapshot("item.candidate", fields, entityClass)
         val ruleCandidateType = DELETE_RULE_CANDIDATE.parameterizedBy(entityClass, candidateClass)
         return listOf(
-            property("deletePrivacyEvaluator", MUTATION_PRIVACY_EVALUATOR.parameterizedBy(ruleCandidateType)) {
+            property(
+                "deletePrivacyEvaluator",
+                MUTATION_PRIVACY_EVALUATOR.parameterizedBy(
+                    ClassName(packageName, "ReadOnlyEntClient"),
+                    ruleCandidateType,
+                    deleteRuleInput,
+                ),
+            ) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(codeBlock {
-                    add("%M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
+                    add("%T(\n", MUTATION_PRIVACY_EVALUATOR)
                     indent()
-                    add("lifecycle = %S,\n", "$schemaName DELETE privacy")
-                    add("unresolvedReason = %S,\n", "no delete rule allowed access")
+                    add("entity = %T,\n", entityDescriptorClass)
+                    add("operation = %T.DELETE,\n", PRIVACY_OPERATION)
                     add("rules = configuredPrivacy.deleteRules,\n")
                     add("ruleClientProvider = { client.readOnlyClient },\n")
                     add(
@@ -609,11 +617,9 @@ internal class RepoGenerator(
                     )
                     add("fallback = if (configuredPrivacy.deleteDerivesFromCreate) {\n")
                     indent()
-                    add("%M(\n", PRIVACY_DECISION_EVALUATOR_FACTORY)
+                    add("%T(\n", PRIVACY_DECISION_EVALUATOR)
                     indent()
-                    add("lifecycle = %S,\n", "$schemaName DELETE privacy")
                     add("rules = configuredPrivacy.createRules,\n")
-                    add("ruleClientProvider = { client.readOnlyClient },\n")
                     add(
                         "freshItem = { item: %T -> %T(%L) },\n",
                         ruleCandidateType,

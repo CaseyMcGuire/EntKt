@@ -41,7 +41,7 @@ class UpdateMutationOperation<
     >(
     private val entity: EntityMapping<Entity>,
     private val mutationRuntime: MutationRuntime,
-    private val privacyEvaluator: MutationPrivacyEvaluator<PreparedState>,
+    private val privacyEvaluator: MutationPrivacyEvaluator<*, PreparedState, *>,
     private val validationEvaluator: MutationValidationEvaluator<PreparedState>,
     private val adapter:
         UpdateMutationAdapter<Draft, Entity, PendingEdges, PreparedState, BeforeUpdateState>,

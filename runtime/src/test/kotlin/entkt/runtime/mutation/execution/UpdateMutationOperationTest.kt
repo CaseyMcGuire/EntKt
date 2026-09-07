@@ -27,7 +27,8 @@ import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.privacy.mutationPrivacyEvaluatorForInternalUse
+import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.PrivacyOperation
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
@@ -187,9 +188,9 @@ class UpdateMutationOperationTest {
             relationshipLocking = RelationshipLocking.OwnerOnly,
         )
 
-        val privacyEvaluator = mutationPrivacyEvaluatorForInternalUse<Any, State, State>(
-            lifecycle = "Widget UPDATE privacy",
-            unresolvedReason = "no update rule allowed access",
+        val privacyEvaluator = MutationPrivacyEvaluator<Any, State, State>(
+            entity = mapping,
+            operation = PrivacyOperation.UPDATE,
             rules = listOf(
                 batchPrivacyRule<Any, State> { context, states ->
                     events += "privacy:${states.single().name}"

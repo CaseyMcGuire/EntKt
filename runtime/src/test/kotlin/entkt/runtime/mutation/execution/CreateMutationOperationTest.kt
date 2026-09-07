@@ -17,7 +17,8 @@ import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.privacy.mutationPrivacyEvaluatorForInternalUse
+import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.PrivacyOperation
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.result.EntConflictException
@@ -139,9 +140,9 @@ class CreateMutationOperationTest {
             }
         }
 
-        val privacyEvaluator = mutationPrivacyEvaluatorForInternalUse<Unit, Candidate, Candidate>(
-                lifecycle = "Widget CREATE privacy",
-                unresolvedReason = "no create rule allowed access",
+        val privacyEvaluator = MutationPrivacyEvaluator<Unit, Candidate, Candidate>(
+                entity = RecordingMapping(events),
+                operation = PrivacyOperation.CREATE,
                 rules = listOf(
                     batchPrivacyRule<Unit, Candidate> { context, batch ->
                         events += "create-privacy"

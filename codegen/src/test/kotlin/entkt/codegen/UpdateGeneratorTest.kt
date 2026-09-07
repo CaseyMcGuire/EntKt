@@ -353,7 +353,7 @@ class UpdateGeneratorTest {
         assert(emptyBlock.contains("state = PreparedState(") && emptyBlock.contains("values = emptyMap()")) {
             "No-op preparation should retain the unchanged rule state without owner values\n$output"
         }
-        assert(output.contains("privacyEvaluator = mutationPrivacyEvaluatorForInternalUse(") &&
+        assert(output.contains("privacyEvaluator = MutationPrivacyEvaluator(") &&
             output.contains("validationEvaluator = mutationValidationEvaluatorForInternalUse(")) {
             "updateOperation should pass the no-op state through runtime privacy and validation evaluators\n$output"
         }
@@ -509,6 +509,28 @@ class UpdateGeneratorTest {
             !output.contains("supportsReadRowForUpdate") &&
             !output.contains("readRowForUpdate(")) {
             "Pessimistic validation and row selection belong to UpdateMutationOperation\n$output"
+        }
+    }
+
+    @Test
+    fun `update binds concrete privacy and CREATE fallback with runtime-owned diagnostics`() {
+        val user = User()
+        finalize(user, Car())
+        val output = generator.generate("User", user).toString().replace("\\s+".toRegex(), " ")
+        val privacy = output.substringAfter("privacyEvaluator = ").substringBefore("validationEvaluator = ")
+
+        assert(privacy.contains("MutationPrivacyEvaluator( entity = UserDescriptor, operation = PrivacyOperation.UPDATE,"))
+        assert(privacy.contains("rules = configuredPrivacy.updateRules"))
+        assert(!output.contains("mutationPrivacyEvaluatorForInternalUse") &&
+            !output.contains("privacyDecisionEvaluatorForInternalUse"))
+        assert(!privacy.contains("lifecycle") && !privacy.contains("unresolvedReason")) {
+            "UPDATE privacy diagnostics should belong to the runtime evaluator\n$output"
+        }
+        val fallback = privacy.substringAfter("fallback = if (configuredPrivacy.updateDerivesFromCreate) {")
+            .substringBefore("} else {")
+        assert(fallback.contains("PrivacyDecisionEvaluator( rules = configuredPrivacy.createRules,"))
+        assert(!fallback.contains("ruleClientProvider")) {
+            "CREATE fallback should reuse the mutation's rule context\n$output"
         }
     }
 

@@ -16,7 +16,8 @@ import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.privacy.mutationPrivacyEvaluatorForInternalUse
+import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.PrivacyOperation
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EntInterceptorsConfig
 import entkt.runtime.query.EntityQuery
@@ -218,13 +219,13 @@ class DeleteMutationOperationTest {
             afterDelete = HookRunner(listOf(Hook { entity -> events += "after:${entity.id}" })),
         )
 
-        val privacyEvaluator = mutationPrivacyEvaluatorForInternalUse<
+        val privacyEvaluator = MutationPrivacyEvaluator<
             Any,
             DeleteRuleCandidate<Widget, Candidate>,
             DeleteRuleCandidate<Widget, Candidate>,
             >(
-            lifecycle = "Widget DELETE privacy",
-            unresolvedReason = "no delete rule allowed access",
+            entity = mapping,
+            operation = PrivacyOperation.DELETE,
             rules = listOf(
                 batchPrivacyRule<Any, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
                     events += "privacy:${batch.joinToString { it.entity.id.toString() }}"

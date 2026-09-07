@@ -29,7 +29,7 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "privacyEvaluator = mutationPrivacyEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE privacy\", unresolvedReason = \"no create rule allowed access\", rules = configuredPrivacy.createRules, ruleClientProvider = { client.readOnlyClient }, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
+                "privacyEvaluator = MutationPrivacyEvaluator( entity = RepoBytesRecordDescriptor, operation = PrivacyOperation.CREATE, rules = configuredPrivacy.createRules, ruleClientProvider = { client.readOnlyClient }, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
             ),
         ) {
             "the privacy evaluator should provide a fresh detached item for each rule\n$output"
@@ -755,8 +755,17 @@ class RepoGeneratorTest {
         assert(output.contains("= LoadPrivacyEvaluator(")) {
             "LOAD privacy should delegate through its runtime evaluator\n$output"
         }
-        assert(output.contains("privacyEvaluator = mutationPrivacyEvaluatorForInternalUse(")) {
+        assert(output.contains("privacyEvaluator = MutationPrivacyEvaluator(")) {
             "write privacy should delegate decisions through runtime evaluators\n$output"
+        }
+        assert(!output.contains("mutationPrivacyEvaluatorForInternalUse") &&
+            !output.contains("privacyDecisionEvaluatorForInternalUse")) {
+            "privacy evaluators should be constructed directly\n$output"
+        }
+        assert(output.contains("entity = CarDescriptor, operation = PrivacyOperation.CREATE"))
+        assert(!output.contains("\"Car CREATE privacy\"") &&
+            !output.contains("\"Car DELETE privacy\"") && !output.contains("unresolvedReason")) {
+            "mutation privacy diagnostics should be owned by the runtime evaluator\n$output"
         }
         assert(
             !output.contains("Viewer.PrivacyBypass") &&
@@ -774,11 +783,17 @@ class RepoGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("fallback = if (configuredPrivacy.deleteDerivesFromCreate)")) {
-            "DELETE should use the reusable unresolved-candidate fallback combinator\n$output"
+            "DELETE should configure the runtime's unresolved-candidate fallback\n$output"
         }
-        assert(output.contains("if (configuredPrivacy.deleteDerivesFromCreate)") &&
-            output.contains("rules = configuredPrivacy.createRules")) {
-            "DELETE-derived CREATE rules should remain explicitly configured under deleteSpec\n$output"
+        assert(output.contains("MutationPrivacyEvaluator<ReadOnlyEntClient, DeleteRuleCandidate<Car, CarWriteCandidate>, CarDeleteRuleInput>"))
+        assert(output.contains("entity = CarDescriptor, operation = PrivacyOperation.DELETE"))
+        val fallback = output.substringAfter("fallback = if (configuredPrivacy.deleteDerivesFromCreate) {")
+            .substringBefore("} else {")
+        assert(fallback.contains("PrivacyDecisionEvaluator( rules = configuredPrivacy.createRules,")) {
+            "DELETE-derived CREATE rules should be bound to a concrete runtime evaluator\n$output"
+        }
+        assert(!fallback.contains("lifecycle") && !fallback.contains("ruleClientProvider")) {
+            "fallback evaluation should use its parent mutation's diagnostics and rule context\n$output"
         }
     }
 
