@@ -7,6 +7,7 @@ import entkt.runtime.entity.EntityMapping
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.result.EntBatchRuleContractException
 import entkt.runtime.rule.RuleBatch
+import entkt.runtime.rule.TestRuleClient
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -35,7 +36,7 @@ class MutationPrivacyEvaluatorTest {
     }
 
     private val viewerContext = ViewerContext(Viewer.User(7L))
-    private val ruleClient = Any()
+    private val ruleClient = TestRuleClient()
     private val ruleContext = PrivacyRuleContext(viewerContext, ruleClient)
     private val mutationOperations = listOf(
         PrivacyOperation.CREATE,
@@ -45,10 +46,10 @@ class MutationPrivacyEvaluatorTest {
 
     private fun evaluator(
         operation: PrivacyOperation = PrivacyOperation.UPDATE,
-        rules: List<BatchPrivacyRule<Any, Record>> = emptyList(),
+        rules: List<BatchPrivacyRule<TestRuleClient, Record>> = emptyList(),
         freshItem: ((Record) -> Record)? = null,
-        fallback: PrivacyDecisionEvaluator<Any, Record, *>? = null,
-    ): MutationPrivacyEvaluator<Any, Record> {
+        fallback: PrivacyDecisionEvaluator<TestRuleClient, Record, *>? = null,
+    ): MutationPrivacyEvaluator<TestRuleClient, Record> {
         if (freshItem == null) {
             return MutationPrivacyEvaluator(RecordMapping, operation, rules, fallback)
         }
@@ -63,7 +64,7 @@ class MutationPrivacyEvaluatorTest {
     @Test
     fun `direct input constructor preserves subjects and context without a caller converter`() {
         val seen = mutableListOf<Record>()
-        val rules = mutableListOf<BatchPrivacyRule<Any, Record>>(
+        val rules = mutableListOf<BatchPrivacyRule<TestRuleClient, Record>>(
             PrivacyRule { context, item ->
                 assertSame(ruleContext, context)
                 seen += item
@@ -96,10 +97,10 @@ class MutationPrivacyEvaluatorTest {
 
     @Test
     fun `bound primary and fallback rules share one context and only see unresolved states`() {
-        val contexts = mutableListOf<PrivacyRuleContext<Any>>()
+        val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
         val primaryBatches = mutableListOf<List<Long>>()
         val fallbackBatches = mutableListOf<List<String>>()
-        val primaryRules = mutableListOf<BatchPrivacyRule<Any, Record>>(
+        val primaryRules = mutableListOf<BatchPrivacyRule<TestRuleClient, Record>>(
             batchPrivacyRule { context, batch ->
                 contexts += context
                 primaryBatches += batch.map { it.id }
@@ -117,7 +118,7 @@ class MutationPrivacyEvaluatorTest {
                 batch.decideEach { PrivacyDecision.Continue }
             },
         )
-        val fallbackRules = mutableListOf<BatchPrivacyRule<Any, String>>(
+        val fallbackRules = mutableListOf<BatchPrivacyRule<TestRuleClient, String>>(
             batchPrivacyRule { context, batch ->
                 contexts += context
                 fallbackBatches += batch.toList()
@@ -161,7 +162,7 @@ class MutationPrivacyEvaluatorTest {
     fun `no rules or unresolved fallback denies with the operation-specific default reason`() {
         val record = Record(1)
         for (operation in mutationOperations) {
-            val fallback = PrivacyDecisionEvaluator<Any, Record, Record>(
+            val fallback = PrivacyDecisionEvaluator<TestRuleClient, Record, Record>(
                 rules = listOf(PrivacyRule { _, _ -> PrivacyDecision.Continue }),
                 freshItem = { it },
             )
@@ -183,7 +184,7 @@ class MutationPrivacyEvaluatorTest {
         val evaluator = evaluator(
             rules = listOf(PrivacyRule { _, _ -> error("Primary must not run") }),
             freshItem = { error("Primary input must not be converted") },
-            fallback = PrivacyDecisionEvaluator<Any, Record, String>(
+            fallback = PrivacyDecisionEvaluator<TestRuleClient, Record, String>(
                 rules = listOf(PrivacyRule { _, _ -> error("Fallback must not run") }),
                 freshItem = { error("Fallback input must not be converted") },
             ),
@@ -202,7 +203,7 @@ class MutationPrivacyEvaluatorTest {
     @Test
     fun `primary and fallback rules can share the original input without copies`() {
         val observed = mutableListOf<Record>()
-        val observe = PrivacyRule<Any, Record> { _, item ->
+        val observe = PrivacyRule<TestRuleClient, Record> { _, item ->
             assertContentEquals(byteArrayOf(1), item.payload)
             observed += item
             PrivacyDecision.Continue
@@ -210,7 +211,7 @@ class MutationPrivacyEvaluatorTest {
         val evaluator = evaluator(
             rules = listOf(observe, observe),
             fallback = PrivacyDecisionEvaluator(
-                rules = listOf(observe, PrivacyRule<Any, Record> { _, _ -> PrivacyDecision.Allow }),
+                rules = listOf(observe, PrivacyRule<TestRuleClient, Record> { _, _ -> PrivacyDecision.Allow }),
                 freshItem = { record: Record -> record },
             ),
         )
@@ -234,7 +235,7 @@ class MutationPrivacyEvaluatorTest {
                     if (index == 0) PrivacyDecision.Deny("first occurrence") else PrivacyDecision.Continue
                 }
             }),
-            fallback = PrivacyDecisionEvaluator<Any, Record, Record>(
+            fallback = PrivacyDecisionEvaluator<TestRuleClient, Record, Record>(
                 rules = listOf(batchPrivacyRule { _, batch ->
                     assertEquals(1, batch.size)
                     batch.decideEach { PrivacyDecision.Allow }
@@ -255,7 +256,7 @@ class MutationPrivacyEvaluatorTest {
     fun `resolved primary decisions never invoke fallback rules or converters`() {
         val evaluator = evaluator(
             rules = listOf(PrivacyRule { _, _ -> PrivacyDecision.Allow }),
-            fallback = PrivacyDecisionEvaluator<Any, Record, Record>(
+            fallback = PrivacyDecisionEvaluator<TestRuleClient, Record, Record>(
                 rules = listOf(PrivacyRule { _, _ -> error("Fallback must not run") }),
                 freshItem = { error("Fallback input must not be converted") },
             ),
@@ -273,7 +274,7 @@ class MutationPrivacyEvaluatorTest {
                         if (!failInFallback) throw failure
                         PrivacyDecision.Continue
                     }),
-                    fallback = PrivacyDecisionEvaluator<Any, Record, Record>(
+                    fallback = PrivacyDecisionEvaluator<TestRuleClient, Record, Record>(
                         rules = listOf(PrivacyRule { _, _ -> throw failure }),
                         freshItem = { it },
                     ),
@@ -295,7 +296,7 @@ class MutationPrivacyEvaluatorTest {
                     rules = listOf(batchPrivacyRule { _, batch ->
                         if (failInFallback) batch.decideEach { PrivacyDecision.Continue } else foreignDecisions
                     }),
-                    fallback = PrivacyDecisionEvaluator<Any, Record, Record>(
+                    fallback = PrivacyDecisionEvaluator<TestRuleClient, Record, Record>(
                         rules = listOf(batchPrivacyRule { _, _ -> foreignDecisions }),
                         freshItem = { it },
                     ),
@@ -313,9 +314,9 @@ class MutationPrivacyEvaluatorTest {
 
     @Test
     fun `each evaluation uses its supplied context without retaining a client or viewer`() {
-        val clients = listOf(Any(), Any())
+        val clients = listOf(TestRuleClient(), TestRuleClient())
         val viewers = listOf(viewerContext, ViewerContext(Viewer.User(8L)))
-        val contexts = mutableListOf<PrivacyRuleContext<Any>>()
+        val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
         val suppliedContexts = viewers.mapIndexed { index, viewer -> PrivacyRuleContext(viewer, clients[index]) }
         val evaluator = evaluator(
             rules = listOf(PrivacyRule { context, _ ->

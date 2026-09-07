@@ -19,6 +19,7 @@ import entkt.runtime.mutation.execution.MutationRuntime
 import entkt.runtime.mutation.execution.UpdateMutationInput
 import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.query.EntityQueryBuilder
+import entkt.runtime.rule.EntRuleClient
 
 /** CREATE entry point for caller-assigned IDs; intentionally has no no-ID create or batch terminal. */
 abstract class ExplicitIdRepository<
@@ -27,7 +28,7 @@ abstract class ExplicitIdRepository<
     CreateDraft : CreateMutationDraft<Entity>,
     UpdateDraft : UpdateMutationDraft<Entity>,
     Query : EntityQueryBuilder<Entity, Query>,
-    RuleClient,
+    RuleClient : EntRuleClient,
 > @EntktInternal protected constructor(
     entity: EntityDescriptor<Entity, ID>,
     driver: DatabaseDriver,

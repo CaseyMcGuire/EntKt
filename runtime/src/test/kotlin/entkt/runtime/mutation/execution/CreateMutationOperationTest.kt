@@ -32,6 +32,7 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ValidationViolation
+import entkt.runtime.rule.TestRuleClient
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
 import entkt.runtime.validation.ResolvedEntityValidationConfig
@@ -147,7 +148,7 @@ class CreateMutationOperationTest {
         val privacy = ResolvedEntityPrivacyConfig(
             loadRules = emptyList<Nothing>(),
             createRules = listOf(
-                batchPrivacyRule<Unit, Candidate> { context, batch ->
+                batchPrivacyRule<TestRuleClient, Candidate> { context, batch ->
                     events += "create-privacy"
                     receivedViewerContexts += context.viewerContext
                     batch.decideEach { createDecision }
@@ -161,7 +162,7 @@ class CreateMutationOperationTest {
 
         val validation = ResolvedEntityValidationConfig(
             createRules = listOf(
-                batchValidationRule<Unit, Candidate> { _, batch ->
+                batchValidationRule<TestRuleClient, Candidate> { _, batch ->
                     events += "validate"
                     batch.decideEach {
                         validationViolations.firstOrNull()?.let { violation ->
@@ -554,7 +555,7 @@ class CreateMutationOperationTest {
         val input = fixture.createManyInput(fixture.viewerContext, blocks)
         blocks.clear()
 
-        val result = fixture.mutationExecutor.execute(fixture.manyOperation, input, Unit)
+        val result = fixture.mutationExecutor.execute(fixture.manyOperation, input, TestRuleClient())
 
         assertEquals(MutationResult.Success(listOf(Widget(1, "Ada"))), result)
         assertEquals(1, fixture.events.count { it == "construct-draft" })
@@ -601,7 +602,7 @@ class CreateMutationOperationTest {
             newDraft = { throw cause },
         )
 
-        val result = fixture.mutationExecutor.execute(fixture.manyOperation, input, Unit)
+        val result = fixture.mutationExecutor.execute(fixture.manyOperation, input, TestRuleClient())
 
         val failure = assertIs<EntUnexpectedMutationException>(assertIs<MutationResult.Failed>(result).exception)
         assertEquals(MutationWriteState.NotPersisted, failure.writeState)
@@ -619,7 +620,7 @@ class CreateMutationOperationTest {
 
         val result = fixture.mutationExecutor.execute(
             operation = fixture.manyOperation,
-            ruleClient = Unit,
+            ruleClient = TestRuleClient(),
             input = fixture.createManyInput(fixture.viewerContext, blocks),
         )
 
@@ -640,7 +641,7 @@ class CreateMutationOperationTest {
 
         val result = fixture.mutationExecutor.executeInOwnedTransactionForInternalUse(
             operation = fixture.manyOperation,
-            ruleClient = Unit,
+            ruleClient = TestRuleClient(),
             input = fixture.createManyInput(fixture.viewerContext, blocks),
             completionCapture = capture,
         )
@@ -667,10 +668,10 @@ class CreateMutationOperationTest {
 
             val result = if (owned) {
                 fixture.mutationExecutor.executeInOwnedTransactionForInternalUse(
-                    fixture.manyOperation, input, Unit, MutationCompletionCapture(),
+                    fixture.manyOperation, input, TestRuleClient(), MutationCompletionCapture(),
                 )
             } else {
-                fixture.mutationExecutor.execute(fixture.manyOperation, input, Unit)
+                fixture.mutationExecutor.execute(fixture.manyOperation, input, TestRuleClient())
             }
 
             val failure = assertIs<MutationResult.Failed>(result).exception
@@ -823,8 +824,8 @@ class CreateMutationOperationTest {
         val spec: RecordingSpec,
         val input: RecordingInput,
         val mutationExecutor: MutationExecutor,
-        val operation: MutationOperation<Unit, CreateMutationInput<RecordingInput>, Widget>,
-        val manyOperation: MutationOperation<Unit, CreateManyMutationInput<RecordingInput>, List<Widget>>,
+        val operation: MutationOperation<TestRuleClient, CreateMutationInput<RecordingInput>, Widget>,
+        val manyOperation: MutationOperation<TestRuleClient, CreateManyMutationInput<RecordingInput>, List<Widget>>,
         val viewerContext: ViewerContext,
         val recordedFailures: MutableList<EntMutationException>,
     ) {
@@ -834,7 +835,7 @@ class CreateMutationOperationTest {
             checkReturnedEntityPrivacy: Boolean,
         ): MutationResult<Widget> = mutationExecutor.execute(
             operation = operation,
-            ruleClient = Unit,
+            ruleClient = TestRuleClient(),
             input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy),
         )
 
@@ -862,7 +863,7 @@ class CreateMutationOperationTest {
             }
             return mutationExecutor.execute(
                 operation = manyOperation,
-                ruleClient = Unit,
+                ruleClient = TestRuleClient(),
                 input = createManyInput(viewerContext, blocks),
             )
         }

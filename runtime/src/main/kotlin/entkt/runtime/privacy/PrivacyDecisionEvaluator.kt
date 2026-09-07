@@ -3,13 +3,14 @@
 package entkt.runtime.privacy
 
 import entkt.query.EntktInternal
+import entkt.runtime.rule.EntRuleClient
 
 /**
  * A typed rule list and per-rule input converter, without a fail-closed terminal decision.
  * Used by [MutationPrivacyEvaluator] for its primary policy and optional CREATE-rule fallback.
  */
 @EntktInternal
-class PrivacyDecisionEvaluator<RuleClient, Subject, Item>(
+class PrivacyDecisionEvaluator<RuleClient : EntRuleClient, Subject, Item>(
     rules: List<BatchPrivacyRule<RuleClient, Item>>,
     private val freshItem: (Subject) -> Item,
 ) {

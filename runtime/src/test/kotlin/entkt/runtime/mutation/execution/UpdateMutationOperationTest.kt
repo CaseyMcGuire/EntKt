@@ -40,6 +40,7 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ValidationViolation
+import entkt.runtime.rule.TestRuleClient
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
 import entkt.runtime.validation.ResolvedEntityValidationConfig
@@ -164,10 +165,10 @@ class UpdateMutationOperationTest {
         )
         val mapping = RecordingMapping(events)
         val viewerContext = ViewerContext(Viewer.User(7L))
-        val ruleClient = Any()
+        val ruleClient = TestRuleClient()
         val failures = mutableListOf<EntMutationException>()
         val receivedContexts = mutableListOf<ViewerContext>()
-        val receivedClients = mutableListOf<Any>()
+        val receivedClients = mutableListOf<TestRuleClient>()
         var loadedRow: Map<String, Any?>?
             get() = driver.loadedRow
             set(value) {
@@ -197,7 +198,7 @@ class UpdateMutationOperationTest {
         val privacy = ResolvedEntityPrivacyConfig(
             loadRules = emptyList<Nothing>(),
             createRules = listOf(
-                batchPrivacyRule<Any, Candidate> { context, candidates ->
+                batchPrivacyRule<TestRuleClient, Candidate> { context, candidates ->
                     assertSame(viewerContext, context.viewerContext)
                     assertSame(ruleClient, context.client)
                     privacyFallbackCandidates += candidates.toList()
@@ -205,7 +206,7 @@ class UpdateMutationOperationTest {
                 },
             ),
             updateRules = listOf(
-                batchPrivacyRule<Any, State> { context, states ->
+                batchPrivacyRule<TestRuleClient, State> { context, states ->
                     events += "privacy:${states.single().name}"
                     receivedContexts += context.viewerContext
                     receivedClients += context.client
@@ -219,14 +220,14 @@ class UpdateMutationOperationTest {
 
         val validation = ResolvedEntityValidationConfig(
             createRules = listOf(
-                batchValidationRule<Any, Candidate> { context, candidates ->
+                batchValidationRule<TestRuleClient, Candidate> { context, candidates ->
                     assertSame(ruleClient, context.client)
                     validationAdditionalCandidates += candidates.toList()
                     candidates.decideEach { createInvalids.firstOrNull() ?: ValidationDecision.Valid }
                 },
             ),
             updateRules = listOf(
-                batchValidationRule<Any, State> { context, states ->
+                batchValidationRule<TestRuleClient, State> { context, states ->
                     events += "validation:${states.single().name}"
                     receivedClients += context.client
                     states.decideEach { invalids.firstOrNull() ?: ValidationDecision.Valid }

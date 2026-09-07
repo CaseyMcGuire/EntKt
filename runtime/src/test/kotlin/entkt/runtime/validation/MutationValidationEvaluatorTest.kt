@@ -5,6 +5,7 @@ package entkt.runtime.validation
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntBatchRuleContractException
 import entkt.runtime.rule.RuleBatch
+import entkt.runtime.rule.TestRuleClient
 import entkt.runtime.validation.ValidationDecision.Invalid
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
@@ -22,9 +23,9 @@ class MutationValidationEvaluatorTest {
 
     @Test
     fun `direct input constructor preserves subjects and context without a caller converter`() {
-        val context = ValidationRuleContext(Any())
+        val context = ValidationRuleContext(TestRuleClient())
         val seen = mutableListOf<Subject>()
-        val rules = mutableListOf<BatchValidationRule<Any, Subject>>(
+        val rules = mutableListOf<BatchValidationRule<TestRuleClient, Subject>>(
             ValidationRule { suppliedContext, subject ->
                 assertSame(context, suppliedContext)
                 seen += subject
@@ -56,10 +57,10 @@ class MutationValidationEvaluatorTest {
 
     @Test
     fun `evaluator binds its rules and item adapter but receives its context per call`() {
-        val ruleClient = Any()
+        val ruleClient = TestRuleClient()
         val ruleContext = ValidationRuleContext(ruleClient)
         val seenItems = mutableListOf<RuleItem>()
-        val evaluator = MutationValidationEvaluator<Any, Subject>(
+        val evaluator = MutationValidationEvaluator<TestRuleClient, Subject>(
             lifecycle = "Subject CREATE validation",
             primary = ValidationDecisionEvaluator(
                 rules = listOf(
@@ -90,25 +91,25 @@ class MutationValidationEvaluatorTest {
 
     @Test
     fun `empty evaluation does not invoke rules or convert inputs`() {
-        val evaluator = MutationValidationEvaluator<Any, Subject>(
+        val evaluator = MutationValidationEvaluator<TestRuleClient, Subject>(
             lifecycle = "Subject UPDATE validation",
-            primary = ValidationDecisionEvaluator<Any, Subject, RuleItem>(
+            primary = ValidationDecisionEvaluator<TestRuleClient, Subject, RuleItem>(
                 rules = listOf(ValidationRule { _, _ -> error("Rule must not run") }),
                 freshItem = { error("Input must not be converted") },
             ),
-            additional = ValidationDecisionEvaluator<Any, Subject, Subject>(
+            additional = ValidationDecisionEvaluator<TestRuleClient, Subject, Subject>(
                 rules = listOf(ValidationRule { _, _ -> error("Additional rule must not run") }),
                 freshItem = { error("Additional input must not be converted") },
             ),
         )
 
-        assertEquals(0, evaluator.evaluate(ValidationRuleContext(Any()), emptyList()).size)
+        assertEquals(0, evaluator.evaluate(ValidationRuleContext(TestRuleClient()), emptyList()).size)
     }
 
     @Test
     fun `primary and additional rules share each supplied context without retaining a client`() {
-        val seenContexts = mutableListOf<ValidationRuleContext<Any>>()
-        val evaluator = MutationValidationEvaluator<Any, Subject>(
+        val seenContexts = mutableListOf<ValidationRuleContext<TestRuleClient>>()
+        val evaluator = MutationValidationEvaluator<TestRuleClient, Subject>(
             lifecycle = "Subject UPDATE validation",
             primary = ValidationDecisionEvaluator(
                 rules = listOf(ValidationRule { context, _ ->
@@ -117,7 +118,7 @@ class MutationValidationEvaluatorTest {
                 }),
                 freshItem = ::RuleItem,
             ),
-            additional = ValidationDecisionEvaluator<Any, Subject, Subject>(
+            additional = ValidationDecisionEvaluator<TestRuleClient, Subject, Subject>(
                 rules = listOf(ValidationRule { context, _ ->
                     seenContexts += context
                     Invalid("additional")
@@ -125,7 +126,7 @@ class MutationValidationEvaluatorTest {
                 freshItem = { it },
             ),
         )
-        val contexts = listOf(ValidationRuleContext(Any()), ValidationRuleContext(Any()))
+        val contexts = listOf(ValidationRuleContext(TestRuleClient()), ValidationRuleContext(TestRuleClient()))
         val subject = Subject(1)
 
         for (context in contexts) {
@@ -146,19 +147,19 @@ class MutationValidationEvaluatorTest {
     fun `primary and additional exceptions including cancellation escape unchanged`() {
         for (failure in listOf(IllegalStateException("rule failed"), CancellationException("cancelled"))) {
             for (failInAdditional in listOf(false, true)) {
-                val evaluator = MutationValidationEvaluator<Any, Subject>(
+                val evaluator = MutationValidationEvaluator<TestRuleClient, Subject>(
                     lifecycle = "Subject UPDATE validation",
                     rules = listOf(ValidationRule { _, _ ->
                         if (!failInAdditional) throw failure
                         Invalid("primary")
                     }),
-                    additional = ValidationDecisionEvaluator<Any, Subject, Subject>(
+                    additional = ValidationDecisionEvaluator<TestRuleClient, Subject, Subject>(
                         rules = listOf(ValidationRule { _, _ -> throw failure }),
                         freshItem = { it },
                     ),
                 )
 
-                assertSame(failure, assertFails { evaluator.evaluate(ValidationRuleContext(Any()), listOf(Subject(1))) })
+                assertSame(failure, assertFails { evaluator.evaluate(ValidationRuleContext(TestRuleClient()), listOf(Subject(1))) })
             }
         }
     }
@@ -168,19 +169,19 @@ class MutationValidationEvaluatorTest {
         val subject = Subject(1)
         val foreignDecisions = RuleBatch.from(listOf(subject)).decideEach { ValidationDecision.Valid }
         for (failInAdditional in listOf(false, true)) {
-            val evaluator = MutationValidationEvaluator<Any, Subject>(
+            val evaluator = MutationValidationEvaluator<TestRuleClient, Subject>(
                 lifecycle = "Subject UPDATE validation",
                 rules = listOf(batchValidationRule { _, batch ->
                     if (failInAdditional) batch.decideEach { ValidationDecision.Valid } else foreignDecisions
                 }),
-                additional = ValidationDecisionEvaluator<Any, Subject, Subject>(
+                additional = ValidationDecisionEvaluator<TestRuleClient, Subject, Subject>(
                     rules = listOf(batchValidationRule { _, _ -> foreignDecisions }),
                     freshItem = { it },
                 ),
             )
 
             val failure = assertFailsWith<EntBatchRuleContractException> {
-                evaluator.evaluate(ValidationRuleContext(Any()), listOf(subject))
+                evaluator.evaluate(ValidationRuleContext(TestRuleClient()), listOf(subject))
             }
 
             assertEquals("Subject UPDATE validation", failure.lifecycle)

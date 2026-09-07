@@ -4,13 +4,14 @@ package entkt.runtime.privacy
 
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.rule.EntRuleClient
 
 /**
  * Evaluates one entity's mutation privacy policy, including its optional CREATE-rule fallback.
  * The caller supplies the rule context per evaluation; no client or viewer is retained.
  */
 @EntktInternal
-class MutationPrivacyEvaluator<RuleClient, State>(
+class MutationPrivacyEvaluator<RuleClient : EntRuleClient, State>(
     entity: EntityMapping<*>,
     operation: PrivacyOperation,
     private val primary: PrivacyDecisionEvaluator<RuleClient, State, *>,

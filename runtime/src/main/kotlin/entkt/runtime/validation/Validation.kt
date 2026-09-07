@@ -1,6 +1,7 @@
 package entkt.runtime.validation
 
 import entkt.query.EntktInternal
+import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
 import entkt.runtime.rule.decisionsForInternalUse
@@ -16,7 +17,7 @@ import entkt.runtime.privacy.ViewerContext
  * same item shape. The framework passes the exact same instance to every rule
  * in that phase.
  */
-class ValidationRuleContext<out Client>(
+class ValidationRuleContext<out Client : EntRuleClient>(
     val client: Client,
 ) {
     /** Explicit privileged context for reads performed while validating invariants. */
@@ -57,7 +58,7 @@ sealed interface ValidationDecision {
  * the supplied items; callers cannot construct or reorder the result directly.
  * Generated lifecycle evaluators never invoke a rule with an empty batch.
  */
-interface BatchValidationRule<in Client, in Item> {
+interface BatchValidationRule<in Client : EntRuleClient, in Item> {
     @JvmSuppressWildcards
     fun validateBatch(
         context: ValidationRuleContext<Client>,
@@ -72,7 +73,7 @@ interface BatchValidationRule<in Client, in Item> {
  * items serially in encounter order. All reached rules run —
  * [ValidationDecision.Invalid] results are collected, not short-circuited.
  */
-fun interface ValidationRule<in Client, in Item> : BatchValidationRule<Client, Item> {
+fun interface ValidationRule<in Client : EntRuleClient, in Item> : BatchValidationRule<Client, Item> {
     @JvmSuppressWildcards
     fun validate(
         context: ValidationRuleContext<Client>,
@@ -88,7 +89,7 @@ fun interface ValidationRule<in Client, in Item> : BatchValidationRule<Client, I
 }
 
 /** Construct an explicitly batch-aware validation rule. */
-fun <Client, Item> batchValidationRule(
+fun <Client : EntRuleClient, Item> batchValidationRule(
     block: (
         context: ValidationRuleContext<Client>,
         batch: RuleBatch<Item>,
@@ -105,7 +106,7 @@ fun <Client, Item> batchValidationRule(
  * decisions by original item index and rule registration order.
  */
 @EntktInternal
-fun <I, Client, Item> evaluateBatchValidationRulesForInternalUse(
+fun <I, Client : EntRuleClient, Item> evaluateBatchValidationRulesForInternalUse(
     lifecycle: String,
     items: List<I>,
     rules: List<BatchValidationRule<Client, Item>>,

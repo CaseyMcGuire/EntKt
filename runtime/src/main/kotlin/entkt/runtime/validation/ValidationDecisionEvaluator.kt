@@ -3,13 +3,14 @@
 package entkt.runtime.validation
 
 import entkt.query.EntktInternal
+import entkt.runtime.rule.EntRuleClient
 
 /**
  * A typed rule list and per-rule input converter, without final subject correlation.
  * Used by [MutationValidationEvaluator] for its primary policy and optional additional CREATE rules.
  */
 @EntktInternal
-class ValidationDecisionEvaluator<RuleClient, Subject, Item>(
+class ValidationDecisionEvaluator<RuleClient : EntRuleClient, Subject, Item>(
     rules: List<BatchValidationRule<RuleClient, Item>>,
     private val freshItem: (Subject) -> Item,
 ) {

@@ -30,6 +30,7 @@ private val LIST = ClassName("kotlin.collections", "List")
 private val RESOLVED_ENT_INTERCEPTORS_CONFIG =
     ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
+private val ENT_RULE_CLIENT = ClassName("entkt.runtime.rule", "EntRuleClient")
 private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "TransactionExecutionGuard")
 private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "TransactionExecutionToken")
 
@@ -172,6 +173,7 @@ internal class ReadClientGenerator(
 
     private fun buildClientInterface(sorted: List<SchemaInput>): TypeSpec {
         return interfaceType("ReadOnlyEntClient") {
+            addSuperinterface(ENT_RULE_CLIENT)
             for (input in sorted) {
                 property(input.clientName, ClassName(packageName, "${input.name}ReadRepo")) {
                     addModifiers(KModifier.ABSTRACT)

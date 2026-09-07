@@ -19,6 +19,7 @@ import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.result.TransactionResult
+import entkt.runtime.rule.TestRuleClient
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -47,8 +48,8 @@ class MutationExecutorTest {
     @Test
     fun `a reusable operation receives the client supplied for each invocation`() {
         val harness = Harness()
-        val firstClient = Any()
-        val secondClient = Any()
+        val firstClient = TestRuleClient()
+        val secondClient = TestRuleClient()
 
         assertEquals(
             MutationResult.Success("Ada"),
@@ -361,8 +362,8 @@ class MutationExecutorTest {
         }
         val runtime = RecordingRuntime(events)
         val executor = MutationExecutor(driver, runtime)
-        val ruleClient = Any()
-        val ruleClients = mutableListOf<Any>()
+        val ruleClient = TestRuleClient()
+        val ruleClients = mutableListOf<TestRuleClient>()
         val calls = mutableListOf<Pair<MutationExecution, Input>>()
         var completion: MutationCompletion<String>? = null
         var writes = true
@@ -370,13 +371,13 @@ class MutationExecutorTest {
         var rejection: EntMutationException? = null
         var ownedTransaction: ((Input, MutationCompletionCapture) -> TransactionResult<MutationCompletion<String>>)? = null
 
-        val operation = object : MutationOperation<Any, Input, String> {
+        val operation = object : MutationOperation<TestRuleClient, Input, String> {
             override fun requirements(input: Input): MutationRequirements {
                 events += "requirements"
                 return MutationRequirements("Widget mutation", multiWrite, atomic)
             }
 
-            override fun run(execution: MutationExecution, ruleClient: Any, input: Input): MutationCompletion<String> {
+            override fun run(execution: MutationExecution, ruleClient: TestRuleClient, input: Input): MutationCompletion<String> {
                 events += "run"
                 ruleClients += ruleClient
                 calls += execution to input

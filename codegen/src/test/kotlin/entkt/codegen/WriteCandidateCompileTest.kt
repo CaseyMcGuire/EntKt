@@ -32,13 +32,13 @@ class WriteCandidateCompileTest {
 
     private fun mutationTypes(candidate: String): List<String> = listOf(
         "CreateMutationConverter<WidgetDraft, $candidate, Widget>",
-        "CreateMutationOperation<Unit, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
-        "CreateManyMutationOperation<Unit, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
+        "CreateMutationOperation<EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
+        "CreateManyMutationOperation<EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
         "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, $candidate, BeforeUpdate>",
-        "UpdateMutationOperation<Unit, WidgetUpdateDraft, Widget, PendingEdges, WidgetState, $candidate, BeforeSave, BeforeUpdate>",
+        "UpdateMutationOperation<EntRuleClient, WidgetUpdateDraft, Widget, PendingEdges, WidgetState, $candidate, BeforeSave, BeforeUpdate>",
         "DeleteMutationConverter<Widget, $candidate>",
-        "DeleteMutationOperation<Unit, Widget, $candidate>",
-        "DeleteManyMutationOperation<Unit, Widget, $candidate>",
+        "DeleteMutationOperation<EntRuleClient, Widget, $candidate>",
+        "DeleteManyMutationOperation<EntRuleClient, Widget, $candidate>",
         "DeleteRuleCandidate<Widget, $candidate>",
     )
 
@@ -61,6 +61,7 @@ class WriteCandidateCompileTest {
                 import entkt.runtime.mutation.UpdatePendingEdges
                 import entkt.runtime.mutation.WriteCandidate
                 import entkt.runtime.mutation.execution.*
+                import entkt.runtime.rule.EntRuleClient
 
                 data class Widget(override val id: Int) : EntEntity.IntId
                 data class Other(override val id: Int) : EntEntity.IntId
@@ -81,7 +82,7 @@ class WriteCandidateCompileTest {
     )
 
     @Test
-    fun `mutation types accept candidates for their entity without bounding rule clients`() {
+    fun `mutation types accept candidates for their entity and marked rule clients`() {
         val result = compileTypes(
             mutationTypes("WidgetCandidate") + listOf(
                 "PreparedCreate<WidgetCandidate>",
@@ -172,11 +173,11 @@ class WriteCandidateCompileTest {
         }
 
         val resultType = when (factory) {
-            "create" -> "CreateMutationOperations<Unit, WidgetCreateDraft, Widget>"
-            "update" -> "MutationOperation<Unit, UpdateMutationInput<WidgetUpdateDraft>, Widget>"
-            "createMany" -> "CreateManyMutationOperation<Unit, WidgetCreateDraft, WidgetCandidate, Widget, BeforeSave, BeforeCreate>"
-            "delete" -> "DeleteMutationOperation<Unit, Widget, WidgetCandidate>"
-            else -> "DeleteManyMutationOperation<Unit, Widget, WidgetCandidate>"
+            "create" -> "CreateMutationOperations<EntRuleClient, WidgetCreateDraft, Widget>"
+            "update" -> "MutationOperation<EntRuleClient, UpdateMutationInput<WidgetUpdateDraft>, Widget>"
+            "createMany" -> "CreateManyMutationOperation<EntRuleClient, WidgetCreateDraft, WidgetCandidate, Widget, BeforeSave, BeforeCreate>"
+            "delete" -> "DeleteMutationOperation<EntRuleClient, Widget, WidgetCandidate>"
+            else -> "DeleteManyMutationOperation<EntRuleClient, Widget, WidgetCandidate>"
         }
 
         return compile(
@@ -195,6 +196,7 @@ class WriteCandidateCompileTest {
                     import entkt.runtime.mutation.execution.*
                     import entkt.runtime.privacy.BatchPrivacyRule
                     import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
+                    import entkt.runtime.rule.EntRuleClient
                     import entkt.runtime.validation.BatchValidationRule
                     import entkt.runtime.validation.ResolvedEntityValidationConfig
 
@@ -217,12 +219,12 @@ class WriteCandidateCompileTest {
                     fun bind(
                         entity: EntityDescriptor<$mappingEntity, *>,
                         privacy: ResolvedEntityPrivacyConfig<
-                            Nothing, BatchPrivacyRule<Unit, WidgetCandidate>,
-                            BatchPrivacyRule<Unit, Unit>, BatchPrivacyRule<Unit, Unit>,
+                            Nothing, BatchPrivacyRule<EntRuleClient, WidgetCandidate>,
+                            BatchPrivacyRule<EntRuleClient, Unit>, BatchPrivacyRule<EntRuleClient, Unit>,
                         >,
                         validation: ResolvedEntityValidationConfig<
-                            BatchValidationRule<Unit, WidgetCandidate>,
-                            BatchValidationRule<Unit, Unit>, BatchValidationRule<Unit, Unit>,
+                            BatchValidationRule<EntRuleClient, WidgetCandidate>,
+                            BatchValidationRule<EntRuleClient, Unit>, BatchValidationRule<EntRuleClient, Unit>,
                         >,
                         runtime: MutationRuntime,
                         combinedCreateConverter: CombinedCreateConverter,

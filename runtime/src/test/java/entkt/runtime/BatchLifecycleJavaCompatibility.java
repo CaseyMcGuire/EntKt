@@ -9,6 +9,7 @@ import entkt.runtime.privacy.PrivacyRuleContext;
 import entkt.runtime.privacy.Viewer;
 import entkt.runtime.rule.RuleBatch;
 import entkt.runtime.rule.RuleDecisions;
+import entkt.runtime.rule.TestRuleClient;
 import entkt.runtime.validation.BatchValidationRule;
 import entkt.runtime.validation.ValidationDecision;
 import entkt.runtime.validation.ValidationRule;
@@ -23,60 +24,60 @@ import java.util.List;
 final class BatchLifecycleJavaCompatibility {
     private BatchLifecycleJavaCompatibility() {}
 
-    static final PrivacyRuleContext<Object> VIEWER_CONTEXT =
+    static final PrivacyRuleContext<TestRuleClient> VIEWER_CONTEXT =
             new PrivacyRuleContext<>(
                     new ViewerContext(Viewer.Anonymous.INSTANCE),
-                    new Object());
+                    new TestRuleClient());
 
-    static final ValidationRuleContext<Object> VALIDATION_CONTEXT =
-            new ValidationRuleContext<>(new Object());
+    static final ValidationRuleContext<TestRuleClient> VALIDATION_CONTEXT =
+            new ValidationRuleContext<>(new TestRuleClient());
 
-    static final PrivacyRule<Object, String> PRIVACY_LAMBDA =
+    static final PrivacyRule<TestRuleClient, String> PRIVACY_LAMBDA =
             (context, value) -> PrivacyDecision.Allow.INSTANCE;
 
-    static final PrivacyRule<Object, String> PRIVACY_CLASS = new PrivacyRule<>() {
+    static final PrivacyRule<TestRuleClient, String> PRIVACY_CLASS = new PrivacyRule<>() {
         @Override
-        public PrivacyDecision run(PrivacyRuleContext<Object> context, String value) {
+        public PrivacyDecision run(PrivacyRuleContext<TestRuleClient> context, String value) {
             return PrivacyDecision.Allow.INSTANCE;
         }
     };
 
-    static final ValidationRule<Object, String> VALIDATION_LAMBDA =
+    static final ValidationRule<TestRuleClient, String> VALIDATION_LAMBDA =
             (context, value) -> ValidationDecision.Valid.INSTANCE;
 
-    static final ValidationRule<Object, String> VALIDATION_CLASS = new ValidationRule<>() {
+    static final ValidationRule<TestRuleClient, String> VALIDATION_CLASS = new ValidationRule<>() {
         @Override
-        public ValidationDecision validate(ValidationRuleContext<Object> context, String value) {
+        public ValidationDecision validate(ValidationRuleContext<TestRuleClient> context, String value) {
             return ValidationDecision.Valid.INSTANCE;
         }
     };
 
-    static final BatchPrivacyRule<Object, String> NULL_PRIVACY_DECISION_BATCH =
+    static final BatchPrivacyRule<TestRuleClient, String> NULL_PRIVACY_DECISION_BATCH =
             (context, batch) -> batch.decideEach(value -> null);
 
-    static final BatchValidationRule<Object, String> NULL_VALIDATION_DECISION_BATCH =
+    static final BatchValidationRule<TestRuleClient, String> NULL_VALIDATION_DECISION_BATCH =
             (context, batch) -> batch.decideEach(value -> null);
 
-    static final BatchPrivacyRule<Object, String> NULL_PRIVACY_RESULT_BATCH =
+    static final BatchPrivacyRule<TestRuleClient, String> NULL_PRIVACY_RESULT_BATCH =
             (context, values) -> null;
 
-    static final BatchValidationRule<Object, String> NULL_VALIDATION_RESULT_BATCH =
+    static final BatchValidationRule<TestRuleClient, String> NULL_VALIDATION_RESULT_BATCH =
             (context, values) -> null;
 
-    static final BatchPrivacyRule<Object, String> PRIVACY_BATCH_CLASS = new BatchPrivacyRule<>() {
+    static final BatchPrivacyRule<TestRuleClient, String> PRIVACY_BATCH_CLASS = new BatchPrivacyRule<>() {
         @Override
         public RuleDecisions<PrivacyDecision> runBatch(
-                PrivacyRuleContext<Object> context,
+                PrivacyRuleContext<TestRuleClient> context,
                 RuleBatch<String> batch) {
             return batch.decideEach(value -> PrivacyDecision.Allow.INSTANCE);
         }
     };
 
-    static final BatchValidationRule<Object, String> VALIDATION_BATCH_CLASS =
+    static final BatchValidationRule<TestRuleClient, String> VALIDATION_BATCH_CLASS =
             new BatchValidationRule<>() {
         @Override
         public RuleDecisions<ValidationDecision> validateBatch(
-                ValidationRuleContext<Object> context,
+                ValidationRuleContext<TestRuleClient> context,
                 RuleBatch<String> batch) {
             return batch.decideEach(value -> ValidationDecision.Valid.INSTANCE);
         }

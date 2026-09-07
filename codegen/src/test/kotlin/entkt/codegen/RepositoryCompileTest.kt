@@ -26,6 +26,7 @@ class RepositoryCompileTest {
                 import entkt.runtime.query.EntityQueryBuilder
                 import entkt.runtime.repository.GeneratedIdRepository
                 import entkt.runtime.repository.ExplicitIdRepository
+                import entkt.runtime.rule.EntRuleClient
 
                 data class Widget(override val id: Long) : EntEntity.LongId
                 data class Other(override val id: Long) : EntEntity.LongId
@@ -36,8 +37,8 @@ class RepositoryCompileTest {
                 abstract class WidgetQuery : EntityQueryBuilder<Widget, WidgetQuery>(NoopDriver, null, "Widget")
                 abstract class OtherQuery : EntityQueryBuilder<Other, OtherQuery>(NoopDriver, null, "Other")
 
-                typealias GeneratedRepo = GeneratedIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, Unit>
-                typealias ExplicitRepo = ExplicitIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, Unit>
+                typealias GeneratedRepo = GeneratedIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, EntRuleClient>
+                typealias ExplicitRepo = ExplicitIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, EntRuleClient>
                 """.trimIndent(),
             ),
             SourceFile.kotlin(
@@ -52,6 +53,7 @@ class RepositoryCompileTest {
                 import entkt.runtime.repository.GeneratedIdRepository
                 import entkt.runtime.result.MutationResult
                 import entkt.runtime.result.ReadResult
+                import entkt.runtime.rule.EntRuleClient
 
                 $body
                 """.trimIndent(),
@@ -121,10 +123,10 @@ class RepositoryCompileTest {
     @Test
     fun `repository bounds reject mismatched entity ID draft and query types`() {
         val invalidTypes = listOf(
-            "Widget, String, CreateDraft, UpdateDraft, WidgetQuery, Unit",
-            "Widget, Long, OtherCreateDraft, UpdateDraft, WidgetQuery, Unit",
-            "Widget, Long, CreateDraft, OtherUpdateDraft, WidgetQuery, Unit",
-            "Widget, Long, CreateDraft, UpdateDraft, OtherQuery, Unit",
+            "Widget, String, CreateDraft, UpdateDraft, WidgetQuery, EntRuleClient",
+            "Widget, Long, OtherCreateDraft, UpdateDraft, WidgetQuery, EntRuleClient",
+            "Widget, Long, CreateDraft, OtherUpdateDraft, WidgetQuery, EntRuleClient",
+            "Widget, Long, CreateDraft, UpdateDraft, OtherQuery, EntRuleClient",
         )
         for (types in invalidTypes) {
             val result = compile("fun invalid(repo: GeneratedIdRepository<$types>) {}")

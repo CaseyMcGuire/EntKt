@@ -24,6 +24,7 @@ import entkt.runtime.privacy.PrivacyOperation
 import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
+import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.validation.BatchValidationRule
 import entkt.runtime.validation.MutationValidationEvaluator
 import entkt.runtime.validation.ResolvedEntityValidationConfig
@@ -32,7 +33,7 @@ import entkt.runtime.validation.ValidationDecisionEvaluator
 /** Assemble scalar and bulk CREATE from one converter serving both preparation and hook conversion. */
 @EntktInternal
 fun <
-    RuleClient,
+    RuleClient : EntRuleClient,
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
     Entity : EntEntity<*>,
@@ -71,7 +72,7 @@ fun <
 /** Bind CREATE policy and schema-specific dependencies to the shared scalar/batch implementation. */
 @EntktInternal
 fun <
-    RuleClient,
+    RuleClient : EntRuleClient,
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
     Entity : EntEntity<*>,
@@ -115,7 +116,7 @@ fun <
 /** Bind UPDATE policy and hooks without exposing lifecycle types on the repository. */
 @EntktInternal
 fun <
-    RuleClient,
+    RuleClient : EntRuleClient,
     Draft : UpdateMutationDraft<Entity>,
     Entity : EntEntity<*>,
     PendingEdges : UpdatePendingEdges<Entity>,
@@ -184,7 +185,7 @@ fun <
 /** Construct one scalar DELETE operation with its own bound evaluators. */
 @EntktInternal
 fun <
-    RuleClient,
+    RuleClient : EntRuleClient,
     Entity : EntEntity<*>,
     Candidate : WriteCandidate<Entity>,
     RuleInput,
@@ -215,7 +216,7 @@ fun <
 /** Construct one bulk DELETE operation with its own bound evaluators and candidate query executor. */
 @EntktInternal
 fun <
-    RuleClient,
+    RuleClient : EntRuleClient,
     Entity : EntEntity<*>,
     Candidate : WriteCandidate<Entity>,
     RuleInput,
@@ -247,7 +248,7 @@ fun <
 }
 
 private fun <
-    RuleClient,
+    RuleClient : EntRuleClient,
     Entity : EntEntity<*>,
     Candidate : WriteCandidate<Entity>,
     RuleInput,
@@ -278,7 +279,7 @@ private fun <
 }
 
 private fun <
-    RuleClient,
+    RuleClient : EntRuleClient,
     Entity : EntEntity<*>,
     Candidate : WriteCandidate<Entity>,
     RuleInput,

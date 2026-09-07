@@ -8,6 +8,7 @@ import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.rule.RuleBatch
+import entkt.runtime.rule.TestRuleClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -17,7 +18,7 @@ class AllowAllRuleTest {
     private data class FakeCreateCtx(val name: String)
     private val context = PrivacyRuleContext(
         viewerContext = ViewerContext(Viewer.Anonymous),
-        client = "client",
+        client = TestRuleClient("client"),
     )
 
     @Test
@@ -32,9 +33,9 @@ class AllowAllRuleTest {
         // The single value substitutes for every PrivacyRule<Client, SpecificItem> —
         // this is what lets `load(allowAll)` / `create(allowAll)` compile on any
         // generated entity. Assigning to the typed aliases here is the test.
-        val asLoad: PrivacyRule<String, FakeLoadCtx> = allowAll
-        val asCreate: PrivacyRule<String, FakeCreateCtx> = allowAll
-        val asBatch: BatchPrivacyRule<String, FakeLoadCtx> = allowAll
+        val asLoad: PrivacyRule<TestRuleClient, FakeLoadCtx> = allowAll
+        val asCreate: PrivacyRule<TestRuleClient, FakeCreateCtx> = allowAll
+        val asBatch: BatchPrivacyRule<TestRuleClient, FakeLoadCtx> = allowAll
         assertEquals(PrivacyDecision.Allow, asLoad.run(context, FakeLoadCtx(2)))
         assertEquals(PrivacyDecision.Allow, asCreate.run(context, FakeCreateCtx("x")))
         val batch = RuleBatch.from(listOf(FakeLoadCtx(3), FakeLoadCtx(4)))

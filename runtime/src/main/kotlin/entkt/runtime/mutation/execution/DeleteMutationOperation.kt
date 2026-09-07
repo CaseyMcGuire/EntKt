@@ -13,12 +13,13 @@ import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.MutationWriteState
+import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.validation.MutationValidationEvaluator
 import java.util.concurrent.CancellationException
 
 /** Reload, authorize, and idempotently delete one current row. */
 @EntktInternal
-class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate : WriteCandidate<Entity>>(
+class DeleteMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity<*>, Candidate : WriteCandidate<Entity>>(
     private val entity: EntityDescriptor<Entity, *>,
     private val converter: DeleteMutationConverter<Entity, Candidate>,
     private val privacyEvaluator:

@@ -36,6 +36,7 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
 import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.TransactionScope
+import entkt.runtime.rule.EntRuleClient
 
 /**
  * Shared entry-point behavior for generated writable repositories.
@@ -53,7 +54,7 @@ abstract class EntityRepository<
     CreateDraft : CreateMutationDraft<Entity>,
     UpdateDraft : UpdateMutationDraft<Entity>,
     Query : EntityQueryBuilder<Entity, Query>,
-    RuleClient,
+    RuleClient : EntRuleClient,
     Self : EntityRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient, Self>,
 > @EntktInternal protected constructor(
     private val entity: EntityDescriptor<Entity, ID>,

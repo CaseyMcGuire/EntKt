@@ -81,14 +81,19 @@ identifier for i18n or programmatic error handling. Both are optional.
 
 A rule receives phase-shared context separately from one generated item.
 It automatically adapts to batch evaluation by visiting items serially in
-encounter order:
+encounter order.
+
+`Client` must implement the runtime `EntRuleClient` marker. Generated `ReadOnlyEntClient`
+already does, so rule contexts retain their schema-specific read APIs.
 
 ```kotlin
-class ValidationRuleContext<out Client>(
+import entkt.runtime.rule.EntRuleClient
+
+class ValidationRuleContext<out Client : EntRuleClient>(
     val client: Client,
 )
 
-fun interface ValidationRule<in Client, in Item> :
+fun interface ValidationRule<in Client : EntRuleClient, in Item> :
     BatchValidationRule<Client, Item> {
 
     fun validate(
@@ -114,17 +119,18 @@ phase list, commonly to replace per-item reads with one set-based lookup:
 
 ```kotlin
 import entkt.runtime.validation.batchValidationRule
+import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
 
-interface BatchValidationRule<in Client, in Item> {
+interface BatchValidationRule<in Client : EntRuleClient, in Item> {
     fun validateBatch(
         context: ValidationRuleContext<Client>,
         batch: RuleBatch<Item>,
     ): RuleDecisions<ValidationDecision>
 }
 
-fun <Client, Item> batchValidationRule(
+fun <Client : EntRuleClient, Item> batchValidationRule(
     block: (
         context: ValidationRuleContext<Client>,
         batch: RuleBatch<Item>,

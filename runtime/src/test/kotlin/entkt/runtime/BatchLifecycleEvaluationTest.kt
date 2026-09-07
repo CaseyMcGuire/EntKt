@@ -12,6 +12,7 @@ import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.privacy.evaluateBatchPrivacyRulesForInternalUse
 import entkt.runtime.result.EntBatchRuleContractException
+import entkt.runtime.rule.TestRuleClient
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.ValidationRuleContext
 import entkt.runtime.validation.batchValidationRule
@@ -25,15 +26,15 @@ class BatchLifecycleEvaluationTest {
 
     private val viewerContext = PrivacyRuleContext(
         viewerContext = ViewerContext(Viewer.User(7)),
-        client = "privacy-client",
+        client = TestRuleClient("privacy-client"),
     )
-    private val validationContext = ValidationRuleContext(client = "validation-client")
+    private val validationContext = ValidationRuleContext(client = TestRuleClient("validation-client"))
 
     @Test
     fun `privacy evaluation filters finalized items and retains original positions`() {
         val invocations = mutableListOf<List<Int>>()
         val rules = listOf(
-            batchPrivacyRule<String, Int> { _, batch ->
+            batchPrivacyRule<TestRuleClient, Int> { _, batch ->
                 invocations += batch
                 batch.decideEach {
                     when (it) {
@@ -43,7 +44,7 @@ class BatchLifecycleEvaluationTest {
                     }
                 }
             },
-            batchPrivacyRule<String, Int> { _, batch ->
+            batchPrivacyRule<TestRuleClient, Int> { _, batch ->
                 invocations += batch
                 batch.decideEach { PrivacyDecision.Deny("remaining $it") }
             },
@@ -73,14 +74,14 @@ class BatchLifecycleEvaluationTest {
     fun `privacy evaluation reuses shared context and creates fresh items for every reached rule`() {
         var nextSnapshot = 0
         val seen = mutableListOf<List<Int>>()
-        val seenContexts = mutableListOf<PrivacyRuleContext<String>>()
+        val seenContexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
         val rules = listOf(
-            batchPrivacyRule<String, Int> { context, batch ->
+            batchPrivacyRule<TestRuleClient, Int> { context, batch ->
                 seenContexts += context
                 seen += batch
                 batch.decideEach { PrivacyDecision.Continue }
             },
-            batchPrivacyRule<String, Int> { context, batch ->
+            batchPrivacyRule<TestRuleClient, Int> { context, batch ->
                 seenContexts += context
                 seen += batch
                 batch.decideEach { PrivacyDecision.Allow }
@@ -106,12 +107,12 @@ class BatchLifecycleEvaluationTest {
             lifecycle = "Widget LOAD privacy",
             items = listOf(7, 7),
             rules = listOf(
-                batchPrivacyRule<String, Int> { _, batch ->
+                batchPrivacyRule<TestRuleClient, Int> { _, batch ->
                     batch.decideEachIndexed { index, _ ->
                         if (index == 0) PrivacyDecision.Allow else PrivacyDecision.Deny("second")
                     }
                 },
-                batchPrivacyRule<String, Int> { _, batch ->
+                batchPrivacyRule<TestRuleClient, Int> { _, batch ->
                     laterCalls++
                     batch.decideEach { PrivacyDecision.Allow }
                 },
@@ -131,12 +132,12 @@ class BatchLifecycleEvaluationTest {
             lifecycle = "Widget LOAD privacy",
             items = listOf("same", "resolved", "same"),
             rules = listOf(
-                batchPrivacyRule<String, String> { _, batch ->
+                batchPrivacyRule<TestRuleClient, String> { _, batch ->
                     batch.decideEach {
                         if (it == "resolved") PrivacyDecision.Allow else PrivacyDecision.Continue
                     }
                 },
-                batchPrivacyRule<String, String> { _, batch ->
+                batchPrivacyRule<TestRuleClient, String> { _, batch ->
                     laterBatches += batch
                     batch.decideEachIndexed { index, _ -> PrivacyDecision.Deny("active-$index") }
                 },
@@ -160,11 +161,11 @@ class BatchLifecycleEvaluationTest {
     fun `validation evaluation is rule-major and preserves violation order per item`() {
         val invocations = mutableListOf<List<String>>()
         val rules = listOf(
-            batchValidationRule<String, String> { _, batch ->
+            batchValidationRule<TestRuleClient, String> { _, batch ->
                 invocations += batch
                 batch.decideEach { ValidationDecision.Invalid("first $it") }
             },
-            batchValidationRule<String, String> { _, batch ->
+            batchValidationRule<TestRuleClient, String> { _, batch ->
                 invocations += batch
                 batch.decideEach {
                     if (it == "a") ValidationDecision.Valid else ValidationDecision.Invalid("second $it")
@@ -189,14 +190,14 @@ class BatchLifecycleEvaluationTest {
     fun `validation evaluation reuses shared context and creates fresh items for each rule`() {
         var nextSnapshot = 0
         val seen = mutableListOf<List<Int>>()
-        val seenContexts = mutableListOf<ValidationRuleContext<String>>()
+        val seenContexts = mutableListOf<ValidationRuleContext<TestRuleClient>>()
         val rules = listOf(
-            batchValidationRule<String, Int> { context, batch ->
+            batchValidationRule<TestRuleClient, Int> { context, batch ->
                 seenContexts += context
                 seen += batch
                 batch.decideEach { ValidationDecision.Valid }
             },
-            batchValidationRule<String, Int> { context, batch ->
+            batchValidationRule<TestRuleClient, Int> { context, batch ->
                 seenContexts += context
                 seen += batch
                 batch.decideEach { ValidationDecision.Valid }
@@ -219,7 +220,7 @@ class BatchLifecycleEvaluationTest {
     fun `no rules preserve one unresolved result slot per item`() {
         assertEquals(
             listOf(PrivacyDecision.Continue, PrivacyDecision.Continue),
-            evaluateBatchPrivacyRulesForInternalUse<Int, String, Int>(
+            evaluateBatchPrivacyRulesForInternalUse<Int, TestRuleClient, Int>(
                 "Widget LOAD privacy",
                 listOf(1, 2),
                 emptyList(),
@@ -228,7 +229,7 @@ class BatchLifecycleEvaluationTest {
         )
         assertEquals(
             listOf(emptyList(), emptyList()),
-            evaluateBatchValidationRulesForInternalUse<Int, String, Int>(
+            evaluateBatchValidationRulesForInternalUse<Int, TestRuleClient, Int>(
                 "Widget CREATE validation",
                 listOf(1, 2),
                 emptyList(),
@@ -243,11 +244,11 @@ class BatchLifecycleEvaluationTest {
         var validationCalls = 0
         var hookCalls = 0
 
-        val privacy = batchPrivacyRule<String, Int> { _, batch ->
+        val privacy = batchPrivacyRule<TestRuleClient, Int> { _, batch ->
             privacyCalls++
             batch.decideEach { PrivacyDecision.Allow }
         }
-        val validation = batchValidationRule<String, Int> { _, batch ->
+        val validation = batchValidationRule<TestRuleClient, Int> { _, batch ->
             validationCalls++
             batch.decideEach { ValidationDecision.Valid }
         }
@@ -281,12 +282,12 @@ class BatchLifecycleEvaluationTest {
     @Test
     fun `privacy and validation evaluators reject decisions from another batch`() {
         var priorPrivacyDecisions: entkt.runtime.rule.RuleDecisions<PrivacyDecision>? = null
-        val privacyDelegate = batchPrivacyRule<String, Int> { _, batch ->
+        val privacyDelegate = batchPrivacyRule<TestRuleClient, Int> { _, batch ->
             priorPrivacyDecisions ?: batch.decideEach { PrivacyDecision.Allow }.also {
                 priorPrivacyDecisions = it
             }
         }
-        val privacy = batchPrivacyRule<String, Int> { context, batch ->
+        val privacy = batchPrivacyRule<TestRuleClient, Int> { context, batch ->
             privacyDelegate.runBatch(context, batch).mapDecisions { it }
         }
         evaluateBatchPrivacyRulesForInternalUse(
@@ -306,7 +307,7 @@ class BatchLifecycleEvaluationTest {
         assertEquals(true, privacyException.foreignBatchResult)
 
         var priorValidationDecisions: entkt.runtime.rule.RuleDecisions<ValidationDecision>? = null
-        val validation = batchValidationRule<String, Int> { _, batch ->
+        val validation = batchValidationRule<TestRuleClient, Int> { _, batch ->
             priorValidationDecisions ?: batch.decideEach { ValidationDecision.Valid }.also {
                 priorValidationDecisions = it
             }
@@ -397,8 +398,8 @@ class BatchLifecycleEvaluationTest {
                 lifecycle = "Widget LOAD privacy",
                 items = listOf(1),
                 rules = listOf(
-                    batchPrivacyRule<String, Int> { _, _ -> throw failure },
-                    batchPrivacyRule<String, Int> { _, batch ->
+                    batchPrivacyRule<TestRuleClient, Int> { _, _ -> throw failure },
+                    batchPrivacyRule<TestRuleClient, Int> { _, batch ->
                         laterCalls++
                         batch.decideEach { PrivacyDecision.Allow }
                     },
@@ -414,14 +415,14 @@ class BatchLifecycleEvaluationTest {
 
     @Test
     fun `callback batches are immutable even when cast`() {
-        val privacy = batchPrivacyRule<String, Int> { _, batch ->
+        val privacy = batchPrivacyRule<TestRuleClient, Int> { _, batch ->
             assertFailsWith<ClassCastException> {
                 @Suppress("UNCHECKED_CAST")
                 (batch as Any as MutableList<Int>).clear()
             }
             batch.decideEach { PrivacyDecision.Allow }
         }
-        val validation = batchValidationRule<String, Int> { _, batch ->
+        val validation = batchValidationRule<TestRuleClient, Int> { _, batch ->
             assertFailsWith<ClassCastException> {
                 @Suppress("UNCHECKED_CAST")
                 (batch as Any as MutableList<Int>).clear()

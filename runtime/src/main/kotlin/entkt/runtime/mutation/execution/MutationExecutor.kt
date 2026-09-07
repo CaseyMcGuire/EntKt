@@ -11,6 +11,7 @@ import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.TransactionResult
+import entkt.runtime.rule.EntRuleClient
 import java.util.concurrent.CancellationException
 
 /** Executes typed operations inside the shared transaction and failure boundary. */
@@ -24,7 +25,7 @@ class MutationExecutor(
      * completion. Owned-transaction wiring must select the corresponding transaction-bound
      * operation and supply its read client alongside the transaction's driver.
      */
-    fun <RuleClient, Input, Result> execute(
+    fun <RuleClient : EntRuleClient, Input, Result> execute(
         operation: MutationOperation<RuleClient, Input, Result>,
         input: Input,
         ruleClient: RuleClient,
@@ -50,7 +51,7 @@ class MutationExecutor(
      * Lifecycle failures remain Failed so generated wiring can apply orRollback(). Return
      * failures remain neutral until the enclosing transaction determines the write outcome.
      */
-    fun <RuleClient, Input, Result> executeInOwnedTransactionForInternalUse(
+    fun <RuleClient : EntRuleClient, Input, Result> executeInOwnedTransactionForInternalUse(
         operation: MutationOperation<RuleClient, Input, Result>,
         input: Input,
         ruleClient: RuleClient,

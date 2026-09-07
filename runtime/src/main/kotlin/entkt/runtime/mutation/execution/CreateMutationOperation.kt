@@ -6,11 +6,12 @@ import entkt.runtime.mutation.BeforeCreateHookState
 import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.WriteCandidate
+import entkt.runtime.rule.EntRuleClient
 
 /** Scalar CREATE reuses the batch operation while retaining scalar storage and transaction policy. */
 @EntktInternal
 class CreateMutationOperation<
-    RuleClient,
+    RuleClient : EntRuleClient,
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
     Entity : EntEntity<*>,

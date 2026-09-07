@@ -57,6 +57,7 @@ import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.TransactionScope
 import entkt.runtime.result.runEntTransaction
+import entkt.runtime.rule.EntRuleClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -418,7 +419,7 @@ class EntityRepositoryTest {
     private data class Widget(override val id: Long, val name: String) : EntEntity.LongId
     private class CreateDraft(val id: Long? = null, var name: String = "") : CreateMutationDraft<Widget>
     private class UpdateDraft(var name: String = "") : UpdateMutationDraft<Widget>
-    private data class RuleClient(val scope: String)
+    private data class RuleClient(val scope: String) : EntRuleClient
 
     /** Matches the generated per-entity read surface, implemented by inherited final methods. */
     private interface WidgetReadSurface {

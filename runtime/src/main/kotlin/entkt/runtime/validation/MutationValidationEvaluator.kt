@@ -4,13 +4,14 @@ package entkt.runtime.validation
 
 import entkt.query.EntktInternal
 import entkt.runtime.result.EntBatchRuleContractException
+import entkt.runtime.rule.EntRuleClient
 
 /**
  * Evaluates one mutation lifecycle's bound validation policy, including additional CREATE rules.
  * The caller supplies the rule context per evaluation; no client or viewer is retained.
  */
 @EntktInternal
-class MutationValidationEvaluator<RuleClient, Subject>(
+class MutationValidationEvaluator<RuleClient : EntRuleClient, Subject>(
     private val lifecycle: String,
     private val primary: ValidationDecisionEvaluator<RuleClient, Subject, *>,
     private val additional: ValidationDecisionEvaluator<RuleClient, Subject, *>? = null,

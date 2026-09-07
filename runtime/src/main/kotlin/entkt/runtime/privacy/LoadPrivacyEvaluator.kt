@@ -5,13 +5,14 @@ package entkt.runtime.privacy
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
+import entkt.runtime.rule.EntRuleClient
 
 /**
  * Evaluates one entity type's bound LOAD-privacy policy with a per-call rule context.
  * Entity values are not defensively copied; rules must treat them and their nested state as read-only.
  */
 @EntktInternal
-class LoadPrivacyEvaluator<RuleClient, Entity : EntEntity<*>>(
+class LoadPrivacyEvaluator<RuleClient : EntRuleClient, Entity : EntEntity<*>>(
     entity: EntityDescriptor<Entity, *>,
     rules: List<BatchPrivacyRule<RuleClient, Entity>>,
 ) {

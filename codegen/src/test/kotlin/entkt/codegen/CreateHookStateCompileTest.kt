@@ -35,8 +35,8 @@ class CreateHookStateCompileTest {
         }.compile()
 
     private fun createTypes(beforeSave: String, beforeCreate: String): List<String> = listOf(
-        "CreateMutationOperation<Unit, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
-        "CreateManyMutationOperation<Unit, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
+        "CreateMutationOperation<EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
+        "CreateManyMutationOperation<EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
         "CreateMutationHookStateConverter<WidgetDraft, Widget, $beforeSave, $beforeCreate>",
     )
 
@@ -54,6 +54,7 @@ class CreateHookStateCompileTest {
                 import entkt.runtime.mutation.CreateMutationDraft
                 import entkt.runtime.mutation.WriteCandidate
                 import entkt.runtime.mutation.execution.*
+                import entkt.runtime.rule.EntRuleClient
 
                 data class Widget(override val id: Int) : EntEntity.IntId
                 data class Other(override val id: Int) : EntEntity.IntId

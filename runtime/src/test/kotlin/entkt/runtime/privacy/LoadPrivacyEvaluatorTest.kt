@@ -8,6 +8,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.result.EntBatchRuleContractException
+import entkt.runtime.rule.TestRuleClient
 import entkt.runtime.rule.ruleBatchForInternalUse
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,15 +39,15 @@ class LoadPrivacyEvaluatorTest {
     }
 
     private val viewerContext = ViewerContext(Viewer.User(7L))
-    private val ruleContext = PrivacyRuleContext(viewerContext, Any())
+    private val ruleContext = PrivacyRuleContext(viewerContext, TestRuleClient())
 
     @Test
     fun `evaluator preserves context correlation and fail-closed outcomes`() {
-        val ruleClient = Any()
+        val ruleClient = TestRuleClient()
         val ruleContext = PrivacyRuleContext(viewerContext, ruleClient)
-        val contexts = mutableListOf<PrivacyRuleContext<Any>>()
+        val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
         val seenItems = mutableListOf<Record>()
-        val first = PrivacyRule<Any, Record> { context, item ->
+        val first = PrivacyRule<TestRuleClient, Record> { context, item ->
             contexts += context
             seenItems += item
             when (item.id) {
@@ -55,13 +56,13 @@ class LoadPrivacyEvaluatorTest {
                 else -> PrivacyDecision.Continue
             }
         }
-        val second = PrivacyRule<Any, Record> { context, item ->
+        val second = PrivacyRule<TestRuleClient, Record> { context, item ->
             contexts += context
             seenItems += item
             PrivacyDecision.Continue
         }
-        val configuredRules = mutableListOf<BatchPrivacyRule<Any, Record>>(first, second)
-        val evaluator = LoadPrivacyEvaluator<Any, Record>(
+        val configuredRules = mutableListOf<BatchPrivacyRule<TestRuleClient, Record>>(first, second)
+        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
             entity = RecordDescriptor,
             rules = configuredRules,
         )
@@ -90,7 +91,7 @@ class LoadPrivacyEvaluatorTest {
     @Test
     fun `duplicate entity instances keep independent correlated decisions`() {
         val entity = Record(1L, "shared")
-        val evaluator = LoadPrivacyEvaluator<Any, Record>(
+        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
             entity = RecordDescriptor,
             rules = listOf(batchPrivacyRule { _, batch ->
                 batch.decideEachIndexed { index, item ->
@@ -113,10 +114,10 @@ class LoadPrivacyEvaluatorTest {
     @Test
     fun `empty and bypass batches never invoke rules`() {
         var ruleCalls = 0
-        val evaluator = LoadPrivacyEvaluator<Any, Record>(
+        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
             entity = RecordDescriptor,
             rules = listOf(
-                PrivacyRule<Any, Record> { _, _ ->
+                PrivacyRule<TestRuleClient, Record> { _, _ ->
                     ruleCalls++
                     PrivacyDecision.Deny("must not run")
                 },
@@ -127,7 +128,7 @@ class LoadPrivacyEvaluatorTest {
         assertEquals(
             listOf(Record(1L, "one"), Record(1L, "duplicate")),
             evaluator.evaluate(
-                PrivacyRuleContext(ViewerContext.privacyBypass_DANGEROUS("load phase test"), Any()),
+                PrivacyRuleContext(ViewerContext.privacyBypass_DANGEROUS("load phase test"), TestRuleClient()),
                 listOf(Record(1L, "one"), Record(1L, "duplicate")),
             ).allowedSubjects(),
         )
@@ -137,10 +138,10 @@ class LoadPrivacyEvaluatorTest {
     @Test
     fun `rule exceptions escape unchanged`() {
         val failure = IllegalStateException("rule failed")
-        val evaluator = LoadPrivacyEvaluator<Any, Record>(
+        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
             entity = RecordDescriptor,
             rules = listOf(
-                PrivacyRule<Any, Record> { _, _ -> throw failure },
+                PrivacyRule<TestRuleClient, Record> { _, _ -> throw failure },
             ),
         )
 
@@ -153,7 +154,7 @@ class LoadPrivacyEvaluatorTest {
 
     @Test
     fun `no rules denies every entity with the built-in LOAD reason`() {
-        val evaluator = LoadPrivacyEvaluator<Any, Record>(
+        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
             entity = RecordDescriptor,
             rules = emptyList(),
         )
@@ -173,7 +174,7 @@ class LoadPrivacyEvaluatorTest {
     fun `rule contract failures identify the descriptor and LOAD operation`() {
         val foreignDecisions = ruleBatchForInternalUse(listOf(Record(1L, "one")))
             .decideEach { PrivacyDecision.Allow }
-        val evaluator = LoadPrivacyEvaluator<Any, Record>(
+        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
             entity = RecordDescriptor,
             rules = listOf(batchPrivacyRule { _, _ -> foreignDecisions }),
         )
@@ -192,18 +193,18 @@ class LoadPrivacyEvaluatorTest {
 
     @Test
     fun `each evaluation uses the supplied context without retaining a client or viewer`() {
-        val contexts = mutableListOf<PrivacyRuleContext<Any>>()
-        val evaluator = LoadPrivacyEvaluator<Any, Record>(
+        val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
+        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
             entity = RecordDescriptor,
             rules = listOf(
-                PrivacyRule<Any, Record> { context, _ ->
+                PrivacyRule<TestRuleClient, Record> { context, _ ->
                     contexts += context
                     PrivacyDecision.Allow
                 },
             ),
         )
-        val firstContext = PrivacyRuleContext(ViewerContext(Viewer.User(1L)), Any())
-        val secondContext = PrivacyRuleContext(ViewerContext(Viewer.User(2L)), Any())
+        val firstContext = PrivacyRuleContext(ViewerContext(Viewer.User(1L)), TestRuleClient())
+        val secondContext = PrivacyRuleContext(ViewerContext(Viewer.User(2L)), TestRuleClient())
         val entities = listOf(Record(1L, "one"))
 
         assertEquals(entities, evaluator.evaluate(firstContext, entities).allowedSubjects())

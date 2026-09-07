@@ -46,11 +46,11 @@ class ReadClientGeneratorTest {
     }
 
     @Test
-    fun `ReadOnlyEntClient is an interface exposing every read repository`() {
+    fun `ReadOnlyEntClient implements the rule client marker and exposes every read repository`() {
         val output = readClientOutput()
 
-        assert(output.contains("public interface ReadOnlyEntClient {")) {
-            "ReadOnlyEntClient should be an interface\n$output"
+        assert(output.contains("public interface ReadOnlyEntClient : EntRuleClient {")) {
+            "ReadOnlyEntClient should extend the shared rule client marker\n$output"
         }
         assert(!Regex("\\bclass ReadOnlyEntClient\\b").containsMatchIn(output)) {
             "ReadOnlyEntClient must no longer be a class\n$output"

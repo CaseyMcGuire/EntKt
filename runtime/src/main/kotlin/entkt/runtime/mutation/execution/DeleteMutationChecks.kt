@@ -13,11 +13,12 @@ import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.EntityKey
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.toValidationViolation
+import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.validation.MutationValidationEvaluator
 import entkt.runtime.validation.ValidationRuleContext
 
 /** Apply the same privacy-before-validation checks to one candidate or a complete DELETE batch. */
-internal fun <RuleClient, Entity : EntEntity<*>, Candidate : WriteCandidate<Entity>> evaluateDeleteRules(
+internal fun <RuleClient : EntRuleClient, Entity : EntEntity<*>, Candidate : WriteCandidate<Entity>> evaluateDeleteRules(
     execution: MutationExecution,
     ruleClient: RuleClient,
     entityName: String,

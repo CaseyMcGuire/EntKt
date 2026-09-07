@@ -108,13 +108,18 @@ A rule receives phase-shared context separately from one generated item.
 It is also a batch rule: the default adapter visits items serially in encounter
 order.
 
+`Client` must implement the runtime `EntRuleClient` marker. Generated `ReadOnlyEntClient`
+already does, so rule contexts retain their schema-specific read APIs.
+
 ```kotlin
-class PrivacyRuleContext<out Client>(
+import entkt.runtime.rule.EntRuleClient
+
+class PrivacyRuleContext<out Client : EntRuleClient>(
     val viewerContext: ViewerContext,
     val client: Client,
 )
 
-fun interface PrivacyRule<in Client, in Item> :
+fun interface PrivacyRule<in Client : EntRuleClient, in Item> :
     BatchPrivacyRule<Client, Item> {
 
     fun run(
@@ -141,17 +146,18 @@ perform one set-based lookup:
 
 ```kotlin
 import entkt.runtime.privacy.batchPrivacyRule
+import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
 
-interface BatchPrivacyRule<in Client, in Item> {
+interface BatchPrivacyRule<in Client : EntRuleClient, in Item> {
     fun runBatch(
         context: PrivacyRuleContext<Client>,
         batch: RuleBatch<Item>,
     ): RuleDecisions<PrivacyDecision>
 }
 
-fun <Client, Item> batchPrivacyRule(
+fun <Client : EntRuleClient, Item> batchPrivacyRule(
     block: (
         context: PrivacyRuleContext<Client>,
         batch: RuleBatch<Item>,

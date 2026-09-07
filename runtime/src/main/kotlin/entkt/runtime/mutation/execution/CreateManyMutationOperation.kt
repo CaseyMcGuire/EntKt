@@ -26,6 +26,7 @@ import entkt.runtime.result.EntityKey
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.toValidationViolation
+import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.validation.MutationValidationEvaluator
 import entkt.runtime.validation.ValidationRuleContext
 import java.util.concurrent.CancellationException
@@ -40,7 +41,7 @@ import java.util.concurrent.CancellationException
  */
 @EntktInternal
 class CreateManyMutationOperation<
-    RuleClient,
+    RuleClient : EntRuleClient,
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
     Entity : EntEntity<*>,

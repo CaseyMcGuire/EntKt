@@ -1,6 +1,7 @@
 package entkt.runtime.privacy
 
 import entkt.query.EntktInternal
+import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
 import entkt.runtime.rule.decisionsForInternalUse
@@ -95,7 +96,7 @@ fun ViewerContext.uuidIdOrNull(): UUID? =
  * and batch rules receive the same item shape. The framework passes the exact
  * same instance to every reached rule in that phase.
  */
-class PrivacyRuleContext<out Client>(
+class PrivacyRuleContext<out Client : EntRuleClient>(
     val viewerContext: ViewerContext,
     val client: Client,
 )
@@ -143,7 +144,7 @@ class PrivacyDeniedException(
  * the supplied items; callers cannot construct or reorder the result directly.
  * Generated lifecycle evaluators never invoke a rule with an empty batch.
  */
-interface BatchPrivacyRule<in Client, in Item> {
+interface BatchPrivacyRule<in Client : EntRuleClient, in Item> {
     @JvmSuppressWildcards
     fun runBatch(
         context: PrivacyRuleContext<Client>,
@@ -158,7 +159,7 @@ interface BatchPrivacyRule<in Client, in Item> {
  * items serially in encounter order. Rules are evaluated in registration
  * order; the first non-[PrivacyDecision.Continue] result wins for each item.
  */
-fun interface PrivacyRule<in Client, in Item> : BatchPrivacyRule<Client, Item> {
+fun interface PrivacyRule<in Client : EntRuleClient, in Item> : BatchPrivacyRule<Client, Item> {
     @JvmSuppressWildcards
     fun run(
         context: PrivacyRuleContext<Client>,
@@ -180,7 +181,7 @@ fun interface PrivacyRule<in Client, in Item> : BatchPrivacyRule<Client, Item> {
  * explicit at registration sites instead of making a lambda ambiguous between
  * one item and a batch of items.
  */
-fun <Client, Item> batchPrivacyRule(
+fun <Client : EntRuleClient, Item> batchPrivacyRule(
     block: (
         context: PrivacyRuleContext<Client>,
         batch: RuleBatch<Item>,
@@ -201,7 +202,7 @@ fun <Client, Item> batchPrivacyRule(
  * can apply their operation-specific fail-closed denial.
  */
 @EntktInternal
-fun <I, Client, Item> evaluateBatchPrivacyRulesForInternalUse(
+fun <I, Client : EntRuleClient, Item> evaluateBatchPrivacyRulesForInternalUse(
     lifecycle: String,
     items: List<I>,
     rules: List<BatchPrivacyRule<Client, Item>>,
@@ -261,7 +262,7 @@ fun <I, Client, Item> evaluateBatchPrivacyRulesForInternalUse(
  * Under fail-closed privacy this is the explicit opt-in to "no restriction" for
  * an operation; use it deliberately.
  */
-val allowAll: PrivacyRule<Any?, Any?> = PrivacyRule { _, _ -> PrivacyDecision.Allow }
+val allowAll: PrivacyRule<EntRuleClient, Any?> = PrivacyRule { _, _ -> PrivacyDecision.Allow }
 
 /**
  * An entity-scoped policy that configures rules for entity operations

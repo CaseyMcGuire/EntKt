@@ -33,6 +33,7 @@ import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
+import entkt.runtime.rule.TestRuleClient
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
 import entkt.runtime.validation.ResolvedEntityValidationConfig
@@ -154,7 +155,7 @@ class DeleteMutationOperationTest {
         val driver = RecordingDriver(events, inTransaction)
         val viewerContext = ViewerContext(Viewer.User(7L))
         val otherViewerContext = ViewerContext(Viewer.User(8L))
-        val ruleClient = Any()
+        val ruleClient = TestRuleClient()
         val failures = mutableListOf<EntMutationException>()
         var privacyDecisions: List<PrivacyDecision> = emptyList()
         var validationDecisions: List<List<ValidationDecision.Invalid>> = emptyList()
@@ -164,7 +165,7 @@ class DeleteMutationOperationTest {
         var readExecutionFailure: Exception? = null
         val receivedViewerContexts = mutableListOf<ViewerContext>()
         val receivedReadOperations = mutableListOf<ReadOperation>()
-        val receivedRuleClients = mutableListOf<Any>()
+        val receivedRuleClients = mutableListOf<TestRuleClient>()
         val mapping = RecordingDescriptor(events, idColumn)
         val queryHost = object : ReadQueryExecutionHost {
             override val entityInterceptors = EntInterceptorsConfig().apply {
@@ -207,7 +208,7 @@ class DeleteMutationOperationTest {
         val privacy = ResolvedEntityPrivacyConfig(
             loadRules = emptyList<Nothing>(),
             createRules = listOf(
-                batchPrivacyRule<Any, Candidate> { context, candidates ->
+                batchPrivacyRule<TestRuleClient, Candidate> { context, candidates ->
                     assertSame(viewerContext, context.viewerContext)
                     assertSame(ruleClient, context.client)
                     privacyFallbackCandidates += candidates.toList()
@@ -216,7 +217,7 @@ class DeleteMutationOperationTest {
             ),
             updateRules = emptyList<Nothing>(),
             deleteRules = listOf(
-                batchPrivacyRule<Any, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
+                batchPrivacyRule<TestRuleClient, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
                     events += "privacy:${batch.joinToString { it.entity.id.toString() }}"
                     receivedViewerContexts += context.viewerContext
                     receivedRuleClients += context.client
@@ -231,13 +232,13 @@ class DeleteMutationOperationTest {
 
         val validation = ResolvedEntityValidationConfig(
             createRules = listOf(
-                batchValidationRule<Any, Candidate> { _, _ ->
+                batchValidationRule<TestRuleClient, Candidate> { _, _ ->
                     error("DELETE must not derive CREATE validation")
                 },
             ),
             updateRules = emptyList<Nothing>(),
             deleteRules = listOf(
-                batchValidationRule<Any, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
+                batchValidationRule<TestRuleClient, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
                     events += "validation:${batch.joinToString { it.entity.id.toString() }}"
                     receivedRuleClients += context.client
                     batch.decideEachIndexed { index, _ ->
@@ -272,7 +273,7 @@ class DeleteMutationOperationTest {
         fun scalarOperation(
             beforeDelete: List<BatchActionHook<Widget>> = this.beforeDelete,
             afterDelete: List<BatchActionHook<Widget>> = this.afterDelete,
-        ): DeleteMutationOperation<Any, Widget, Candidate> = buildDeleteMutationOperation(
+        ): DeleteMutationOperation<TestRuleClient, Widget, Candidate> = buildDeleteMutationOperation(
             entity = mapping,
             converter = converter,
             privacy = privacy,
@@ -282,7 +283,7 @@ class DeleteMutationOperationTest {
             afterDelete = afterDelete,
         )
 
-        fun manyOperation(): DeleteManyMutationOperation<Any, Widget, Candidate> = buildDeleteManyMutationOperation(
+        fun manyOperation(): DeleteManyMutationOperation<TestRuleClient, Widget, Candidate> = buildDeleteManyMutationOperation(
             entity = mapping,
             converter = converter,
             privacy = privacy,
