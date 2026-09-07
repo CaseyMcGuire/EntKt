@@ -74,6 +74,9 @@ class PrivacyGeneratorTest {
         assert(output.contains("data class UserWriteCandidate")) {
             "Should generate WriteCandidate\n$output"
         }
+        assert(output.contains(": WriteCandidate<User>")) {
+            "WriteCandidate should be bound to its entity\n$output"
+        }
         assert(output.contains("val name: String")) {
             "WriteCandidate should have name\n$output"
         }
@@ -187,6 +190,9 @@ class PrivacyGeneratorTest {
 
         assert(output.contains("class EmptyWriteCandidate")) {
             "Should generate a WriteCandidate class\n$output"
+        }
+        assert(output.contains(": WriteCandidate<Empty>")) {
+            "Id-only candidates should also be bound to their entity\n$output"
         }
         assert(!output.contains("data class EmptyWriteCandidate")) {
             "Should not be a data class (no properties)\n$output"

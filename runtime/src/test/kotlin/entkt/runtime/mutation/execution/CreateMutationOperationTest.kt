@@ -10,6 +10,7 @@ import entkt.runtime.hook.ActionHook
 import entkt.runtime.hook.TransformingHook
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
+import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
@@ -43,7 +44,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class CreateMutationOperationTest {
-    private data class Candidate(val name: String)
+    private data class Candidate(val name: String) : WriteCandidate<Widget>
 
     private data class Widget(
         override val id: Long,

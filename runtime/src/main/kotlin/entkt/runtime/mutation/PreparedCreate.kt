@@ -16,7 +16,7 @@ import entkt.query.EntktInternal
  * module, outside the runtime module's Kotlin `internal` boundary.
  */
 @EntktInternal
-class PreparedCreate<out Candidate>(
+class PreparedCreate<out Candidate : WriteCandidate<*>>(
     val values: Map<String, Any?>,
     val candidate: Candidate,
 )

@@ -3,13 +3,14 @@ package entkt.runtime.mutation.execution
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.mutation.CreateMutationDraft
+import entkt.runtime.mutation.WriteCandidate
 
 /** Scalar CREATE reuses the batch operation while retaining scalar storage and transaction policy. */
 @EntktInternal
 class CreateMutationOperation<
     RuleClient,
     Draft : CreateMutationDraft<Entity>,
-    Candidate,
+    Candidate : WriteCandidate<Entity>,
     Entity : EntEntity<*>,
     BeforeSaveState,
     BeforeCreateState,

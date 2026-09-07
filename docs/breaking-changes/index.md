@@ -30,6 +30,14 @@ above it.
 
 ## Unreleased
 
+- **Bind mutation candidates to their entity** (`runtime`, `codegen`)
+  Generated `${Entity}WriteCandidate` types now implement `WriteCandidate<Entity>`.
+  CREATE/DELETE operations, their converters, and `DeleteRuleCandidate` require
+  a candidate for the same entity; `PreparedCreate` requires a write candidate.
+  _Migration:_ regenerate entity code. Handwritten candidates must implement
+  `WriteCandidate<YourEntity>`, and generic wiring must propagate that bound.
+  `RuleClient` remains unconstrained, and mutation behavior is unchanged.
+
 - **Run hooks with top-level functions instead of runner objects** (`runtime`, `codegen`)
   `HookRunner` and `MutationHookRunner` are removed. Mutation operations receive
   hook lists and execute them through `runActionHooks` and `runTransformingHooks`,

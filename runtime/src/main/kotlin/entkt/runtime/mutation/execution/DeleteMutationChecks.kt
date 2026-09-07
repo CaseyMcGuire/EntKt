@@ -3,6 +3,7 @@
 package entkt.runtime.mutation.execution
 
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
@@ -16,7 +17,7 @@ import entkt.runtime.validation.MutationValidationEvaluator
 import entkt.runtime.validation.ValidationRuleContext
 
 /** Apply the same privacy-before-validation checks to one candidate or a complete DELETE batch. */
-internal fun <RuleClient, Entity : EntEntity<*>, Candidate> evaluateDeleteRules(
+internal fun <RuleClient, Entity : EntEntity<*>, Candidate : WriteCandidate<Entity>> evaluateDeleteRules(
     execution: MutationExecution,
     ruleClient: RuleClient,
     entityName: String,

@@ -14,6 +14,7 @@ import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.ActionHook
 import entkt.runtime.hook.BatchActionHook
+import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
@@ -52,7 +53,7 @@ class DeleteMutationOperationTest {
         val name: String,
     ) : EntEntity.LongId
 
-    private data class Candidate(val name: String)
+    private data class Candidate(val name: String) : WriteCandidate<Widget>
 
     private class RecordingDescriptor(
         private val events: MutableList<String>,

@@ -12,6 +12,7 @@ import entkt.runtime.hook.runActionHooks
 import entkt.runtime.hook.runTransformingHooks
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
+import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
@@ -39,7 +40,7 @@ import java.util.concurrent.CancellationException
 class CreateManyMutationOperation<
     RuleClient,
     Draft : CreateMutationDraft<Entity>,
-    Candidate,
+    Candidate : WriteCandidate<Entity>,
     Entity : EntEntity<*>,
     BeforeSaveState,
     BeforeCreateState,

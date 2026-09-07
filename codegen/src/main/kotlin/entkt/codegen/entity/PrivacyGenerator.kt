@@ -37,6 +37,7 @@ private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
+private val WRITE_CANDIDATE = ClassName("entkt.runtime.mutation", "WriteCandidate")
 private val PENDING_EDGE_OPS = ClassName("entkt.runtime.mutation", "PendingEdgeOps")
 private val UPDATE_PENDING_EDGES =
     ClassName("entkt.runtime.mutation", "UpdatePendingEdges")
@@ -138,7 +139,7 @@ internal class PrivacyGenerator(
             typeAlias(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, deleteInput))
 
         // WriteCandidate
-            addType(buildWriteCandidate(candidateClass, fields, edgeFks))
+            addType(buildWriteCandidate(candidateClass, entityClass, fields, edgeFks))
 
         // UpdatePatch
             addType(buildUpdatePatch(patchClass, fields, edgeFks))
@@ -215,6 +216,7 @@ internal class PrivacyGenerator(
 
     private fun buildWriteCandidate(
         candidateClass: ClassName,
+        entityClass: ClassName,
         fields: List<Field>,
         edgeFks: List<EdgeFk>,
     ): TypeSpec {
@@ -226,7 +228,9 @@ internal class PrivacyGenerator(
                 add(fk.propertyName to fk.idType.toTypeName().copy(nullable = !fk.required))
             }
         }
-        return immutableValueType(candidateClass, members)
+        return immutableValueType(candidateClass, members).toBuilder()
+            .addSuperinterface(WRITE_CANDIDATE.parameterizedBy(entityClass))
+            .build()
     }
 
     /**
