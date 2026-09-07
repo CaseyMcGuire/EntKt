@@ -4,6 +4,8 @@ package entkt.runtime.mutation.execution
 
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.entity.EntityDescriptor
+import entkt.runtime.hook.HookRunner
 import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntOperation
@@ -15,15 +17,17 @@ import java.util.concurrent.CancellationException
 /** Reload, authorize, and idempotently delete one current row. */
 @EntktInternal
 class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
-    private val spec: DeleteMutationSpec<Entity>,
+    private val entity: EntityDescriptor<Entity, *>,
     private val converter: DeleteMutationConverter<Entity, Candidate>,
     private val privacyEvaluator:
         MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
     private val validationEvaluator:
         MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
+    private val beforeDelete: HookRunner<Entity>,
+    private val afterDelete: HookRunner<Entity>,
 ) : MutationOperation<RuleClient, DeleteMutationInput, Boolean> {
     override fun requirements(input: DeleteMutationInput): MutationRequirements =
-        MutationRequirements("${spec.entity.entityName} delete")
+        MutationRequirements("${entity.entityName} delete")
 
     override fun run(
         execution: MutationExecution,
@@ -41,7 +45,7 @@ class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         id: Any,
     ): Boolean {
         val row = try {
-            execution.driver.byId(spec.entity.table, id)
+            execution.driver.byId(entity.table, id)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -53,7 +57,7 @@ class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
             execution = execution,
             ruleClient = ruleClient,
             viewerContext = viewerContext,
-            entity = spec.entity.decode(row),
+            target = entity.decode(row),
         )
     }
 
@@ -61,22 +65,22 @@ class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         execution: MutationExecution,
         ruleClient: RuleClient,
         viewerContext: ViewerContext,
-        entity: Entity,
+        target: Entity,
     ): Boolean {
-        val candidate = DeleteRuleCandidate(entity, converter.toCandidate(entity))
+        val candidate = DeleteRuleCandidate(target, converter.toCandidate(target))
         evaluateDeleteRules(
             execution = execution,
             ruleClient = ruleClient,
-            entityName = spec.entity.entityName,
+            entityName = entity.entityName,
             viewerContext = viewerContext,
             candidates = listOf(candidate),
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
         )
-        spec.beforeDelete.run(listOf(entity))
+        beforeDelete.run(listOf(target))
 
         val deleted = try {
-            execution.driver.delete(spec.entity.table, entity.id)
+            execution.driver.delete(entity.table, target.id)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -86,7 +90,7 @@ class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         }
         if (deleted) {
             execution.markWriteSucceeded()
-            spec.afterDelete.run(listOf(entity))
+            afterDelete.run(listOf(target))
         }
         return deleted
     }
@@ -97,7 +101,7 @@ class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         fallback: MutationWriteState,
     ) = execution.driver.classifyMutationException(
         exception,
-        spec.entity.entityName,
+        entity.entityName,
         EntOperation.DELETE,
     ) ?: EntUnexpectedMutationException(fallback, exception)
 }

@@ -5,9 +5,14 @@ package entkt.runtime.mutation.execution
 import entkt.query.EntktInternal
 import entkt.query.Predicate
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.entity.EntityDescriptor
+import entkt.runtime.hook.HookRunner
 import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
+import entkt.runtime.query.EntityQuery
+import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
+import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.MutationWriteState
@@ -17,16 +22,19 @@ import java.util.concurrent.CancellationException
 /** Select, authorize, and persist one atomic DELETE batch with correlated acknowledgements. */
 @EntktInternal
 class DeleteManyMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
-    private val spec: DeleteMutationSpec<Entity>,
+    private val entity: EntityDescriptor<Entity, *>,
     private val converter: DeleteMutationConverter<Entity, Candidate>,
     private val privacyEvaluator:
         MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
     private val validationEvaluator:
         MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
+    private val readQueryExecutor: ReadQueryExecutor<Entity>,
+    private val beforeDelete: HookRunner<Entity>,
+    private val afterDelete: HookRunner<Entity>,
 ) : MutationOperation<RuleClient, DeleteManyMutationInput<Entity>, Int> {
     override fun requirements(input: DeleteManyMutationInput<Entity>): MutationRequirements =
         MutationRequirements(
-            operationName = "${spec.entity.entityName} deleteMany",
+            operationName = "${entity.entityName} deleteMany",
             multiWrite = true,
             requiresAtomicTransaction = true,
         )
@@ -56,20 +64,20 @@ class DeleteManyMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         evaluateDeleteRules(
             execution = execution,
             ruleClient = ruleClient,
-            entityName = spec.entity.entityName,
+            entityName = entity.entityName,
             viewerContext = viewerContext,
             candidates = candidates,
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
         )
-        spec.beforeDelete.run(entities)
+        beforeDelete.run(entities)
 
         val approvedIds = entities.map { it.id }
         execution.markWritePending()
         val deletedIds = try {
             execution.driver.deleteManyByIds(
-                table = spec.entity.table,
-                idColumn = spec.idColumn,
+                table = entity.table,
+                idColumn = entity.idColumn,
                 ids = approvedIds,
                 predicates = selection.effectivePredicates,
             )
@@ -106,7 +114,7 @@ class DeleteManyMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         check(deletedEntities.size == deletedIdSnapshot.size) {
             "DatabaseDriver.deleteManyByIds acknowledgement could not be correlated to candidates"
         }
-        spec.afterDelete.run(deletedEntities)
+        afterDelete.run(deletedEntities)
         return deletedIdSnapshot.size
     }
 
@@ -116,22 +124,30 @@ class DeleteManyMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         viewerContext: ViewerContext,
         predicates: List<Predicate<Entity>>,
     ): DeleteSelection<Entity> {
-        val query = spec.newQuery()
-        for (predicate in predicates) query.where(predicate)
-        val querySpec = query.compileEntityQuery(
-            viewerContext,
-            ReadOperation.DELETE_CANDIDATES,
+        val query = EntityQuery(
+            entity = entity,
+            source = QuerySource.Root(),
+            predicates = predicates,
+            orderBy = emptyList(),
+            limit = null,
+            offset = null,
+            edges = emptyList(),
+        )
+        val querySpec = readQueryExecutor.compileEntityQuery(
+            viewerContext = viewerContext,
+            query = query,
+            operation = ReadOperation.DELETE_CANDIDATES,
         )
         val effectivePredicates = querySpec.predicates.toList()
         val rows = execution.driver.query(
-            spec.entity.table,
+            entity.table,
             effectivePredicates,
             emptyList(),
             null,
             null,
         )
         return DeleteSelection(
-            entities = rows.map(spec.entity::decode),
+            entities = rows.map(entity::decode),
             effectivePredicates = effectivePredicates,
         )
     }
@@ -142,7 +158,7 @@ class DeleteManyMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
         fallback: MutationWriteState,
     ) = execution.driver.classifyMutationException(
         exception,
-        spec.entity.entityName,
+        entity.entityName,
         EntOperation.DELETE,
     ) ?: EntUnexpectedMutationException(fallback, exception)
 }

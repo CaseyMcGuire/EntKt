@@ -6,8 +6,11 @@ import entkt.query.Op
 import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IdStrategy
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.Hook
 import entkt.runtime.hook.HookRunner
@@ -20,11 +23,9 @@ import entkt.runtime.privacy.MutationPrivacyEvaluator
 import entkt.runtime.privacy.PrivacyOperation
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EntInterceptorsConfig
-import entkt.runtime.query.EntityQuery
-import entkt.runtime.query.EntityQueryBuilder
-import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
+import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -53,20 +54,26 @@ class DeleteMutationOperationTest {
 
     private data class Candidate(val name: String)
 
-    private class RecordingMapping(
+    private class RecordingDescriptor(
         private val events: MutableList<String>,
-    ) : EntityMapping<Widget> {
+        idColumn: String,
+    ) : EntityDescriptor<Widget, Long> {
         override val entityName = "Widget"
         override val clientName = "widgets"
         override val entityClass = Widget::class
-        override val table = "widgets"
+        override val schema = EntitySchema(
+            table = "widgets",
+            idColumn = idColumn,
+            idStrategy = IdStrategy.EXPLICIT,
+            columns = emptyList(),
+            edges = emptyMap(),
+        )
+        override val edgesByStorageName: Map<String, EdgeMapping<Widget, *>> = emptyMap()
 
         override fun decode(row: Map<String, Any?>): Widget {
             events += "decode"
-            return Widget(row.getValue("id") as Long, row.getValue("name") as String)
+            return Widget(row.getValue(idColumn) as Long, row.getValue("name") as String)
         }
-
-        override fun edgeByStorageName(storageName: String): EdgeMapping<Widget, *>? = null
     }
 
     private class RecordingDriver(
@@ -81,6 +88,7 @@ class DeleteMutationOperationTest {
         var acknowledgedIds: List<Any> = listOf(1L, 2L)
         var receivedPredicates: List<Predicate<*>>? = null
         var receivedQueryPredicates: List<Predicate<*>>? = null
+        var receivedIdColumn: String? = null
         var queryRows: List<Map<String, Any?>> = listOf(
             mapOf("id" to 1L, "name" to "one"),
             mapOf("id" to 2L, "name" to "two"),
@@ -111,6 +119,7 @@ class DeleteMutationOperationTest {
         ): List<Any> {
             events += "delete-many:${ids.joinToString()}"
             receivedPredicates = predicates
+            receivedIdColumn = idColumn
             deleteManyFailure?.let { throw it }
             return acknowledgedIds
         }
@@ -137,34 +146,9 @@ class DeleteMutationOperationTest {
         }
     }
 
-    private class WidgetQuery(
-        driver: DatabaseDriver,
-        executionHost: ReadQueryExecutionHost,
-        private val mapping: EntityMapping<Widget>,
-    ) : EntityQueryBuilder<Widget, WidgetQuery>(
-        driver = driver,
-        executionHost = executionHost,
-        entityName = mapping.entityName,
-    ) {
-        override val self: WidgetQuery
-            get() = this
-
-        override fun captureEntityQuery(
-            structuralPredicates: List<Predicate<Widget>>,
-        ): EntityQuery<Widget> = EntityQuery(
-            entity = mapping,
-            source = QuerySource.Root(),
-            predicates = predicates,
-            orderBy = orderFields,
-            limit = queryLimit,
-            offset = queryOffset,
-            edges = emptyList(),
-            structuralPredicates = structuralPredicates,
-        )
-    }
-
     private class Fixture(
         inTransaction: Boolean = false,
+        idColumn: String = "id",
     ) {
         val events = mutableListOf<String>()
         val driver = RecordingDriver(events, inTransaction)
@@ -175,10 +159,11 @@ class DeleteMutationOperationTest {
         var privacyDecisions: List<PrivacyDecision> = emptyList()
         var validationDecisions: List<List<ValidationDecision.Invalid>> = emptyList()
         var effectivePredicates: List<Predicate<Widget>> = emptyList()
+        var readExecutionFailure: Exception? = null
         val receivedViewerContexts = mutableListOf<ViewerContext>()
         val receivedReadOperations = mutableListOf<ReadOperation>()
         val receivedRuleClients = mutableListOf<Any>()
-        val mapping = RecordingMapping(events)
+        val mapping = RecordingDescriptor(events, idColumn)
         val queryHost = object : ReadQueryExecutionHost {
             override val entityInterceptors = EntInterceptorsConfig().apply {
                 addEntity<Widget>(mapping.clientName, "delete-selection") { scope, context ->
@@ -191,6 +176,7 @@ class DeleteMutationOperationTest {
 
             override fun checkReadExecution() {
                 events += "read-guard"
+                readExecutionFailure?.let { throw it }
             }
 
             override fun isConfigured(entity: EntityMapping<*>): Boolean =
@@ -211,13 +197,8 @@ class DeleteMutationOperationTest {
             }
         }
 
-        val spec: DeleteMutationSpec<Widget> = DeleteMutationSpec(
-            entity = mapping,
-            idColumn = "id",
-            newQuery = { WidgetQuery(driver, queryHost, mapping) },
-            beforeDelete = HookRunner(listOf(Hook { entity -> events += "before:${entity.id}" })),
-            afterDelete = HookRunner(listOf(Hook { entity -> events += "after:${entity.id}" })),
-        )
+        val beforeDelete = HookRunner(listOf(Hook<Widget> { entity -> events += "before:${entity.id}" }))
+        val afterDelete = HookRunner(listOf(Hook<Widget> { entity -> events += "after:${entity.id}" }))
 
         val privacyEvaluator = MutationPrivacyEvaluator<
             Any,
@@ -275,27 +256,34 @@ class DeleteMutationOperationTest {
         val mutationExecutor = MutationExecutor(driver, mutationRuntime)
 
         fun scalarOperation(
-            spec: DeleteMutationSpec<Widget> = this.spec,
+            beforeDelete: HookRunner<Widget> = this.beforeDelete,
+            afterDelete: HookRunner<Widget> = this.afterDelete,
         ): DeleteMutationOperation<Any, Widget, Candidate> = DeleteMutationOperation(
-            spec = spec,
+            entity = mapping,
             converter = converter,
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
+            beforeDelete = beforeDelete,
+            afterDelete = afterDelete,
         )
 
         fun manyOperation(): DeleteManyMutationOperation<Any, Widget, Candidate> = DeleteManyMutationOperation(
-            spec = spec,
+            entity = mapping,
             converter = converter,
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
+            readQueryExecutor = ReadQueryExecutor(driver, queryHost),
+            beforeDelete = beforeDelete,
+            afterDelete = afterDelete,
         )
 
         fun deleteById(
             viewerContext: ViewerContext,
             id: Any,
-            spec: DeleteMutationSpec<Widget> = this.spec,
+            beforeDelete: HookRunner<Widget> = this.beforeDelete,
+            afterDelete: HookRunner<Widget> = this.afterDelete,
         ): MutationResult<Boolean> = mutationExecutor.execute(
-            operation = scalarOperation(spec),
+            operation = scalarOperation(beforeDelete, afterDelete),
             ruleClient = ruleClient,
             input = DeleteMutationInput(viewerContext, id),
         )
@@ -423,15 +411,13 @@ class DeleteMutationOperationTest {
         )) {
             val fixture = Fixture(inTransaction)
             val boom = IllegalStateException("after")
-            val failingSpec: DeleteMutationSpec<Widget> = DeleteMutationSpec(
-                entity = fixture.mapping,
-                idColumn = "id",
-                newQuery = fixture.spec.newQuery,
+
+            val result = fixture.deleteById(
+                fixture.viewerContext,
+                1L,
                 beforeDelete = HookRunner(emptyList()),
                 afterDelete = HookRunner(listOf(Hook<Widget> { throw boom })),
             )
-
-            val result = fixture.deleteById(fixture.viewerContext, 1L, failingSpec)
 
             val failure = assertIs<EntUnexpectedMutationException>(
                 assertIs<MutationResult.Failed>(result).exception,
@@ -480,6 +466,75 @@ class DeleteMutationOperationTest {
         assertEquals(listOf(ReadOperation.DELETE_CANDIDATES), fixture.receivedReadOperations)
         assertTrue(fixture.receivedViewerContexts.all { it === fixture.viewerContext })
         assertTrue(fixture.receivedRuleClients.all { it === fixture.ruleClient })
+    }
+
+    @Test
+    fun `delete operations use the descriptor's non-default ID column`() {
+        val fixture = Fixture(inTransaction = true, idColumn = "widget_id")
+        fixture.driver.row = mapOf("widget_id" to 1L, "name" to "current")
+        fixture.driver.queryRows = listOf(
+            mapOf("widget_id" to 1L, "name" to "one"),
+            mapOf("widget_id" to 2L, "name" to "two"),
+        )
+
+        assertEquals(MutationResult.Success(true), fixture.deleteById(fixture.viewerContext, 1L))
+        assertEquals(MutationResult.Success(2), fixture.deleteMany(fixture.viewerContext, emptyList()))
+        assertEquals("widget_id", fixture.driver.receivedIdColumn)
+    }
+
+    @Test
+    fun `reusing a bulk delete operation does not retain predicates between calls`() {
+        val fixture = Fixture(inTransaction = true)
+        val operation = fixture.manyOperation()
+        val firstPredicate = Predicate.Leaf<Widget>("name", Op.EQ, "first")
+        val secondPredicate = Predicate.Leaf<Widget>("name", Op.EQ, "second")
+
+        for (predicate in listOf(firstPredicate, secondPredicate)) {
+            val result = fixture.mutationExecutor.execute(
+                operation = operation,
+                ruleClient = fixture.ruleClient,
+                input = DeleteManyMutationInput(fixture.viewerContext, listOf(predicate)),
+            )
+
+            assertEquals(MutationResult.Success(2), result)
+            assertEquals(listOf(predicate), fixture.driver.receivedQueryPredicates)
+            assertEquals(listOf(predicate), fixture.driver.receivedPredicates)
+        }
+        assertEquals(2, fixture.events.count { it == "read-guard" })
+        assertEquals(
+            listOf(ReadOperation.DELETE_CANDIDATES, ReadOperation.DELETE_CANDIDATES),
+            fixture.receivedReadOperations,
+        )
+    }
+
+    @Test
+    fun `bulk delete read guard rejects execution before selection or lifecycle work`() {
+        val fixture = Fixture(inTransaction = true)
+        val operation = fixture.manyOperation()
+        val guardFailure = IllegalStateException("transaction client is no longer active")
+        fixture.readExecutionFailure = guardFailure
+
+        val result = fixture.mutationExecutor.execute(
+            operation = operation,
+            ruleClient = fixture.ruleClient,
+            input = DeleteManyMutationInput(fixture.viewerContext, emptyList()),
+        )
+
+        val failure = assertIs<EntUnexpectedMutationException>(
+            assertIs<MutationResult.Failed>(result).exception,
+        )
+        assertSame(guardFailure, failure.cause)
+        assertEquals(MutationWriteState.NotPersisted, failure.writeState)
+        assertSame(failure, fixture.failures.single())
+        assertEquals(
+            listOf(
+                "transaction-state",
+                "preflight:Widget deleteMany:true",
+                "read-guard",
+                "record-failure",
+            ),
+            fixture.events,
+        )
     }
 
     @Test

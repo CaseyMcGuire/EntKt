@@ -51,6 +51,8 @@ private val DELETE_MUTATION_INPUT =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationInput")
 private val MUTATION_EXECUTOR =
     ClassName("entkt.runtime.mutation.execution", "MutationExecutor")
+private val READ_QUERY_EXECUTOR =
+    ClassName("entkt.runtime.query.execution", "ReadQueryExecutor")
 private val MUTATION_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "MutationOperation")
 private val MUTATION_PRIVACY_EVALUATOR =
@@ -61,8 +63,6 @@ private val DELETE_MANY_MUTATION_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "DeleteManyMutationOperation")
 private val DELETE_MANY_MUTATION_INPUT =
     ClassName("entkt.runtime.mutation.execution", "DeleteManyMutationInput")
-private val DELETE_MUTATION_SPEC =
-    ClassName("entkt.runtime.mutation.execution", "DeleteMutationSpec")
 private val DELETE_MUTATION_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationOperation")
 private val DELETE_RULE_CANDIDATE =
@@ -210,13 +210,6 @@ internal class RepoGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("%T(createManyMutationOperation)", CREATE_MUTATION_OPERATION)
             }
-            addProperty(
-                buildDeleteMutationSpec(
-                    entityDescriptorClass = entityDescriptorClass,
-                    queryClass = queryClass,
-                    entityClass = entityClass,
-                ),
-            )
             addProperties(
                 buildDeleteEvaluators(
                     schemaName = schemaName,
@@ -235,8 +228,11 @@ internal class RepoGenerator(
             ) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(
-                    "%T(spec = deleteSpec, converter = %T, privacyEvaluator = deletePrivacyEvaluator, validationEvaluator = deleteValidationEvaluator)",
+                    "%T(entity = %T, converter = %T, " +
+                        "privacyEvaluator = deletePrivacyEvaluator, validationEvaluator = deleteValidationEvaluator, " +
+                        "beforeDelete = configuredHooks.beforeDelete, afterDelete = configuredHooks.afterDelete)",
                     DELETE_MUTATION_OPERATION,
+                    entityDescriptorClass,
                     ClassName(packageName, "${schemaName}DeleteConverter"),
                 )
             }
@@ -250,9 +246,14 @@ internal class RepoGenerator(
             ) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(
-                    "%T(spec = deleteSpec, converter = %T, privacyEvaluator = deletePrivacyEvaluator, validationEvaluator = deleteValidationEvaluator)",
+                    "%T(entity = %T, converter = %T, " +
+                        "privacyEvaluator = deletePrivacyEvaluator, validationEvaluator = deleteValidationEvaluator, " +
+                        "readQueryExecutor = %T(driver, client), " +
+                        "beforeDelete = configuredHooks.beforeDelete, afterDelete = configuredHooks.afterDelete)",
                     DELETE_MANY_MUTATION_OPERATION,
+                    entityDescriptorClass,
                     ClassName(packageName, "${schemaName}DeleteConverter"),
+                    READ_QUERY_EXECUTOR,
                 )
             }
             addInitializerBlock(
@@ -547,29 +548,6 @@ internal class RepoGenerator(
                 add("beforeSaveHookRunner = configuredHooks.beforeSave,\n")
                 add("beforeCreateHookRunner = configuredHooks.beforeCreate,\n")
                 add("afterCreateHookRunner = configuredHooks.afterCreate,\n")
-                unindent()
-                add(")")
-            })
-        }
-    }
-
-    /** Capture schema-specific DELETE adapters while runtime owns lifecycle ordering. */
-    private fun buildDeleteMutationSpec(
-        entityDescriptorClass: ClassName,
-        queryClass: ClassName,
-        entityClass: ClassName,
-    ): PropertySpec {
-        val specType = DELETE_MUTATION_SPEC.parameterizedBy(entityClass)
-        return property("deleteSpec", specType) {
-            addModifiers(KModifier.PRIVATE)
-            initializer(codeBlock {
-                add("%T(\n", DELETE_MUTATION_SPEC)
-                indent()
-                add("entity = %T,\n", entityDescriptorClass)
-                add("idColumn = %T.SCHEMA.idColumn,\n", entityClass)
-                add("newQuery = { %T(driver, client) },\n", queryClass)
-                add("beforeDelete = configuredHooks.beforeDelete,\n")
-                add("afterDelete = configuredHooks.afterDelete,\n")
                 unindent()
                 add(")")
             })

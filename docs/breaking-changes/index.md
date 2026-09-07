@@ -30,6 +30,18 @@ above it.
 
 ## Unreleased
 
+- **Inject DELETE dependencies directly into operations** (`runtime`, `codegen`)
+  `DeleteMutationSpec` is removed. Both DELETE operations receive their entity
+  descriptor, converter, evaluators, and before/after hook runners directly.
+  Bulk DELETE derives its ID column from the descriptor and receives a
+  `ReadQueryExecutor` instead of a generated-query factory. It constructs its
+  candidate query directly in runtime; scalar DELETE has no query dependency.
+  _Migration:_ regenerate entity code. Handwritten internal wiring should pass
+  the descriptor and hook runners to operation constructors instead of creating
+  a spec, and inject a `ReadQueryExecutor` bound to the same driver and client
+  into `DeleteManyMutationOperation`. Deletion, interceptor behavior, hook
+  ordering, and transaction checks are unchanged.
+
 - **Construct mutation validation evaluators directly** (`runtime`, `codegen`)
   `MutationValidationEvaluator` and `ValidationDecisionEvaluator` are concrete
   runtime classes. Their `*ForInternalUse` factories are removed. CREATE passes

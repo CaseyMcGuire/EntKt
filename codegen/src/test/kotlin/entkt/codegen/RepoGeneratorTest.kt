@@ -41,8 +41,8 @@ class RepoGeneratorTest {
         ) {
             "CREATE validation should receive the prepared candidate directly\n$output"
         }
-        assert(output.contains("private val deleteSpec: DeleteMutationSpec<RepoBytesRecord>")) {
-            "DELETE should expose one typed runtime specification\n$output"
+        assert(!output.contains("DeleteMutationSpec") && !output.contains("deleteSpec")) {
+            "DELETE should inject its dependencies without a specification holder\n$output"
         }
         val deleteInput = "freshItem = { item: DeleteRuleCandidate<RepoBytesRecord, RepoBytesRecordWriteCandidate> -> RepoBytesRecordDeleteRuleInput(item.entity, item.candidate) }"
         assert(Regex(Regex.escape(deleteInput)).findAll(output).count() == 2) {
@@ -613,8 +613,28 @@ class RepoGeneratorTest {
         assert(output.contains("private val deleteMutationOperation: MutationOperation<ReadOnlyEntClient, DeleteMutationInput, Boolean>") && !output.contains("DeleteOperation")) {
             "the scalar DELETE operation should return a Boolean directly\n$output"
         }
-        assert(output.contains("DeleteMutationOperation(spec = deleteSpec, converter = CarDeleteConverter,"))
-        assert(output.contains("DeleteManyMutationOperation(spec = deleteSpec, converter = CarDeleteConverter,"))
+        assert(output.contains("DeleteMutationOperation(entity = CarDescriptor, converter = CarDeleteConverter,"))
+        assert(output.contains("DeleteManyMutationOperation(entity = CarDescriptor, converter = CarDeleteConverter,"))
+        assert(!output.contains("DeleteMutationSpec") && !output.contains("deleteSpec"))
+        assert(!output.contains("idColumn = Car.SCHEMA.idColumn")) {
+            "DELETE should derive its ID column from the injected descriptor\n$output"
+        }
+        val scalarBinding = output.substringAfter("private val deleteMutationOperation:")
+            .substringBefore("private val deleteManyMutationOperation:")
+        val bulkBinding = output.substringAfter("private val deleteManyMutationOperation:").substringBefore("init {")
+        for (binding in listOf(scalarBinding, bulkBinding)) {
+            assert(binding.contains("beforeDelete = configuredHooks.beforeDelete"))
+            assert(binding.contains("afterDelete = configuredHooks.afterDelete"))
+        }
+        assert(!scalarBinding.contains("readQueryExecutor")) {
+            "Scalar DELETE must not carry an unused query executor\n$output"
+        }
+        assert(bulkBinding.contains("readQueryExecutor = ReadQueryExecutor(driver, client)")) {
+            "Bulk DELETE must receive the query executor bound to this repository's driver and client\n$output"
+        }
+        assert(!bulkBinding.contains("CarQuery") && !output.contains("newQuery")) {
+            "DELETE must not depend on a generated query builder or query factory\n$output"
+        }
         assert(!output.contains("MutationLifecycle"))
         assert(output.contains("private val deleteManyMutationOperation: MutationOperation<ReadOnlyEntClient, DeleteManyMutationInput<Car>, Int>"))
         assert(
@@ -752,8 +772,9 @@ class RepoGeneratorTest {
         assert(!output.contains("fun evaluateCreatePrivacy")) {
             "CREATE privacy should run in the shared runtime lifecycle\n$output"
         }
-        assert(output.contains("private val deleteSpec: DeleteMutationSpec<Car>")) {
-            "DELETE rule adapters should live in one typed specification\n$output"
+        assert(output.contains("private val deletePrivacyEvaluator:") &&
+            output.contains("private val deleteValidationEvaluator:")) {
+            "DELETE operations should share the bound evaluators directly\n$output"
         }
         assert(!output.contains("updateDenialReasonOrNull") && !output.contains("deleteDenialReasonOrNull")) {
             "repositories should not generate write lifecycle evaluators\n$output"
@@ -826,7 +847,7 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `delete specification captures privacy candidates and rules`() {
+    fun `delete operation receives its converter query executor and rules directly`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
@@ -836,11 +857,11 @@ class RepoGeneratorTest {
             "DELETE should use a schema-specific converter without calling back into the repo\n$output"
         }
         assert(!output.contains("fun buildDeleteCandidate") && !output.contains("::buildDeleteCandidate"))
-        assert(output.contains("newQuery = { CarQuery(driver, client) }")) {
-            "deleteSpec should provide only the schema-specific candidate query factory\n$output"
+        assert(output.contains("readQueryExecutor = ReadQueryExecutor(driver, client)")) {
+            "DELETE should use the existing runtime query executor\n$output"
         }
         assert(output.contains("rules = configuredPrivacy.deleteRules")) {
-            "deleteSpec should capture DELETE privacy rules\n$output"
+            "DELETE should bind its configured privacy rules\n$output"
         }
     }
 
@@ -1015,8 +1036,8 @@ class RepoGeneratorTest {
         assert(output.contains("CreateManyMutationOperation<ReadOnlyEntClient, CarCreateDraft, CarWriteCandidate, Car, CarBeforeSaveState, CarBeforeCreateState>")) {
             "the create operation should require the concrete read-only client\n$output"
         }
-        assert(output.contains("DeleteMutationSpec<Car>")) {
-            "deleteSpec should not carry a rule-client type\n$output"
+        assert(output.contains("MutationOperation<ReadOnlyEntClient, DeleteMutationInput, Boolean>")) {
+            "The DELETE operation should require the concrete read-only client\n$output"
         }
         assert(!output.contains("ruleClientProvider")) {
             "evaluators must not capture a rule-client provider\n$output"
