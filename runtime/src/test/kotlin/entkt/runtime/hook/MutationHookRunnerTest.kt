@@ -17,8 +17,8 @@ class MutationHookRunnerTest {
         val runner = MutationHookRunner<State>(
             lifecycle = "User.beforeUpdate",
             hooks = listOf(
-                MutationHook<State> { state -> state.copy(value = "${state.value}:first") },
-                MutationHook<State> { state -> state.copy(value = "${state.value}:second") },
+                TransformingHook<State> { state -> state.copy(value = "${state.value}:first") },
+                TransformingHook<State> { state -> state.copy(value = "${state.value}:second") },
             ),
         )
 
@@ -33,8 +33,8 @@ class MutationHookRunnerTest {
         val runner = MutationHookRunner<Int>(
             lifecycle = "User.beforeCreate",
             hooks = listOf(
-                MutationHook<Int> { it * 10 },
-                MutationHook<Int> { it + 1 },
+                TransformingHook<Int> { it * 10 },
+                TransformingHook<Int> { it + 1 },
             ),
         )
 
@@ -49,11 +49,11 @@ class MutationHookRunnerTest {
         val runner = MutationHookRunner<Int>(
             lifecycle = "User.beforeCreate",
             hooks = listOf(
-                batchMutationHook<Int> { states ->
+                batchTransformingHook<Int> { states ->
                     observed.add(states.toList())
                     states.mapStatesIndexed { index, state -> state + index }
                 },
-                batchMutationHook<Int> { states ->
+                batchTransformingHook<Int> { states ->
                     observed.add(states.toList())
                     states.mapStates { it * 2 }
                 },
@@ -71,7 +71,7 @@ class MutationHookRunnerTest {
         val initial = Any()
         val runner = MutationHookRunner<Any>(
             lifecycle = "User.beforeUpdate",
-            hooks = listOf(batchMutationHook<Any> { it }),
+            hooks = listOf(batchTransformingHook<Any> { it }),
         )
 
         val result = runner.run(initial)
@@ -84,7 +84,7 @@ class MutationHookRunnerTest {
         val foreign = MutationBatch.from(listOf("foreign"))
         val runner = MutationHookRunner<String>(
             lifecycle = "User.beforeUpdate",
-            hooks = listOf(batchMutationHook<String> { foreign }),
+            hooks = listOf(batchTransformingHook<String> { foreign }),
         )
 
         val exception = assertFailsWith<EntBatchMutationHookContractException> {
@@ -102,7 +102,7 @@ class MutationHookRunnerTest {
         var calls = 0
         val runner = MutationHookRunner<Int>(
             lifecycle = "User.beforeCreate",
-            hooks = listOf(MutationHook<Int> { calls++; it }),
+            hooks = listOf(TransformingHook<Int> { calls++; it }),
         )
 
         val result = runner.runBatch(emptyList())

@@ -12,7 +12,7 @@ import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
-import entkt.runtime.hook.batchHook
+import entkt.runtime.hook.batchActionHook
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -294,12 +294,12 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             }
             hooks {
                 users {
-                    beforeDelete(batchHook<User> { entities ->
+                    beforeDelete(batchActionHook<User> { entities ->
                         assertEquals(0, driver.probe.deleteManyByIdsCalls)
                         driver.probe.events +=
                             "beforeDelete:${entities.joinToString { it.name }}"
                     })
-                    afterDelete(batchHook<User> { entities ->
+                    afterDelete(batchActionHook<User> { entities ->
                         assertEquals(1, driver.probe.deleteManyByIdsCalls)
                         driver.probe.events +=
                             "afterDelete:${entities.joinToString { it.name }}"
@@ -555,7 +555,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             policies { users(configuredPolicy) }
             hooks {
                 users {
-                    afterDelete(batchHook<User> { entities ->
+                    afterDelete(batchActionHook<User> { entities ->
                         afterBatches += entities.map { it.name }
                         throw thrown
                     })
@@ -660,7 +660,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             policies { users(configuredPolicy) }
             hooks {
                 users {
-                    afterDelete(batchHook<User> { throw thrown })
+                    afterDelete(batchActionHook<User> { throw thrown })
                 }
             }
         }
@@ -711,8 +711,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             policies { users(configuredPolicy) }
             hooks {
                 users {
-                    beforeDelete(batchHook<User> { beforeBatches += it.map(User::name) })
-                    afterDelete(batchHook<User> { afterBatches += it.map(User::name) })
+                    beforeDelete(batchActionHook<User> { beforeBatches += it.map(User::name) })
+                    afterDelete(batchActionHook<User> { afterBatches += it.map(User::name) })
                 }
             }
         }
@@ -748,7 +748,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             policies { users(configuredPolicy) }
             hooks {
                 users {
-                    afterDelete(batchHook<User> { afterBatches += it.map(User::name) })
+                    afterDelete(batchActionHook<User> { afterBatches += it.map(User::name) })
                 }
             }
         }

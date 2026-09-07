@@ -13,11 +13,19 @@ import kotlin.test.assertEquals
 /** Compile-time coverage for mixed scalar and batch lifecycle registration. */
 class BatchLifecycleCodegenCompileTest {
 
-    private class HookSchema : EntSchema("hooks", clientName = "hookSchemas") {
+    private class ActionHook : EntSchema("action_hooks", clientName = "actionHooks") {
         override fun id() = EntId.long()
     }
 
-    private class BatchHookSchema : EntSchema("batch_hooks", clientName = "batchHookSchemas") {
+    private class BatchActionHook : EntSchema("batch_action_hooks", clientName = "batchActionHooks") {
+        override fun id() = EntId.long()
+    }
+
+    private class TransformingHook : EntSchema("transforming_hooks", clientName = "transformingHooks") {
+        override fun id() = EntId.long()
+    }
+
+    private class BatchTransformingHook : EntSchema("batch_transforming_hooks", clientName = "batchTransformingHooks") {
         override fun id() = EntId.long()
     }
 
@@ -76,8 +84,12 @@ class BatchLifecycleCodegenCompileTest {
                 import com.example.ent.EntClient
                 import com.example.ent.ReadOnlyEntClient
                 import entkt.runtime.driver.DatabaseDriver
-                import entkt.runtime.hook.MutationHook
-                import entkt.runtime.hook.batchMutationHook
+                import entkt.runtime.hook.ActionHook
+                import entkt.runtime.hook.BatchActionHook
+                import entkt.runtime.hook.BatchTransformingHook
+                import entkt.runtime.hook.TransformingHook
+                import entkt.runtime.hook.batchActionHook
+                import entkt.runtime.hook.batchTransformingHook
                 import entkt.runtime.privacy.EntityPolicy
                 import entkt.runtime.privacy.PrivacyDecision
                 import entkt.runtime.privacy.allowAll
@@ -93,6 +105,9 @@ class BatchLifecycleCodegenCompileTest {
                     }
 
                 private val scalarCreate = CarCreateValidationRule { _, _ -> ValidationDecision.Valid }
+                private val actionHook: BatchActionHook<Car> = ActionHook<Car> { }
+                private val transformingHook: BatchTransformingHook<CarBeforeCreateState> =
+                    TransformingHook<CarBeforeCreateState> { it }
                 private val scalarCreates = arrayOf(scalarCreate)
                 private val batchCreate: CarCreateBatchValidationRule =
                     batchValidationRule<ReadOnlyEntClient, CarWriteCandidate> { _, batch ->
@@ -128,9 +143,12 @@ class BatchLifecycleCodegenCompileTest {
                     hooks {
                         cars {
                             beforeCreate { state -> state }
-                            beforeCreate(MutationHook<CarBeforeCreateState> { it })
-                            beforeCreate(batchMutationHook<CarBeforeCreateState> { it })
+                            beforeCreate(TransformingHook<CarBeforeCreateState> { it })
+                            beforeCreate(transformingHook)
+                            beforeCreate(batchTransformingHook<CarBeforeCreateState> { it })
                             beforeCreate { state -> state }
+                            afterCreate(actionHook)
+                            afterCreate(batchActionHook<Car> { })
                         }
                     }
                 }
@@ -146,22 +164,17 @@ class BatchLifecycleCodegenCompileTest {
     }
 
     @Test
-    fun `entity names Hook and BatchHook do not collide with runtime hook contracts`() {
-        val hook = HookSchema()
-        val batchHook = BatchHookSchema()
-        val registry = mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(
-            hook::class to hook,
-            batchHook::class to batchHook,
+    fun `entity names do not collide with action or transforming hook contracts`() {
+        val schemas = listOf(
+            ActionHook(),
+            BatchActionHook(),
+            TransformingHook(),
+            BatchTransformingHook(),
         )
-        hook.finalize(registry)
-        batchHook.finalize(registry)
+        val registry = schemas.associateBy { it::class }
+        schemas.forEach { it.finalize(registry) }
         val generated = EntGenerator("com.example.ent")
-            .generate(
-                listOf(
-                    SchemaInput(hook),
-                    SchemaInput(batchHook),
-                ),
-            )
+            .generate(schemas.map { SchemaInput(it) })
             .toCompileTestSources()
 
         val result = compileGenerated(generated)
@@ -170,6 +183,40 @@ class BatchLifecycleCodegenCompileTest {
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
             "Expected runtime hook contract imports to avoid entity-name collisions, got:\n${result.messages}",
+        )
+    }
+
+    @Test
+    fun `action and transforming hooks cannot be registered in each other's phases`() {
+        val result = compile(
+            SourceFile.kotlin(
+                "MismatchedHookKinds.kt",
+                """
+                package com.example.app
+
+                import com.example.ent.Car
+                import com.example.ent.CarBeforeCreateState
+                import com.example.ent.EntClient
+                import entkt.runtime.driver.DatabaseDriver
+                import entkt.runtime.hook.ActionHook
+                import entkt.runtime.hook.TransformingHook
+
+                fun configuredClient(driver: DatabaseDriver): EntClient = EntClient(driver) {
+                    hooks {
+                        cars {
+                            beforeCreate(ActionHook<CarBeforeCreateState> { })
+                            afterCreate(TransformingHook<Car> { it })
+                        }
+                    }
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals(
+            KotlinCompilation.ExitCode.COMPILATION_ERROR,
+            result.exitCode,
+            "Expected mismatched hook kinds to fail compilation, got:\n${result.messages}",
         )
     }
 

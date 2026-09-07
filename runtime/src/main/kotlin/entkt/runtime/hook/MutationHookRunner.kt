@@ -8,7 +8,7 @@ import entkt.runtime.result.EntBatchMutationHookContractException
 @EntktInternal
 class MutationHookRunner<State>(
     lifecycle: String,
-    hooks: List<BatchMutationHook<State>>,
+    hooks: List<BatchTransformingHook<State>>,
 ) {
     private val lifecycle: String = lifecycle.also {
         require(it.isNotBlank()) { "lifecycle must not be blank" }

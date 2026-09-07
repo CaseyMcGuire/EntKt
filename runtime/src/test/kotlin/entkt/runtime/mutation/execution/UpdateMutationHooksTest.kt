@@ -3,9 +3,9 @@
 package entkt.runtime.mutation.execution
 
 import entkt.runtime.entity.EntEntity
-import entkt.runtime.hook.Hook
+import entkt.runtime.hook.ActionHook
 import entkt.runtime.hook.HookRunner
-import entkt.runtime.hook.MutationHook
+import entkt.runtime.hook.TransformingHook
 import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.BeforeUpdateHookState
@@ -62,7 +62,7 @@ class UpdateMutationHooksTest {
             beforeSave = MutationHookRunner(
                 lifecycle = "Test.beforeSave",
                 hooks = listOf(
-                    MutationHook { state ->
+                    TransformingHook { state ->
                         events += "before-save:${state.description}"
                         BeforeSaveState("${state.description}-save")
                     },
@@ -71,7 +71,7 @@ class UpdateMutationHooksTest {
             beforeUpdate = MutationHookRunner(
                 lifecycle = "Test.beforeUpdate",
                 hooks = listOf(
-                    MutationHook { state ->
+                    TransformingHook { state ->
                         events += "before-update:${state.description}"
                         BeforeUpdateState("${state.description}-update")
                     },
@@ -122,7 +122,7 @@ class UpdateMutationHooksTest {
             },
             beforeSave = MutationHookRunner("Test.beforeSave", emptyList()),
             beforeUpdate = MutationHookRunner("Test.beforeUpdate", emptyList()),
-            afterUpdate = HookRunner(listOf(Hook(seen::add))),
+            afterUpdate = HookRunner(listOf(ActionHook(seen::add))),
         )
 
         val updated = Widget(1L, "updated")

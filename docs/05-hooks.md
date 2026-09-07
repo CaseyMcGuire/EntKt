@@ -36,16 +36,22 @@ val client = EntClient(driver) {
 
 ## Scalar and Batch Hooks
 
-The ordinary trailing-lambda form is a scalar hook. It keeps the existing
-one-value callback and automatically adapts when a lifecycle phase contains
-several values:
+There are two callback contracts. `ActionHook<T>` performs work and returns
+`Unit`; it is used by `afterCreate`, `afterUpdate`, `beforeDelete`, and
+`afterDelete`. `TransformingHook<T>` returns the state passed to the next
+hook; it is used by `beforeSave`, `beforeCreate`, and `beforeUpdate`. Both
+may perform side effects or throw—these names describe return behavior,
+not purity.
+
+The ordinary trailing-lambda form is a scalar hook. Both kinds automatically
+adapt when a lifecycle phase contains several values:
 
 ```kotlin
-interface BatchHook<in T> {
+interface BatchActionHook<in T> {
     fun runBatch(elements: List<T>)
 }
 
-fun interface Hook<in T> : BatchHook<T> {
+fun interface ActionHook<in T> : BatchActionHook<T> {
     fun run(element: T)
 
     override fun runBatch(elements: List<T>) {
@@ -53,35 +59,51 @@ fun interface Hook<in T> : BatchHook<T> {
     }
 }
 
-fun <T> batchHook(block: (List<T>) -> Unit): BatchHook<T>
+interface BatchTransformingHook<State> {
+    fun transformBatch(states: MutationBatch<State>): MutationBatch<State>
+}
+
+fun interface TransformingHook<State> : BatchTransformingHook<State> {
+    fun transform(state: State): State
+
+    override fun transformBatch(states: MutationBatch<State>): MutationBatch<State> =
+        states.mapStates(::transform)
+}
 ```
 
-Use `batchHook` when one callback should see the whole ordered phase list—for
-example, to share a lookup or one timestamp across all creates:
+Use `batchActionHook` or `batchTransformingHook` when one callback should
+see the whole ordered phase batch—for example, to share one timestamp
+across all creates:
 
 ```kotlin
-import entkt.runtime.hook.batchHook
+import entkt.runtime.hook.batchActionHook
+import entkt.runtime.hook.batchTransformingHook
 
 users {
     beforeCreate(
-        batchHook<UserCreateHookContext> { contexts ->
+        batchTransformingHook<UserBeforeCreateState> { states ->
             val now = clock.now()
-            contexts.forEach { it.mutation.createdAt = now }
+            states.mapStates { it.setCreatedAt(now) }
+        },
+    )
+    afterCreate(
+        batchActionHook<User> { entities ->
+            println("Created ${entities.size} users")
         },
     )
 }
 ```
 
-`BatchHook<T>` is an explicit interface with
-`runBatch(elements: List<T>)`. The `batchHook { ... }` factory avoids making a
-lambda ambiguous between one element and a list. Batch and scalar hooks
-register under the same Kotlin lifecycle names and share one registration
-order; there are no `beforeCreateBatch`-style Kotlin methods. Generated batch
-overloads use JVM names such as `beforeCreateBatchHook` so Java lambdas remain
-unambiguous. A batch hook receives a singleton list for a scalar operation and
-is not invoked for an empty phase. Hooks intentionally keep this read-only
-`List` input instead of the privacy/validation `RuleBatch`: hooks return `Unit`,
-so there is no per-item result whose correlation must be protected.
+The explicit batch factories avoid making a lambda ambiguous between one
+element and a batch. Batch and scalar hooks register under the same Kotlin
+lifecycle names and share one registration order; there are no
+`beforeCreateBatch`-style Kotlin methods. A batch hook receives a singleton
+batch for a scalar operation and is not invoked for an empty phase.
+
+Action hooks receive a read-only `List`: they return no per-item result.
+Transforming hooks receive a `MutationBatch`; `mapStates` and
+`mapStatesIndexed` preserve its identity, size, and order. Returning a batch
+from a different invocation is rejected.
 
 ## The Mutation Interface
 

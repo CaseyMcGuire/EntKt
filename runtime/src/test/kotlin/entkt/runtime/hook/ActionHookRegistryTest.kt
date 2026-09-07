@@ -5,15 +5,15 @@ package entkt.runtime.hook
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-class HookRegistryTest {
+class ActionHookRegistryTest {
     @Test
     fun `scalar and batch registrations retain encounter order`() {
         val calls = mutableListOf<String>()
-        val registry = HookRegistry<Int>()
+        val registry = ActionHookRegistry<Int>()
 
         registry { value -> calls += "scalar:$value" }
         registry(
-            batchHook { values ->
+            batchActionHook { values ->
                 calls += "batch:${values.joinToString()}"
             },
         )
@@ -29,7 +29,7 @@ class HookRegistryTest {
     @Test
     fun `snapshots are detached from later registrations`() {
         val calls = mutableListOf<String>()
-        val source = HookRegistry<Int>()
+        val source = ActionHookRegistry<Int>()
         source { calls += "initial:$it" }
 
         val snapshot = source.snapshotForInternalUse()

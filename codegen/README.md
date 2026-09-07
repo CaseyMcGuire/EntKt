@@ -125,7 +125,8 @@ automatically apply within transactions — no re-registration needed.
 
 Scalar privacy rules, validators, and hooks automatically implement their
 runtime batch contract by visiting values in encounter order. Explicit batch
-callbacks use `batchPrivacyRule`, `batchValidationRule`, and `batchHook`; the
+callbacks use `batchPrivacyRule`, `batchValidationRule`, `batchActionHook`,
+and `batchTransformingHook`; the
 generated DSL registers them under the same `load` / `create` / `beforeCreate`
 names in Kotlin, not parallel `*Batch` methods. Their generated JVM names use
 `*BatchRule` / `*BatchHook` suffixes so Java lambda overload resolution remains

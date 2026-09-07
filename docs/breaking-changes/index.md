@@ -30,6 +30,18 @@ above it.
 
 ## Unreleased
 
+- **Name hook contracts by their return behavior** (`runtime`)
+  `Hook<T>` / `BatchHook<T>` are now `ActionHook<T>` / `BatchActionHook<T>`;
+  they perform work without returning replacement state. `MutationHook<T>` /
+  `BatchMutationHook<T>` are now `TransformingHook<T>` / `BatchTransformingHook<T>`;
+  each returned state is passed to the next hook. Neither contract promises
+  purity. Registry types are now `ActionHookRegistry` and
+  `TransformingHookRegistry`.
+  _Migration:_ update imports and explicit hook types. Replace `batchHook`
+  with `batchActionHook` and `batchMutationHook` with `batchTransformingHook`.
+  Lifecycle names and trailing-lambda registration syntax are unchanged,
+  as are hook ordering, batch correspondence, and failure behavior.
+
 - **Inject DELETE dependencies directly into operations** (`runtime`, `codegen`)
   `DeleteMutationSpec` is removed. Both DELETE operations receive their entity
   descriptor, converter, evaluators, and before/after hook runners directly.

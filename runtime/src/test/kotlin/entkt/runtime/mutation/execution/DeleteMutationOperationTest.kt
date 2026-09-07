@@ -12,7 +12,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.hook.Hook
+import entkt.runtime.hook.ActionHook
 import entkt.runtime.hook.HookRunner
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
@@ -197,8 +197,8 @@ class DeleteMutationOperationTest {
             }
         }
 
-        val beforeDelete = HookRunner(listOf(Hook<Widget> { entity -> events += "before:${entity.id}" }))
-        val afterDelete = HookRunner(listOf(Hook<Widget> { entity -> events += "after:${entity.id}" }))
+        val beforeDelete = HookRunner(listOf(ActionHook<Widget> { entity -> events += "before:${entity.id}" }))
+        val afterDelete = HookRunner(listOf(ActionHook<Widget> { entity -> events += "after:${entity.id}" }))
 
         val privacyEvaluator = MutationPrivacyEvaluator<
             Any,
@@ -416,7 +416,7 @@ class DeleteMutationOperationTest {
                 fixture.viewerContext,
                 1L,
                 beforeDelete = HookRunner(emptyList()),
-                afterDelete = HookRunner(listOf(Hook<Widget> { throw boom })),
+                afterDelete = HookRunner(listOf(ActionHook<Widget> { throw boom })),
             )
 
             val failure = assertIs<EntUnexpectedMutationException>(

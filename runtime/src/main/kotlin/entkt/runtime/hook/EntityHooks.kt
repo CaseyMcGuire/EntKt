@@ -7,13 +7,13 @@ import entkt.schema.EntktDsl
 @EntktDsl
 @OptIn(EntktInternal::class)
 public class EntityHooks<BeforeSave, BeforeCreate, BeforeUpdate, Entity> {
-    public val beforeSave: MutationHookRegistry<BeforeSave> = MutationHookRegistry()
-    public val beforeCreate: MutationHookRegistry<BeforeCreate> = MutationHookRegistry()
-    public val afterCreate: HookRegistry<Entity> = HookRegistry()
-    public val beforeUpdate: MutationHookRegistry<BeforeUpdate> = MutationHookRegistry()
-    public val afterUpdate: HookRegistry<Entity> = HookRegistry()
-    public val beforeDelete: HookRegistry<Entity> = HookRegistry()
-    public val afterDelete: HookRegistry<Entity> = HookRegistry()
+    public val beforeSave: TransformingHookRegistry<BeforeSave> = TransformingHookRegistry()
+    public val beforeCreate: TransformingHookRegistry<BeforeCreate> = TransformingHookRegistry()
+    public val afterCreate: ActionHookRegistry<Entity> = ActionHookRegistry()
+    public val beforeUpdate: TransformingHookRegistry<BeforeUpdate> = TransformingHookRegistry()
+    public val afterUpdate: ActionHookRegistry<Entity> = ActionHookRegistry()
+    public val beforeDelete: ActionHookRegistry<Entity> = ActionHookRegistry()
+    public val afterDelete: ActionHookRegistry<Entity> = ActionHookRegistry()
 
     /** Resolve this mutable construction value into a detached immutable value. */
     @EntktInternal

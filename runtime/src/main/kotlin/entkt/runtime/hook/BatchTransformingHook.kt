@@ -9,14 +9,14 @@ package entkt.runtime.hook
  * identity, size, and encounter order. A batch returned from a different hook
  * invocation is rejected by [MutationHookRunner].
  */
-interface BatchMutationHook<State> {
+interface BatchTransformingHook<State> {
     fun transformBatch(states: MutationBatch<State>): MutationBatch<State>
 }
 
-/** Construct an explicitly batch-aware mutation hook. */
-fun <State> batchMutationHook(
+/** Construct an explicitly batch-aware transforming hook. */
+fun <State> batchTransformingHook(
     transform: (MutationBatch<State>) -> MutationBatch<State>,
-): BatchMutationHook<State> = object : BatchMutationHook<State> {
+): BatchTransformingHook<State> = object : BatchTransformingHook<State> {
     override fun transformBatch(states: MutationBatch<State>): MutationBatch<State> =
         transform(states)
 }

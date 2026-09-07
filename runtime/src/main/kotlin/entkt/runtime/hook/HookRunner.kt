@@ -5,7 +5,7 @@ import entkt.runtime.internal.immutableListCopy
 
 /** Runs one immutable, ordered set of lifecycle hooks. */
 @EntktInternal
-class HookRunner<T>(hooks: List<BatchHook<T>>) {
+class HookRunner<T>(hooks: List<BatchActionHook<T>>) {
     private val hooks = immutableListCopy(hooks)
 
     /** Run every hook against the same non-empty ordered batch. */

@@ -9,12 +9,12 @@ class HookRunnerTest {
     @Test
     fun `runner snapshots hooks and preserves registration order`() {
         val events = mutableListOf<String>()
-        val hooks = mutableListOf<BatchHook<Int>>(
-            Hook { events += "first:$it" },
-            batchHook { events += "batch:${it.joinToString()}" },
+        val hooks = mutableListOf<BatchActionHook<Int>>(
+            ActionHook { events += "first:$it" },
+            batchActionHook { events += "batch:${it.joinToString()}" },
         )
         val runner = HookRunner(hooks)
-        hooks += Hook { events += "late:$it" }
+        hooks += ActionHook { events += "late:$it" }
 
         runner.run(listOf(2, 1))
 

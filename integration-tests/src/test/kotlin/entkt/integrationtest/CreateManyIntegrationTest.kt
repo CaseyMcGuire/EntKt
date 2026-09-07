@@ -15,8 +15,8 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
-import entkt.runtime.hook.batchHook
-import entkt.runtime.hook.batchMutationHook
+import entkt.runtime.hook.batchActionHook
+import entkt.runtime.hook.batchTransformingHook
 import entkt.runtime.mutation.orElse
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
@@ -251,16 +251,16 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             policies { users(policy) }
             hooks {
                 users {
-                    beforeSave(batchMutationHook<UserBeforeSaveState> { states ->
+                    beforeSave(batchTransformingHook<UserBeforeSaveState> { states ->
                         events += "beforeSave:${states.joinToString { it.name.orElse(null)!! }}"
                         states
                     })
-                    beforeCreate(batchMutationHook<UserBeforeCreateState> { states ->
+                    beforeCreate(batchTransformingHook<UserBeforeCreateState> { states ->
                         states.forEach { assertSame(capturedPrivacy, it.viewerContext) }
                         events += "beforeCreate:${states.joinToString { it.name.orElse(null)!! }}"
                         states
                     })
-                    afterCreate(batchHook<User> { entities ->
+                    afterCreate(batchActionHook<User> { entities ->
                         // Hydration and the set-based write both precede the full-batch callback.
                         assertEquals(1, recording.callCount("insertMany:users"))
                         events += "afterCreate:${entities.joinToString { it.name }}"
@@ -570,7 +570,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             policies { users(OpenUser) }
             hooks {
                 users {
-                    afterCreate(batchHook<User> { throw thrown })
+                    afterCreate(batchActionHook<User> { throw thrown })
                 }
             }
         }

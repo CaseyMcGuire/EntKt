@@ -5,12 +5,12 @@ package entkt.runtime.hook
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-class MutationHookRegistryTest {
+class TransformingHookRegistryTest {
     @Test
     fun `scalar and batch transformations retain registration order`() {
-        val registry = MutationHookRegistry<Int>()
+        val registry = TransformingHookRegistry<Int>()
         registry { it + 1 }
-        registry(batchMutationHook { states -> states.mapStates { it * 2 } })
+        registry(batchTransformingHook { states -> states.mapStates { it * 2 } })
 
         val result = registry
             .runnerForInternalUse("User.beforeCreate")
@@ -21,7 +21,7 @@ class MutationHookRegistryTest {
 
     @Test
     fun `resolved runner is detached from later registrations`() {
-        val registry = MutationHookRegistry<Int>()
+        val registry = TransformingHookRegistry<Int>()
         registry { it + 1 }
         val runner = registry.runnerForInternalUse("User.beforeCreate")
         registry { it * 100 }

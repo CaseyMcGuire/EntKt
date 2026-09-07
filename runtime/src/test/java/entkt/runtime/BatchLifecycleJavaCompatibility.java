@@ -1,6 +1,6 @@
 package entkt.runtime;
 
-import entkt.runtime.hook.Hook;
+import entkt.runtime.hook.ActionHook;
 import entkt.runtime.privacy.BatchPrivacyRule;
 import entkt.runtime.privacy.ViewerContext;
 import entkt.runtime.privacy.PrivacyDecision;
@@ -82,7 +82,7 @@ final class BatchLifecycleJavaCompatibility {
         }
     };
 
-    static final Hook<List<Integer>> LIST_HOOK = new Hook<>() {
+    static final ActionHook<List<Integer>> LIST_HOOK = new ActionHook<>() {
         @Override
         public void run(List<Integer> value) {}
     };

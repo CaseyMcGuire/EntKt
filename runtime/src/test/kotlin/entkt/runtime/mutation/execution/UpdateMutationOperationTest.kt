@@ -6,9 +6,9 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.hook.Hook
+import entkt.runtime.hook.ActionHook
 import entkt.runtime.hook.HookRunner
-import entkt.runtime.hook.MutationHook
+import entkt.runtime.hook.TransformingHook
 import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.BeforeUpdateHookState
@@ -305,7 +305,7 @@ class UpdateMutationOperationTest {
                 beforeSave = MutationHookRunner(
                     lifecycle = "Widget.beforeSave",
                     hooks = listOf(
-                        MutationHook { value: BeforeSaveState ->
+                        TransformingHook { value: BeforeSaveState ->
                             events += value.description
                             value
                         },
@@ -314,7 +314,7 @@ class UpdateMutationOperationTest {
                 beforeUpdate = MutationHookRunner(
                     lifecycle = "Widget.beforeUpdate",
                     hooks = listOf(
-                        MutationHook { value: BeforeUpdateState ->
+                        TransformingHook { value: BeforeUpdateState ->
                             events += value.description
                             value
                         },
@@ -322,7 +322,7 @@ class UpdateMutationOperationTest {
                 ),
                 afterUpdate = HookRunner(
                     listOf(
-                        Hook { entity ->
+                        ActionHook { entity ->
                             events += "after:${entity.name}"
                             afterAction(entity)
                         },

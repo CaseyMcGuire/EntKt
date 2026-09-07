@@ -1,8 +1,8 @@
 package entkt.runtime
 
-import entkt.runtime.hook.BatchHook
-import entkt.runtime.hook.Hook
-import entkt.runtime.hook.batchHook
+import entkt.runtime.hook.BatchActionHook
+import entkt.runtime.hook.ActionHook
+import entkt.runtime.hook.batchActionHook
 import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -110,7 +110,7 @@ class BatchLifecycleContractsTest {
         }
         val validation = ValidationRule<String, List<Int>> { _, _ -> ValidationDecision.Valid }
         val visited = mutableListOf<List<Int>>()
-        val hook = Hook<List<Int>> { visited += it }
+        val hook = ActionHook<List<Int>> { visited += it }
 
         assertEquals(
             listOf(PrivacyDecision.Deny("1, 2")),
@@ -133,11 +133,11 @@ class BatchLifecycleContractsTest {
             batch.decideEach { ValidationDecision.Valid }
         }
         val hookValues = mutableListOf<Any?>()
-        val hookForAny = batchHook<Any?> { hookValues.addAll(it) }
+        val hookForAny = batchActionHook<Any?> { hookValues.addAll(it) }
 
         val privacyForStrings: BatchPrivacyRule<String, String> = privacyForAny
         val validationForStrings: BatchValidationRule<String, String> = validationForAny
-        val hookForStrings: BatchHook<String> = hookForAny
+        val hookForStrings: BatchActionHook<String> = hookForAny
 
         assertEquals(
             listOf(PrivacyDecision.Allow),
@@ -259,8 +259,8 @@ class BatchLifecycleContractsTest {
     @Test
     fun `scalar hooks adapt to ordered batches`() {
         val visited = mutableListOf<Int>()
-        val scalar = Hook<Int> { visited += it }
-        val batch: BatchHook<Int> = scalar
+        val scalar = ActionHook<Int> { visited += it }
+        val batch: BatchActionHook<Int> = scalar
 
         batch.runBatch(listOf(4, 2, 9))
 
@@ -270,7 +270,7 @@ class BatchLifecycleContractsTest {
     @Test
     fun `batch hook factory receives the complete ordered list once`() {
         val invocations = mutableListOf<List<String>>()
-        val hook = batchHook<String> { invocations += it }
+        val hook = batchActionHook<String> { invocations += it }
 
         hook.runBatch(listOf("a", "b"))
 

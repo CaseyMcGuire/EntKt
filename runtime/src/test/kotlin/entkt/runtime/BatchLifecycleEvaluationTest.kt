@@ -2,8 +2,8 @@
 
 package entkt.runtime
 
-import entkt.runtime.hook.Hook
-import entkt.runtime.hook.batchHook
+import entkt.runtime.hook.ActionHook
+import entkt.runtime.hook.batchActionHook
 import entkt.runtime.hook.HookRunner
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -251,7 +251,7 @@ class BatchLifecycleEvaluationTest {
             validationCalls++
             batch.decideEach { ValidationDecision.Valid }
         }
-        val hook = batchHook<Int> { hookCalls++ }
+        val hook = batchActionHook<Int> { hookCalls++ }
 
         assertEquals(
             emptyList(),
@@ -428,7 +428,7 @@ class BatchLifecycleEvaluationTest {
             }
             batch.decideEach { ValidationDecision.Valid }
         }
-        val hook = batchHook<Int> { elements ->
+        val hook = batchActionHook<Int> { elements ->
             assertFailsWith<UnsupportedOperationException> {
                 @Suppress("UNCHECKED_CAST")
                 (elements as MutableList<Int>).clear()
@@ -454,9 +454,9 @@ class BatchLifecycleEvaluationTest {
     fun `hooks run in registration order and scalar hooks retain element order`() {
         val events = mutableListOf<String>()
         val hooks = listOf(
-            Hook<Int> { events += "scalar $it" },
-            batchHook<Int> { elements -> events += "batch ${elements.joinToString()}" },
-            Hook<Int> { events += "last $it" },
+            ActionHook<Int> { events += "scalar $it" },
+            batchActionHook<Int> { elements -> events += "batch ${elements.joinToString()}" },
+            ActionHook<Int> { events += "last $it" },
         )
 
         HookRunner(hooks).run(listOf(2, 1))

@@ -6,9 +6,9 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.hook.Hook
+import entkt.runtime.hook.ActionHook
 import entkt.runtime.hook.HookRunner
-import entkt.runtime.hook.MutationHook
+import entkt.runtime.hook.TransformingHook
 import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
@@ -777,7 +777,7 @@ class CreateMutationOperationTest {
             beforeSaveHookRunner = MutationHookRunner(
                 lifecycle = "Widget.beforeSave",
                 hooks = listOf(
-                    MutationHook { value: String ->
+                    TransformingHook { value: String ->
                         events += "before-save:$value"
                         value
                     },
@@ -786,7 +786,7 @@ class CreateMutationOperationTest {
             beforeCreateHookRunner = MutationHookRunner(
                 lifecycle = "Widget.beforeCreate",
                 hooks = listOf(
-                    MutationHook { value: String ->
+                    TransformingHook { value: String ->
                         events += "before-create:$value"
                         spec.beforeCreateAction()
                         value
@@ -795,7 +795,7 @@ class CreateMutationOperationTest {
             ),
             afterCreateHookRunner = HookRunner(
                 listOf(
-                    Hook { value ->
+                    ActionHook { value ->
                         events += "after-create:${value.id}"
                         spec.afterCreateAction(value)
                     },
