@@ -9,8 +9,8 @@ import entkt.schema.OnDelete
  * up rows by id, evaluate predicates, and resolve edges into joins.
  *
  * The codegen emits one of these per generated entity (e.g.
- * `UserSchema`) and the generated repo registers it with the driver in
- * its `init` block. Drivers MUST NOT depend on the schema DSL itself —
+ * `User.SCHEMA`) and the repository base registers it with the driver
+ * during construction. Drivers MUST NOT depend on the schema DSL itself —
  * everything they need at runtime lives here.
  */
 data class EntitySchema(

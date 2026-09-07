@@ -67,6 +67,23 @@ class EntityRepositoryTest {
     private val viewerContext = ViewerContext(Viewer.User(7L))
 
     @Test
+    fun `both repository variants register the descriptor schema on their scoped driver`() {
+        for (inTransaction in listOf(false, true)) {
+            val fixture = Fixture(inTransaction)
+            assertTrue(fixture.driver.registeredSchemas.isEmpty())
+
+            fixture.generated
+
+            assertSame(Descriptor.schema, fixture.driver.registeredSchemas.single())
+
+            fixture.explicit
+
+            assertEquals(2, fixture.driver.registeredSchemas.size)
+            assertSame(Descriptor.schema, fixture.driver.registeredSchemas.last())
+        }
+    }
+
+    @Test
     fun `construction does not resolve the rule client or execute operations`() {
         val fixture = Fixture()
 
@@ -454,7 +471,7 @@ class EntityRepositoryTest {
 
     private class GeneratedRepo(private val fixture: Fixture) :
         GeneratedIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>(
-            Descriptor, fixture.executor, UpdateConsistency.Pessimistic, RelationshipLocking.Canonical,
+            Descriptor, fixture.driver, fixture.executor, UpdateConsistency.Pessimistic, RelationshipLocking.Canonical,
         ), WidgetReadSurface {
         override val ruleClient: RuleClient get() = fixture.client.also { fixture.clientResolutions++ }
         override val createOperation = fixture.create
@@ -479,7 +496,9 @@ class EntityRepositoryTest {
     }
 
     private class ExplicitRepo(private val fixture: Fixture) :
-        ExplicitIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>(Descriptor, fixture.executor),
+        ExplicitIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>(
+            Descriptor, fixture.driver, fixture.executor,
+        ),
         WidgetReadSurface {
         override val ruleClient: RuleClient get() = fixture.client.also { fixture.clientResolutions++ }
         override val createOperation = fixture.create
@@ -513,6 +532,7 @@ class EntityRepositoryTest {
 
     private class RecordingDriver(override val inTransaction: Boolean) : DatabaseDriver by NoopDriver {
         val scope = if (inTransaction) "transaction" else "root"
+        val registeredSchemas = mutableListOf<EntitySchema>()
         var transactionDriver: DatabaseDriver? = null
         var transactions = 0
         var commits = 0
@@ -520,6 +540,10 @@ class EntityRepositoryTest {
         var rows = listOf(mapOf("widget_key" to 1L, "name" to "one"))
         var queryPredicates: List<Predicate<*>> = emptyList()
         var queryLimit: Int? = null
+
+        override fun register(schema: EntitySchema) {
+            registeredSchemas += schema
+        }
 
         override fun <Result> withTransaction(block: (DatabaseDriver) -> Result): DriverTransactionResult<Result> {
             transactions++

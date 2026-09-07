@@ -3,6 +3,7 @@
 package entkt.runtime.repository
 
 import entkt.query.EntktInternal
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.mutation.CreateMutationDraft
@@ -23,13 +24,14 @@ abstract class ExplicitIdRepository<
     RuleClient,
 > @EntktInternal protected constructor(
     entity: EntityDescriptor<Entity, ID>,
+    driver: DatabaseDriver,
     mutationExecutor: MutationExecutor,
     defaultUpdateConsistency: UpdateConsistency = UpdateConsistency.ReadCurrent,
     defaultRelationshipLocking: RelationshipLocking = RelationshipLocking.OwnerOnly,
 ) : EntityRepository<
     Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient,
     ExplicitIdRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient>,
->(entity, mutationExecutor, defaultUpdateConsistency, defaultRelationshipLocking) {
+>(entity, driver, mutationExecutor, defaultUpdateConsistency, defaultRelationshipLocking) {
     final override val self: ExplicitIdRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient>
         get() = this
 

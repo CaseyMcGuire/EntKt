@@ -5,6 +5,7 @@ package entkt.runtime.repository
 import entkt.query.EntktInternal
 import entkt.query.Op
 import entkt.query.Predicate
+import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.mutation.CreateMutationDraft
@@ -53,10 +54,15 @@ abstract class EntityRepository<
     Self : EntityRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient, Self>,
 > @EntktInternal protected constructor(
     private val entity: EntityDescriptor<Entity, ID>,
+    driver: DatabaseDriver,
     private val mutationExecutor: MutationExecutor,
     private val defaultUpdateConsistency: UpdateConsistency = UpdateConsistency.ReadCurrent,
     private val defaultRelationshipLocking: RelationshipLocking = RelationshipLocking.OwnerOnly,
 ) {
+    init {
+        driver.register(entity.schema)
+    }
+
     protected abstract val self: Self
 
     /** Resolve only when an entry point is called, after client/repository construction is complete. */

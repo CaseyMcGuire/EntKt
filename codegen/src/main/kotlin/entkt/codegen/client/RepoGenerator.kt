@@ -123,6 +123,7 @@ internal class RepoGenerator(
                 // KotlinPoet's four-space supertype continuation does not indent explicit newlines.
                 add("\n")
                 add("      entity = %T,\n", entityDescriptorClass)
+                add("      driver = driver,\n")
                 add("      mutationExecutor = %T(driver, client),\n", MUTATION_EXECUTOR)
                 add("      defaultUpdateConsistency = client.defaultUpdateConsistency,\n")
                 add("      defaultRelationshipLocking = client.defaultRelationshipLocking,\n")
@@ -237,9 +238,6 @@ internal class RepoGenerator(
                     add(")")
                 })
             }
-            addInitializerBlock(
-                CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
-            )
             // Index-helper namespace. Emitted only when the schema has at
             // least one eligible index (matching the conditional
             // `${schemaName}Indexes` file).

@@ -157,6 +157,7 @@ class RepoGeneratorTest {
             val expected = """
                 $superclass<$name, $idType, ${name}CreateDraft, ${name}UpdateDraft, ${name}Query, ReadOnlyEntClient>(
                       entity = ${name}Descriptor,
+                      driver = driver,
                       mutationExecutor = MutationExecutor(driver, client),
                       defaultUpdateConsistency = client.defaultUpdateConsistency,
                       defaultRelationshipLocking = client.defaultRelationshipLocking,
@@ -376,13 +377,21 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo registers the entity schema in its init block`() {
+    fun `repo delegates schema registration to the runtime base`() {
         val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val session = Session()
+        finalize(car, User(), session)
 
-        assert(output.contains("driver.register(Car.SCHEMA)")) {
-            "Repo should register Car.SCHEMA with the driver on construction\n$output"
+        for (schema in listOf(car, session)) {
+            val name = schema::class.simpleName!!
+            val output = generator.generate(name, schema).toString()
+
+            assert(output.contains("entity = ${name}Descriptor,") && output.contains("driver = driver,")) {
+                "Both repository bases should receive the descriptor and driver\n$output"
+            }
+            assert(!output.contains("driver.register(") && !output.contains("init {")) {
+                "Schema registration belongs to the runtime base, not generated initialization\n$output"
+            }
         }
     }
 
@@ -496,7 +505,8 @@ class RepoGeneratorTest {
         }
         val scalarBinding = output.substringAfter("protected override val deleteOperation:")
             .substringBefore("protected override val deleteManyOperation:")
-        val bulkBinding = output.substringAfter("protected override val deleteManyOperation:").substringBefore("init {")
+        val bulkBinding = output.substringAfter("protected override val deleteManyOperation:")
+            .substringBefore("protected override fun newQuery(")
         for (binding in listOf(scalarBinding, bulkBinding)) {
             assert(binding.contains("beforeDelete = configuredHooks.beforeDelete"))
             assert(binding.contains("afterDelete = configuredHooks.afterDelete"))
