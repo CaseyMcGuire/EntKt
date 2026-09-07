@@ -113,8 +113,8 @@ class JsonCodegenTest {
         assertTrue("loadPrivacyRules = configuredPrivacy.loadRules," in repo, repo)
         assertFalse("freshItem" in repo || "LoadPrivacyItem" in repo, repo)
         assertFalse("copyJsonValue" in repo, repo)
-        val createBinding = repo.substringAfter("protected override val createManyOperation:")
-            .substringBefore("protected override val createOperation:")
+        val createBinding = repo.substringAfter("protected override val createOperations:")
+            .substringBefore("protected override val deleteOperation:")
         assertFalse("freshItem" in createBinding, createBinding)
         assertFalse("CreateRuleInput" in repo, repo)
 
@@ -209,8 +209,8 @@ class JsonCodegenTest {
         assertTrue("loadPrivacyRules = configuredPrivacy.loadRules," in repo, repo)
         assertFalse("freshItem" in repo || "LoadPrivacyItem" in repo, repo)
         assertFalse("copyJsonValue" in repo, repo)
-        val createBinding = repo.substringAfter("protected override val createManyOperation:")
-            .substringBefore("protected override val createOperation:")
+        val createBinding = repo.substringAfter("protected override val createOperations:")
+            .substringBefore("protected override val deleteOperation:")
         assertFalse("freshItem" in createBinding, createBinding)
     }
 

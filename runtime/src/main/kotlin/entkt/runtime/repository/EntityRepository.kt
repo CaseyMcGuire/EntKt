@@ -8,6 +8,10 @@ import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
+import entkt.runtime.hook.BatchActionHook
+import entkt.runtime.hook.BatchTransformingHook
+import entkt.runtime.mutation.BeforeCreateHookState
+import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.CreateMutationRepository
 import entkt.runtime.mutation.PendingCreateMutation
@@ -17,17 +21,24 @@ import entkt.runtime.mutation.UpdateConsistency
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.UpdateMutationRepository
 import entkt.runtime.mutation.UpdateMutationRequest
+import entkt.runtime.mutation.WriteCandidate
+import entkt.runtime.mutation.execution.CreateMutationConverter
+import entkt.runtime.mutation.execution.CreateMutationHookStateConverter
 import entkt.runtime.mutation.execution.CreateMutationInput
+import entkt.runtime.mutation.execution.CreateMutationOperation
+import entkt.runtime.mutation.execution.CreateMutationOperations
 import entkt.runtime.mutation.execution.DeleteManyMutationInput
 import entkt.runtime.mutation.execution.DeleteMutationInput
 import entkt.runtime.mutation.execution.MutationExecutor
 import entkt.runtime.mutation.execution.MutationOperation
 import entkt.runtime.mutation.execution.MutationRuntime
 import entkt.runtime.mutation.execution.UpdateMutationInput
+import entkt.runtime.mutation.execution.buildCreateManyMutationOperation
 import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.privacy.LoadPrivacyEvaluator
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.PrivacyRuleContext
+import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EntityQueryBuilder
 import entkt.runtime.query.ReadOperation
@@ -37,6 +48,8 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
 import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.TransactionScope
+import entkt.runtime.validation.BatchValidationRule
+import entkt.runtime.validation.ResolvedEntityValidationConfig
 
 /**
  * Shared entry-point behavior for generated writable repositories.
@@ -59,7 +72,7 @@ abstract class EntityRepository<
 > @EntktInternal protected constructor(
     private val entity: EntityDescriptor<Entity, ID>,
     driver: DatabaseDriver,
-    mutationRuntime: MutationRuntime,
+    private val mutationRuntime: MutationRuntime,
     readExecutionHost: ReadQueryExecutionHost,
     loadPrivacyRules: List<BatchPrivacyRule<RuleClient, Entity>>,
     private val defaultUpdateConsistency: UpdateConsistency = UpdateConsistency.ReadCurrent,
@@ -79,7 +92,7 @@ abstract class EntityRepository<
     /** Resolve only when an entry point is called, after client/repository construction is complete. */
     protected abstract val ruleClient: RuleClient
 
-    protected abstract val createOperation: MutationOperation<RuleClient, CreateMutationInput<CreateDraft>, Entity>
+    protected abstract val createOperations: CreateMutationOperations<RuleClient, CreateDraft, Entity>
     protected abstract val updateOperation: MutationOperation<RuleClient, UpdateMutationInput<UpdateDraft>, Entity>
     protected abstract val deleteOperation: MutationOperation<RuleClient, DeleteMutationInput, Boolean>
     protected abstract val deleteManyOperation: MutationOperation<RuleClient, DeleteManyMutationInput<Entity>, Int>
@@ -156,10 +169,41 @@ abstract class EntityRepository<
     fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Entity>): PrivacyEvaluation<Entity> =
         loadPrivacyEvaluator.evaluate(PrivacyRuleContext(viewerContext, ruleClient), entities)
 
+    /** Assemble both CREATE terminals without exposing candidate or hook-state types on the repository. */
+    protected fun <
+        Candidate : WriteCandidate<Entity>,
+        BeforeSaveState : BeforeSaveHookState<Entity>,
+        BeforeCreateState : BeforeCreateHookState<Entity>,
+    > buildCreateOperations(
+        converter: CreateMutationConverter<CreateDraft, Candidate, Entity>,
+        privacy: ResolvedEntityPrivacyConfig<*, BatchPrivacyRule<RuleClient, Candidate>, *, *>,
+        validation: ResolvedEntityValidationConfig<BatchValidationRule<RuleClient, Candidate>, *, *>,
+        hookStateConverter: CreateMutationHookStateConverter<CreateDraft, Entity, BeforeSaveState, BeforeCreateState>,
+        beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
+        beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
+        afterCreate: List<BatchActionHook<Entity>>,
+    ): CreateMutationOperations<RuleClient, CreateDraft, Entity> {
+        val many = buildCreateManyMutationOperation(
+            entity = entity,
+            mutationRuntime = mutationRuntime,
+            converter = converter,
+            privacy = privacy,
+            validation = validation,
+            hookStateConverter = hookStateConverter,
+            beforeSave = beforeSave,
+            beforeCreate = beforeCreate,
+            afterCreate = afterCreate,
+        )
+        return CreateMutationOperations(
+            single = CreateMutationOperation(many),
+            many = many,
+        )
+    }
+
     /** Bind immutable execution dependencies now; saving does not call back into this repository. */
     protected fun pendingCreate(draft: CreateDraft): PendingCreateMutation<CreateDraft, Entity> {
         val executor = mutationExecutor
-        val operation = createOperation
+        val operation = createOperations.single
         val client = ruleClient
         val execution = object : CreateMutationRepository<CreateDraft, Entity> {
             override fun saveCreation(viewerContext: ViewerContext, draft: CreateDraft): MutationResult<Unit> =

@@ -12,7 +12,6 @@ import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.UpdateConsistency
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.execution.CreateManyMutationInput
-import entkt.runtime.mutation.execution.MutationOperation
 import entkt.runtime.mutation.execution.MutationRuntime
 import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.privacy.ViewerContext
@@ -51,9 +50,6 @@ abstract class GeneratedIdRepository<
     final override val self: GeneratedIdRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient>
         get() = this
 
-    protected abstract val createManyOperation:
-        MutationOperation<RuleClient, CreateManyMutationInput<CreateDraft>, List<Entity>>
-
     /** Construct a fresh draft only; do not resolve defaults, execute hooks, or access storage here. */
     protected abstract fun newCreateDraft(): CreateDraft
 
@@ -63,6 +59,6 @@ abstract class GeneratedIdRepository<
     fun createMany(viewerContext: ViewerContext, vararg blocks: CreateDraft.() -> Unit): MutationResult<List<Entity>> =
         executeMutation(
             input = CreateManyMutationInput(viewerContext, blocks.asList(), newDraft = ::newCreateDraft),
-            operation = { it.createManyOperation },
+            operation = { it.createOperations.many },
         )
 }

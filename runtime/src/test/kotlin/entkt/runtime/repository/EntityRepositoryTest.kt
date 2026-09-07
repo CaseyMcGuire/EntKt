@@ -19,6 +19,7 @@ import entkt.runtime.mutation.UpdateConsistency
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.execution.CreateManyMutationInput
 import entkt.runtime.mutation.execution.CreateMutationInput
+import entkt.runtime.mutation.execution.CreateMutationOperations
 import entkt.runtime.mutation.execution.DeleteManyMutationInput
 import entkt.runtime.mutation.execution.DeleteMutationInput
 import entkt.runtime.mutation.execution.MutationCompletion
@@ -555,8 +556,7 @@ class EntityRepositoryTest {
             UpdateConsistency.Pessimistic, RelationshipLocking.Canonical,
         ), WidgetReadSurface {
         override val ruleClient: RuleClient get() = fixture.client.also { fixture.clientResolutions++ }
-        override val createOperation = fixture.create
-        override val createManyOperation = fixture.createMany
+        override val createOperations = CreateMutationOperations(fixture.create, fixture.createMany)
         override val updateOperation = fixture.update
         override val deleteOperation = fixture.delete
         override val deleteManyOperation = fixture.deleteMany
@@ -583,7 +583,7 @@ class EntityRepositoryTest {
         ),
         WidgetReadSurface {
         override val ruleClient: RuleClient get() = fixture.client.also { fixture.clientResolutions++ }
-        override val createOperation = fixture.create
+        override val createOperations = CreateMutationOperations(fixture.create, fixture.createMany)
         override val updateOperation = fixture.update
         override val deleteOperation = fixture.delete
         override val deleteManyOperation = fixture.deleteMany

@@ -104,7 +104,7 @@ class GeneratedRepositoryCompileTest {
     @Test
     fun `generated repositories do not expose inherited execution dependencies`() {
         val members = listOf(
-            "ruleClient", "mutationExecutor", "readQueryExecutor", "createOperation", "updateOperation", "loadPrivacyEvaluator",
+            "ruleClient", "mutationExecutor", "readQueryExecutor", "createOperations", "updateOperation", "loadPrivacyEvaluator",
         )
         val accesses = members.joinToString("\n") { "client.cars.$it" }
         val result = compile(

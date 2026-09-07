@@ -40,18 +40,12 @@ import entkt.schema.Field
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val INT = Int::class.asClassName()
 private val ENT_CLIENT_NAME = "EntClient"
-private val CREATE_MANY_MUTATION_OPERATION =
-    ClassName("entkt.runtime.mutation.execution", "CreateManyMutationOperation")
-private val CREATE_MUTATION_OPERATION =
-    ClassName("entkt.runtime.mutation.execution", "CreateMutationOperation")
-private val CREATE_MUTATION_INPUT =
-    ClassName("entkt.runtime.mutation.execution", "CreateMutationInput")
+private val CREATE_MUTATION_OPERATIONS =
+    ClassName("entkt.runtime.mutation.execution", "CreateMutationOperations")
 private val DELETE_MUTATION_INPUT =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationInput")
 private val MUTATION_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "MutationOperation")
-private val BUILD_CREATE_MANY_MUTATION_OPERATION =
-    MemberName("entkt.runtime.mutation.execution", "buildCreateManyMutationOperation")
 private val BUILD_UPDATE_MUTATION_OPERATION =
     MemberName("entkt.runtime.mutation.execution", "buildUpdateMutationOperation")
 private val BUILD_DELETE_MUTATION_OPERATION =
@@ -98,11 +92,9 @@ internal class RepoGenerator(
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val indexesClass = ClassName(packageName, "${schemaName}Indexes")
         val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
-        val beforeCreateStateClass = ClassName(packageName, "${schemaName}BeforeCreateState")
         val entityHooksType = resolvedEntityHooksType(packageName, schemaName)
         val privacyConfigType = resolvedEntityPrivacyConfigType(packageName, schemaName)
         val validationConfigType = resolvedEntityValidationConfigType(packageName, schemaName)
-        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val ruleClientClass = ClassName(packageName, "ReadOnlyEntClient")
         val idType = schema.id().type.toTypeName()
@@ -160,27 +152,11 @@ internal class RepoGenerator(
                 initializer("%T(driver, client.hookClientScopeForInternalUse)", createConverterClass)
             }
             addProperty(
-                buildCreateManyMutationOperationProperty(
-                    entityDescriptorClass = entityDescriptorClass,
+                buildCreateOperationsProperty(
                     createDraftClass = createDraftClass,
                     entityClass = entityClass,
-                    candidateClass = candidateClass,
-                    beforeSaveStateClass = beforeSaveStateClass,
-                    beforeCreateStateClass = beforeCreateStateClass,
-                    generatedId = generatedId,
                 ),
             )
-            property(
-                "createOperation",
-                MUTATION_OPERATION.parameterizedBy(
-                    ClassName(packageName, "ReadOnlyEntClient"),
-                    CREATE_MUTATION_INPUT.parameterizedBy(createDraftClass),
-                    entityClass,
-                ),
-            ) {
-                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
-                initializer("%T(createManyOperation)", CREATE_MUTATION_OPERATION)
-            }
             property(
                 "deleteOperation",
                 MUTATION_OPERATION.parameterizedBy(
@@ -409,34 +385,20 @@ internal class RepoGenerator(
     }
 
     /** Bind this entity's CREATE dependencies once for its scalar and bulk runtime operations. */
-    private fun buildCreateManyMutationOperationProperty(
-        entityDescriptorClass: ClassName,
+    private fun buildCreateOperationsProperty(
         createDraftClass: ClassName,
         entityClass: ClassName,
-        candidateClass: ClassName,
-        beforeSaveStateClass: ClassName,
-        beforeCreateStateClass: ClassName,
-        generatedId: Boolean,
     ): PropertySpec {
-        val operationType = CREATE_MANY_MUTATION_OPERATION.parameterizedBy(
+        val operationType = CREATE_MUTATION_OPERATIONS.parameterizedBy(
             ClassName(packageName, "ReadOnlyEntClient"),
             createDraftClass,
-            candidateClass,
             entityClass,
-            beforeSaveStateClass,
-            beforeCreateStateClass,
         )
-        return property("createManyOperation", operationType) {
-            if (generatedId) {
-                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
-            } else {
-                addModifiers(KModifier.PRIVATE)
-            }
+        return property("createOperations", operationType) {
+            addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
             initializer(codeBlock {
-                add("%M(\n", BUILD_CREATE_MANY_MUTATION_OPERATION)
+                add("buildCreateOperations(\n")
                 indent()
-                add("entity = %T,\n", entityDescriptorClass)
-                add("mutationRuntime = client,\n")
                 add("converter = createConverter,\n")
                 add("privacy = configuredPrivacy,\n")
                 add("validation = configuredValidation,\n")

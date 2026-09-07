@@ -111,7 +111,7 @@ class RepositoryCompileTest {
     @Test
     fun `application code cannot access repository execution dependencies`() {
         for (repo in listOf("GeneratedRepo", "ExplicitRepo")) {
-            for (property in listOf("ruleClient", "mutationExecutor", "self")) {
+            for (property in listOf("ruleClient", "mutationExecutor", "createOperations", "self")) {
                 assertRejected(repo, "repo.$property", property)
             }
             assertRejected(repo, "repo.withTransaction { Unit }", "withTransaction")
