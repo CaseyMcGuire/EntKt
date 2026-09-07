@@ -37,12 +37,14 @@ Open or speculative RFCs remain in the
 
 ## Privacy And Validation
 
+- [Batch-Aware Lifecycle Evaluation](privacy-validation/batch-aware-lifecycle-evaluation.md)
 - [Read-Only Validation Client](privacy-validation/read-only-validation-client.md)
 - [Read-Only Privacy Rule Client](privacy-validation/read-only-privacy-client.md)
 - [Posture-Specific Read Client Types](privacy-validation/posture-specific-read-clients.md)
 
 ## Model Behavior
 
+- [Typed Schema Handles](schema/typed-schema-handles.md)
 - [Schema Validation Explain](schema/schema-validation-explain.md)
 - [Soft Delete](schema/soft-delete.md)
 - [Schema Nullability Terminology](schema/schema-nullability-terminology.md)

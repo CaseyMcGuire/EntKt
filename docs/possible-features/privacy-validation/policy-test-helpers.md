@@ -45,7 +45,7 @@ class PostPolicyTestHarness(
 ) {
     fun assertLoadAllowed(viewer: Viewer, entity: Post)
     fun assertLoadDenied(viewer: Viewer, entity: Post, reason: String? = null)
-    fun assertCreateDenied(viewer: Viewer, block: PostCreate.() -> Unit)
+    fun assertCreateDenied(viewer: Viewer, block: PostCreateDraft.() -> Unit)
 }
 ```
 

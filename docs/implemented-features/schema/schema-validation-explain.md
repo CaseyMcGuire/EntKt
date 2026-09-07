@@ -450,16 +450,13 @@ so that the inspector can control finalization inside its own error
 handling. `scanForSchemas()` calls `collectSchemas()` then
 `ensureFinalized()` for the codegen/migration path.
 
-### Relationship To Schema Printer
+### Relationship To The Earlier Printer Proposal
 
-This RFC is broader than [Schema Printer](../../possible-features/schema/schema-printer.md).
-
-The likely long-term direction is:
-
-- `Schema Validation And Explain` becomes the shared inspection layer
-- `Schema Printer` becomes one renderer or task built on top of that layer
-
-The two should not evolve as independent schema interpreters.
+This implementation subsumes the earlier standalone schema-printer proposal.
+`explainEntSchemas` renders text, JSON, or SQL from the shared inspection layer
+without a database connection; a second schema interpreter or task name is
+unnecessary. Optional output-file handling can be considered with Gradle DX,
+and additional dialects with driver capability work.
 
 ## Implementation Status
 

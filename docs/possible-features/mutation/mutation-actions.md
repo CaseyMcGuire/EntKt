@@ -19,14 +19,14 @@ Generated builders are a good low-level mutation surface:
 ```kotlin
 client.posts.create {
     title = input.title
-    author.connect(author)
-}.save()
+    authorId = author.id
+}.save(viewerContext).getOrThrow()
 ```
 
 Applications often need a more explicit operation boundary:
 
 ```kotlin
-CreatePostAction(client, viewer).save(
+CreatePostAction(client, viewerContext).save(
     CreatePostInput(
         title = "Hello",
         authorId = author.id,
@@ -58,32 +58,34 @@ Actions can be handwritten classes that compose generated APIs:
 ```kotlin
 class CreatePostAction(
     private val client: EntClient,
-    private val viewer: Viewer,
+    private val viewerContext: ViewerContext,
 ) {
-    suspend fun save(input: CreatePostInput): Post {
+    fun save(input: CreatePostInput): Post {
         validateInput(input)
-
-        return client.withPrivacyContext(viewer) {
-            withTransaction { tx ->
-                val author = tx.users.byId(input.authorId)
-
-                tx.posts.create {
-                    title = input.title
-                    this.author.connect(author)
-                }.save()
-            }
-        }
+        return client.withTransaction { tx ->
+            val author = requireNotNull(
+                tx.users.findById(viewerContext, input.authorId).getOrThrow(),
+            )
+            tx.posts.create {
+                title = input.title
+                authorId = author.id
+            }.saveAndLoad(viewerContext).orRollback()
+        }.getOrThrow()
     }
 }
 ```
+
+This composes the current synchronous API. An action may capture an explicit
+operation context, but does not bind viewer state to the shared client. Suspend
+variants belong to the separate coroutine driver track.
 
 Generated helpers could make this pattern less repetitive without forcing a
 large framework:
 
 ```kotlin
 abstract class EntAction<Input, Output> {
-    open suspend fun validate(input: Input) {}
-    abstract suspend fun run(input: Input): Output
+    open fun validate(input: Input) {}
+    abstract fun run(input: Input): Output
 }
 ```
 
@@ -93,7 +95,7 @@ The action lifecycle should be explicit:
 
 1. parse or receive typed input
 2. validate request-level input
-3. enter privacy context
+3. select the explicit operation `ViewerContext`
 4. optionally open transaction
 5. run generated entity mutations
 6. run after-commit side effects if the transaction succeeds
@@ -110,9 +112,9 @@ Actions should make transactions easy but not implicit for every operation.
 Possible helper:
 
 ```kotlin
-suspend fun <T> EntClient.actionTransaction(
-    block: suspend EntClient.() -> T,
-): T
+fun <T> EntClient.actionTransaction(
+    block: TransactionScope.(EntTransactionClient) -> T,
+): TransactionResult<T>
 ```
 
 Open question:

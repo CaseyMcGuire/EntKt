@@ -4,16 +4,16 @@
 
 Possible future feature. This is not implemented.
 
-Read-path interceptors already own the per-terminal dry-run explain surface and
-the post-interceptor query shape. This RFC is now limited to future diagnostics
-that are not covered by that implementation: execution tracing, query-count
-estimates, SQL shape output, loader / eager-load diagnostics, and diagnostic
-warnings.
+Read interceptors and runtime query compilation already own the effective
+query shape. The old generated per-terminal `explain*` family has since been
+removed. This note retains execution tracing, SQL/plan diagnostics, query-count
+estimates, and loader diagnostics as future work; it must not assume those old
+terminal names still exist.
 
 ## Summary
 
-Add query diagnostics that make generated read behavior inspectable beyond the
-existing per-terminal explain methods.
+Add query diagnostics that make runtime read behavior inspectable through a
+surface aligned with the current `all` / `firstOrNull` terminals.
 
 The goal is to help users answer:
 
@@ -36,7 +36,7 @@ Generated APIs can hide useful complexity:
 client.posts.query {
     loadAuthor()
     loadComments()
-}.allOrThrow()
+}.all(viewerContext).getOrThrow()
 ```
 
 This may be the right API, but users still need to understand the work it does
@@ -59,49 +59,29 @@ query execution strategy.
 
 ## Implemented Baseline
 
-[Read-Path Interceptors](../../implemented-features/query/read-path-interceptors.md) already defines and
-implements the dry-run explain family. Each explain method mirrors a concrete
-terminal API because every terminal has its own intercepted query context.
+Read interceptors and `ReadQueryCompiler` produce the effective storage query
+used by runtime reads. The historical
+[Read-Path Interceptors](../../implemented-features/query/read-path-interceptors.md)
+RFC also records an explain family that is no longer generated. A future
+inspection API should consume current immutable query descriptions and reuse
+compilation semantics rather than restore removed terminal aliases.
 
-This RFC should not introduce another explain surface or redefine the base query
-plan model. Future diagnostics should enrich the existing explain output and add
-runtime tracing for actual executions.
+Set-based nested loading and native direct to-many windows are implemented.
+[Remaining eager-loader work](set-based-eager-graph-loader.md) concerns native
+M2M windows and generic chunking. Diagnostics should describe logical edge
+steps and actual physical reads, not assume one statement per graph or parent.
+Callback-issued queries need independent trace entries.
 
-The eager-query examples and estimates below describe the current
-multi-statement implementation. The accepted
-[Set-Based Eager Graph Loader](set-based-eager-graph-loader.md) retains explicit
-relationship reads while removing per-parent nested N+1 behavior. Diagnostics
-should therefore describe logical edge-load steps, physical chunks, and count
-ranges rather than assuming either one statement for a graph or one statement
-per returned parent. Callback-issued queries retain independent trace entries.
+Desired diagnostic output might describe the post-interceptor root and edges,
+then provide query-count estimates only when supported by the runtime plan.
+Neither estimates nor a public query-plan wrapper are claimed as current API.
 
-Baseline explain output can already describe the post-interceptor root query
-shape:
-
-```text
-PostQuery
-  root: posts
-    predicates:
-      published = ?
-      deleted_at IS NULL        added by SoftDeleteInterceptor
-    order:
-      created_at DESC
-    limit: 20
-
-  eager loads:
-    author: batched belongsTo load by author_id
-
-  estimated driver queries:
-    1 root query
-    1 author batch query
-```
-
-Future diagnostics can add a richer machine-readable wrapper around that
-existing plan:
+Future diagnostics can add a richer machine-readable wrapper around the
+compiled query description:
 
 ```kotlin
 data class QueryDiagnostics(
-    val plan: QueryPlan,
+    val plan: DiagnosticQueryPlan, // proposed inspection model
     val estimatedDriverQueries: IntRange?,
     val sqlShapes: List<SqlShape>,
     val loaderPlans: List<LoaderPlan>,
@@ -121,7 +101,7 @@ val trace = client.withQueryTracing {
     posts.query {
         loadAuthor()
         limit(20)
-    }.allOrThrow()
+    }.all(viewerContext).getOrThrow()
 }
 ```
 
@@ -135,15 +115,10 @@ trace.privacyChecks
 trace.interceptorApplications
 ```
 
-This complements the explain family:
-
-- `explainAllOrThrow()` / `explainFirstOrError()` / `explainVisibleCount()`
-  / etc. describe planned generated behavior for one terminal without
-  executing the query (see
-  [Read-Path Interceptors → Explain Interaction](../../implemented-features/query/read-path-interceptors.md)
-  for the full method list and per-terminal mirroring rule)
-- tracing records actual driver calls, loader batches, cache hits, and
-  privacy checks during execution
+Separate dry-run inspection from runtime tracing: inspection describes a
+compiled query without executing storage reads, while tracing records actual
+driver calls, callback-issued queries, batches, and future loader cache hits.
+The public inspection method and plan types remain design choices.
 
 ## Query Logging
 
@@ -155,7 +130,7 @@ client.withQueryLogging(QueryLogOptions()) {
     posts.query {
         loadAuthor()
         limit(20)
-    }.allOrThrow()
+    }.all(viewerContext).getOrThrow()
 }
 ```
 
@@ -244,16 +219,10 @@ LIMIT ?
 Default output should not include raw bind values because predicates may
 contain emails, tokens, names, or other sensitive data.
 
-Potential opt-in: every explain / diagnostic method that can show SQL takes the
-same `includeBindValues` flag.
-
-```kotlin
-query.explainAllOrThrow(includeBindValues = true)
-client.users.explainByIdOrNull(id, includeBindValues = true)
-```
-
-The bind-values argument should be uniform across the existing explain surface
-and any richer diagnostics API added by this RFC.
+A proposed diagnostics API may offer one consistent `includeBindValues` option
+for explicitly privileged debugging. Do not attach the option to removed
+`explainAllOrThrow` or `explainByIdOrNull` methods. Redaction and value access
+must be consistent between dry-run inspection and execution tracing.
 
 Typed SQL escape-hatch expressions should appear in this same SQL shape output.
 Raw fragments should be marked so users can distinguish generated predicates
@@ -283,9 +252,9 @@ See [Request-Scoped Entity Loading](request-scoped-entity-loading.md).
 
 ## Interceptor Diagnostics
 
-The existing explain family already shows post-interceptor query shape. Future
-diagnostics and execution tracing should add attribution for which interceptors
-ran and what they changed:
+Runtime compilation already applies interceptor predicates. Future diagnostics
+and execution tracing should expose which interceptors ran and what they
+changed:
 
 ```text
 interceptors:
@@ -303,15 +272,16 @@ Query diagnostics can count privacy checks and warn that privacy rules may
 issue reads, but it should not replace rule-level tracing. Detailed privacy
 decisions belong in [Privacy / Validation Explain Mode](../privacy-validation/privacy-validation-explain-mode.md).
 
-Privacy-sensitive aggregate semantics are covered separately by
-[Checked Aggregate Privacy](../privacy-validation/checked-aggregate-privacy.md).
+Current counts and aggregates are collection operations over entity reads.
+Future SQL visibility semantics belong to
+[Query-Time Visibility Predicates](../privacy-validation/query-time-visibility-predicates.md).
 
 ## Test Requirements
 
 Before implementation, add tests for:
 
-- diagnostics build on the implemented per-terminal explain surface rather than
-  introducing separate terminal names
+- diagnostics reuse runtime query compilation and match executed predicates
+- inspection uses current row-terminal shapes without restoring removed aliases
 - eager-load diagnostics report the expected generated batch reads
 - interceptor attribution appears in diagnostics and runtime traces
 - default SQL output redacts bind values

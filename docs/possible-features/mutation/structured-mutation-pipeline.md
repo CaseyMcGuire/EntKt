@@ -2,7 +2,11 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Possible future lifecycle API. The shared mutation runtime is implemented,
+but the distinct normalization, input-validation, derivation, invariant,
+post-persist, and post-commit APIs below are not. Existing before hooks
+transform immutable schema-typed states; this proposal must build on that
+contract rather than restore mutable hook views.
 
 ## Summary
 
@@ -228,8 +232,8 @@ hook model on day one.
 
 Plausible mapping:
 
-- `beforeSave` and operation-specific before hooks become compatibility adapters
-  over documented mutable pre-persist phases
+- `beforeSave` and operation-specific before hooks retain immutable state
+  transformation, with their role in the proposed pre-persist phases made explicit
 - today's `afterCreate`, `afterUpdate`, and `afterDelete` semantics are named
   `afterPersist`
 - a new `afterCommit` surface owns effects that must not run on rollback

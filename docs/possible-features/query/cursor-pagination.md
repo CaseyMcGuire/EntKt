@@ -30,7 +30,7 @@ val page = client.posts.query {
     orderBy(Post.createdAt.desc())
     first(20)
     after(cursor)
-}.page()
+}.page(viewerContext)
 ```
 
 Return shape:
@@ -48,7 +48,7 @@ data class PageInfo(
     val hasPreviousPage: Boolean,
 )
 
-fun page(): ReadResult<Page<Post>>
+fun page(viewerContext: ViewerContext): ReadResult<Page<Post>>
 ```
 
 The terminal follows the canonical read-result contract. Query rejection,

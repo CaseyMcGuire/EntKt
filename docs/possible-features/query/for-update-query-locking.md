@@ -9,11 +9,11 @@ Possible future feature. This is not implemented.
 Add query-level row locking for transaction-scoped reads:
 
 ```kotlin
-val layout = tx.assetPageLayouts.query {
+val layout = requireNotNull(tx.assetPageLayouts.query {
     where(AssetPageLayout.assetId.eq(assetId))
     where(AssetPageLayout.page.eq(page))
     forUpdate()
-}.firstOrThrow()
+}.firstOrNull(viewerContext).getOrThrow())
 ```
 
 On Postgres this lowers to `SELECT ... FOR UPDATE`, locking the selected root
@@ -33,17 +33,17 @@ writers can serialize per-page edits by locking the layout row:
 
 ```kotlin
 entClient.withTransaction { tx ->
-    val layout = tx.assetPageLayouts.query {
+    val layout = requireNotNull(tx.assetPageLayouts.query {
         where(AssetPageLayout.assetId.eq(assetId))
         where(AssetPageLayout.page.eq(page))
         forUpdate()
-    }.firstOrThrow()
+    }.firstOrNull(viewerContext).getOrThrow())
 
     val highlights = tx.highlights.indexes
         .assetId(assetId)
         .page(page)
         .query()
-        .allOrThrow()
+        .all(viewerContext).getOrThrow()
 
     // Merge, clip, create, and update highlights while the page lock is held.
 }
@@ -57,7 +57,7 @@ existing highlight rows is not enough:
 - locks on existing rows do not protect future inserted rows
 - the operation needs one stable lock target representing the whole page
 
-EntKT already has a low-level `Driver.readRowForUpdate(table, id)` primitive for
+EntKT already has a low-level `DatabaseDriver.readRowForUpdate(table, id)` primitive for
 pessimistic updates, but generated repositories expose it only through update
 saves. Using a fake update to acquire a lock has the wrong semantics:
 
@@ -91,20 +91,20 @@ fun forUpdate(): AssetPageLayoutQuery
 Usage:
 
 ```kotlin
-val layout = tx.assetPageLayouts.query {
+val layout = requireNotNull(tx.assetPageLayouts.query {
     where(AssetPageLayout.assetId.eq(assetId))
     where(AssetPageLayout.page.eq(page))
     forUpdate()
-}.firstOrThrow()
+}.firstOrNull(viewerContext).getOrThrow())
 ```
 
 By-id locking remains query-shaped:
 
 ```kotlin
-val layout = tx.assetPageLayouts.query {
+val layout = requireNotNull(tx.assetPageLayouts.query {
     where(AssetPageLayout.id.eq(layoutId))
     forUpdate()
-}.firstOrThrow()
+}.firstOrNull(viewerContext).getOrThrow())
 ```
 
 This keeps one API surface for locking reads and avoids a long generated method
@@ -122,7 +122,7 @@ query {
     orderBy(...)
     limit(...)
     forUpdate()
-}.allOrThrow()
+}.all(viewerContext).getOrThrow()
 ```
 
 EntKT should:
@@ -137,45 +137,36 @@ EntKT should:
 
 The lock is taken by the database before EntKT can run post-load privacy. That
 means a strict read that later fails LOAD privacy may have locked a row before
-throwing. This is acceptable for strict terminals because the operation selected
+returning a failed read. This is acceptable for strict reads because they selected
 that row. Callers should rely on query predicates and read interceptors to narrow
 the locked set before execution.
 
 ## Supported Terminals
 
-V1 should support strict row terminals:
+The current row terminals are:
 
 ```kotlin
-allOrThrow()
-allOrError()
-firstOrThrow()
-firstOrNull()
-firstOrError()
+all(viewerContext)          // ReadResult<List<Entity>>
+firstOrNull(viewerContext)  // ReadResult<Entity?>
 ```
 
-V1 should reject non-row or visible-filtering terminals when `forUpdate()` is
-present:
+Both would retain strict LOAD privacy and canonical result handling when
+locking is requested. `getOrThrow()` projects the result after execution; a
+required lock target also needs an explicit absence check such as
+`requireNotNull(result.getOrThrow())`.
 
-```kotlin
-rawCount()
-visibleCount()
-rawExists()
-visibleExists()
-aggregate(...)
-visibleAll()
-visibleAllOrError()
-firstVisibleOrNull()
-```
+Generated count, aggregate, and root visible-filtering terminals no longer
+exist. If future non-row or visible-scan terminals are added, their lock
+semantics must be designed explicitly rather than inherited by default.
+Collection calculations after a row read do not change which rows were locked.
 
-Reasons:
+Likewise, `visibleOrNull()` is a result projection after the read. It cannot
+undo a lock acquired before LOAD denial or be rejected by a terminal before
+execution. Lock lifetime remains the surrounding transaction lifetime even
+when the caller projects the result to absence.
 
-- count, exists, and aggregate reads do not return rows to lock
-- visible-filtering terminals can silently lock rows that are later omitted
-  from the returned result
-- keeping V1 strict avoids surprising hidden lock behavior
-
-The rejection should happen in generated terminal code before driver execution,
-with a clear error message.
+Preflight belongs in the shared runtime query path; generated code supplies
+only the typed fluent method and lock metadata.
 
 ## Privacy And Interceptors
 
@@ -216,7 +207,7 @@ tx.users.query {
 }.queryPosts {
     where(Post.status.eq(Status.DRAFT))
     forUpdate()
-}.allOrThrow()
+}.all(viewerContext).getOrThrow()
 ```
 
 `forUpdate()` locks the target query rows (`posts`), not the source rows
@@ -229,7 +220,7 @@ For eager loading:
 tx.posts.query {
     forUpdate()
     loadAuthor()
-}.allOrThrow()
+}.all(viewerContext).getOrThrow()
 ```
 
 V1 locks only the root `posts` rows. Eager-loaded `author` rows are ordinary
@@ -251,7 +242,7 @@ enum class QueryLockMode {
     ForUpdate,
 }
 
-data class FrozenQuerySpec<E : Any>(
+data class StorageQuerySpec<E : Any>(
     val predicates: List<Predicate<E>>,
     val orderBy: List<OrderField<E>>,
     val limit: Int?,
@@ -284,7 +275,7 @@ entClient.withTransaction { tx ->
     tx.assetPageLayouts.query {
         where(...)
         forUpdate()
-    }.firstOrThrow()
+    }.firstOrNull(viewerContext).getOrThrow()
 }
 ```
 
@@ -292,33 +283,24 @@ Calling a `forUpdate()` terminal outside a transaction should fail before the
 driver query runs. The existing `TransactionRequiredException` shape is the
 likely fit.
 
-If the driver does not support query-level `FOR UPDATE`, generated terminal code
+If the driver does not support query-level `FOR UPDATE`, the shared runtime query path
 should fail before driver execution with `UnsupportedDriverCapabilityException`.
 
-## Explain Plans
+## Diagnostics
 
-Explain APIs should expose the lock mode:
-
-```kotlin
-val plan = tx.assetPageLayouts.query {
-    where(...)
-    forUpdate()
-}.explainFirstOrThrow()
-```
-
-The plan should show that the root query is a locking read. Eager subplans
-should not show lock mode unless a future eager-edge locking feature exists.
+A future query diagnostics surface should show the root lock mode and leave
+ordinary eager subplans unlocked. The previous generated `explain*` terminal
+family is no longer exposed; this RFC does not depend on restoring it. See
+[Query Observability Diagnostics](query-observability-diagnostics.md).
 
 ## Open Questions
 
-- Should terminal rejection for unsupported shapes be an `IllegalStateException`
-  or a structured `EntError` variant on `*OrError` terminals?
+- Which lock-shape errors are deterministic programming exceptions, and which
+  belong in `ReadResult.Failed`, consistently with current query preflight?
 - Should `forUpdate()` be rejected immediately outside a transaction, or only
   when a terminal executes?
 - Should lock mode be visible to read interceptors in `QueryContext`, even if
   interceptors cannot mutate it in V1?
-- Should `firstOrNull()` with `forUpdate()` be encouraged, or should locking
-  reads prefer throwing/result terminals to avoid silent absence?
 - Should V1 support `FOR NO KEY UPDATE`, `FOR SHARE`, or `SKIP LOCKED`, or keep
   only `FOR UPDATE` until there are concrete use cases?
 
@@ -336,4 +318,5 @@ Before implementation, add tests for:
 - update privacy, validation, and mutation hooks do not run
 - edge traversal locks target rows, not source rows
 - eager-loaded edge rows are not locked in V1
-- count, exists, aggregate, and visible-filtering terminals reject `forUpdate()`
+- result projections preserve the executed read's lock lifetime
+- absence can be distinguished from a successfully locked row

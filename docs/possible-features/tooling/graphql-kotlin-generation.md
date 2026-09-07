@@ -69,7 +69,7 @@ GraphQL exposure should be declared on the schema, not in Gradle, so the API
 shape lives beside the entity and field definitions:
 
 ```kotlin
-class Session : EntSchema("sessions") {
+class Session : EntSchema("sessions", clientName = "sessions") {
     override fun id() = EntId.long()
 
     graphql {
@@ -77,12 +77,12 @@ class Session : EntSchema("sessions") {
     }
 }
 
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val name = string("name")
-    val passwordHash = string("password_hash").graphql { exclude() }
-    val resetToken = string("reset_token").graphql { exclude() }
+    val name by string("name")
+    val passwordHash by string("password_hash").graphql { exclude() }
+    val resetToken by string("reset_token").graphql { exclude() }
 }
 ```
 
@@ -105,17 +105,25 @@ Example generated API:
 ```kotlin
 class PostGraphqlQuery(
     private val client: EntClient,
+    private val currentViewerContext: () -> ViewerContext,
 ) {
     fun post(id: Long): PostGraphql? =
-        client.posts.visibleByIdOrNull(id)?.toGraphql()
+        client.posts.findById(currentViewerContext(), id)
+            .visibleOrNull().getOrThrow()?.toGraphql()
 
     fun posts(limit: Int = 50, offset: Int = 0): List<PostGraphql> =
         client.posts.query {
             this.limit(limit)
             this.offset(offset)
-        }.visibleAll().map { it.toGraphql() }
+        }.all(currentViewerContext()).getOrThrow().map { it.toGraphql() }
 }
 ```
+
+The context provider is application-owned and resolves the current request.
+Singular reads explicitly project root denial to absence; list reads remain
+strict and fail if a selected row is denied. A future visible-page policy must
+be designed with [Privacy-Aware Visible Pagination](../query/privacy-aware-visible-pagination.md),
+not implemented by calling removed filtering terminals.
 
 GraphQL Kotlin can discover this through normal code-first schema generation
 using `TopLevelObject`. DGS can expose the same generated behavior through
@@ -275,7 +283,7 @@ GraphQL exposure belongs in the schema, similar to EntGo's pattern of attaching
 GraphQL behavior to schema definitions rather than central build config:
 
 ```kotlin
-class Session : EntSchema("sessions") {
+class Session : EntSchema("sessions", clientName = "sessions") {
     override fun id() = EntId.long()
 
     graphql {
@@ -283,12 +291,12 @@ class Session : EntSchema("sessions") {
     }
 }
 
-class User : EntSchema("users") {
+class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val name = string("name")
-    val passwordHash = string("password_hash").graphql { exclude() }
-    val resetToken = string("reset_token").graphql { exclude() }
+    val name by string("name")
+    val passwordHash by string("password_hash").graphql { exclude() }
+    val resetToken by string("reset_token").graphql { exclude() }
 }
 ```
 

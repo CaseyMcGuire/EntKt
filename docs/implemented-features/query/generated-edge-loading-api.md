@@ -848,7 +848,6 @@ Examples should include:
 
 - [Schema Declaration Names As Generated API](../schema/schema-declaration-api-names.md)
 - [Set-Based Eager Graph Loader](../../possible-features/query/set-based-eager-graph-loader.md)
-- [Explicit Query Authority And Cost](../../possible-features/query/explicit-query-authority-and-cost.md)
 - [Query Observability Diagnostics](../../possible-features/query/query-observability-diagnostics.md)
 - [Loaded Edge State](loaded-edge-state.md)
 - [Eager-Edge Privacy](../api/operation-result-algebra.md#eager-edge-privacy)

@@ -9,56 +9,32 @@ Possible future feature. This is not implemented.
 Add an explicit API for returning up to `N` visible rows when LOAD privacy is
 evaluated after storage reads.
 
-The current `visibleAll()` API filters the storage window selected by the
-driver. If a query asks for `limit(10)`, EntKT scans at most ten storage rows
-and returns the subset that passes LOAD privacy. That is clear once documented,
-but it can surprise callers who expect "ten visible rows".
+Current `all(viewerContext)` reads are strict: any denied root entity fails the
+operation. `limit` and `offset` select storage rows before LOAD privacy. There
+is no root collection `visibleAll()` terminal. Singular results can explicitly
+project root denial to absence with `visibleOrNull()`; eager edges can filter
+only their selected window with `filterVisible()`.
 
-This RFC describes the problem and the main solution shapes:
-
-- keep the current raw-window semantics and rename or document them more
-  explicitly
-- push privacy predicates into SQL when rules can be represented as predicates
-- add an explicit bounded visible-scan pagination API for arbitrary Kotlin
-  privacy rules
-- use a hybrid model where predicate pushdown narrows the database query and
-  LOAD privacy remains the final authority
+This RFC retains two open capabilities: predicate-shaped query visibility and
+an explicit bounded scan that collects visible rows under arbitrary Kotlin
+LOAD rules. Neither is a rename of an existing collection terminal.
 
 ## Motivation
 
-EntKT has two useful but different read semantics today:
-
-```kotlin
-query.allOrThrow()
-```
-
-Strictly loads the selected storage rows and rejects the whole operation if any
-selected entity fails LOAD privacy.
-
-```kotlin
-query.firstVisibleOrNull()
-query.visibleAll()
-```
-
-Scans storage rows and filters out entities that fail LOAD privacy.
-
-The hard case is paged lists. Consider:
+A paged list currently uses:
 
 ```kotlin
 val rows = client.conversationAssets.query {
     where(ConversationAsset.conversationId.eq(conversationId))
     orderBy(ConversationAsset.createdAt.desc())
     limit(10)
-}.visibleAll()
+}.all(viewerContext).getOrThrow()
 ```
 
-Today, `limit(10)` means "scan at most ten matching storage rows, then return
-the visible subset." If five of those rows fail LOAD privacy, the caller gets
-five rows even if more visible rows exist just beyond the storage window.
-
-That behavior is defensible as a bounded scan, but the API name does not make
-the distinction obvious. It also makes offset pagination surprising because
-`offset` skips storage rows, not visible rows.
+If any of those ten selected storage rows is denied, the read fails. It does
+not return five visible rows or continue scanning to fill the page. Applications
+that need that behavior require an explicit new contract for filtering, cost,
+and continuation. Offset still skips storage rows, not visible rows.
 
 ## Problem Statement
 
@@ -73,8 +49,7 @@ EntKT should make these concepts explicit:
 - **visible read**: omit denied rows without revealing their values
 
 The current API exposes storage `limit` and `offset`, but does not provide a
-separate visible-result limit. That creates least-surprise pressure around
-`visibleAll()`.
+separate visible-result limit or root collection filtering terminal.
 
 ## Non-Goals
 
@@ -84,58 +59,13 @@ separate visible-result limit. That creates least-surprise pressure around
   scanned totals.
 - Do not solve request-scoped batching or N+1 behavior in this RFC. That is a
   related but separate query performance problem.
-- Do not remove strict read APIs like `allOrThrow()`.
+- Do not remove strict reads such as `all(viewerContext)`.
 
-## Option A: Keep Current Semantics, Rename Or Clarify
+## Option A: Predicate Pushdown
 
-Keep `visibleAll()` as a raw-window filter, or rename it to a name that makes
-the storage-window behavior explicit:
-
-```kotlin
-query.visibleWindow()
-query.visibleStorageWindow()
-```
-
-Semantics:
-
-- driver applies `where`, `orderBy`, `limit`, and `offset`
-- EntKT materializes the selected rows
-- LOAD privacy filters denied rows
-- the result may contain fewer rows than `limit`
-
-Pros:
-
-- smallest implementation
-- keeps performance bounded by the existing query shape
-- easy to document and test
-- no hidden loops over large data sets
-
-Cons:
-
-- does not satisfy "give me up to ten visible rows"
-- offset remains storage-offset, not visible-offset
-- callers may still choose the wrong API unless naming is very explicit
-
-This option is mainly a terminology and documentation fix. It does not solve
-visible pagination.
-
-## Option B: Predicate Pushdown
-
-Add privacy-adjacent rules that can produce SQL predicates:
-
-```kotlin
-privacy {
-    load(UserPrivacy.visibleWhere { User.orgId.eq(viewer.orgId) })
-}
-```
-
-or model this as query interceptors/scopes:
-
-```kotlin
-interceptors {
-    load { addPredicate(User.orgId.eq(viewer.orgId)) }
-}
-```
+Add typed query-visibility predicates before storage bounds while keeping LOAD
+privacy as the final authority. The API and relationship coverage belong to
+[Query-Time Visibility Predicates](../privacy-validation/query-time-visibility-predicates.md).
 
 Semantics:
 
@@ -161,7 +91,7 @@ Cons:
 This option is powerful, but it should not replace LOAD privacy. It should be
 an optimization and correctness tool for predicate-shaped visibility rules.
 
-## Option C: Explicit Visible Scan Pagination
+## Option B: Explicit Visible Scan Pagination
 
 Add a terminal that says exactly what it does: scan storage rows in stable
 order until it collects up to `N` visible rows, reaches storage exhaustion, or
@@ -174,6 +104,7 @@ val page = client.conversationAssets.query {
     where(ConversationAsset.conversationId.eq(conversationId))
     orderBy(ConversationAsset.createdAt.desc())
 }.visibleScanPage(
+    viewerContext = viewerContext,
     visibleLimit = 10,
     after = cursor,
     scanLimit = 500,
@@ -223,7 +154,7 @@ Cons:
 This option best matches the existing privacy model because it preserves
 arbitrary LOAD privacy while making the cost and partial-page behavior visible.
 
-## Option D: Hybrid Model
+## Option C: Hybrid Model
 
 Support both predicate pushdown and explicit visible scanning.
 
@@ -242,6 +173,7 @@ val page = client.assets.query {
     where(Asset.workspaceId.eq(workspaceId))
     orderBy(Asset.createdAt.desc())
 }.visibleScanPage(
+    viewerContext = viewerContext,
     visibleLimit = 20,
     scanLimit = 1_000,
 )
@@ -282,23 +214,11 @@ query-time tools for cases that need pagination-correct filtering.
 
 ## Proposed Direction
 
-Adopt Option D in phases.
-
-Phase 1: clarify the current API.
-
-- document that `visibleAll()` filters a storage window
-- consider renaming or adding an alias such as `visibleWindow()`
-- reject or warn on confusing combinations if needed
-
-Phase 2: add explicit visible scanning.
-
-```kotlin
-query.visibleScanPage(
-    visibleLimit = 20,
-    after = cursor,
-    scanLimit = 1_000,
-)
-```
+Explore the hybrid model without changing strict entity reads. Design the
+bounded scan's cursor and result contract together with query-time visibility.
+The proposed terminal should take an explicit `ViewerContext` and return
+`ReadResult<VisibleScanPage<T>>`; operational failures remain failed reads,
+while reaching a scan budget is a successful partial page.
 
 Rules:
 
@@ -307,7 +227,7 @@ Rules:
 - do not expose denied-row counts by default
 - treat `ScanLimitReached` as a normal boundary, not an exception
 
-Phase 3: add predicate pushdown for predicate-shaped visibility rules.
+When predicate-shaped visibility is added:
 
 - keep LOAD privacy as final authority
 - make pushed rules explicit in naming and docs
@@ -316,8 +236,6 @@ Phase 3: add predicate pushdown for predicate-shaped visibility rules.
 
 ## Open Questions
 
-- Should the current `visibleAll()` be renamed, deprecated, or kept with
-  stronger docs?
 - Should `visibleScanPage()` live directly on queries, or under a namespace
   that emphasizes privacy-aware scanning?
 - What should the default `scanLimit` be, and should it be required?
@@ -331,7 +249,7 @@ Phase 3: add predicate pushdown for predicate-shaped visibility rules.
 
 Before implementation, add tests for:
 
-- `visibleAll()` continues to filter only the selected storage window
+- existing strict reads and eager `filterVisible()` semantics are unchanged
 - `visibleScanPage(visibleLimit = N)` returns up to `N` allowed rows after
   skipping denied rows
 - `visibleScanPage()` returns `ScanLimitReached` with a continuation cursor

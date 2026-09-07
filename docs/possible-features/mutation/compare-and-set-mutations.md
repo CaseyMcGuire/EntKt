@@ -62,30 +62,30 @@ If no row matches, the mutation fails with a structured compare-and-set error.
 ### Explicit CAS Block
 
 ```kotlin
-client.posts.update(post) {
+client.posts.update(post.id) {
     status = PostStatus.PUBLISHED
 }.cas {
-    expect(PostSchema.status, PostStatus.DRAFT)
-}.save()
+    expect(Post.status, PostStatus.DRAFT)
+}.save(viewerContext)
 ```
 
 ### Builder Method
 
 ```kotlin
-client.posts.update(post) {
+client.posts.update(post.id) {
     status = PostStatus.PUBLISHED
-}.expect(PostSchema.status, PostStatus.DRAFT)
- .save()
+}.expect(Post.status, PostStatus.DRAFT)
+ .save(viewerContext)
 ```
 
 ### Null Checks
 
 ```kotlin
-client.posts.update(post) {
+client.posts.update(post.id) {
     deletedAt = Instant.now()
 }.cas {
-    expectNull(PostSchema.deletedAt)
-}.save()
+    expectNull(Post.deletedAt)
+}.save(viewerContext)
 ```
 
 The API should stay narrow in V1:
@@ -148,31 +148,35 @@ validation step.
 ### State Transition Guard
 
 ```kotlin
-client.friendships.update(friendship) {
+client.friendships.update(friendship.id) {
     status = FriendshipStatus.ACCEPTED
 }.cas {
-    expect(FriendshipSchema.status, FriendshipStatus.PENDING)
-}.save()
+    expect(Friendship.status, FriendshipStatus.PENDING)
+}.save(viewerContext)
 ```
 
 ### Timestamp-Based Stale Write Detection
 
 ```kotlin
-client.posts.update(post) {
+client.posts.update(post.id) {
     title = "New title"
 }.cas {
-    expect(PostSchema.updatedAt, post.updatedAt)
-}.save()
+    expect(Post.updatedAt, post.updatedAt)
+}.save(viewerContext)
 ```
 
-### Soft Delete
+### Delete Preconditions
+
+This delete-builder sketch is a proposed surface. Current delete methods execute
+immediately and return `MutationResult`; adding CAS requires an explicit
+pre-execution request API rather than chaining onto that result.
 
 ```kotlin
 client.posts.delete(post)
     .cas {
-        expectNull(PostSchema.deletedAt)
+        expectNull(Post.deletedAt)
     }
-    .save()
+    .save(viewerContext)
 ```
 
 ## SQL / Driver Requirements

@@ -95,7 +95,7 @@ client.posts.update(post.id) {
 Version locking is explicit schema opt-in:
 
 ```kotlin
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
     val version = version("version")
 }
@@ -109,9 +109,9 @@ SET title = ?, version = version + 1
 WHERE id = ? AND version = ?
 ```
 
-`update(entity)` naturally carries the entity's expected version. An ID-only
-update must either state an expectation or clearly retain last-write-wins
-semantics. The two entry points must not look equivalent while silently using
+The current update API is ID-based. A proposed `update(entity)` convenience
+could carry the entity's expected version; ID-based updates must state an
+expectation or clearly retain last-write-wins semantics. The two entry points must not look equivalent while silently using
 different concurrency guarantees.
 
 Deletes follow the same rule:

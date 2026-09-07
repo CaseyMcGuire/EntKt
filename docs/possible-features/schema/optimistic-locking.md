@@ -34,18 +34,20 @@ Without optimistic locking, the last write wins silently.
 Possible mixin:
 
 ```kotlin
-object VersionedMixin : Mixin {
-    override fun fields() = fields {
-        long("version").default(0)
-    }
+class Versioned(scope: EntMixin.Scope) : EntMixin(scope) {
+    val version by long("version").default(0)
 }
 ```
 
-Or a dedicated helper:
+Include it with the existing declaration API:
 
 ```kotlin
-override fun mixins() = listOf(versioned())
+val versioning = include(::Versioned)
 ```
+
+A column bundle alone does not enable concurrency control. An explicit version
+marker or dedicated helper still needs design; a field named `version` must
+not silently acquire locking behavior.
 
 ## Generated Behavior
 
@@ -64,17 +66,19 @@ DELETE FROM posts
 WHERE id = ? AND version = ?
 ```
 
-If no row is affected, generated code throws a structured stale-write error.
+A stale expectation returns `MutationResult.Failed` with a typed conflict
+exception. `getOrThrow()` throws that exception. Absence and conflicts need
+explicit classification as described in [Delete Consistency](../mutation/delete-consistency.md).
 
 ## API Shape
 
-The default generated update API can enforce locking automatically when the
-entity is versioned:
+A proposed expectation method could extend today's ID-based update API:
 
 ```kotlin
-client.posts.update(post) {
+client.posts.update(post.id) {
     title = "New title"
-}.saveOrThrow()
+}.expectVersion(post.version)
+ .saveAndLoad(viewerContext).getOrThrow()
 ```
 
 The generated `Post` returned from the update should contain the incremented

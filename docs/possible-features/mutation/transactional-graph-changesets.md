@@ -17,18 +17,18 @@ Many application mutations naturally touch more than one entity:
 client.withTransaction { tx ->
     val org = tx.orgs.create {
         name = "Acme"
-    }.save()
+    }.saveAndLoad(viewerContext).orRollback()
 
     val user = tx.users.create {
         email = "admin@example.com"
-        this.org.connect(org)
-    }.save()
+        orgId = org.id
+    }.saveAndLoad(viewerContext).orRollback()
 
     tx.memberships.create {
-        this.org.connect(org)
-        this.user.connect(user)
+        orgId = org.id
+        userId = user.id
         role = "owner"
-    }.save()
+    }.saveAndLoad(viewerContext).orRollback()
 }
 ```
 
@@ -45,32 +45,20 @@ same storage model while improving readability for common graph mutations.
 
 ## Proposed API
 
-One possible shape:
+A proposed `graphTransaction` would collect typed create/update nodes with an
+explicit `ViewerContext`, resolve their dependencies, and execute them in one
+transaction. It should return the canonical transaction result.
 
-```kotlin
-client.graphTransaction { graph ->
-    val org = graph.orgs.create {
-        name = "Acme"
-    }
+The exact DSL for assigning a future generated ID remains open. Ordinary
+builders currently accept scalar FK values such as `orgId = org.id`; they do
+not expose `org.connect(...)` or accept pending mutation objects as IDs. A
+changeset needs an explicit typed deferred-reference adapter rather than
+pretending an unsaved handle is already an entity.
 
-    val user = graph.users.create {
-        email = "admin@example.com"
-        this.org.connect(org)
-    }
-
-    graph.memberships.create {
-        this.org.connect(org)
-        this.user.connect(user)
-        role = "owner"
-    }
-
-    graph.save()
-}
-```
-
-The important distinction is that `org` and `user` are changeset handles until
-`save()` runs. They can be used by later changes in the same graph without
-requiring the caller to manually sequence every insert.
+Until execution, each node is a changeset handle. The graph resolves its ID
+before configuring dependent writes. Users should not need to manually
+sequence every insert, but the dependency and transaction boundaries stay
+explicit.
 
 ## Execution Model
 
@@ -81,29 +69,21 @@ The changeset should compile to an explicit dependency graph:
 - updates and edge changes run when their referenced rows are known
 - validation and privacy run through the normal generated mutation pipeline
 
-In V1, reject cycles instead of trying to solve them:
-
-```kotlin
-val a = graph.nodes.create { parent.connect(b) }
-val b = graph.nodes.create { parent.connect(a) }
-```
+In V1, reject cycles such as `A.parent -> B` and `B.parent -> A`, with a
+readable dependency path.
 
 ## Relationship To Edge Mutations
 
-This feature should build on the edge mutation API. It should not introduce a
-second way to express relationships.
-
-Good:
-
-```kotlin
-this.author.connect(author)
-```
-
-Avoid:
+Current FK assignments use scalar fields:
 
 ```kotlin
 authorId = author.id
 ```
+
+Generated changeset adapters should eventually resolve a typed deferred
+reference into that same assignment. Preserve existing field-backed FK names,
+nullability, and relationship mutation validation; do not create a second
+relationship model or infer persistence from arbitrary Kotlin object graphs.
 
 ## Validation And Privacy
 
@@ -130,7 +110,7 @@ The graph layer only coordinates ordering and transaction scope.
 Before implementation, add tests for:
 
 - dependent creates are ordered correctly
-- edge connects can reference earlier changeset handles
+- typed deferred references resolve IDs from earlier changeset handles
 - all writes run inside one transaction
 - failures roll back earlier graph writes
 - validation and privacy errors preserve entity context

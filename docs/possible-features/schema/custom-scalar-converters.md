@@ -28,8 +28,9 @@ database-native type is not a converter.
 @JvmInline
 value class Email(val value: String)
 
-class User : EntSchema("users") {
-    val email = customScalar("email", Email::class)
+class User : EntSchema("users", clientName = "users") {
+    override fun id() = EntId.long()
+    val email by customScalar("email", Email::class)
         .storedAsText(
             encode = { it.value },
             decode = { Email(it) },
@@ -47,7 +48,7 @@ object EmailMapping : ScalarMapping<Email, String> {
     override fun decode(value: String): Email = Email(value)
 }
 
-val email = customScalar("email", Email::class).mappedBy(EmailMapping)
+val email by customScalar("email", Email::class).mappedBy(EmailMapping)
 ```
 
 The exact names are open, but the shape should stay explicit: domain Kotlin type,

@@ -85,8 +85,6 @@ Deferred to follow-ups (out of V1 scope):
 - **Second-side / reverse traversal** (referenced by RFC #3). Separate RFC
   — see [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md).
 
-Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
-
 ## Summary
 
 Generate collection-style mutation helpers for helper-eligible `throughLink(...)`

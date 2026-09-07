@@ -15,8 +15,8 @@ driver to inherit a large set of unrelated default methods and booleans.
 
 ## Motivation
 
-The current driver surface includes registration, JSON copying, native storage,
-CRUD, aggregates, bulk writes, query explanation, transaction ownership, row
+The current `DatabaseDriver` surface includes registration, JSON copying, native storage,
+CRUD, aggregates, bulk writes, transaction ownership, row
 locking, relationship locking, and mutation-exception classification.
 
 That creates several pressures:
@@ -26,7 +26,7 @@ That creates several pressures:
 - a root driver can advertise family support for an operation that only its
   transaction-scoped child may execute
 - native, emulated, and unsupported behavior are not represented uniformly
-- generated code must know which preflight belongs to which method
+- shared runtime engines must know which preflight belongs to which method
 - one interface change creates churn across every driver implementation
 
 ## Design Principles

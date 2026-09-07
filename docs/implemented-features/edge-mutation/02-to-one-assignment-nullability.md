@@ -9,7 +9,7 @@ Follow-up work was extracted into focused RFCs:
 - [Field-Backed FK Declaration Names](06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](07-generated-member-name-collisions.md)
 - [Create Hook Mutation View Adapter](08-create-hook-mutation-view-adapter.md)
-- [Schema Declaration Names As Generated API](../../possible-features/schema/schema-declaration-api-names.md)
+- [Schema Declaration Names As Generated API](../schema/schema-declaration-api-names.md)
 
 The core to-one behavior is implemented. The edge declaration-name capture
 described later in this document is not implemented and is superseded by the
@@ -18,8 +18,6 @@ edge APIs from the storage/runtime `Edge.name`.
 
 Create-side result variants are already implemented under
 [EntKt Result Variants](../tooling/entkt-result-variants-rfc.md).
-
-Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
 
 ## Summary
 
@@ -131,7 +129,7 @@ The relationship nullability model is required by default. A
 `belongsTo<Target>(...)` edge produces a non-null FK unless the schema marks the
 relationship with `.nullable()`. `.nullable()` is the only relationship
 nullability modifier — see
-[Schema Nullability Terminology](../../possible-features/schema/schema-nullability-terminology.md) for the
+[Schema Nullability Terminology](../schema/schema-nullability-terminology.md) for the
 DSL-wide contract.
 
 Nullable to-one edges, declared with `.nullable()`, can be cleared by assigning
@@ -219,7 +217,7 @@ a collision would occur.
 
 > **Historical design note:** this section was not implemented as part of the
 > core to-one baseline. Its edge-specific contract is superseded by
-> [Schema Declaration Names As Generated API](../../possible-features/schema/schema-declaration-api-names.md).
+> [Schema Declaration Names As Generated API](../schema/schema-declaration-api-names.md).
 
 Even without entity setter methods like `setAuthor(...)`, implicit FK
 properties still need a Kotlin source name for their generated API,
@@ -967,7 +965,7 @@ is covered in [Transaction And Locking Semantics](04-transaction-locking-semanti
 2. Change relationship nullability to required by default for `belongsTo(...)`,
    with `.nullable()` as the explicit nullable relationship
    marker. Follow the DSL-wide terminology contract from
-   [Schema Nullability Terminology](../../possible-features/schema/schema-nullability-terminology.md).
+   [Schema Nullability Terminology](../schema/schema-nullability-terminology.md).
 3. Add tests proving required/nullable to-one semantics and hook/privacy/
    validation visibility.
 

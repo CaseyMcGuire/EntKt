@@ -99,7 +99,8 @@ differ's join key and the reverse-mapping key for error classification.
 
 A CHECK violation that does slip past the app (out-of-band writer racing a
 deploy, or raw driver writes) surfaces as SQLSTATE `23514`.
-`classifyException` already maps `23xxx` to `EntError.ConstraintViolation`
+`classifyMutationException` already maps supported constraint SQLSTATEs to
+`EntConstraintViolationException`
 with the constraint name; the deterministic naming scheme lets it also
 populate `field` by parsing `ck_<table>_<column>_...`.
 

@@ -29,7 +29,7 @@ aggregates are now explicit storage-level reads on both concrete client types:
 they run interceptors but skip entity materialization and LOAD privacy.
 Materializing privacy-client reads remain viewer-scoped. The proposed narrowed
 query hierarchy was
-[rejected](../../possible-features/privacy-validation/privacy-safe-query-surfaces.md)
+rejected
 because privacy rules are trusted authorization code and raw reads are useful
 for control-plane facts and avoiding recursive LOAD evaluation. References to
 the gate below describe the historical design this RFC originally implemented.
@@ -51,6 +51,12 @@ and [Privacy → Operation Contexts](../../06-privacy.md#operation-contexts)
 for the user-facing documentation, and the
 [breaking-changes entry](../../breaking-changes/index.md) for caller
 migration.
+
+**Subsequent API changes.** Rule clients now share `ReadOnlyEntClient`, and
+entity terminals require an explicit `ViewerContext`. Generated raw query
+terminals have been removed. The posture-specific types and raw-read decisions
+recorded below are historical; see [Privacy](../../06-privacy.md) and
+[Queries](../../04-queries.md) for current behavior.
 
 ## Summary
 

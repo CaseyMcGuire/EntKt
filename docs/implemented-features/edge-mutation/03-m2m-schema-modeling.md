@@ -43,8 +43,6 @@ Follow-up work was extracted into focused RFCs:
 - [Through-Entity Nullable M2M Traversal](09-through-entity-nullable-m2m-traversal.md)
 - [Symmetric Link-Table Edges](10-symmetric-link-table-writes.md)
 
-Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
-
 ## Summary
 
 Replace the generic many-to-many `.through(...)` marker with explicit schema

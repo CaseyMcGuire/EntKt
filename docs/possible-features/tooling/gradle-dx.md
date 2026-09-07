@@ -2,7 +2,10 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Partially implemented. `generateEntkt`, `validateEntSchemas`,
+`explainEntSchemas` (text/JSON/SQL), and Flyway generation/validation tasks
+already exist. Remaining ideas concern generated-output checks, richer
+diagnostics, cacheability, and source-processing ergonomics.
 
 ## Summary
 
@@ -32,12 +35,16 @@ As entkt grows, users need clear commands for common workflows:
 Potential tasks:
 
 ```bash
-./gradlew generateEntkt
-./gradlew verifyEntktSchemas
 ./gradlew diffEntktSchemas
-./gradlew entktDescribeSchema
 ./gradlew checkEntktGenerated
 ```
+
+Build on the existing tasks described in
+[Schema Validation And Explain](../../implemented-features/schema/schema-validation-explain.md)
+and [Flyway Shadow Migration Workflow](../../implemented-features/tooling/flyway-shadow-migration-workflow.md).
+Do not add another schema-printing task for the same functionality. An optional
+output-file setting could complement the current stdout rendering; additional
+dialects belong with driver capability support.
 
 `checkEntktGenerated` could fail if generated output differs from checked-in
 generated files, for projects that commit generated code.
@@ -68,7 +75,7 @@ See [Same-Module Schema Processing](same-module-schema-processing.md).
 Before implementation, add tests for:
 
 - tasks are registered by the Gradle plugin
-- `verifyEntktSchemas` works without a database
+- existing `validateEntSchemas` / `explainEntSchemas` remain database-independent
 - stale generated code is detected when configured
 - errors include schema and field context
 - tasks are cacheable where appropriate

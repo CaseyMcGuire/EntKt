@@ -2,7 +2,18 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Implemented. Typed field handles, symbolic schema targets, inverse property
+references, junction references, and schema finalization are part of the current
+schema API.
+
+This page records the original design. Subsequent decisions require explicit
+`clientName`, use delegated `by` declarations for field and edge API names,
+split junction linkage into `throughLink` / `throughEntity`, and make
+belongs-to relationships non-null by default. The plain-property examples and
+`required()` / `through()` spellings below are historical. See
+[Schema](../../02-schema.md), [Edges](../../03-edges.md), and
+[Schema Declaration Names As Generated API](schema-declaration-api-names.md)
+for the current contract.
 
 ## Summary
 
@@ -119,7 +130,7 @@ That creates a few recurring problems:
 - Keep SQL column and table naming explicit in schema declarations.
 - Use Kotlin declaration names for generated APIs while keeping SQL names
   explicit, as specified by
-  [Schema Declaration Names As Generated API](../../implemented-features/schema/schema-declaration-api-names.md).
+  [Schema Declaration Names As Generated API](schema-declaration-api-names.md).
 - Reject obvious schema mismatches earlier.
 - Use plain property declarations as the schema model for fields,
   edges, and indexes.

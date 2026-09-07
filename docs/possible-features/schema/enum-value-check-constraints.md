@@ -72,8 +72,8 @@ One opt-out, for teams that prefer application-only validation or that have
 legacy columns they are not ready to constrain:
 
 ```kotlin
-val priority = enum<Priority>("priority").default(Priority.LOW)   // CHECK emitted
-val legacyKind = enum<Kind>("kind").noCheck()                     // no CHECK emitted
+val priority by enum<Priority>("priority").default(Priority.LOW)   // CHECK emitted
+val legacyKind by enum<Kind>("kind").noCheck()                     // no CHECK emitted
 ```
 
 `noCheck()` is purely a migration concern (it suppresses constraint
@@ -175,9 +175,9 @@ For:
 
 ```kotlin
 enum class Priority { LOW, MEDIUM, HIGH }
-class Ticket : EntSchema("tickets") {
+class Ticket : EntSchema("tickets", clientName = "tickets") {
     override fun id() = EntId.int()
-    val priority = enum<Priority>("priority").default(Priority.LOW)
+    val priority by enum<Priority>("priority").default(Priority.LOW)
 }
 ```
 

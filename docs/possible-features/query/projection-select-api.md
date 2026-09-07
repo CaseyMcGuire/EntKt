@@ -33,7 +33,7 @@ Simple typed projections:
 ```kotlin
 val rows = client.posts.query {
     where(Post.published eq true)
-}.select(Post.id, Post.title)
+}.select(viewerContext, Post.id, Post.title)
 ```
 
 Generated result type options:
@@ -47,7 +47,7 @@ Potential first version:
 
 ```kotlin
 val rows: ReadResult<List<SelectedRow2<Long, String>>> =
-    client.posts.query().select(Post.id, Post.title)
+    client.posts.query().select(viewerContext, Post.id, Post.title)
 ```
 
 Named generated projections are preferable when a projection is reused across
@@ -56,7 +56,7 @@ application boundaries:
 ```kotlin
 val rows: ReadResult<List<PostSummary>> = client.posts.query {
     where(Post.published eq true)
-}.select(PostSummary::class)
+}.select(viewerContext, PostSummary::class)
 ```
 
 The exact declaration mechanism is open. The public result must provide named
@@ -70,10 +70,11 @@ must define privacy behavior explicitly.
 Recommended behavior:
 
 - query-time visibility predicates apply before projection, ordering, and bounds
-- if no LOAD rules exist, query only the storage columns required by the
-  projection and effective ordering
-- if LOAD rules exist, fetch every field required to evaluate those rules,
-  enforce LOAD privacy, then map the successful entity to the projection
+- an empty LOAD rule list remains fail-closed; absence of rules is not permission
+- under ordinary viewer contexts, fetch every field required by LOAD rules,
+  enforce privacy, then map the successful entity to the projection
+- fewer storage columns may be fetched only when an explicit authorization
+  contract, such as a privacy-bypass context, permits skipping full hydration
 - never change the terminal's authorization claim merely because a policy list
   happens to be empty at runtime
 
@@ -104,7 +105,8 @@ Before implementation, add tests for:
 - selected field types are preserved
 - nullable fields stay nullable
 - LOAD privacy is enforced before projection
-- generated SQL only selects requested columns when no privacy rules exist
+- empty privacy rule lists deny rather than authorize projection
+- explicitly authorized projection can omit unused storage columns
 - policy-required fields are available without appearing in the public result
 - failures use the canonical `ReadResult` contract
 - cursor projection selects hidden ordering fields without exposing them

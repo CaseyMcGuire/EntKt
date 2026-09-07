@@ -492,7 +492,7 @@ above it.
   delete, reasserting the frozen caller-plus-interceptor predicates; only rows
   actually removed reach `afterDelete`. PostgreSQL statement counts and shapes
   therefore change. See the
-  [batch-aware lifecycle design](../possible-features/privacy-validation/batch-aware-lifecycle-evaluation.md)
+  [batch-aware lifecycle design](../implemented-features/privacy-validation/batch-aware-lifecycle-evaluation.md)
   for the full ordering and transaction contract.
   Custom drivers are source-broken: `Driver.registeredIdColumn(table)` is a new
   abstract method. `Driver.deleteManyByIds(...)` has a correct default that

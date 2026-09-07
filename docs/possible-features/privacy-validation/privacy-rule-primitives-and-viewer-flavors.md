@@ -11,7 +11,7 @@ privacy model:
 
 - named rule constructors for common allow / require / deny shapes
 - reusable FK and graph-reachability predicates
-- viewer flavors / capabilities on `PrivacyContext`
+- viewer flavors / capabilities on `ViewerContext`
 - stable rule names that feed privacy-denial messages and future explain
   output
 
@@ -23,8 +23,8 @@ pass — and these helpers just compose those decisions ergonomically.
 
 EntKt already has the important safety properties:
 
-- LOAD privacy rechecks hydrated rows and throws on denied rows by default
-- `visible*` APIs are explicit when callers want privacy filtering
+- LOAD privacy checks hydrated rows and returns a failed read on denial
+- singular `visibleOrNull()` and eager `filterVisible()` make privacy projection explicit
 - write privacy sees `WriteCandidate`, update patches, and edge changes
 - read-path filters such as soft delete live in query interceptors
 
@@ -32,10 +32,10 @@ The remaining problem is ergonomics. Application policies today tend to
 be hand-written lambdas:
 
 ```kotlin
-ArticleCreatePrivacyRule { ctx ->
-    val viewer = ctx.privacy.viewer as? Viewer.User
+ArticleCreatePrivacyRule { context, candidate ->
+    val viewerId = context.viewerContext.userIdOrNull()
         ?: return@ArticleCreatePrivacyRule PrivacyDecision.Deny("login required")
-    if (ctx.candidate.authorId == viewer.id) PrivacyDecision.Continue
+    if (candidate.authorId == viewerId) PrivacyDecision.Allow
     else PrivacyDecision.Deny("authorId must be current viewer")
 }
 ```
@@ -94,43 +94,34 @@ change the evaluator.
 
 ### Named Rules
 
-Add a lightweight named-rule wrapper:
+Add an optional name contract and runtime wrappers around the existing
+`PrivacyRule<Client, Item>` / `BatchPrivacyRule<Client, Item>` interfaces.
+`Client` is bounded by `EntRuleClient`; callbacks receive shared
+`PrivacyRuleContext<Client>` and separate per-item state. LOAD items are the
+entities themselves; CREATE items are write candidates.
+
+Illustrative scalar constructor signatures:
 
 ```kotlin
-interface NamedPrivacyRule {
-    val ruleName: String
-}
-
-class NamedRule<C>(
-    override val ruleName: String,
-    private val delegate: PrivacyRule<C>,
-) : PrivacyRule<C>, NamedPrivacyRule {
-    override fun run(ctx: C): PrivacyDecision = delegate.run(ctx)
-}
-```
-
-Add runtime helper constructors:
-
-```kotlin
-fun <C> allowIf(
+fun <Client : EntRuleClient, Item> allowIf(
     name: String,
-    predicate: (C) -> Boolean,
-): PrivacyRule<C>
+    predicate: (PrivacyRuleContext<Client>, Item) -> Boolean,
+): PrivacyRule<Client, Item>
 
-fun <C> denyIf(
+fun <Client : EntRuleClient, Item> denyIf(
     name: String,
     reason: String = name,
-    predicate: (C) -> Boolean,
-): PrivacyRule<C>
+    predicate: (PrivacyRuleContext<Client>, Item) -> Boolean,
+): PrivacyRule<Client, Item>
 
-fun <C> require(
+fun <Client : EntRuleClient, Item> require(
     name: String,
     reason: String = name,
-    predicate: (C) -> Boolean,
-): PrivacyRule<C>
+    predicate: (PrivacyRuleContext<Client>, Item) -> Boolean,
+): PrivacyRule<Client, Item>
 ```
 
-Decision behavior:
+The helper names are proposed. Preserve the existing decision algebra:
 
 ```text
 allowIf: true -> Allow, false -> Continue
@@ -138,71 +129,50 @@ denyIf:  true -> Deny(reason), false -> Continue
 require: true -> Continue, false -> Deny(reason)
 ```
 
-`require(...)` is intended for write privacy and validation-style
-authorization. It composes as an AND because successful rules continue
-and failed rules deny. In LOAD privacy, `require(...)` by itself does
-not allow access because LOAD end-of-list still denies.
+A successful `require` does not authorize an operation. Every CRUD policy still
+needs an explicit `Allow`; falling off the list denies. Rule order matters:
+an early `Allow` skips later requirements, so policies needing every requirement
+must place them first.
 
-Rule ordering still matters. `PrivacyDecision.Allow` short-circuits
-write privacy today, and this RFC preserves that behavior. A broad
-`allowIf("admin")` before a `require(...)` rule intentionally bypasses
-later checks; applications that want every requirement enforced should
-put `require(...)` rules first or avoid early `Allow` rules in that
-policy.
-
-Example:
+For example, a proposed helper could express a complete author policy:
 
 ```kotlin
 privacy {
-    load(
-        allowIf("article is published") { ctx ->
-            ctx.entity.published
-        },
-        allowIf("viewer is article author") { ctx ->
-            ctx.privacy.viewer.userIdOrNull() == ctx.entity.authorId
-        },
-    )
-
     create(
-        require("viewer is authenticated") { ctx ->
-            ctx.privacy.viewer is Viewer.User
+        require("viewer is authenticated") { context, _ ->
+            context.viewerContext.viewer is Viewer.User
         },
-        require("authorId points to viewer") { ctx ->
-            ctx.privacy.viewer.userIdOrNull() == ctx.candidate.authorId
+        allowIf("authorId points to viewer") { context, candidate ->
+            context.viewerContext.userIdOrNull() == candidate.authorId
         },
     )
 }
 ```
 
-### Viewer Helpers
+Scalar helpers must retain the existing batch adaptation and rule order.
+Wrapping an explicit batch rule to add a name must preserve its single batch
+invocation and correlated decisions instead of turning it into per-item calls.
 
-Add small helper functions for common viewer checks:
+### Implemented Viewer Helpers
 
-```kotlin
-fun Viewer.userIdOrNull(): Any? =
-    (this as? Viewer.User)?.id
-
-fun PrivacyContext.userIdOrNull(): Any? =
-    viewer.userIdOrNull()
-```
-
-These helpers keep policies readable without changing the existing
-`Viewer` sealed interface.
+`Viewer` and `ViewerContext` already expose `userOrNull`, `userIdOrNull`, and
+typed ID helpers. Reuse those functions; they are no longer proposed work.
+Application-defined flavors and named rule constructors remain open.
 
 ### Viewer Flavors
 
-Add application-defined capabilities to `PrivacyContext`:
+Add application-defined capabilities to `ViewerContext`:
 
 ```kotlin
 interface PrivacyFlavor
 
-data class PrivacyContext(
+data class ViewerContext(
     val viewer: Viewer,
     val flavors: List<PrivacyFlavor> = emptyList(),
 )
 
-inline fun <reified F : PrivacyFlavor> PrivacyContext.flavor(): F?
-inline fun <reified F : PrivacyFlavor> PrivacyContext.hasFlavor(): Boolean
+inline fun <reified F : PrivacyFlavor> ViewerContext.flavor(): F?
+inline fun <reified F : PrivacyFlavor> ViewerContext.hasFlavor(): Boolean
 ```
 
 Example:
@@ -213,8 +183,8 @@ data object ReadArchiveFlavor : PrivacyFlavor
 
 privacy {
     load(
-        allowIf("admin") { ctx -> ctx.privacy.hasFlavor<AdminFlavor>() },
-        allowIf("published") { ctx -> ctx.entity.published },
+        allowIf("admin") { ctx, item -> ctx.viewerContext.hasFlavor<AdminFlavor>() },
+        allowIf("published") { ctx, item -> item.published },
     )
 }
 ```
@@ -223,23 +193,18 @@ privacy {
 application-level capabilities that should still pass through explicit
 policy rules and appear in rule traces.
 
-Scoped clients can add flavors without replacing the viewer:
+Flavors should extend the explicit operation context rather than reintroduce
+viewer-bound clients. A possible helper creates a new immutable context:
 
 ```kotlin
-client.withPrivacyFlavor(AdminFlavor) { adminClient ->
-    adminClient.posts.query().allOrThrow()
-}
+val adminContext = viewerContext.plusFlavor(AdminFlavor)
+client.posts.query().all(adminContext).getOrThrow()
 ```
 
-This is equivalent to:
-
-```kotlin
-client.withPrivacyContext(
-    client.currentPrivacyContext().plusFlavor(AdminFlavor),
-) { adminClient -> ... }
-```
-
-The exact helper names can be finalized during implementation.
+`plusFlavor`, `flavor`, and `hasFlavor` are proposed; existing `ViewerContext`
+currently contains only the viewer. Propagate the resulting context through
+nested rule reads explicitly and preserve the same context instance within an
+operation. Exact storage and helper names remain open.
 
 ## FK And Graph Predicates
 
@@ -254,13 +219,13 @@ Generated helper examples:
 ```kotlin
 object ArticlePrivacy {
     fun allowAuthor(): ArticleLoadPrivacyRule =
-        allowIf("Article.authorId points to viewer") { ctx ->
-            ctx.privacy.userIdOrNull() == ctx.entity.authorId
+        allowIf("Article.authorId points to viewer") { ctx, item ->
+            ctx.viewerContext.userIdOrNull() == item.authorId
         }
 
     fun requireAuthorIsViewer(): ArticleCreatePrivacyRule =
-        require("Article.authorId points to viewer") { ctx ->
-            ctx.privacy.userIdOrNull() == ctx.candidate.authorId
+        require("Article.authorId points to viewer") { ctx, item ->
+            ctx.viewerContext.userIdOrNull() == item.authorId
         }
 }
 ```
@@ -278,17 +243,17 @@ Example generated helper:
 ```kotlin
 object CommentPrivacy {
     fun requireCanReadTopic(): CommentCreatePrivacyRule =
-        require("viewer can read Comment.topic") { ctx ->
-            ctx.client.topics.visibleByIdOrNull(ctx.candidate.topicId) != null
+        require("viewer can read Comment.topic") { ctx, item ->
+            ctx.client.topics.findById(ctx.viewerContext, item.topicId)
+                .visibleOrNull().getOrThrow() != null
         }
 }
 ```
 
 Open implementation detail: this helper must avoid leaking whether the
-target row exists but is unreadable. `visibleByIdOrNull` has the right
-high-level shape because it collapses missing and denied rows to null.
-If the implementation needs stricter error handling, it can catch
-`PrivacyDeniedException` internally and return false.
+target row exists but is unreadable. The current `visibleOrNull()` result
+projection maps only root LOAD denial to absence. Operational failures must
+remain failures, not be caught and treated as an unreadable target.
 
 ### Can Update / Delete Outgoing Edge
 
@@ -312,18 +277,21 @@ connecting the viewer to the current entity:
 ```kotlin
 object OrganizationPrivacy {
     fun allowIfViewerMembershipExists(): OrganizationLoadPrivacyRule =
-        allowIf("viewer has organization membership") { ctx ->
-            val viewerId = ctx.privacy.userIdOrNull() ?: return@allowIf false
+        allowIf("viewer has organization membership") { ctx, item ->
+            val viewerId = ctx.viewerContext.userIdOrNull() ?: return@allowIf false
             ctx.client.employments.query()
                 .where(Employment.userId eq viewerId)
-                .where(Employment.organizationId eq ctx.entity.id)
-                .visibleExists()
+                .where(Employment.organizationId eq item.id)
+                .firstOrNull(ctx.viewerContext)
+                .visibleOrNull().getOrThrow() != null
         }
 }
 ```
 
-This should use generated metadata where possible so users do not have to
-hand-write the junction query every time.
+This sketch checks the selected membership row. If the intended rule should
+find any readable row after an earlier denied row, its scanning or predicate
+visibility contract must be designed explicitly. No root `visibleExists`
+terminal exists today. Use generated metadata for relationship linkage.
 
 ## Generated Helper Placement
 
@@ -361,7 +329,7 @@ Named rules should improve failures immediately:
 CREATE denied on Article by rule "authorId points to viewer": authorId points to viewer
 ```
 
-The generated evaluator can use:
+The shared runtime evaluator could use:
 
 ```kotlin
 val ruleName = (rule as? NamedPrivacyRule)?.ruleName
@@ -389,10 +357,9 @@ possible future [Privacy / Validation Explain Mode](privacy-validation-explain-m
 ## Implementation Plan
 
 1. Add runtime named-rule helpers and `NamedPrivacyRule`.
-2. Add `PrivacyFlavor` support to `PrivacyContext`, plus scoped-client
-   helper APIs for adding flavors.
-3. Update generated privacy evaluators to include rule names in denial
-   messages and trace hooks.
+2. Add proposed `PrivacyFlavor` support and immutable context helpers.
+3. Update shared runtime evaluators to include rule names in denial messages
+   and trace hooks; generated code supplies only schema-specific adapters.
 4. Generate per-entity FK/viewer helper rules from relationship metadata.
 5. Generate or document graph-predicate helpers for can-read outgoing FK
    and incoming membership existence.
@@ -409,7 +376,7 @@ Before implementation, add tests for:
 - `require` alone does not accidentally allow LOAD privacy
 - named rules surface their names in privacy denial messages
 - anonymous rules still work and use a fallback name
-- `PrivacyContext` remains source-compatible with existing construction
+- `ViewerContext` remains source-compatible with existing construction
   through a default `flavors = emptyList()` parameter
 - `hasFlavor<T>()` and `flavor<T>()` work for application-defined flavors
 - `Viewer.PrivacyBypass` continues to bypass all privacy checks

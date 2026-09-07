@@ -76,12 +76,12 @@ Generate a suspend client alongside or instead of the synchronous client:
 ```kotlin
 val client = SuspendEntClient(PostgresR2dbcDriver(connectionFactory))
 
-val user = client.users.byIdOrNull(id)
+val user = client.users.findById(viewerContext, id).getOrThrow()
 
 client.withTransaction { tx ->
     tx.posts.create {
         title = "Hello"
-    }.save()
+    }.save(viewerContext).getOrThrow()
 }
 ```
 

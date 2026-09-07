@@ -15,7 +15,7 @@ boolean flags, late SQL errors, or documentation-only caveats.
 
 entkt already has driver-specific behavior:
 
-- JDBC Postgres supports SQL explain output
+- JDBC Postgres supports native direct to-many windows and JSON predicates
 - owner-row locking requires a supporting driver and active transaction
 - migration generation is currently Postgres/Flyway-oriented
 - future SQL expressions may require dialect-specific support
@@ -117,7 +117,7 @@ Used by Post.metadata containsJson(...).
 Expose capabilities from drivers:
 
 ```kotlin
-interface Driver {
+interface DatabaseDriver {
     val capabilities: DriverCapabilities
 }
 ```
@@ -139,14 +139,16 @@ Generate or maintain a documentation table:
 | Capability | Postgres JDBC | Postgres R2DBC | Notes |
 |---|---:|---:|---|
 | transactions | native | planned | |
-| savepoints | native | unknown | |
+| savepoints | unsupported | unknown | nested transactions are rejected |
 | row lock for update | native | planned | requires active transaction |
-| SQL explain | native | unknown | bind values redacted by default |
-| JSON containment | planned | planned | Postgres only |
+| query SQL explain | unsupported | unknown | generated explain terminals were removed |
+| JSON containment | native | planned | Postgres jsonb predicates |
 | Flyway migration generation | native | n/a | tooling feature |
 
-This table should be derived from code or tested constants when possible, so
-docs do not drift from implementation.
+The example above reflects current EntKt support, not everything the database
+itself can do. Generate this table from code or tested constants so it does not
+drift. Future dialect-aware schema output should likewise report unsupported
+features explicitly instead of guessing portable SQL.
 
 ## Tooling
 
@@ -161,10 +163,10 @@ Possible output:
 ```text
 PostgresDriver
   transactions: supported
-  savepoints: supported
+  savepoints: unsupported
   read row for update: supported
-  SQL explain: supported
-  JSON containment: planned
+  query SQL explain: unsupported
+  JSON containment: native
 ```
 
 For generated projects, validation can compare selected features against the

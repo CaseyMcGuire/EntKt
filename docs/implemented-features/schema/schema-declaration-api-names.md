@@ -1034,7 +1034,7 @@ declaration/storage mismatch so the separation is visible.
 
 ## Related RFCs
 
-- [Typed Schema Handles](../../possible-features/schema/typed-schema-handles.md)
+- [Typed Schema Handles](typed-schema-handles.md)
 - [Field-Backed FK Declaration Names](../edge-mutation/06-field-backed-fk-declaration-names.md)
 - [Generated Member Name Collisions](../edge-mutation/07-generated-member-name-collisions.md)
 - [To-One FK Mutation And Nullability](../edge-mutation/02-to-one-assignment-nullability.md)

@@ -22,9 +22,9 @@ Some relationship sets are not independent edges. They represent state:
 With plain edges, the schema can expose multiple independent relationships:
 
 ```kotlin
-val pending = manyToMany<User>("pending")
-val accepted = manyToMany<User>("accepted")
-val blocked = manyToMany<User>("blocked")
+val pending by manyToMany<User>("pending")
+val accepted by manyToMany<User>("accepted")
+val blocked by manyToMany<User>("blocked")
 ```
 
 Nothing in that shape says the same target cannot be in more than one state.
@@ -52,14 +52,14 @@ For SQL-first schemas, the cleaner model may be a join entity with an explicit
 state field:
 
 ```kotlin
-class Friendship : EntSchema<Int>("friendships") {
-    override fun id() = EntId.int()
+class Friendship : EntSchema("friendships", clientName = "friendships") {
+    override fun id() = EntId.long()
 
-    val requesterId = long("requester_id")
-    val recipientId = long("recipient_id")
-    val requester = belongsTo<User>("requester").field(requesterId).required()
-    val recipient = belongsTo<User>("recipient").field(recipientId).required()
-    val state = enum("state", FriendshipState::class)
+    val requesterId by long("requester_id")
+    val recipientId by long("recipient_id")
+    val requester by belongsTo<User>("requester").field(requesterId)
+    val recipient by belongsTo<User>("recipient").field(recipientId)
+    val state by enum<FriendshipState>("state")
 
     val byPair = index("idx_friendships_pair", requesterId, recipientId).unique()
 }
@@ -93,15 +93,15 @@ Generated state helpers should be query conveniences, not hidden storage:
 
 ```kotlin
 client.friendships.query()
-    .where(Friendship.requester.eq(user.id))
+    .where(Friendship.requesterId.eq(user.id))
     .where(Friendship.state.eq(FriendshipState.Accepted))
-    .all()
+    .all(viewerContext).getOrThrow()
 ```
 
 could become:
 
 ```kotlin
-client.users.acceptedFriends(user).all()
+client.users.acceptedFriends(user).all(viewerContext).getOrThrow()
 ```
 
 Mutation helpers should make state transitions explicit:

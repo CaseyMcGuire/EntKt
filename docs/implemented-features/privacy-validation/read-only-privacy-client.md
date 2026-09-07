@@ -43,7 +43,7 @@ materialization and LOAD privacy while retaining read interceptors. Privacy
 rules are trusted authorization code; this capability is useful for ACL and
 membership facts and can avoid recursive LOAD-policy evaluation. Materializing
 reads remain viewer-scoped. The narrowed privacy-query proposal was
-[rejected](../../possible-features/privacy-validation/privacy-safe-query-surfaces.md).
+rejected.
 The gate discussion below is retained as history and is no longer the current
 API contract.
 
@@ -110,6 +110,12 @@ machinery this one reuses: the `@EntktInternal` `EntReadRuntime`
 contract, per-entity read surfaces, and read repos whose queries and
 index stages run identically under any host that implements the
 contract.
+
+**Subsequent API changes.** Rule clients now share `ReadOnlyEntClient`, and
+entity terminals require an explicit `ViewerContext`. Generated raw query
+terminals have been removed. The posture-specific types and raw-read decisions
+recorded below are historical; see [Privacy](../../06-privacy.md) and
+[Queries](../../04-queries.md) for current behavior.
 
 ## Summary
 

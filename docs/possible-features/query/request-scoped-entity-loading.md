@@ -20,7 +20,7 @@ val post = client.posts.byId(postId)
 val author = client.users.byId(post.authorId)
 val comments = client.comments.query()
     .where(Comment.postId.eq(post.id))
-    .all()
+    .all(viewerContext).getOrThrow()
 val commentAuthors = comments.map { client.users.byId(it.authorId) }
 ```
 

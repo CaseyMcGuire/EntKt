@@ -26,13 +26,12 @@ fields can build on those mechanisms.
 
 ## Proposed Schema API
 
-Possible mixins:
+Possible `EntMixin` bundles, using the existing host-bound `include` API
+(the audit bundles themselves are proposed):
 
 ```kotlin
-override fun mixins() = listOf(
-    timestamps(),
-    actorStamps(),
-)
+val timestamps = include(::Timestamps)
+val actors = include(::ActorStamps)
 ```
 
 Generated fields:
@@ -46,10 +45,10 @@ updated_by
 
 ## Viewer Integration
 
-For actor fields, generated code can read from `PrivacyContext.viewer`:
+For actor fields, generated code can read from `ViewerContext.viewer`:
 
 ```kotlin
-when (val viewer = privacy.viewer) {
+when (val viewer = viewerContext.viewer) {
     is Viewer.User -> viewer.id
     is Viewer.PrivacyBypass -> null
     Viewer.Anonymous -> null

@@ -68,7 +68,7 @@ privacy {
         }
     }
 
-    load(UserLoadPrivacyRule { ctx ->
+    load(UserLoadPrivacyRule { context, user ->
         // Final materialization authority remains available.
         PrivacyDecision.Allow
     })
@@ -164,12 +164,15 @@ ctx.client.posts.storageQuery {
 }.exists()
 ```
 
-Whether this replaces the current `raw*` names belongs to
-[Explicit Query Authority And Cost](../query/explicit-query-authority-and-cost.md).
+Generated `raw*` terminals have been removed. Today, callers materialize rows
+with an explicit privacy-bypass `ViewerContext` and compute collection results.
+The storage-query sketch above would be a new capability, not a rename of an
+existing terminal. If introduced, its builder should expose only clauses that
+affect its result and distinguish storage access from query visibility.
 
 ## Privacy Context And Bypass
 
-One captured `PrivacyContext` is shared across visibility predicate creation,
+One captured `ViewerContext` is shared across visibility predicate creation,
 read interceptors, storage execution, LOAD privacy, traversal, and eager work.
 
 `Viewer.PrivacyBypass` should bypass both query visibility and LOAD privacy.
@@ -218,4 +221,3 @@ The predicate factory runs once per logical query step, not once per row.
 - [Privacy-Aware Visible Pagination](../query/privacy-aware-visible-pagination.md)
 - [Projection / Select API](../query/projection-select-api.md)
 - [Cursor Pagination](../query/cursor-pagination.md)
-- [Explicit Query Authority And Cost](../query/explicit-query-authority-and-cost.md)

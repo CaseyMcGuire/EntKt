@@ -90,8 +90,6 @@ Deferred follow-ups:
   FK path; until that lands, the raw driver exception still
   propagates there
 
-Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
-
 ## Summary
 
 Define transaction-neutral generated saves, optional runtime transaction

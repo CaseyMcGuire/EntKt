@@ -19,13 +19,19 @@ item types contain only per-item state. Explicit batch-rule implementations
 return a `RuleDecisions` value through `decideEach` rather than a free
 positional list.
 
-The motivation below describes the pre-implementation baseline.
+The body below records the design at implementation time. Subsequent changes
+unified rule reads under `ReadOnlyEntClient`, require an explicit
+`ViewerContext` at entity-operation terminals, pass entities directly to LOAD
+rules, and replace mutable before-hook views with immutable transforming hook
+states. The driver interface is now named `DatabaseDriver`. Older names and
+examples below are historical; see [Privacy](../../06-privacy.md),
+[Validation](../../07-validation.md), and the runtime
+[hook contracts](../../../runtime/src/main/kotlin/entkt/runtime/hook/EntityHooks.kt)
+for the current surface.
 
-This RFC supersedes the design direction in
-[`preflighted-bulk-operations.md`](preflighted-bulk-operations.md). That note
-predates the current atomic bulk-mutation contract and deliberately excludes
-batch-aware lifecycle callbacks, so it cannot address the N+1 behavior this RFC
-targets.
+This implementation superseded the earlier preflight-only bulk proposal by
+combining atomic writes with batch-aware lifecycle callbacks. Its motivation
+describes the pre-implementation baseline.
 
 ## Summary
 
@@ -1313,7 +1319,7 @@ This RFC adopts that proposal's unconditional predicate-reassertion rule for
 part of the ID-returning write, so set-based persistence does not reopen the
 candidate-selection race. The optional pessimistic locking API and the residual
 privacy/validation staleness window remain in the separate
-[Delete Consistency](../mutation/delete-consistency.md) proposal.
+[Delete Consistency](../../possible-features/mutation/delete-consistency.md) proposal.
 
 ### Structured Mutation Pipeline
 

@@ -15,28 +15,23 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 - [Privacy Rule Primitives And Viewer Flavors](privacy-validation/privacy-rule-primitives-and-viewer-flavors.md)
 - [Privacy / Validation Explain Mode](privacy-validation/privacy-validation-explain-mode.md)
 - [Policy Test Helpers](privacy-validation/policy-test-helpers.md)
-- [Checked Aggregate Privacy](privacy-validation/checked-aggregate-privacy.md)
 - [Edge-Derived LOAD Privacy](privacy-validation/edge-derived-load-privacy.md)
-- [Preflighted Bulk Operations](privacy-validation/preflighted-bulk-operations.md)
 
 ## Mutation APIs
 
 - [Structured Mutation Pipeline](mutation/structured-mutation-pipeline.md)
 - [Coherent Write Concurrency Model](mutation/coherent-write-concurrency.md)
-- [Explicit Save Terminals](mutation/explicit-save-terminals.md)
 - [Ephemeral Mutation Inputs](mutation/ephemeral-mutation-inputs.md)
 - [Compare-And-Set Mutations](mutation/compare-and-set-mutations.md)
 - [Delete Consistency](mutation/delete-consistency.md)
-- [Update Hook Context Clarity](mutation/update-hook-context-clarity.md)
 - [Transaction Options And Savepoints](mutation/transaction-options-savepoints.md)
-- [Edge Mutation API Overview](edge-mutation/00-overview.md)
 - [Mutation Actions](mutation/mutation-actions.md)
 - [Transactional Graph Changesets](mutation/transactional-graph-changesets.md)
 
 ## Query APIs
 
-- [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md)
-- [Explicit Query Authority And Cost](query/explicit-query-authority-and-cost.md)
+- [Eager Loading: Native M2M Windows And Chunking](query/set-based-eager-graph-loader.md)
+- [Junction Interceptors: Traversal And Edge Predicates](query/junction-read-interceptors.md)
 - [Request-Scoped Entity Loading](query/request-scoped-entity-loading.md)
 - [Privacy-Aware Visible Pagination](query/privacy-aware-visible-pagination.md)
 - [Query `forUpdate()` Row Locking](query/for-update-query-locking.md)
@@ -47,22 +42,16 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 
 ## Model Behavior
 
-- [Typed Schema Handles](schema/typed-schema-handles.md)
 - [Optimistic Locking](schema/optimistic-locking.md)
 - [Edge Groups](schema/edge-groups.md)
 - [Audit Fields](schema/audit-fields.md)
 - [Custom Scalar Converters](schema/custom-scalar-converters.md)
 - [Enum Value CHECK Constraints](schema/enum-value-check-constraints.md)
 - [Validator-Derived CHECK Constraints](schema/validator-check-constraints.md)
-- [Schema Printer](schema/schema-printer.md)
-
-## Core API And Results
-
-- [Canonical Operation Result Algebra](api/operation-result-algebra.md)
 
 ## Codegen And Tooling
 
-- [Thin Codegen And Runtime Execution Engines](tooling/thin-codegen-runtime-engines.md)
+- [Runtime Engines: Remaining Verification And Documentation](tooling/thin-codegen-runtime-engines.md)
 - [Modular Driver SPI](tooling/modular-driver-spi.md)
 - [Same-Module Schema Processing](tooling/same-module-schema-processing.md)
 - [Migration Risk And Online DDL](tooling/migration-risk-and-online-ddl.md)
@@ -71,7 +60,6 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 - [GraphQL Kotlin Type Generation](tooling/graphql-kotlin-generation.md)
 - [Generated Test Fixtures](tooling/generated-test-fixtures.md)
 - [Gradle Developer Experience](tooling/gradle-dx.md)
-- [Ent Viewer](tooling/ent-viewer.md)
 - [Coroutine And R2DBC Driver Track](tooling/coroutine-r2dbc-driver.md)
 - [Migration Diagnostics](tooling/migration-diagnostics.md)
 - [Driver Capability Matrix](tooling/driver-capability-matrix.md)

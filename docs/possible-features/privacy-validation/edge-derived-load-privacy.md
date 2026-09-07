@@ -96,42 +96,20 @@ sealed interface LoadSource {
 }
 ```
 
-Generated contexts would add `source`:
+Current LOAD callbacks receive `PrivacyRuleContext<ReadOnlyEntClient>` plus
+the entity, and batch callbacks receive an ordered entity batch. There is no
+per-entity `PostLoadPrivacyContext` to extend.
 
-```kotlin
-data class PostLoadPrivacyContext(
-    val privacy: PrivacyContext,
-    val client: EntClient,
-    val entity: Post,
-    val source: LoadSource,
-)
-```
+The `LoadSource` sketch above describes the information the rule needs. A
+future implementation must decide how source metadata accompanies a LOAD batch
+without restoring combined viewer/client/entity contexts or evaluating shared
+targets once per parent. A shared target may have several readable source
+parents in the same eager step; source attribution must preserve those
+associations.
 
-Root reads use `LoadSource.Direct`:
-
-```kotlin
-PostLoadPrivacyContext(
-    privacy = privacy,
-    client = privacyClient,
-    entity = post,
-    source = LoadSource.Direct,
-)
-```
-
-Eager-loaded edge reads use `LoadSource.Edge`:
-
-```kotlin
-PostLoadPrivacyContext(
-    privacy = privacy,
-    client = privacyClient,
-    entity = post,
-    source = LoadSource.Edge(
-        parentEntityName = "User",
-        edgeName = "posts",
-        parent = user,
-    ),
-)
-```
+Root reads would carry direct-source information. Eager reads would carry the
+relevant readable parent associations. The exact callback representation is
+an open design decision, not an existing generated context type.
 
 ## Rule Semantics
 
@@ -178,14 +156,14 @@ This feature should apply only to eager-loaded edges in the first version:
 ```kotlin
 client.users.query {
     loadPosts()
-}.all()
+}.all(viewerContext).getOrThrow()
 ```
 
 It should not apply to direct child reads:
 
 ```kotlin
-client.posts.byId(postId)
-client.posts.query().all()
+client.posts.findById(viewerContext, postId)
+client.posts.query().all(viewerContext).getOrThrow()
 ```
 
 Traversal queries should remain direct child reads unless a later design
@@ -194,7 +172,7 @@ defines parent context preservation:
 ```kotlin
 client.users.query {
     where(User.id eq userId)
-}.queryPosts().all()
+}.queryPosts().all(viewerContext).getOrThrow()
 ```
 
 ## Safety Considerations

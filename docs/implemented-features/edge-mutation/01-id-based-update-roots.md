@@ -9,8 +9,6 @@ hook-cleared empty handling, and driver state-equal hydration are all live.
 Pessimistic update consistency and the broader result-variants surface
 remain future work in their own RFCs.
 
-Split out from [Edge Mutation API](../../possible-features/edge-mutation/00-overview.md).
-
 ## Summary
 
 Generated update APIs should identify the owner row by id, not by a caller-passed

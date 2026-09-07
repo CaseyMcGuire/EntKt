@@ -1185,10 +1185,9 @@ materially different states, including a definitely unpersisted write, a
 committed write whose callback failed, and an unknown commit outcome. Clients
 must inspect the raw result or choose the explicit throwing projection.
 
-This direction supersedes [Explicit Save Terminals](../../possible-features/mutation/explicit-save-terminals.md)
-if adopted. That RFC improves the existing result-variant design by preferring
-`saveOrThrow()` and `saveOrError()`; this RFC instead makes plain `save()`
-exhaustive and moves those behaviors to projections.
+This direction superseded the earlier proposal to prefer `saveOrThrow()` and
+`saveOrError()`: mutation terminals return exhaustive results, and throwing
+behavior is a projection on those results.
 
 No additional privacy-specific mutation projection is part of the initial
 API. If repeated handling of LOAD-denied `Failed` results emerges in
@@ -1564,12 +1563,13 @@ does not add a parallel strict lookup. A strict convenience may be added later
 under an explicitly non-null name if real call sites justify more generated
 surface.
 
-The proposed
-[Privacy-Safe Query Surfaces](../../possible-features/privacy-validation/privacy-safe-query-surfaces.md)
-RFC was later rejected. Raw terminals remain nameable through privacy-rule
-clients and execute as explicit storage-level reads that skip LOAD privacy and
-entity materialization. Their ordinary execution failures still use
-`ReadResult.Failed`; there is no posture-capability rejection.
+A separate narrowed query hierarchy for privacy-rule clients was rejected.
+At that stage, raw terminals remained available as explicit storage-level
+reads. Subsequent API simplification removed generated raw terminals and
+unified rule clients under `ReadOnlyEntClient`. Current entity reads require
+an explicit `ViewerContext`; counts and aggregates are collection operations
+over those reads. See [Queries](../../04-queries.md) and
+[Privacy](../../06-privacy.md) for the current surface.
 
 ## Migration Plan
 
