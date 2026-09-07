@@ -29,19 +29,19 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "privacyEvaluator = mutationPrivacyEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE privacy\", unresolvedReason = \"no create rule allowed access\", rules = privacyConfig.createRules, ruleClientProvider = { client.readOnlyClient }, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(snapshotCreateCandidate(candidate)) }, )",
+                "privacyEvaluator = mutationPrivacyEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE privacy\", unresolvedReason = \"no create rule allowed access\", rules = configuredPrivacy.createRules, ruleClientProvider = { client.readOnlyClient }, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
             ),
         ) {
             "the privacy evaluator should provide a fresh detached item for each rule\n$output"
         }
         assert(
             output.contains(
-                "validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE validation\", rules = validationConfig.createRules, ruleClientProvider = { client.readOnlyClient }, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(snapshotCreateCandidate(candidate)) }, )",
+                "validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE validation\", rules = configuredValidation.createRules, ruleClientProvider = { client.readOnlyClient }, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
             ),
         ) {
             "the validation evaluator should provide a fresh detached item for each rule\n$output"
         }
-        assert(output.contains("private val deleteSpec: DeleteMutationSpec<RepoBytesRecord, RepoBytesRecordWriteCandidate>")) {
+        assert(output.contains("private val deleteSpec: DeleteMutationSpec<RepoBytesRecord>")) {
             "DELETE should expose one typed runtime specification\n$output"
         }
         assert(output.contains("freshItem = { item: DeleteRuleCandidate<RepoBytesRecord, RepoBytesRecordWriteCandidate> -> RepoBytesRecordDeleteRuleInput")) {
@@ -50,14 +50,14 @@ class RepoGeneratorTest {
         assert(output.contains("RepoBytesRecordDeleteRuleInput")) {
             "DELETE validation should adapt a fresh typed item\n$output"
         }
-        assert(output.contains("private fun snapshotCreateCandidate(candidate: RepoBytesRecordWriteCandidate): RepoBytesRecordWriteCandidate")) {
-            "mutable create candidates should be detached by one generated mapping helper\n$output"
+        assert(!output.contains("fun snapshotCreateCandidate")) {
+            "rule items should be constructed directly, without callbacks into the repo\n$output"
         }
         val viewerContexts = Regex(
-            Regex.escape("val ruleContext = PrivacyRuleContext(viewerContext, client.readOnlyClient)"),
+            Regex.escape("PrivacyRuleContext(viewerContext, client.readOnlyClient)"),
         ).findAll(output).count()
-        assert(viewerContexts == 0) {
-            "Privacy rule-context construction belongs to runtime phases; found $viewerContexts\n$output"
+        assert(viewerContexts == 1) {
+            "Only LOAD should receive its concrete rule context from the repository; found $viewerContexts\n$output"
         }
         val validationContexts = Regex(
             Regex.escape("val ruleContext = ValidationRuleContext(client.readOnlyClient)"),
@@ -276,7 +276,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("deleteOperation.delete(viewerContext, entity)")) {
+        assert(output.contains("mutationExecutor.execute( operation = deleteMutationOperation.mapResult { Unit }, input = DeleteMutationInput(viewerContext, entity.id), )")) {
             "delete should pass the handle to the bound runtime operation\n$output"
         }
     }
@@ -289,7 +289,7 @@ class RepoGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         assert(!output.contains("deleteLoaded") && !output.contains("driver.delete(Car.TABLE")) {
-            "scalar delete lifecycle and storage coordination belong to DeleteMutationExecutor\n$output"
+            "scalar delete lifecycle and storage coordination belong to DeleteMutationOperation\n$output"
         }
     }
 
@@ -300,7 +300,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("deleteOperation.deleteById(viewerContext, id)")) {
+        assert(output.contains("mutationExecutor.execute( operation = deleteMutationOperation, input = DeleteMutationInput(viewerContext, id), )")) {
             "deleteById should pass the id to the bound runtime operation\n$output"
         }
     }
@@ -331,11 +331,19 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `update captures a draft request and delegates execution to the stable adapter`() {
+    fun `update captures a draft request and submits its operation directly to the executor`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
+        assert(output.contains("private val mutationExecutor: MutationExecutor = MutationExecutor(driver, client)")) {
+            "repo should construct one shared mutation executor\n$output"
+        }
+        assert(Regex("private val mutationExecutor:").findAll(output).count() == 1)
+        assert(!output.contains("createOperation") && !output.contains("deleteOperation") &&
+            !output.contains("updateAdapter.execute(")) {
+            "No operation or schema adapter should wrap the shared executor\n$output"
+        }
         assert(output.contains("private val updateAdapter: CarUpdateAdapter = CarUpdateAdapter(driver, client, configuredPrivacy, configuredValidation, configuredHooks.beforeSave, configuredHooks.beforeUpdate, configuredHooks.afterUpdate)")) {
             "repo should construct one stable schema-specific update adapter\n$output"
         }
@@ -345,8 +353,8 @@ class RepoGeneratorTest {
             "update should capture only per-operation state in the draft and request\n$output"
         }
         assert(output.contains("override fun executeUpdate(") &&
-            output.contains("updateAdapter.execute( viewerContext = viewerContext, request = request, applyLoadPrivacy = applyLoadPrivacy,")) {
-            "repository execution should delegate to the stable update adapter\n$output"
+            output.contains("mutationExecutor.execute( operation = updateAdapter.updateOperation, input = UpdateMutationInput( viewerContext = viewerContext, request = request, applyLoadPrivacy = applyLoadPrivacy,")) {
+            "repository execution should pass the complete request directly to the shared executor\n$output"
         }
     }
 
@@ -424,26 +432,29 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private val createOperation: CreateOperation<CarCreateDraft, Car> by lazy({")) {
-            "the repo should retain one stable lazily bound create operation\n$output"
+        assert(output.contains("private val createMutationOperation: MutationOperation<CreateMutationInput<") && !output.contains("CreateOperation")) {
+            "the repo should bind a scalar operation returning the entity directly\n$output"
         }
         assert(
             output.contains(
-                "createOperation.create( vc = viewerContext, draft = draft, " +
-                    "checkReturnedEntityPrivacy = false, )",
+                "mutationExecutor.execute( operation = createMutationOperation.mapResult { Unit }, " +
+                    "input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy = false), )",
             ),
         ) {
             "save should use the bound operation without returned LOAD disclosure\n$output"
         }
         assert(
             output.contains(
-                "createOperation.create(viewerContext, draft, checkReturnedEntityPrivacy = true)",
+                "mutationExecutor.execute( operation = createMutationOperation, input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy = true), )",
             ),
         ) {
             "saveAndLoad should use the same bound operation with returned LOAD disclosure\n$output"
         }
         assert(!output.contains("client.createMutations.create(")) {
             "generated scalar terminals should not bypass the bound operation\n$output"
+        }
+        assert(!output.contains("it.single()") && !output.contains("requireOne()") && !output.contains("requireMany()")) {
+            "operation result types should not require runtime scalar-bulk checks in generated code\n$output"
         }
     }
 
@@ -452,10 +463,11 @@ class RepoGeneratorTest {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
+            .replace("\\s+".toRegex(), " ")
 
         // Canonical createMany IS the surface: one MutationResult for
-        // the whole atomic batch. The bound runtime operation owns its
-        // transaction preflight and empty-input behavior.
+        // the whole atomic batch. The shared runtime executor owns its
+        // transaction preflight; the operation owns empty-input behavior.
         assert(
             Regex(
                 "public fun createMany\\(\\s*viewerContext: ViewerContext,\\s*" +
@@ -464,7 +476,7 @@ class RepoGeneratorTest {
         ) {
             "Should have createMany with vararg blocks returning MutationResult<List<Car>>\n$output"
         }
-        assert(output.contains("createOperation.createMany(viewerContext, blocks.asList())")) {
+        assert(output.contains("mutationExecutor.execute(") && output.contains("input = CreateManyMutationInput(viewerContext, blocks.asList(), newDraft = { CarCreateDraft() }),")) {
             "createMany should delegate transaction and empty-input behavior to the bound operation\n$output"
         }
     }
@@ -476,16 +488,21 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private val createOperation: CreateOperation<CarCreateDraft, Car>")) {
+        assert(output.contains("private val createManyMutationOperation: CreateManyMutationOperation<CarCreateDraft, CarWriteCandidate, Car, CarBeforeSaveState, CarBeforeCreateState>")) {
             "the repo should bind one typed create operation\n$output"
         }
         assert(
             output.contains(
-                "createExecutor.operationForInternalUse( spec = createSpec, " +
-                    "newDraft = { CarCreateDraft() }",
+                "CreateMutationOperation(createManyMutationOperation)",
             ),
         ) {
-            "the bound operation should capture the spec and draft factory\n$output"
+            "scalar create should reuse the canonical batch operation\n$output"
+        }
+        assert(Regex("newDraft =").findAll(output).count() == 1) {
+            "the bulk request should capture its schema-specific draft constructor\n$output"
+        }
+        assert(!output.contains("mutationExecutor.create") && !output.contains("CreateManyDisclosure")) {
+            "the shared executor should receive only typed operation inputs and generic completions\n$output"
         }
         assert(
             !output.contains("ArrayList<CarCreateDraft>") &&
@@ -506,13 +523,14 @@ class RepoGeneratorTest {
 
         // Runtime owns the posture branch; generated wiring only selects the
         // corresponding transaction-bound operation.
-        assert(output.contains("ownedTransaction = { vc, blocks, disclosureCapture -> client.withTransaction { tx ->")) {
+        assert(output.contains("ownedTransaction = { input, completionCapture -> client.withTransaction { tx ->")) {
             "the bound operation should be given an EntKt-owned transaction adapter\n$output"
         }
         assert(
             output.contains(
-                "tx.cars.createOperation.createManyInOwnedTransactionForInternalUse( " +
-                    "vc = vc, blocks = blocks, disclosureCapture = disclosureCapture, ).orRollback()",
+                "tx.cars.mutationExecutor.executeInOwnedTransactionForInternalUse( " +
+                    "operation = tx.cars.createManyMutationOperation, input = input, " +
+                    "completionCapture = completionCapture, ).orRollback()",
             ),
         ) {
             "the EntKt-owned batch should use the transaction repo's bound operation\n$output"
@@ -532,11 +550,11 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("createOperation.createMany(viewerContext, blocks.asList())")) {
+        assert(output.contains("mutationExecutor.execute(") && output.contains("input = CreateManyMutationInput(viewerContext, blocks.asList(), newDraft = { CarCreateDraft() }),")) {
             "the terminal should pass its exact ViewerContext to the runtime operation\n$output"
         }
-        assert(output.contains("vc = vc, blocks = blocks, disclosureCapture = disclosureCapture")) {
-            "the owned transaction adapter should preserve the same context and disclosure capture\n$output"
+        assert(output.contains("input = input, completionCapture = completionCapture")) {
+            "the transaction wiring should preserve the original input and generic completion capture\n$output"
         }
         assert(
             !output.contains("loadDenials(viewerContext, completion)") &&
@@ -561,23 +579,32 @@ class RepoGeneratorTest {
         ) {
             "Should have deleteMany with vararg typed Predicate<Car> returning MutationResult<Int>\n$output"
         }
-        assert(output.contains("deleteOperation.deleteMany(viewerContext, predicates.asList())")) {
+        assert(output.contains("mutationExecutor.execute(") && output.contains("input = DeleteManyMutationInput(viewerContext, predicates.asList()),")) {
             "deleteMany should delegate its typed predicates to the bound runtime operation\n$output"
         }
     }
 
     @Test
-    fun `repo binds one delete operation to its typed runtime specification`() {
+    fun `repo binds typed scalar and bulk delete operations directly`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private val deleteOperation: DeleteOperation<Car> by lazy({")) {
-            "the repository should retain one lazily bound delete operation\n$output"
+        assert(output.contains("private val deleteMutationOperation: MutationOperation<DeleteMutationInput, Boolean>") && !output.contains("DeleteOperation")) {
+            "the scalar DELETE operation should return a Boolean directly\n$output"
         }
-        assert(output.contains("deleteExecutor.operationForInternalUse( spec = deleteSpec,")) {
-            "the bound operation should capture the repository's typed specification\n$output"
+        assert(output.contains("DeleteMutationOperation(spec = deleteSpec, converter = CarDeleteConverter,"))
+        assert(output.contains("DeleteManyMutationOperation(spec = deleteSpec, converter = CarDeleteConverter,"))
+        assert(!output.contains("MutationLifecycle"))
+        assert(output.contains("private val deleteManyMutationOperation: MutationOperation<DeleteManyMutationInput<Car>, Int>"))
+        assert(
+            output.contains(
+                "mutationExecutor.execute( operation = deleteManyMutationOperation, " +
+                    "input = DeleteManyMutationInput(viewerContext, predicates.asList()), ownedTransaction =",
+            ),
+        ) {
+            "the executor should receive the repository's typed delete operation\n$output"
         }
         assert(!output.contains("private fun _executeDeleteManyPhases(")) {
             "deleteMany transaction and failure coordination should live only in runtime\n$output"
@@ -593,14 +620,14 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "ownedTransaction = { vc, predicates -> client.withTransaction { tx ->",
+                "ownedTransaction = { input, completionCapture -> client.withTransaction { tx ->",
             ),
         ) {
             "the bound operation should receive an EntKt-owned transaction adapter\n$output"
         }
         assert(
             output.contains(
-                "tx.cars.deleteOperation.deleteManyInOwnedTransactionForInternalUse( vc = vc, predicates = predicates, ).orRollback()",
+                "tx.cars.mutationExecutor.executeInOwnedTransactionForInternalUse( operation = tx.cars.deleteManyMutationOperation, input = input, completionCapture = completionCapture, ).orRollback()",
             ),
         ) {
             "owned deleteMany work should use the transaction repository's bound operation\n$output"
@@ -614,14 +641,19 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has privacy config property`() {
+    fun `repo uses privacy constructor input without retaining a configuration property`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("internal val privacyConfig: ResolvedEntityPrivacyConfig<CarLoadBatchPrivacyRule, CarCreateBatchPrivacyRule, CarUpdateBatchPrivacyRule, CarDeleteBatchPrivacyRule>")) {
-            "Should have internal privacyConfig property\n$output"
+        assert(!output.contains("val privacyConfig") && !output.contains("val configuredPrivacy")) {
+            "Privacy configuration should only be a constructor input\n$output"
         }
+        assert(!output.contains("privacyConfig."))
+        assert(output.contains("rules = configuredPrivacy.loadRules"))
+        assert(output.contains("rules = configuredPrivacy.createRules"))
+        assert(output.contains("rules = configuredPrivacy.deleteRules"))
+        assert(output.contains("if (configuredPrivacy.deleteDerivesFromCreate)"))
     }
 
     @Test
@@ -634,7 +666,7 @@ class RepoGeneratorTest {
         assert(output.contains("configuredPrivacy: $type")) {
             "Should accept privacy configuration in the constructor\n$output"
         }
-        assert(output.contains("internal val privacyConfig: $type = configuredPrivacy"))
+        assert(!output.contains("privacyConfig:"))
         assert(!output.contains("applyPrivacy") && !output.contains("copyPrivacyFrom"))
     }
 
@@ -677,15 +709,19 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "private val loadPrivacyEvaluator: LoadPrivacyEvaluator<Car> = loadPrivacyEvaluatorForInternalUse( " +
-                    "lifecycle = \"Car LOAD privacy\", unresolvedReason = \"no load rule allowed access\", rules = privacyConfig.loadRules, " +
-                    "ruleClientProvider = { client.readOnlyClient }, freshItem = { item -> CarLoadPrivacyItem(item) }, )",
+                "private val loadPrivacyEvaluator: LoadPrivacyEvaluator<ReadOnlyEntClient, Car, CarLoadPrivacyItem> = LoadPrivacyEvaluator( " +
+                    "entity = CarDescriptor, rules = configuredPrivacy.loadRules, " +
+                    "freshItem = { item -> CarLoadPrivacyItem(item) }, )",
             ),
         ) {
-            "LOAD should bind its lifecycle, rules, stable client, and typed item adapter\n$output"
+            "LOAD should inject its descriptor, rules, and typed item adapter without resolving a client\n$output"
         }
-        assert(output.contains("loadPrivacyEvaluator.evaluate(viewerContext, entities)")) {
-            "The read-surface method should delegate to its bound runtime evaluator\n$output"
+        assert(!output.contains("loadPrivacyEvaluatorForInternalUse"))
+        assert(!output.contains("\"Car LOAD privacy\"") && !output.contains("\"no load rule allowed access\"")) {
+            "LOAD diagnostics and the default denial reason should be owned by the runtime evaluator\n$output"
+        }
+        assert(output.contains("loadPrivacyEvaluator.evaluate( context = PrivacyRuleContext(viewerContext, client.readOnlyClient), entities = entities, )")) {
+            "The read-surface method should supply the concrete context to its bound runtime evaluator\n$output"
         }
         assert(
             !output.contains("evaluateBatchPrivacyRulesForInternalUse") &&
@@ -695,9 +731,9 @@ class RepoGeneratorTest {
             "LOAD batch evaluation and denial correlation should not be generated\n$output"
         }
         assert(!output.contains("fun evaluateCreatePrivacy")) {
-            "CREATE privacy should run in CreateMutationExecutor from createSpec\n$output"
+            "CREATE privacy should run in the shared runtime lifecycle\n$output"
         }
-        assert(output.contains("private val deleteSpec: DeleteMutationSpec<Car, CarWriteCandidate>")) {
+        assert(output.contains("private val deleteSpec: DeleteMutationSpec<Car>")) {
             "DELETE rule adapters should live in one typed specification\n$output"
         }
         assert(!output.contains("updateDenialReasonOrNull") && !output.contains("deleteDenialReasonOrNull")) {
@@ -712,7 +748,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("loadPrivacyEvaluatorForInternalUse(")) {
+        assert(output.contains("= LoadPrivacyEvaluator(")) {
             "LOAD privacy should delegate through its runtime evaluator\n$output"
         }
         assert(output.contains("privacyEvaluator = mutationPrivacyEvaluatorForInternalUse(")) {
@@ -733,11 +769,11 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("fallback = if (privacyConfig.deleteDerivesFromCreate)")) {
+        assert(output.contains("fallback = if (configuredPrivacy.deleteDerivesFromCreate)")) {
             "DELETE should use the reusable unresolved-candidate fallback combinator\n$output"
         }
-        assert(output.contains("if (privacyConfig.deleteDerivesFromCreate)") &&
-            output.contains("rules = privacyConfig.createRules")) {
+        assert(output.contains("if (configuredPrivacy.deleteDerivesFromCreate)") &&
+            output.contains("rules = configuredPrivacy.createRules")) {
             "DELETE-derived CREATE rules should remain explicitly configured under deleteSpec\n$output"
         }
     }
@@ -761,13 +797,14 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("candidate = ::buildDeleteCandidate")) {
-            "deleteSpec should provide normalized candidates\n$output"
+        assert(output.contains("converter = CarDeleteConverter")) {
+            "DELETE should use a schema-specific converter without calling back into the repo\n$output"
         }
+        assert(!output.contains("fun buildDeleteCandidate") && !output.contains("::buildDeleteCandidate"))
         assert(output.contains("newQuery = { CarQuery(driver, client) }")) {
             "deleteSpec should provide only the schema-specific candidate query factory\n$output"
         }
-        assert(output.contains("rules = privacyConfig.deleteRules")) {
+        assert(output.contains("rules = configuredPrivacy.deleteRules")) {
             "deleteSpec should capture DELETE privacy rules\n$output"
         }
     }
@@ -863,28 +900,28 @@ class RepoGeneratorTest {
         }
         assert(
             normalized.contains(
-                "private val createOperation: CreateOperation<SessionCreateDraft, Session> by " +
-                    "lazy({ createExecutor.operationForInternalUse( spec = createSpec, ) })",
+                "mutationExecutor.execute( operation = createMutationOperation,",
             ),
         ) {
             "explicit-id repositories should bind only the scalar create capability\n$output"
         }
-        val createBinding = normalized.substringAfter("private val createOperation:")
-            .substringBefore("private val deleteSpec:")
-        assert(!createBinding.contains("ownedTransaction =") && !createBinding.contains("newDraft =")) {
+        assert(!normalized.contains("CreateManyMutationInput") && !normalized.contains("newDraft =")) {
             "explicit-id repositories should not emit unreachable createMany wiring\n$output"
         }
     }
 
     @Test
-    fun `repo has validation config property`() {
+    fun `repo uses validation constructor input without retaining a configuration property`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("internal val validationConfig: ResolvedEntityValidationConfig<CarCreateBatchValidationRule, CarUpdateBatchValidationRule, CarDeleteBatchValidationRule>")) {
-            "Should have internal validationConfig property\n$output"
+        assert(!output.contains("val validationConfig") && !output.contains("val configuredValidation")) {
+            "Validation configuration should only be a constructor input\n$output"
         }
+        assert(!output.contains("validationConfig."))
+        assert(output.contains("rules = configuredValidation.createRules"))
+        assert(output.contains("rules = configuredValidation.deleteRules"))
     }
 
     @Test
@@ -897,7 +934,7 @@ class RepoGeneratorTest {
         assert(output.contains("configuredValidation: $type")) {
             "Should accept validation configuration in the constructor\n$output"
         }
-        assert(output.contains("internal val validationConfig: $type = configuredValidation"))
+        assert(!output.contains("validationConfig:"))
         assert(!output.contains("applyValidation") && !output.contains("copyValidationFrom"))
     }
 
@@ -908,13 +945,13 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
         assert(!output.contains("fun evaluateCreateValidation")) {
-            "CREATE validation should run in CreateMutationExecutor from createSpec\n$output"
+            "CREATE validation should run in the shared runtime lifecycle\n$output"
         }
         assert(output.contains("validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"Car CREATE validation\"")) {
-            "createExecutor should capture CREATE validation\n$output"
+            "createMutationOperation should capture CREATE validation\n$output"
         }
         assert(output.contains("lifecycle = \"Car DELETE validation\"") &&
-            output.contains("rules = validationConfig.deleteRules")) {
+            output.contains("rules = configuredValidation.deleteRules")) {
             "deleteSpec should capture DELETE validation\n$output"
         }
         assert(!output.contains("evaluateUpdateValidation") && !output.contains("evaluateDeleteValidation")) {
@@ -923,18 +960,15 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `delete spec places privacy before validation`() {
+    fun `delete operations reuse bound privacy and validation evaluators`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        val deleteExecutor = output.substringAfter("private val deleteExecutor:")
-            .substringBefore("private val deleteOperation:")
-        val privacyAt = deleteExecutor.indexOf("privacyEvaluator = mutationPrivacyEvaluatorForInternalUse(")
-        val validationAt = deleteExecutor.indexOf("validationEvaluator = mutationValidationEvaluatorForInternalUse(", privacyAt)
-        assert(privacyAt in 0 until validationAt) {
-            "deleteExecutor should wire privacy before validation for the runtime lifecycle\n$output"
-        }
+        assert(Regex("rules = configuredPrivacy.deleteRules").findAll(output).count() == 1)
+        assert(Regex("rules = configuredValidation.deleteRules").findAll(output).count() == 1)
+        assert(Regex("privacyEvaluator = deletePrivacyEvaluator").findAll(output).count() == 2)
+        assert(Regex("validationEvaluator = deleteValidationEvaluator").findAll(output).count() == 2)
     }
 
     @Test
@@ -943,10 +977,10 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("CreateMutationSpec<CarCreateDraft, CarWriteCandidate, Car>")) {
-            "createSpec should not carry a rule-client type\n$output"
+        assert(output.contains("CreateManyMutationOperation<CarCreateDraft, CarWriteCandidate, Car, CarBeforeSaveState, CarBeforeCreateState>")) {
+            "the create operation should not carry a rule-client type\n$output"
         }
-        assert(output.contains("DeleteMutationSpec<Car, CarWriteCandidate>")) {
+        assert(output.contains("DeleteMutationSpec<Car>")) {
             "deleteSpec should not carry a rule-client type\n$output"
         }
         assert(output.contains("ruleClientProvider = { client.readOnlyClient }")) {
@@ -962,21 +996,23 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `generated LOAD phase resolves the stable read-only client lazily`() {
+    fun `generated LOAD phase supplies its concrete context only at evaluation time`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
         val loadBinding = output.substringAfter("private val loadPrivacyEvaluator:")
-            .substringBefore("private val createSpec:")
-        val uses = Regex(
-            Regex.escape("ruleClientProvider = { client.readOnlyClient }")
-        ).findAll(loadBinding).count()
-        assert(uses == 1) {
-            "LOAD should resolve the stable client through one lazy provider; found $uses\n$output"
+            .substringBefore("private val createConverter:")
+        assert(!loadBinding.contains("ruleClientProvider") && !loadBinding.contains("client.readOnlyClient")) {
+            "The LOAD evaluator must not depend on a client during repository construction\n$output"
         }
-        assert(!output.contains("PrivacyRuleContext(")) {
-            "ViewerContext and rule-client binding should happen inside the runtime phase\n$output"
+        assert(
+            output.contains(
+                "override fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Car>): PrivacyEvaluation<Car> = " +
+                    "loadPrivacyEvaluator.evaluate( context = PrivacyRuleContext(viewerContext, client.readOnlyClient), entities = entities, )",
+            ),
+        ) {
+            "The read-surface method should preserve its API and construct the context when called\n$output"
         }
         assert(!output.contains("asPrivacyReadClientForInternalUse"))
     }

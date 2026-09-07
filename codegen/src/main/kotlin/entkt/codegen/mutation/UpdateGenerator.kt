@@ -195,7 +195,7 @@ internal class UpdateGenerator(
                 initializer("client")
             }
             addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
-            addProperty(saveArtifacts.executorProperty)
+            addProperty(saveArtifacts.operationProperty)
             saveArtifacts.functions.forEach(::addFunction)
             addType(saveArtifacts.preparedStateType)
             addType(hookStateConverterType)

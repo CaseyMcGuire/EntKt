@@ -21,17 +21,14 @@ data class DeleteSelection<Entity : EntEntity<*>>(
     val effectivePredicates: List<Predicate<Entity>>,
 )
 
-/** Immutable entity-specific inputs consumed by [DeleteMutationExecutor]. */
+/** Immutable entity-specific inputs shared by the scalar and bulk DELETE operations. */
 @EntktInternal
 class DeleteMutationSpec<
     Entity : EntEntity<*>,
-    Candidate,
     >(
     val entity: EntityMapping<Entity>,
     val idColumn: String,
     val newQuery: () -> EntityQueryBuilder<Entity, *>,
-    val candidate: (Entity) -> Candidate,
     val beforeDelete: HookRunner<Entity>,
     val afterDelete: HookRunner<Entity>,
-) {
-}
+)

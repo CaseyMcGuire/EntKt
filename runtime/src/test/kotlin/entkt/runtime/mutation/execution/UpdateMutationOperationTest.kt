@@ -53,7 +53,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-class UpdateMutationExecutorTest {
+class UpdateMutationOperationTest {
     private data class Widget(
         override val id: Long,
         val name: String,
@@ -246,36 +246,38 @@ class UpdateMutationExecutorTest {
             }
         }
 
-        val executor = UpdateMutationExecutor(
-            driver = driver,
-            mutationRuntime = object : MutationRuntime {
-                override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
-                    events += "runtime-preflight:$operation:$multiWrite"
-                }
+        val mutationRuntime = object : MutationRuntime {
+            override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
+                events += "runtime-preflight:$operation:$multiWrite"
+            }
 
-                override fun recordTransactionMutationFailure(exception: EntMutationException) {
-                    events += "record-failure"
-                    failures += exception
-                }
+            override fun recordTransactionMutationFailure(exception: EntMutationException) {
+                events += "record-failure"
+                failures += exception
+            }
 
-                override fun isConfigured(entity: EntityMapping<*>): Boolean = true
+            override fun isConfigured(entity: EntityMapping<*>): Boolean = true
 
-                override fun <Entity : EntEntity<*>> evaluate(
-                    entity: EntityMapping<Entity>,
-                    viewerContext: ViewerContext,
-                    entities: List<Entity>,
-                ): PrivacyEvaluation<Entity> {
-                    events += "load-privacy"
-                    receivedContexts += viewerContext
-                    return privacyEvaluation(
-                        subjects = entities,
-                        decisions = entities.map {
-                            loadDenial?.let { PrivacyDecision.Deny(it.reason) }
-                                ?: PrivacyDecision.Allow
-                        },
-                    )
-                }
-            },
+            override fun <Entity : EntEntity<*>> evaluate(
+                entity: EntityMapping<Entity>,
+                viewerContext: ViewerContext,
+                entities: List<Entity>,
+            ): PrivacyEvaluation<Entity> {
+                events += "load-privacy"
+                receivedContexts += viewerContext
+                return privacyEvaluation(
+                    subjects = entities,
+                    decisions = entities.map {
+                        loadDenial?.let { PrivacyDecision.Deny(it.reason) }
+                            ?: PrivacyDecision.Allow
+                    },
+                )
+            }
+        }
+        val mutationExecutor = MutationExecutor(driver, mutationRuntime)
+        val operation = UpdateMutationOperation(
+            entity = mapping,
+            mutationRuntime = mutationRuntime,
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
             adapter = adapter,
@@ -338,17 +340,19 @@ class UpdateMutationExecutorTest {
             relationshipRequirements: UpdateRelationshipRequirements = UpdateRelationshipRequirements.None,
         ): MutationResult<Widget> {
             currentRelationshipRequirements = relationshipRequirements
-            return executor.update(
-                viewerContext = viewerContext,
-                request = request,
-                entity = mapping,
-                applyLoadPrivacy = applyLoadPrivacy,
+            return mutationExecutor.execute(
+                operation = operation,
+                input = UpdateMutationInput(
+                    viewerContext = viewerContext,
+                    request = request,
+                    applyLoadPrivacy = applyLoadPrivacy,
+                ),
             )
         }
     }
 
     @Test
-    fun `update executor owns lifecycle order and preserves supplied identities`() {
+    fun `update operation owns lifecycle order and preserves supplied identities`() {
         val fixture = Fixture()
 
         val result = fixture.execute(applyLoadPrivacy = true)

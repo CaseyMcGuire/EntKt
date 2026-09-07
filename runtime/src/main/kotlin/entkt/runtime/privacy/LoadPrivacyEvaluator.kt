@@ -3,38 +3,40 @@
 package entkt.runtime.privacy
 
 import entkt.query.EntktInternal
+import entkt.runtime.entity.EntEntity
+import entkt.runtime.entity.EntityDescriptor
 
-/** Evaluates one entity type's bound LOAD-privacy policy. */
+/** Evaluates one entity type's bound LOAD-privacy policy with a per-call rule context. */
 @EntktInternal
-fun interface LoadPrivacyEvaluator<Entity> {
-    fun evaluate(
-        viewerContext: ViewerContext,
-        entities: List<Entity>,
-    ): PrivacyEvaluation<Entity>
-}
-
-/** Bind LOAD rules, their read-client provider, and their entity-item adapter. */
-@EntktInternal
-fun <RuleClient, Entity, Item> loadPrivacyEvaluatorForInternalUse(
-    lifecycle: String,
-    unresolvedReason: String,
+class LoadPrivacyEvaluator<RuleClient, Entity : EntEntity<*>, Item>(
+    entity: EntityDescriptor<Entity, *>,
     rules: List<BatchPrivacyRule<RuleClient, Item>>,
-    ruleClientProvider: () -> RuleClient,
-    freshItem: (Entity) -> Item,
-): LoadPrivacyEvaluator<Entity> {
-    val decisions = privacyDecisionEvaluatorForInternalUse(
-        lifecycle = lifecycle,
-        rules = rules,
-        ruleClientProvider = ruleClientProvider,
-        freshItem = freshItem,
-    )
-    return LoadPrivacyEvaluator { viewerContext, entities ->
+    private val freshItem: (Entity) -> Item,
+) {
+    private val lifecycle = "${entity.entityName} LOAD privacy"
+    private val rules = rules.toList()
+
+    fun evaluate(
+        context: PrivacyRuleContext<RuleClient>,
+        entities: List<Entity>,
+    ): PrivacyEvaluation<Entity> {
         val entitySnapshot = entities.toList()
-        correlatePrivacyEvaluationForInternalUse(
+        val decisions = if (context.viewerContext.viewer is Viewer.PrivacyBypass) {
+            List(entitySnapshot.size) { PrivacyDecision.Allow }
+        } else {
+            evaluateBatchPrivacyRulesForInternalUse(
+                lifecycle = lifecycle,
+                items = entitySnapshot,
+                rules = rules,
+                context = context,
+                freshItem = freshItem,
+            )
+        }
+        return correlatePrivacyEvaluationForInternalUse(
             lifecycle = lifecycle,
             subjects = entitySnapshot,
-            decisions = decisions.evaluate(viewerContext, entitySnapshot),
-            unresolvedReason = unresolvedReason,
+            decisions = decisions,
+            unresolvedReason = "no load rule allowed access",
         )
     }
 }

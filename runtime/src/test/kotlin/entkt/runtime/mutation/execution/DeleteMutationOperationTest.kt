@@ -44,7 +44,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-class DeleteMutationExecutorTest {
+class DeleteMutationOperationTest {
     private data class Widget(
         override val id: Long,
         val name: String,
@@ -203,14 +203,17 @@ class DeleteMutationExecutorTest {
                 error("DELETE candidate selection never evaluates LOAD privacy")
         }
 
-        val spec: DeleteMutationSpec<Widget, Candidate> = DeleteMutationSpec(
+        val converter = object : DeleteMutationConverter<Widget, Candidate> {
+            override fun toCandidate(entity: Widget): Candidate {
+                events += "candidate:${entity.id}"
+                return Candidate(entity.name)
+            }
+        }
+
+        val spec: DeleteMutationSpec<Widget> = DeleteMutationSpec(
             entity = mapping,
             idColumn = "id",
             newQuery = { WidgetQuery(driver, queryHost, mapping) },
-            candidate = { entity ->
-                events += "candidate:${entity.id}"
-                Candidate(entity.name)
-            },
             beforeDelete = HookRunner(listOf(Hook { entity -> events += "before:${entity.id}" })),
             afterDelete = HookRunner(listOf(Hook { entity -> events += "after:${entity.id}" })),
         )
@@ -256,44 +259,90 @@ class DeleteMutationExecutorTest {
             freshItem = { it },
         )
 
-        val executor = DeleteMutationExecutor(
-            driver = driver,
-            mutationRuntime = object : MutationRuntime {
-                override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
-                    events += "preflight:$operation:$multiWrite"
-                }
+        val mutationRuntime = object : MutationRuntime {
+            override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
+                events += "preflight:$operation:$multiWrite"
+            }
 
-                override fun recordTransactionMutationFailure(exception: EntMutationException) {
-                    events += "record-failure"
-                    failures += exception
-                }
+            override fun recordTransactionMutationFailure(exception: EntMutationException) {
+                events += "record-failure"
+                failures += exception
+            }
 
-                override fun isConfigured(entity: EntityMapping<*>): Boolean = true
+            override fun isConfigured(entity: EntityMapping<*>): Boolean = true
 
-                override fun <Entity : EntEntity<*>> evaluate(
-                    entity: EntityMapping<Entity>,
-                    viewerContext: ViewerContext,
-                    entities: List<Entity>,
-                ): PrivacyEvaluation<Entity> = error("DELETE never evaluates LOAD privacy")
-            },
+            override fun <Entity : EntEntity<*>> evaluate(
+                entity: EntityMapping<Entity>,
+                viewerContext: ViewerContext,
+                entities: List<Entity>,
+            ): PrivacyEvaluation<Entity> = error("DELETE never evaluates LOAD privacy")
+        }
+        val mutationExecutor = MutationExecutor(driver, mutationRuntime)
+
+        fun scalarOperation(
+            spec: DeleteMutationSpec<Widget> = this.spec,
+        ): DeleteMutationOperation<Widget, Candidate> = DeleteMutationOperation(
+            spec = spec,
+            converter = converter,
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
         )
+
+        fun manyOperation(): DeleteManyMutationOperation<Widget, Candidate> = DeleteManyMutationOperation(
+            spec = spec,
+            converter = converter,
+            privacyEvaluator = privacyEvaluator,
+            validationEvaluator = validationEvaluator,
+        )
+
+        fun deleteById(
+            viewerContext: ViewerContext,
+            id: Any,
+            spec: DeleteMutationSpec<Widget> = this.spec,
+        ): MutationResult<Boolean> = mutationExecutor.execute(
+            operation = scalarOperation(spec),
+            input = DeleteMutationInput(viewerContext, id),
+        )
+
+        fun deleteMany(
+            viewerContext: ViewerContext,
+            predicates: List<Predicate<Widget>>,
+        ): MutationResult<Int> = mutationExecutor.execute(
+            operation = manyOperation(),
+            input = DeleteManyMutationInput(viewerContext, predicates),
+        )
+    }
+
+    @Test
+    fun `scalar and bulk delete declare distinct transaction requirements`() {
+        val fixture = Fixture()
+
+        assertEquals(
+            MutationRequirements("Widget delete"),
+            fixture.scalarOperation().requirements(DeleteMutationInput(fixture.viewerContext, 1L)),
+        )
+        assertEquals(
+            MutationRequirements("Widget deleteMany", multiWrite = true, requiresAtomicTransaction = true),
+            fixture.manyOperation().requirements(
+                DeleteManyMutationInput(fixture.viewerContext, emptyList()),
+            ),
+        )
+        assertTrue(fixture.events.isEmpty())
     }
 
     @Test
     fun `scalar delete reloads current state and runs lifecycle in order`() {
         val fixture = Fixture()
 
-        val result = fixture.executor.deleteById(fixture.viewerContext, 1L, fixture.spec)
+        val result = fixture.deleteById(fixture.viewerContext, 1L)
 
         assertEquals(MutationResult.Success(true), result)
         assertEquals(
             listOf(
+                "transaction-state",
                 "preflight:Widget delete:false",
                 "by-id:1",
                 "decode",
-                "transaction-state",
                 "candidate:1",
                 "privacy:1",
                 "validation:1",
@@ -312,10 +361,13 @@ class DeleteMutationExecutorTest {
         val fixture = Fixture()
         fixture.driver.row = null
 
-        val result = fixture.executor.deleteById(fixture.viewerContext, 42L, fixture.spec)
+        val result = fixture.deleteById(fixture.viewerContext, 42L)
 
         assertEquals(MutationResult.Success(false), result)
-        assertEquals(listOf("preflight:Widget delete:false", "by-id:42"), fixture.events)
+        assertEquals(
+            listOf("transaction-state", "preflight:Widget delete:false", "by-id:42"),
+            fixture.events,
+        )
         assertTrue(fixture.failures.isEmpty())
     }
 
@@ -324,7 +376,7 @@ class DeleteMutationExecutorTest {
         val fixture = Fixture()
         fixture.privacyDecisions = listOf(PrivacyDecision.Deny("owner only"))
 
-        val result = fixture.executor.deleteById(fixture.viewerContext, 1L, fixture.spec)
+        val result = fixture.deleteById(fixture.viewerContext, 1L)
 
         val failure = assertIs<MutationResult.Failed>(result).exception
         val denial = assertIs<EntMutationPrivacyDeniedException>(failure)
@@ -342,7 +394,7 @@ class DeleteMutationExecutorTest {
             listOf(ValidationDecision.Invalid("still referenced", field = "id")),
         )
 
-        val result = fixture.executor.deleteById(fixture.viewerContext, 1L, fixture.spec)
+        val result = fixture.deleteById(fixture.viewerContext, 1L)
 
         val failure = assertIs<MutationResult.Failed>(result).exception
         val validation = assertIs<EntValidationException>(failure)
@@ -360,7 +412,7 @@ class DeleteMutationExecutorTest {
         fixture.driver.deleteFailure = driverFailure
         fixture.driver.classifiedFailure = classified
 
-        val result = fixture.executor.deleteById(fixture.viewerContext, 1L, fixture.spec)
+        val result = fixture.deleteById(fixture.viewerContext, 1L)
 
         assertSame(classified, assertIs<MutationResult.Failed>(result).exception)
         assertSame(classified, fixture.failures.single())
@@ -374,16 +426,15 @@ class DeleteMutationExecutorTest {
         )) {
             val fixture = Fixture(inTransaction)
             val boom = IllegalStateException("after")
-            val failingSpec: DeleteMutationSpec<Widget, Candidate> = DeleteMutationSpec(
+            val failingSpec: DeleteMutationSpec<Widget> = DeleteMutationSpec(
                 entity = fixture.mapping,
                 idColumn = "id",
                 newQuery = fixture.spec.newQuery,
-                candidate = fixture.spec.candidate,
                 beforeDelete = HookRunner(emptyList()),
                 afterDelete = HookRunner(listOf(Hook<Widget> { throw boom })),
             )
 
-            val result = fixture.executor.deleteById(fixture.viewerContext, 1L, failingSpec)
+            val result = fixture.deleteById(fixture.viewerContext, 1L, failingSpec)
 
             val failure = assertIs<EntUnexpectedMutationException>(
                 assertIs<MutationResult.Failed>(result).exception,
@@ -401,17 +452,16 @@ class DeleteMutationExecutorTest {
         fixture.effectivePredicates = listOf(effective)
         fixture.driver.acknowledgedIds = listOf(2L)
 
-        val result = fixture.executor.deleteMany(
+        val result = fixture.deleteMany(
             viewerContext = fixture.viewerContext,
             predicates = listOf(requested),
-            spec = fixture.spec,
-            promoteDriverNotPersisted = true,
         )
 
         assertEquals(MutationResult.Success(1), result)
         assertEquals(
             listOf(
                 "transaction-state",
+                "preflight:Widget deleteMany:true",
                 "read-guard",
                 "select",
                 "query",
@@ -443,11 +493,9 @@ class DeleteMutationExecutorTest {
         fixture.driver.deleteManyFailure = driverFailure
         fixture.driver.classifiedFailure = classified
 
-        val result = fixture.executor.deleteMany(
+        val result = fixture.deleteMany(
             fixture.viewerContext,
             emptyList(),
-            fixture.spec,
-            promoteDriverNotPersisted = true,
         )
 
         val failure = assertIs<EntUnexpectedMutationException>(
@@ -464,7 +512,7 @@ class DeleteMutationExecutorTest {
         fixture.driver.deleteFailure = cancellation
 
         val thrown = assertFailsWith<CancellationException> {
-            fixture.executor.deleteById(fixture.otherViewerContext, 1L, fixture.spec)
+            fixture.deleteById(fixture.otherViewerContext, 1L)
         }
 
         assertSame(cancellation, thrown)

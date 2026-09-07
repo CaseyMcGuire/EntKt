@@ -16,6 +16,8 @@ import entkt.codegen.metadata.columnMetadataFor
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.mutation.CreateGenerator
+import entkt.codegen.mutation.CreateConverterGenerator
+import entkt.codegen.mutation.DeleteConverterGenerator
 import entkt.codegen.mutation.LifecycleRuleInputGenerator
 import entkt.codegen.mutation.MutationGenerator
 import entkt.codegen.mutation.UpdateGenerator
@@ -760,6 +762,8 @@ class EntGenerator(
     private val viewerGenerator = ViewerGenerator(packageName)
     private val mutationGenerator = MutationGenerator(packageName)
     private val createGenerator = CreateGenerator(packageName)
+    private val createConverterGenerator = CreateConverterGenerator(packageName)
+    private val deleteConverterGenerator = DeleteConverterGenerator(packageName)
     private val updateGenerator = UpdateGenerator(packageName)
     private val entityDescriptorGenerator = EntityDescriptorGenerator(packageName)
     private val queryGenerator = QueryGenerator(packageName)
@@ -835,6 +839,8 @@ class EntGenerator(
                 add(entityGenerator.generate(name, schema, schemaNames))
                 addAll(mutationGenerator.generate(name, schema, schemaNames))
                 add(createGenerator.generate(name, schema, schemaNames))
+                add(createConverterGenerator.generate(name, schema, schemaNames))
+                add(deleteConverterGenerator.generate(name, schema, schemaNames))
                 add(updateGenerator.generate(name, schema, schemaNames))
                 addAll(entityDescriptorGenerator.generate(name, schema, schemaNames))
                 add(queryGenerator.generate(name, schema, schemaNames))
@@ -869,7 +875,7 @@ class EntGenerator(
                     fileCollisions.keys.joinToString("\n") { (_, name) ->
                         "  - more than one artifact generates '$name.kt' — a schema name " +
                             "collides with a derived artifact name (<Schema>Descriptor/" +
-                            "<Schema><Edge>EdgeDescriptor/CreateDraft/UpdateDraft/Query/Repo/" +
+                            "<Schema><Edge>EdgeDescriptor/CreateDraft/CreateConverter/DeleteConverter/UpdateDraft/Query/Repo/" +
                             "Privacy/Validation/CreateRuleInput/UpdateRuleInput/" +
                             "DeleteRuleInput/Indexes/Hooks) or a " +
                             "generated client-support file"

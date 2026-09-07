@@ -103,23 +103,25 @@ class EntGeneratorTest {
         val files = generator.generate(schemas)
 
         // Per schema: entity, descriptor, one descriptor per edge, three
-        // hook-state files, create, update, query, repo, privacy, validation,
+        // hook-state files, create draft, create/delete converters, update, query, repo, privacy, validation,
         // and one same-named rule-input file for each mutation lifecycle.
         // The schema-set-level files are EntReadRuntime, ReadOnlyEntClient, the
         // public client DSL/facades, and three immutable resolved-config types.
         // User additionally gets an index-helper file; Car has no eligible
         // indexes and therefore has no corresponding file.
-        assertEquals(13 * schemas.size + 13 + 1 + 4, files.size)
+        assertEquals(15 * schemas.size + 13 + 1 + 4, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
                 "Car", "CarDescriptor", "CarUserEdgeDescriptor",
                 "CarBeforeSaveState", "CarBeforeCreateState", "CarBeforeUpdateState",
                 "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
+                "CarCreateConverter", "CarDeleteConverter",
                 "CarCreateRuleInput", "CarUpdateRuleInput", "CarDeleteRuleInput",
                 "User", "UserDescriptor", "UserCarsEdgeDescriptor",
                 "UserBeforeSaveState", "UserBeforeCreateState", "UserBeforeUpdateState",
                 "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
+                "UserCreateConverter", "UserDeleteConverter",
                 "UserCreateRuleInput", "UserUpdateRuleInput", "UserDeleteRuleInput",
                 "UserIndexes",
                 "EntReadRuntime",

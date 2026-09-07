@@ -226,7 +226,7 @@ internal class CreateGenerator(
             statement("return column in assignedFields")
         }
 
-    /** Build the repo-owned required-input check run before draft resolution. */
+    /** Describe required draft inputs for the generated create converter. */
     fun buildRequiredInputViolationsFunction(
         schemaName: String,
         schema: EntSchema,
@@ -240,7 +240,7 @@ internal class CreateGenerator(
             "requiredInputViolations",
             returnType = List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION),
         ) {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.OVERRIDE)
             parameter("draft", draftClass)
             for (field in allFields) {
                 if (field.nullable) continue
@@ -288,7 +288,7 @@ internal class CreateGenerator(
         }
     }
 
-    /** Build the repo-owned draft resolver used by scalar and batch create. */
+    /** Build the schema-specific draft resolver used by scalar and batch create. */
     fun buildResolveFunction(
         schemaName: String,
         schema: EntSchema,
@@ -302,7 +302,7 @@ internal class CreateGenerator(
             "resolve",
             returnType = PREPARED_CREATE.parameterizedBy(candidateClass),
         ) {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.OVERRIDE)
             parameter("draft", draftClass)
             beginControlFlow("return draft.run")
             emitResolvedCreate(this, schemaName, schema, allFields, edgeFks)
@@ -318,7 +318,7 @@ internal class CreateGenerator(
         }
     }
 
-    /** Build schema-field checks over the stable candidate produced by [resolve]. */
+    /** Describe schema-field constraints on the stable resolved candidate. */
     fun buildCreateFieldViolationsFunction(
         schemaName: String,
         schema: EntSchema,
@@ -328,10 +328,10 @@ internal class CreateGenerator(
         val allFields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
         return function(
-            "createFieldViolations",
+            "fieldViolations",
             returnType = List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION),
         ) {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.OVERRIDE)
             parameter("candidate", candidateClass)
             for (field in allFields) {
                 if (field.validators.isNotEmpty()) {

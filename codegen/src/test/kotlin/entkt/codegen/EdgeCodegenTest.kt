@@ -1183,30 +1183,36 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create executor receives generated immutable hook state adapter`() {
+    fun `create operation receives generated immutable hook state converter`() {
         val (_, names, byName) = createAllSchemas()
         val output = entkt.codegen.client.RepoGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private class CreateHookStateConverter"))
-        assert(output.contains("CreateMutationHookStateConverter<PetCreateDraft, PetBeforeSaveState, PetBeforeCreateState>"))
-        assert(output.contains("private val createSpec: CreateMutationSpec<PetCreateDraft, PetWriteCandidate, Pet>")) {
-            "the repo should pass a compact immutable specification to CreateMutationExecutor\n$output"
+        val converter = entkt.codegen.mutation.CreateConverterGenerator("com.example.ent")
+            .generate("Pet", byName["Pet"]!!, names).toString()
+            .replace("\\s+".toRegex(), " ")
+        assert(converter.contains("internal class PetCreateConverter"))
+        assert(converter.contains("CreateMutationHookStateConverter<PetCreateDraft, PetBeforeSaveState, PetBeforeCreateState>"))
+        assert(converter.contains("CreateMutationConverter<PetCreateDraft, PetWriteCandidate, Pet>"))
+        assert(output.contains("private val createConverter: PetCreateConverter = PetCreateConverter(driver, client.hookClientScopeForInternalUse)")) {
+            "the repo should construct its schema-specific converter\n$output"
         }
-        assert(output.contains("requiredInputViolations = ::requiredInputViolations, resolveDraft = ::resolve, fieldViolations = ::createFieldViolations"))
+        assert(output.contains("converter = createConverter,") && output.contains("hookStateConverter = createConverter,"))
+        assert(!output.contains("::requiredInputViolations") && !output.contains("::resolve") && !output.contains("fun resolve("))
         assert(!output.contains("beforeSave =") && !output.contains("beforeCreate ="))
-        assert(output.contains("CreateMutationExecutor<PetCreateDraft, PetWriteCandidate, Pet, PetBeforeSaveState, PetBeforeCreateState>") &&
+        assert(output.contains("CreateManyMutationOperation<PetCreateDraft, PetWriteCandidate, Pet, PetBeforeSaveState, PetBeforeCreateState>") &&
             output.contains("privacyEvaluator = mutationPrivacyEvaluatorForInternalUse(")) {
-            "rule evaluators should be injected directly into the typed executor\n$output"
+            "rule evaluators should be injected directly into the runtime operation\n$output"
         }
-        assert(!output.contains("CreateMutationInput") && !output.contains("createMutationInput(")) {
-            "phase-local hook values should not leak into the create specification\n$output"
+        assert(!output.contains("MutationLifecycle"))
+        assert(output.contains("CreateMutationOperation(createManyMutationOperation)"))
+        assert(!output.contains("CreateMutationSpec") && !output.contains("private class CreateHookStateConverter")) {
+            "CREATE should not call back into repository-owned conversion methods\n$output"
         }
         assert(!output.contains("createDenialReasons =") && !output.contains("validationViolations =") && !output.contains("loadDenials =")) {
             "the create specification should not contain already-evaluated rule callbacks\n$output"
         }
-        assert(!output.contains(": PetReadSurface, CreateMutationSpec"))
         assert(!output.contains("CreateMutationDelegate")) {
             "lifecycle execution should use the runtime specification\n$output"
         }

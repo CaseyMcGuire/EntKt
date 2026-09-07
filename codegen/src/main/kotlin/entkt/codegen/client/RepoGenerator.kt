@@ -1,6 +1,5 @@
 package entkt.codegen.client
 
-import entkt.codegen.apiName
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -9,11 +8,8 @@ import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.MemberName
-import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.STAR
-import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.lifecycleValueSnapshot
@@ -26,18 +22,14 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
-import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.idStrategyName
-import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.mutation.MUTATION_RESULT
-import entkt.codegen.mutation.CreateGenerator
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 import entkt.schema.Field
-import entkt.codegen.metadata.EdgeFk
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
@@ -50,25 +42,34 @@ private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEval
 private val LOAD_PRIVACY_EVALUATOR =
     ClassName("entkt.runtime.privacy", "LoadPrivacyEvaluator")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
-private val CREATE_MUTATION_SPEC =
-    ClassName("entkt.runtime.mutation.execution", "CreateMutationSpec")
-private val CREATE_MUTATION_EXECUTOR =
-    ClassName("entkt.runtime.mutation.execution", "CreateMutationExecutor")
-private val CREATE_MUTATION_HOOK_STATE_CONVERTER =
-    ClassName("entkt.runtime.mutation.execution", "CreateMutationHookStateConverter")
-private val CREATE_OPERATION =
-    ClassName("entkt.runtime.mutation.execution", "CreateOperation")
+private val CREATE_MANY_MUTATION_OPERATION =
+    ClassName("entkt.runtime.mutation.execution", "CreateManyMutationOperation")
+private val CREATE_MANY_MUTATION_INPUT =
+    ClassName("entkt.runtime.mutation.execution", "CreateManyMutationInput")
+private val CREATE_MUTATION_OPERATION =
+    ClassName("entkt.runtime.mutation.execution", "CreateMutationOperation")
+private val CREATE_MUTATION_INPUT =
+    ClassName("entkt.runtime.mutation.execution", "CreateMutationInput")
+private val DELETE_MUTATION_INPUT =
+    ClassName("entkt.runtime.mutation.execution", "DeleteMutationInput")
+private val MUTATION_EXECUTOR =
+    ClassName("entkt.runtime.mutation.execution", "MutationExecutor")
+private val MUTATION_OPERATION =
+    ClassName("entkt.runtime.mutation.execution", "MutationOperation")
+private val MUTATION_PRIVACY_EVALUATOR =
+    ClassName("entkt.runtime.privacy", "MutationPrivacyEvaluator")
+private val MUTATION_VALIDATION_EVALUATOR =
+    ClassName("entkt.runtime.validation", "MutationValidationEvaluator")
+private val DELETE_MANY_MUTATION_OPERATION =
+    ClassName("entkt.runtime.mutation.execution", "DeleteManyMutationOperation")
+private val DELETE_MANY_MUTATION_INPUT =
+    ClassName("entkt.runtime.mutation.execution", "DeleteManyMutationInput")
 private val DELETE_MUTATION_SPEC =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationSpec")
-private val DELETE_MUTATION_EXECUTOR =
-    ClassName("entkt.runtime.mutation.execution", "DeleteMutationExecutor")
-private val DELETE_OPERATION =
-    ClassName("entkt.runtime.mutation.execution", "DeleteOperation")
+private val DELETE_MUTATION_OPERATION =
+    ClassName("entkt.runtime.mutation.execution", "DeleteMutationOperation")
 private val DELETE_RULE_CANDIDATE =
     ClassName("entkt.runtime.mutation.execution", "DeleteRuleCandidate")
-private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
-private val LOAD_PRIVACY_EVALUATOR_FACTORY =
-    MemberName("entkt.runtime.privacy", "loadPrivacyEvaluatorForInternalUse")
 private val MUTATION_PRIVACY_EVALUATOR_FACTORY =
     MemberName("entkt.runtime.privacy", "mutationPrivacyEvaluatorForInternalUse")
 private val PRIVACY_DECISION_EVALUATOR_FACTORY =
@@ -126,7 +127,6 @@ internal class RepoGenerator(
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val idType = schema.id().type.toTypeName()
         val fields = scalarFields(schema)
-        val edgeFks = computeEdgeFks(schema, schemaNames)
 
         val createLambda = LambdaTypeName.get(
             receiver = createDraftClass,
@@ -172,6 +172,10 @@ internal class RepoGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("client")
             }
+            property("mutationExecutor", MUTATION_EXECUTOR) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("%T(driver, client)", MUTATION_EXECUTOR)
+            }
             property("updateAdapter", updateAdapterClass) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(
@@ -179,35 +183,24 @@ internal class RepoGenerator(
                     updateAdapterClass,
                 )
             }
-            // Privacy config
-            property("privacyConfig", privacyConfigType) {
-                addModifiers(KModifier.INTERNAL)
-                initializer("configuredPrivacy")
-            }
-            // Validation config
-            property("validationConfig", validationConfigType) {
-                addModifiers(KModifier.INTERNAL)
-                initializer("configuredValidation")
-            }
             addProperty(
                 buildLoadPrivacyEvaluator(
-                    schemaName = schemaName,
+                    entityDescriptorClass = entityDescriptorClass,
                     entityClass = entityClass,
                     loadItemClass = loadItemClass,
                     fields = fields,
                 ),
             )
+            val createConverterClass = ClassName(packageName, "${schemaName}CreateConverter")
+            property("createConverter", createConverterClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("%T(driver, client.hookClientScopeForInternalUse)", createConverterClass)
+            }
             addProperty(
-                buildCreateMutationSpec(
-                    entityDescriptorClass = entityDescriptorClass,
-                    createDraftClass = createDraftClass,
-                    candidateClass = candidateClass,
-                    entityClass = entityClass,
-                ),
-            )
-            addProperty(
-                buildCreateMutationExecutor(
+                buildCreateManyMutationOperation(
                     schemaName = schemaName,
+                    entityDescriptorClass = entityDescriptorClass,
+                    fields = fields,
                     createDraftClass = createDraftClass,
                     entityClass = entityClass,
                     candidateClass = candidateClass,
@@ -215,36 +208,50 @@ internal class RepoGenerator(
                     beforeCreateStateClass = beforeCreateStateClass,
                 ),
             )
-            addProperty(
-                buildCreateOperation(
-                    schema = schema,
-                    clientName = schema.clientName,
-                    createDraftClass = createDraftClass,
-                    entityClass = entityClass,
-                ),
-            )
+            property(
+                "createMutationOperation",
+                MUTATION_OPERATION.parameterizedBy(CREATE_MUTATION_INPUT.parameterizedBy(createDraftClass), entityClass),
+            ) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("%T(createManyMutationOperation)", CREATE_MUTATION_OPERATION)
+            }
             addProperty(
                 buildDeleteMutationSpec(
                     entityDescriptorClass = entityDescriptorClass,
                     queryClass = queryClass,
                     entityClass = entityClass,
-                    candidateClass = candidateClass,
                 ),
             )
-            addProperty(
-                buildDeleteMutationExecutor(
+            addProperties(
+                buildDeleteEvaluators(
                     schemaName = schemaName,
                     entityClass = entityClass,
                     candidateClass = candidateClass,
                     fields = fields,
                 ),
             )
-            addProperty(
-                buildDeleteOperation(
-                    clientName = schema.clientName,
-                    entityClass = entityClass,
-                ),
-            )
+            property(
+                "deleteMutationOperation",
+                MUTATION_OPERATION.parameterizedBy(DELETE_MUTATION_INPUT, Boolean::class.asClassName()),
+            ) {
+                addModifiers(KModifier.PRIVATE)
+                initializer(
+                    "%T(spec = deleteSpec, converter = %T, privacyEvaluator = deletePrivacyEvaluator, validationEvaluator = deleteValidationEvaluator)",
+                    DELETE_MUTATION_OPERATION,
+                    ClassName(packageName, "${schemaName}DeleteConverter"),
+                )
+            }
+            property(
+                "deleteManyMutationOperation",
+                MUTATION_OPERATION.parameterizedBy(DELETE_MANY_MUTATION_INPUT.parameterizedBy(entityClass), INT),
+            ) {
+                addModifiers(KModifier.PRIVATE)
+                initializer(
+                    "%T(spec = deleteSpec, converter = %T, privacyEvaluator = deletePrivacyEvaluator, validationEvaluator = deleteValidationEvaluator)",
+                    DELETE_MANY_MUTATION_OPERATION,
+                    ClassName(packageName, "${schemaName}DeleteConverter"),
+                )
+            }
             addInitializerBlock(
                 CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
             )
@@ -258,35 +265,6 @@ internal class RepoGenerator(
             addFunction(buildRepoCreate(schema, entityClass, createDraftClass, createLambda))
             addFunction(buildSaveCreation(createDraftClass))
             addFunction(buildSaveAndLoadCreation(createDraftClass, entityClass))
-            addType(
-                buildCreateHookStateConverter(
-                    schema = schema,
-                    schemaName = schemaName,
-                    createDraftClass = createDraftClass,
-                    entityClass = entityClass,
-                    beforeSaveStateClass = beforeSaveStateClass,
-                    beforeCreateStateClass = beforeCreateStateClass,
-                    fields = fields,
-                    edgeFks = edgeFks,
-                ),
-            )
-            val createGenerator = CreateGenerator(packageName)
-            addFunction(
-                createGenerator.buildRequiredInputViolationsFunction(
-                    schemaName,
-                    schema,
-                    schemaNames,
-                ),
-            )
-            addFunction(createGenerator.buildResolveFunction(schemaName, schema, schemaNames))
-            addFunction(
-                createGenerator.buildCreateFieldViolationsFunction(
-                    schemaName,
-                    schema,
-                    schemaNames,
-                ),
-            )
-            addFunction(buildSnapshotCreateCandidate(entityClass, candidateClass, fields))
             // Per-operation UpdateConsistency override (transaction locking). Defaults
             // to the client's `defaultUpdateConsistency` so callers
             // who don't pass `consistency =` get the configured
@@ -317,17 +295,16 @@ internal class RepoGenerator(
             addFunction(buildExecuteUpdate(updateDraftClass, entityClass))
             addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "client"))
             addFunction(buildDelete(entityClass))
-            addFunction(buildDeleteById(entityClass, idType))
+            addFunction(buildDeleteById(idType))
             if (idStrategyName(schema) != "EXPLICIT") {
-                addFunction(buildCreateMany(entityClass, createLambda))
+                addFunction(buildCreateMany(entityClass, createDraftClass, createLambda, schema.clientName))
             }
-            addFunction(buildDeleteMany(entityClass))
+            addFunction(buildDeleteMany(entityClass, schema.clientName))
             addFunction(buildHasPrivacy("hasLoadPrivacy", readSurfaceOverride = true))
             addFunction(buildHasPrivacy("hasCreatePrivacy"))
             addFunction(buildHasPrivacy("hasUpdatePrivacy"))
             addFunction(buildHasPrivacy("hasDeletePrivacy"))
             addFunction(buildEvaluateLoadPrivacy(entityClass))
-            addFunction(buildBuildDeleteCandidate(schemaName, schema, entityClass, candidateClass, schemaNames))
         }
 
         // The repo class implements the `@EntktInternal`-guarded
@@ -359,11 +336,16 @@ internal class RepoGenerator(
         )
         parameter("applyLoadPrivacy", Boolean::class.asClassName())
         addCode(codeBlock {
-            add("return updateAdapter.execute(\n")
+            add("return mutationExecutor.execute(\n")
+            indent()
+            add("operation = updateAdapter.updateOperation,\n")
+            add("input = %T(\n", ClassName("entkt.runtime.mutation.execution", "UpdateMutationInput"))
             indent()
             add("viewerContext = viewerContext,\n")
             add("request = request,\n")
             add("applyLoadPrivacy = applyLoadPrivacy,\n")
+            unindent()
+            add("),\n")
             unindent()
             add(")\n")
         })
@@ -374,33 +356,37 @@ internal class RepoGenerator(
      * delete. `Success(Unit)` means the row is absent afterward,
      * whether this call deleted it or it was already absent.
      */
-    private fun buildDelete(entityClass: ClassName): FunSpec {
-        val resultType = MUTATION_RESULT.parameterizedBy(UNIT)
-        return function("delete", resultType) {
+    private fun buildDelete(entityClass: ClassName): FunSpec =
+        function("delete", MUTATION_RESULT.parameterizedBy(UNIT)) {
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entity", entityClass)
             addCode(codeBlock {
-                add("return deleteOperation.delete(viewerContext, entity)\n")
+                add("return mutationExecutor.execute(\n")
+                indent()
+                add("operation = deleteMutationOperation.mapResult { Unit },\n")
+                add("input = %T(viewerContext, entity.id),\n", DELETE_MUTATION_INPUT)
+                unindent()
+                add(")\n")
             })
         }
-    }
 
     /**
      * `deleteById(id): MutationResult<Boolean>` — idempotent
      * delete-by-id preserving the affected-row acknowledgement.
      */
     private fun buildDeleteById(
-        entityClass: ClassName,
         idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec {
-        val resultType = MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName())
-        return function("deleteById", resultType) {
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("id", idType)
-            addCode(codeBlock {
-                add("return deleteOperation.deleteById(viewerContext, id)\n")
-            })
-        }
+    ): FunSpec = function("deleteById", MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName())) {
+        parameter("viewerContext", VIEWER_CONTEXT)
+        parameter("id", idType)
+        addCode(codeBlock {
+            add("return mutationExecutor.execute(\n")
+            indent()
+            add("operation = deleteMutationOperation,\n")
+            add("input = %T(viewerContext, id),\n", DELETE_MUTATION_INPUT)
+            unindent()
+            add(")\n")
+        })
     }
 
     /**
@@ -414,20 +400,44 @@ internal class RepoGenerator(
      */
     private fun buildDeleteMany(
         entityClass: ClassName,
-    ): FunSpec {
-        val resultType = MUTATION_RESULT.parameterizedBy(INT)
-        return function("deleteMany", resultType) {
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter(
-                // vararg predicates: Predicate<EntityClass> — typed in
-                // the entity scope so callers can only pass predicates
-                // for this repo's entity, matching the rest of the
-                // typed query DSL surface.
-                "predicates",
-                PREDICATE.parameterizedBy(entityClass),
-            ) { addModifiers(KModifier.VARARG) }
-            statement("return deleteOperation.deleteMany(viewerContext, predicates.asList())")
-        }
+        clientName: String,
+    ): FunSpec = function("deleteMany", MUTATION_RESULT.parameterizedBy(INT)) {
+        parameter("viewerContext", VIEWER_CONTEXT)
+        parameter("predicates", PREDICATE.parameterizedBy(entityClass)) { addModifiers(KModifier.VARARG) }
+        addCode(codeBlock {
+            add("return mutationExecutor.execute(\n")
+            indent()
+            add("operation = deleteManyMutationOperation,\n")
+            add("input = %T(viewerContext, predicates.asList()),\n", DELETE_MANY_MUTATION_INPUT)
+            addOwnedTransactionWiring(
+                clientName,
+                CodeBlock.of("tx.%L.deleteManyMutationOperation", clientName),
+            )
+            unindent()
+            add(")\n")
+        })
+    }
+
+    /** Select transaction-bound dependencies; runtime owns transaction policy and completion handling. */
+    private fun CodeBlock.Builder.addOwnedTransactionWiring(
+        clientName: String,
+        operation: CodeBlock,
+    ) {
+        add("ownedTransaction = { input, completionCapture ->\n")
+        indent()
+        add("client.withTransaction { tx ->\n")
+        indent()
+        add("tx.%L.mutationExecutor.executeInOwnedTransactionForInternalUse(\n", clientName)
+        indent()
+        add("operation = %L,\n", operation)
+        add("input = input,\n")
+        add("completionCapture = completionCapture,\n")
+        unindent()
+        add(").orRollback()\n")
+        unindent()
+        add("}\n")
+        unindent()
+        add("},\n")
     }
 
     // Privacy is fail-closed: every operation requires an explicit Allow, so
@@ -446,22 +456,24 @@ internal class RepoGenerator(
 
     /** Bind schema-specific LOAD rules and item snapshots to the reusable runtime evaluator. */
     private fun buildLoadPrivacyEvaluator(
-        schemaName: String,
+        entityDescriptorClass: ClassName,
         entityClass: ClassName,
         loadItemClass: ClassName,
         fields: List<Field>,
     ): PropertySpec = property(
         "loadPrivacyEvaluator",
-        LOAD_PRIVACY_EVALUATOR.parameterizedBy(entityClass),
+        LOAD_PRIVACY_EVALUATOR.parameterizedBy(
+            ClassName(packageName, "ReadOnlyEntClient"),
+            entityClass,
+            loadItemClass,
+        ),
     ) {
         addModifiers(KModifier.PRIVATE)
         initializer(codeBlock {
-            add("%M(\n", LOAD_PRIVACY_EVALUATOR_FACTORY)
+            add("%T(\n", LOAD_PRIVACY_EVALUATOR)
             indent()
-            add("lifecycle = %S,\n", "$schemaName LOAD privacy")
-            add("unresolvedReason = %S,\n", "no load rule allowed access")
-            add("rules = privacyConfig.loadRules,\n")
-            add("ruleClientProvider = { client.readOnlyClient },\n")
+            add("entity = %T,\n", entityDescriptorClass)
+            add("rules = configuredPrivacy.loadRules,\n")
             add(
                 "freshItem = { item -> %T(%L) },\n",
                 loadItemClass,
@@ -479,77 +491,24 @@ internal class RepoGenerator(
             addModifiers(KModifier.OVERRIDE)
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("entities", LIST.parameterizedBy(entityClass))
-            statement("return loadPrivacyEvaluator.evaluate(viewerContext, entities)")
-        }
-
-    private fun buildBuildDeleteCandidate(
-        schemaName: String,
-        schema: EntSchema,
-        entityClass: ClassName,
-        candidateClass: ClassName,
-        schemaNames: Map<EntSchema, String>,
-    ): FunSpec {
-        val fields = scalarFields(schema)
-        val edgeFks = computeEdgeFks(schema, schemaNames)
-        val body = codeBlock {
-            add("return %T(\n", candidateClass)
-            for (field in fields) {
-                add("  %L = entity.%L,\n", field.apiName, field.apiName)
-            }
-            for (fk in edgeFks) {
-                add("  %L = entity.%L,\n", fk.propertyName, fk.propertyName)
-            }
-            add(")\n")
-        }
-
-        return function("buildDeleteCandidate", candidateClass) {
-            addModifiers(KModifier.PRIVATE)
-            parameter("entity", entityClass)
-            addCode(body)
-        }
-    }
-
-    /** Detach mutable candidate fields before exposing them to one CREATE rule. */
-    private fun buildSnapshotCreateCandidate(
-        entityClass: ClassName,
-        candidateClass: ClassName,
-        fields: List<Field>,
-    ): FunSpec = function("snapshotCreateCandidate", candidateClass) {
-        addModifiers(KModifier.PRIVATE)
-        parameter("candidate", candidateClass)
-        statement("return %L", lifecycleValueSnapshot("candidate", fields, entityClass))
-    }
-
-    /** Capture the immutable inputs consumed by the shared runtime create lifecycle. */
-    private fun buildCreateMutationSpec(
-        entityDescriptorClass: ClassName,
-        createDraftClass: ClassName,
-        candidateClass: ClassName,
-        entityClass: ClassName,
-    ): PropertySpec {
-        val specType = CREATE_MUTATION_SPEC.parameterizedBy(
-            createDraftClass,
-            candidateClass,
-            entityClass,
-        )
-        return property("createSpec", specType) {
-            addModifiers(KModifier.PRIVATE)
-            initializer(codeBlock {
-                add("%T(\n", CREATE_MUTATION_SPEC)
+            addCode(codeBlock {
+                add("return loadPrivacyEvaluator.evaluate(\n")
                 indent()
-                add("entity = %T,\n", entityDescriptorClass)
-                add("requiredInputViolations = ::requiredInputViolations,\n")
-                add("resolveDraft = ::resolve,\n")
-                add("fieldViolations = ::createFieldViolations,\n")
+                add(
+                    "context = %T(viewerContext, client.readOnlyClient),\n",
+                    ClassName("entkt.runtime.privacy", "PrivacyRuleContext"),
+                )
+                add("entities = entities,\n")
                 unindent()
-                add(")")
+                add(")\n")
             })
         }
-    }
 
-    /** Bind this entity's CREATE privacy and validation evaluators directly to its executor. */
-    private fun buildCreateMutationExecutor(
+    /** Bind this entity's CREATE dependencies once for its scalar and bulk runtime operations. */
+    private fun buildCreateManyMutationOperation(
         schemaName: String,
+        entityDescriptorClass: ClassName,
+        fields: List<Field>,
         createDraftClass: ClassName,
         entityClass: ClassName,
         candidateClass: ClassName,
@@ -557,38 +516,47 @@ internal class RepoGenerator(
         beforeCreateStateClass: ClassName,
     ): PropertySpec {
         val ruleInputClass = ClassName(packageName, "${schemaName}CreateRuleInput")
-        val executorType = CREATE_MUTATION_EXECUTOR.parameterizedBy(
+        val operationType = CREATE_MANY_MUTATION_OPERATION.parameterizedBy(
             createDraftClass,
             candidateClass,
             entityClass,
             beforeSaveStateClass,
             beforeCreateStateClass,
         )
-        return property("createExecutor", executorType) {
+        return property("createManyMutationOperation", operationType) {
             addModifiers(KModifier.PRIVATE)
             initializer(codeBlock {
-                add("%T(\n", CREATE_MUTATION_EXECUTOR)
+                add("%T(\n", CREATE_MANY_MUTATION_OPERATION)
                 indent()
-                add("driver = driver,\n")
                 add("mutationRuntime = client,\n")
+                add("entity = %T,\n", entityDescriptorClass)
+                add("converter = createConverter,\n")
                 add("privacyEvaluator = %M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName CREATE privacy")
                 add("unresolvedReason = %S,\n", "no create rule allowed access")
-                add("rules = privacyConfig.createRules,\n")
+                add("rules = configuredPrivacy.createRules,\n")
                 add("ruleClientProvider = { client.readOnlyClient },\n")
-                add("freshItem = { candidate -> %T(snapshotCreateCandidate(candidate)) },\n", ruleInputClass)
+                add(
+                    "freshItem = { candidate -> %T(%L) },\n",
+                    ruleInputClass,
+                    lifecycleValueSnapshot("candidate", fields, entityClass),
+                )
                 unindent()
                 add("),\n")
                 add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName CREATE validation")
-                add("rules = validationConfig.createRules,\n")
+                add("rules = configuredValidation.createRules,\n")
                 add("ruleClientProvider = { client.readOnlyClient },\n")
-                add("freshItem = { candidate -> %T(snapshotCreateCandidate(candidate)) },\n", ruleInputClass)
+                add(
+                    "freshItem = { candidate -> %T(%L) },\n",
+                    ruleInputClass,
+                    lifecycleValueSnapshot("candidate", fields, entityClass),
+                )
                 unindent()
                 add("),\n")
-                add("hookStateConverter = CreateHookStateConverter(client),\n")
+                add("hookStateConverter = createConverter,\n")
                 add("beforeSaveHookRunner = configuredHooks.beforeSave,\n")
                 add("beforeCreateHookRunner = configuredHooks.beforeCreate,\n")
                 add("afterCreateHookRunner = configuredHooks.afterCreate,\n")
@@ -598,59 +566,13 @@ internal class RepoGenerator(
         }
     }
 
-    /** Bind the generated create adapters once to the runtime create operation. */
-    private fun buildCreateOperation(
-        schema: EntSchema,
-        clientName: String,
-        createDraftClass: ClassName,
-        entityClass: ClassName,
-    ): PropertySpec {
-        val operationType = CREATE_OPERATION.parameterizedBy(createDraftClass, entityClass)
-        return property("createOperation", operationType) {
-            addModifiers(KModifier.PRIVATE)
-            delegate(codeBlock {
-                add("lazy({\n")
-                indent()
-                add("createExecutor.operationForInternalUse(\n")
-                indent()
-                add("spec = createSpec,\n")
-                if (idStrategyName(schema) != "EXPLICIT") {
-                    add("newDraft = { %T() },\n", createDraftClass)
-                    add("ownedTransaction = { vc, blocks, disclosureCapture ->\n")
-                    indent()
-                    add("client.withTransaction { tx ->\n")
-                    indent()
-                    add("tx.%L.createOperation.createManyInOwnedTransactionForInternalUse(\n", clientName)
-                    indent()
-                    add("vc = vc,\n")
-                    add("blocks = blocks,\n")
-                    add("disclosureCapture = disclosureCapture,\n")
-                    unindent()
-                    add(").orRollback()\n")
-                    unindent()
-                    add("}\n")
-                    unindent()
-                    add("},\n")
-                }
-                unindent()
-                add(")\n")
-                unindent()
-                add("})")
-            })
-        }
-    }
-
     /** Capture schema-specific DELETE adapters while runtime owns lifecycle ordering. */
     private fun buildDeleteMutationSpec(
         entityDescriptorClass: ClassName,
         queryClass: ClassName,
         entityClass: ClassName,
-        candidateClass: ClassName,
     ): PropertySpec {
-        val specType = DELETE_MUTATION_SPEC.parameterizedBy(
-            entityClass,
-            candidateClass,
-        )
+        val specType = DELETE_MUTATION_SPEC.parameterizedBy(entityClass)
         return property("deleteSpec", specType) {
             addModifiers(KModifier.PRIVATE)
             initializer(codeBlock {
@@ -659,7 +581,6 @@ internal class RepoGenerator(
                 add("entity = %T,\n", entityDescriptorClass)
                 add("idColumn = %T.SCHEMA.idColumn,\n", entityClass)
                 add("newQuery = { %T(driver, client) },\n", queryClass)
-                add("candidate = ::buildDeleteCandidate,\n")
                 add("beforeDelete = configuredHooks.beforeDelete,\n")
                 add("afterDelete = configuredHooks.afterDelete,\n")
                 unindent()
@@ -668,114 +589,78 @@ internal class RepoGenerator(
         }
     }
 
-    /** Bind this entity's DELETE privacy and validation evaluators directly to its executor. */
-    private fun buildDeleteMutationExecutor(
+    /** Share the already-bound evaluators without introducing a lifecycle object. */
+    private fun buildDeleteEvaluators(
         schemaName: String,
         entityClass: ClassName,
         candidateClass: ClassName,
         fields: List<Field>,
-    ): PropertySpec {
+    ): List<PropertySpec> {
         val deleteRuleInput = ClassName(packageName, "${schemaName}DeleteRuleInput")
         val createRuleInput = ClassName(packageName, "${schemaName}CreateRuleInput")
         val entitySnapshot = lifecycleValueSnapshot("item.entity", fields, entityClass)
         val candidateSnapshot = lifecycleValueSnapshot("item.candidate", fields, entityClass)
         val ruleCandidateType = DELETE_RULE_CANDIDATE.parameterizedBy(entityClass, candidateClass)
-        val executorType = DELETE_MUTATION_EXECUTOR.parameterizedBy(entityClass, candidateClass)
-        return property("deleteExecutor", executorType) {
-            addModifiers(KModifier.PRIVATE)
-            initializer(codeBlock {
-                add("%T(\n", DELETE_MUTATION_EXECUTOR)
-                indent()
-                add("driver = driver,\n")
-                add("mutationRuntime = client,\n")
-                add("privacyEvaluator = %M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
-                indent()
-                add("lifecycle = %S,\n", "$schemaName DELETE privacy")
-                add("unresolvedReason = %S,\n", "no delete rule allowed access")
-                add("rules = privacyConfig.deleteRules,\n")
-                add("ruleClientProvider = { client.readOnlyClient },\n")
-                add(
-                    "freshItem = { item: %T -> %T(%L, %L) },\n",
-                    ruleCandidateType,
-                    deleteRuleInput,
-                    entitySnapshot,
-                    candidateSnapshot,
-                )
-                add("fallback = if (privacyConfig.deleteDerivesFromCreate) {\n")
-                indent()
-                add("%M(\n", PRIVACY_DECISION_EVALUATOR_FACTORY)
-                indent()
-                add("lifecycle = %S,\n", "$schemaName DELETE privacy")
-                add("rules = privacyConfig.createRules,\n")
-                add("ruleClientProvider = { client.readOnlyClient },\n")
-                add(
-                    "freshItem = { item: %T -> %T(%L) },\n",
-                    ruleCandidateType,
-                    createRuleInput,
-                    candidateSnapshot,
-                )
-                unindent()
-                add(")\n")
-                unindent()
-                add("} else {\n")
-                add("  null\n")
-                add("},\n")
-                unindent()
-                add("),\n")
-                add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
-                indent()
-                add("lifecycle = %S,\n", "$schemaName DELETE validation")
-                add("rules = validationConfig.deleteRules,\n")
-                add("ruleClientProvider = { client.readOnlyClient },\n")
-                add(
-                    "freshItem = { item: %T -> %T(%L, %L) },\n",
-                    ruleCandidateType,
-                    deleteRuleInput,
-                    entitySnapshot,
-                    candidateSnapshot,
-                )
-                unindent()
-                add("),\n")
-                unindent()
-                add(")")
-            })
-        }
-    }
-
-    /** Bind the generated delete adapters once to the runtime delete operation. */
-    private fun buildDeleteOperation(
-        clientName: String,
-        entityClass: ClassName,
-    ): PropertySpec {
-        val operationType = DELETE_OPERATION.parameterizedBy(entityClass)
-        return property("deleteOperation", operationType) {
-            addModifiers(KModifier.PRIVATE)
-            delegate(codeBlock {
-                add("lazy({\n")
-                indent()
-                add("deleteExecutor.operationForInternalUse(\n")
-                indent()
-                add("spec = deleteSpec,\n")
-                add("ownedTransaction = { vc, predicates ->\n")
-                indent()
-                add("client.withTransaction { tx ->\n")
-                indent()
-                add("tx.%L.deleteOperation.deleteManyInOwnedTransactionForInternalUse(\n", clientName)
-                indent()
-                add("vc = vc,\n")
-                add("predicates = predicates,\n")
-                unindent()
-                add(").orRollback()\n")
-                unindent()
-                add("}\n")
-                unindent()
-                add("},\n")
-                unindent()
-                add(")\n")
-                unindent()
-                add("})")
-            })
-        }
+        return listOf(
+            property("deletePrivacyEvaluator", MUTATION_PRIVACY_EVALUATOR.parameterizedBy(ruleCandidateType)) {
+                addModifiers(KModifier.PRIVATE)
+                initializer(codeBlock {
+                    add("%M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
+                    indent()
+                    add("lifecycle = %S,\n", "$schemaName DELETE privacy")
+                    add("unresolvedReason = %S,\n", "no delete rule allowed access")
+                    add("rules = configuredPrivacy.deleteRules,\n")
+                    add("ruleClientProvider = { client.readOnlyClient },\n")
+                    add(
+                        "freshItem = { item: %T -> %T(%L, %L) },\n",
+                        ruleCandidateType,
+                        deleteRuleInput,
+                        entitySnapshot,
+                        candidateSnapshot,
+                    )
+                    add("fallback = if (configuredPrivacy.deleteDerivesFromCreate) {\n")
+                    indent()
+                    add("%M(\n", PRIVACY_DECISION_EVALUATOR_FACTORY)
+                    indent()
+                    add("lifecycle = %S,\n", "$schemaName DELETE privacy")
+                    add("rules = configuredPrivacy.createRules,\n")
+                    add("ruleClientProvider = { client.readOnlyClient },\n")
+                    add(
+                        "freshItem = { item: %T -> %T(%L) },\n",
+                        ruleCandidateType,
+                        createRuleInput,
+                        candidateSnapshot,
+                    )
+                    unindent()
+                    add(")\n")
+                    unindent()
+                    add("} else {\n")
+                    add("  null\n")
+                    add("},\n")
+                    unindent()
+                    add(")")
+                })
+            },
+            property("deleteValidationEvaluator", MUTATION_VALIDATION_EVALUATOR.parameterizedBy(ruleCandidateType)) {
+                addModifiers(KModifier.PRIVATE)
+                initializer(codeBlock {
+                    add("%M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
+                    indent()
+                    add("lifecycle = %S,\n", "$schemaName DELETE validation")
+                    add("rules = configuredValidation.deleteRules,\n")
+                    add("ruleClientProvider = { client.readOnlyClient },\n")
+                    add(
+                        "freshItem = { item: %T -> %T(%L, %L) },\n",
+                        ruleCandidateType,
+                        deleteRuleInput,
+                        entitySnapshot,
+                        candidateSnapshot,
+                    )
+                    unindent()
+                    add(")")
+                })
+            },
+        )
     }
 
     private fun buildRepoCreate(
@@ -803,159 +688,31 @@ internal class RepoGenerator(
             parameter("viewerContext", VIEWER_CONTEXT)
             parameter("draft", createDraftClass)
             addCode(codeBlock {
-                    add("return when (val result = createOperation.create(\n")
-                    .indent()
-                    .add("vc = viewerContext,\n")
-                    .add("draft = draft,\n")
-                    .add("checkReturnedEntityPrivacy = false,\n")
-                    .unindent()
-                    .add(")) {\n")
-                    .add("  is %T.Success -> %T.Success(Unit)\n", MUTATION_RESULT, MUTATION_RESULT)
-                    .add("  is %T.Failed -> result\n", MUTATION_RESULT)
-                    .add("}\n")
+                add("return mutationExecutor.execute(\n")
+                indent()
+                add("operation = createMutationOperation.mapResult { Unit },\n")
+                add("input = %T(viewerContext, draft, checkReturnedEntityPrivacy = false),\n", CREATE_MUTATION_INPUT)
+                unindent()
+                add(")\n")
             })
         }
 
     private fun buildSaveAndLoadCreation(
         createDraftClass: ClassName,
         entityClass: ClassName,
-    ): FunSpec =
-        function("saveAndLoadCreation", MUTATION_RESULT.parameterizedBy(entityClass)) {
-            addAnnotation(ENTKT_INTERNAL)
-            addModifiers(KModifier.OVERRIDE)
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("draft", createDraftClass)
-            statement(
-                "return createOperation.create(viewerContext, draft, checkReturnedEntityPrivacy = true)",
-            )
-        }
-
-    /** Generated conversion only; runtime owns hook sequencing and state folding. */
-    private fun buildCreateHookStateConverter(
-        schema: EntSchema,
-        schemaName: String,
-        createDraftClass: ClassName,
-        entityClass: ClassName,
-        beforeSaveStateClass: ClassName,
-        beforeCreateStateClass: ClassName,
-        fields: List<Field>,
-        edgeFks: List<EdgeFk>,
-    ): TypeSpec {
-        val mutableFields = fields.filterNot { it.immutable }
-        val mutableEdgeFks = edgeFks.filterNot { it.immutable }
-        val converterType = CREATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
-            createDraftClass,
-            beforeSaveStateClass,
-            beforeCreateStateClass,
-        )
-        return classType("CreateHookStateConverter") {
-            addModifiers(KModifier.PRIVATE)
-            addSuperinterface(converterType)
-            primaryConstructor { parameter("client", ClassName(packageName, ENT_CLIENT_NAME)) }
-            property("client", ClassName(packageName, ENT_CLIENT_NAME)) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("client")
-            }
-            function("toBeforeSaveState", beforeSaveStateClass) {
-                addModifiers(KModifier.OVERRIDE)
-                parameter("draft", createDraftClass)
-                addCode(codeBlock {
-                    add("return %T(\n", beforeSaveStateClass)
-                    indent()
-                    mutableFields.forEach { field ->
-                        add(
-                            "%L = if (draft.isSet(%T.%L)) %T.Set(draft.%L) else %T.Unset,\n",
-                            field.apiName,
-                            entityClass,
-                            field.apiName,
-                            FIELD_PATCH,
-                            field.apiName,
-                            FIELD_PATCH,
-                        )
-                    }
-                    mutableEdgeFks.forEach { fk ->
-                        add(
-                            "%L = if (draft.isSet(%T.%L)) %T.Set(draft.%L) else %T.Unset,\n",
-                            fk.propertyName,
-                            entityClass,
-                            fk.propertyName,
-                            FIELD_PATCH,
-                            fk.propertyName,
-                            FIELD_PATCH,
-                        )
-                    }
-                    unindent()
-                    add(")\n")
-                })
-            }
-            function("toBeforeCreateState", beforeCreateStateClass) {
-                addModifiers(KModifier.OVERRIDE)
-                parameter("viewerContext", VIEWER_CONTEXT)
-                parameter("draft", createDraftClass)
-                parameter("beforeSaveState", beforeSaveStateClass)
-                addCode(codeBlock {
-                    add("return %T(\n", beforeCreateStateClass)
-                    indent()
-                    add("client = client.hookClientScopeForInternalUse,\n")
-                    add("viewerContext = viewerContext,\n")
-                    fields.forEach { field ->
-                        if (field.immutable) {
-                            add(
-                                "%L = if (draft.isSet(%T.%L)) %T.Set(draft.%L) else %T.Unset,\n",
-                                field.apiName,
-                                entityClass,
-                                field.apiName,
-                                FIELD_PATCH,
-                                field.apiName,
-                                FIELD_PATCH,
-                            )
-                        } else {
-                            add("%L = beforeSaveState.%L,\n", field.apiName, field.apiName)
-                        }
-                    }
-                    edgeFks.forEach { fk ->
-                        if (fk.immutable) {
-                            add(
-                                "%L = if (draft.isSet(%T.%L)) %T.Set(draft.%L) else %T.Unset,\n",
-                                fk.propertyName,
-                                entityClass,
-                                fk.propertyName,
-                                FIELD_PATCH,
-                                fk.propertyName,
-                                FIELD_PATCH,
-                            )
-                        } else {
-                            add("%L = beforeSaveState.%L,\n", fk.propertyName, fk.propertyName)
-                        }
-                    }
-                    unindent()
-                    add(")\n")
-                })
-            }
-            function("toPreparationDraft", createDraftClass) {
-                addModifiers(KModifier.OVERRIDE)
-                parameter("originalDraft", createDraftClass)
-                parameter("state", beforeCreateStateClass)
-                if (idStrategyName(schema) == "EXPLICIT") {
-                    statement("val draft = %T(originalDraft.id)", createDraftClass)
-                } else {
-                    statement("val draft = %T()", createDraftClass)
-                }
-                (fields.map { it.apiName } + edgeFks.map { it.propertyName }).forEach { property ->
-                    addCode(
-                        "when (val entry = state.%L) {\n" +
-                            "  %T.Unset -> Unit\n" +
-                            "  is %T.Set -> draft.%L = entry.value\n" +
-                            "}\n",
-                        property,
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                        property,
-                    )
-                }
-                statement("return draft")
-            }
-        }
+    ): FunSpec = function("saveAndLoadCreation", MUTATION_RESULT.parameterizedBy(entityClass)) {
+        addAnnotation(ENTKT_INTERNAL)
+        addModifiers(KModifier.OVERRIDE)
+        parameter("viewerContext", VIEWER_CONTEXT)
+        parameter("draft", createDraftClass)
+        addCode(codeBlock {
+            add("return mutationExecutor.execute(\n")
+            indent()
+            add("operation = createMutationOperation,\n")
+            add("input = %T(viewerContext, draft, checkReturnedEntityPrivacy = true),\n", CREATE_MUTATION_INPUT)
+            unindent()
+            add(")\n")
+        })
     }
 
     /**
@@ -973,14 +730,21 @@ internal class RepoGenerator(
      */
     private fun buildCreateMany(
         entityClass: ClassName,
+        createDraftClass: ClassName,
         createLambda: LambdaTypeName,
-    ): FunSpec {
-        val resultType = MUTATION_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))
-        return function("createMany", resultType) {
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("blocks", createLambda) { addModifiers(KModifier.VARARG) }
-            statement("return createOperation.createMany(viewerContext, blocks.asList())")
-        }
+        clientName: String,
+    ): FunSpec = function("createMany", MUTATION_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))) {
+        parameter("viewerContext", VIEWER_CONTEXT)
+        parameter("blocks", createLambda) { addModifiers(KModifier.VARARG) }
+        addCode(codeBlock {
+            add("return mutationExecutor.execute(\n")
+            indent()
+            add("operation = createManyMutationOperation,\n")
+            add("input = %T(viewerContext, blocks.asList(), newDraft = { %T() }),\n", CREATE_MANY_MUTATION_INPUT, createDraftClass)
+            addOwnedTransactionWiring(clientName, CodeBlock.of("tx.%L.createManyMutationOperation", clientName))
+            unindent()
+            add(")\n")
+        })
     }
 
 }

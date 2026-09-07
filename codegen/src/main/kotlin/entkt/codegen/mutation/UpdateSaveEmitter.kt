@@ -33,8 +33,8 @@ private val RELATIONSHIP_LOCK_KEY = ClassName("entkt.runtime.mutation", "Relatio
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UUID_CLASS = ClassName("java.util", "UUID")
-private val UPDATE_MUTATION_EXECUTOR =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationExecutor")
+private val UPDATE_MUTATION_OPERATION =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationOperation")
 private val UPDATE_MUTATION_HOOKS =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationHooks")
 private val UPDATE_MUTATION_REQUEST =
@@ -65,7 +65,7 @@ private val SNAPSHOT_EDGE_CHANGES =
 /** Schema-specific artifacts around the reusable runtime UPDATE lifecycle. */
 internal data class UpdateSaveArtifacts(
     val preparedStateType: TypeSpec,
-    val executorProperty: PropertySpec,
+    val operationProperty: PropertySpec,
     val functions: List<FunSpec>,
 )
 
@@ -93,7 +93,7 @@ internal class UpdateSaveEmitter(
 
     fun build(): UpdateSaveArtifacts = UpdateSaveArtifacts(
         preparedStateType = buildPreparedStateType(),
-        executorProperty = buildExecutorProperty(),
+        operationProperty = buildOperationProperty(),
         functions = buildList {
             if (helperEligibleEdges.isNotEmpty()) {
                 add(buildRelationshipRequirementsFunction())
@@ -103,7 +103,6 @@ internal class UpdateSaveEmitter(
             add(buildRequestedPatchFunction())
             add(buildPrepareFunction())
             add(buildRelationshipFunction())
-            add(buildExecuteFunction())
         },
     )
 
@@ -129,12 +128,12 @@ internal class UpdateSaveEmitter(
             .build()
     }
 
-    private fun buildExecutorProperty(): PropertySpec {
+    private fun buildOperationProperty(): PropertySpec {
         val updateRuleInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
         val createRuleInput = ClassName(packageName, "${schemaName}CreateRuleInput")
         return property(
-            "updateExecutor",
-            UPDATE_MUTATION_EXECUTOR.parameterizedBy(
+            "updateOperation",
+            UPDATE_MUTATION_OPERATION.parameterizedBy(
                 draftClass,
                 entityClass,
                 pendingEdgesClass,
@@ -143,11 +142,10 @@ internal class UpdateSaveEmitter(
                 beforeUpdateStateClass,
             ),
         ) {
-            addModifiers(KModifier.PRIVATE)
             initializer(codeBlock {
-                add("%T(\n", UPDATE_MUTATION_EXECUTOR)
+                add("%T(\n", UPDATE_MUTATION_OPERATION)
                 indent()
-                add("driver = driver,\n")
+                add("entity = %T,\n", entityDescriptorClass)
                 add("mutationRuntime = client,\n")
                 add("privacyEvaluator = %M(\n", MUTATION_PRIVACY_EVALUATOR_FACTORY)
                 indent()
@@ -549,25 +547,6 @@ internal class UpdateSaveEmitter(
             )
             endControlFlow()
         }
-    }
-
-    private fun buildExecuteFunction(): FunSpec = function(
-        "execute",
-        MUTATION_RESULT.parameterizedBy(entityClass),
-    ) {
-        parameter("viewerContext", VIEWER_CONTEXT)
-        parameter("request", UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass))
-        parameter("applyLoadPrivacy", BOOLEAN)
-        addCode(codeBlock {
-            add("return updateExecutor.update(\n")
-            indent()
-            add("viewerContext = viewerContext,\n")
-            add("request = request,\n")
-            add("entity = %T,\n", entityDescriptorClass)
-            add("applyLoadPrivacy = applyLoadPrivacy,\n")
-            unindent()
-            add(")\n")
-        })
     }
 
     private fun edgeChangesSnapshot(source: String): CodeBlock {

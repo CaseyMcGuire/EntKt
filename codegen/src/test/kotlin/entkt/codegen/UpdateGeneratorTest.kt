@@ -241,21 +241,20 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `passes the request to the runtime executor`() {
+    fun `wires the descriptor into the runtime operation without executing requests`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("request = request") &&
-            output.contains("entity = UserDescriptor")) {
-            "The generated adapter should pass the request and entity descriptor to UpdateMutationExecutor\n$output"
+        assert(output.contains("entity = UserDescriptor") && !output.contains("MutationExecutor")) {
+            "The generated adapter should wire the descriptor without owning the execution boundary\n$output"
         }
         assert(!output.contains("UpdateMutationSpec")) {
             "UpdateMutationSpec should be removed from generated updates\n$output"
         }
         assert(!output.contains("driver.byId(User.TABLE") &&
             !output.contains("driver.readRowForUpdate(User.TABLE")) {
-            "Owner-row selection belongs to UpdateMutationExecutor\n$output"
+            "Owner-row selection belongs to UpdateMutationOperation\n$output"
         }
     }
 
@@ -273,9 +272,9 @@ class UpdateGeneratorTest {
         assert(!output.contains("EntNoChangesException")) {
             "EntNoChangesException must be gone from the generated update\n$output"
         }
-        assert(output.contains("updateExecutor.update(") &&
-            output.contains("request = request")) {
-            "the generated adapter should delegate the complete request to UpdateMutationExecutor\n$output"
+        assert(output.contains("public val updateOperation: UpdateMutationOperation<") &&
+            !output.contains("MutationExecutor") && !output.contains("fun execute(")) {
+            "the adapter should expose the wired operation without executing it\n$output"
         }
         assert(!output.contains("_loadUpdateRow") && !output.contains("loadRow =")) {
             "generated update code should not retain an owner-row callback\n$output"
@@ -356,7 +355,7 @@ class UpdateGeneratorTest {
         }
         assert(output.contains("privacyEvaluator = mutationPrivacyEvaluatorForInternalUse(") &&
             output.contains("validationEvaluator = mutationValidationEvaluatorForInternalUse(")) {
-            "updateExecutor should pass the no-op state through runtime privacy and validation evaluators\n$output"
+            "updateOperation should pass the no-op state through runtime privacy and validation evaluators\n$output"
         }
     }
 
@@ -396,19 +395,20 @@ class UpdateGeneratorTest {
                 "(otherwise updatedAt = Set(now) sneaks into values and the write happens)\n$output"
         }
         assert(!output.contains("driver.update(")) {
-            "owner persistence belongs entirely to UpdateMutationExecutor\n$output"
+            "owner persistence belongs entirely to UpdateMutationOperation\n$output"
         }
     }
 
     @Test
-    fun `generated update code delegates one execution path to the runtime operation`() {
+    fun `generated update adapter wires its operation without an execution entry point`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("public fun execute( viewerContext: ViewerContext, request: UpdateMutationRequest<UserUpdateDraft>, applyLoadPrivacy: Boolean, ): MutationResult<User> = updateExecutor.update(")) {
-            "The stateless adapter should delegate each explicit request to UpdateMutationExecutor\n$output"
+        assert(output.contains("public val updateOperation: UpdateMutationOperation<") &&
+            !output.contains("MutationExecutor") && !output.contains("fun execute(")) {
+            "The adapter wires the operation; only the repository submits it to the executor\n$output"
         }
         assert(!output.contains("class Execution")) { "Generated updates should have no per-request execution holder\n$output" }
         assert(!output.contains("public fun save(") && !output.contains("public fun saveAndLoad(")) {
@@ -508,7 +508,7 @@ class UpdateGeneratorTest {
         assert(!output.contains("UpdateConsistency.Pessimistic") &&
             !output.contains("supportsReadRowForUpdate") &&
             !output.contains("readRowForUpdate(")) {
-            "Pessimistic validation and row selection belong to UpdateMutationExecutor\n$output"
+            "Pessimistic validation and row selection belong to UpdateMutationOperation\n$output"
         }
     }
 
@@ -1172,7 +1172,7 @@ class UpdateGeneratorTest {
             "Generated requirements must distinguish add/set from remove-only writes\n$output"
         }
         assert(!output.contains("supportsInsertIgnore")) {
-            "Driver capability validation belongs to UpdateMutationExecutor\n$output"
+            "Driver capability validation belongs to UpdateMutationOperation\n$output"
         }
     }
 
@@ -1205,7 +1205,7 @@ class UpdateGeneratorTest {
             "Expected the schema-specific canonical relationship key\n$output"
         }
         assert(!output.contains("supportsRelationshipSerialization")) {
-            "Canonical capability validation belongs to UpdateMutationExecutor\n$output"
+            "Canonical capability validation belongs to UpdateMutationOperation\n$output"
         }
     }
 
@@ -1222,7 +1222,7 @@ class UpdateGeneratorTest {
             "Expected the canonical key to be included only for a changed edge\n$output"
         }
         assert(!output.contains("driver.serializeRelationship(") && !output.contains("_loadUpdateRow")) {
-            "Lock acquisition and owner-row loading belong to UpdateMutationExecutor\n$output"
+            "Lock acquisition and owner-row loading belong to UpdateMutationOperation\n$output"
         }
     }
 
@@ -1312,7 +1312,7 @@ class UpdateGeneratorTest {
         assert(!output.contains("TransactionRequiredException") &&
             !output.contains("UnsupportedDriverCapabilityException") &&
             !output.contains("supportsOwnerEdgeSerialization")) {
-            "Transaction and driver capability policy belongs to UpdateMutationExecutor\n$output"
+            "Transaction and driver capability policy belongs to UpdateMutationOperation\n$output"
         }
     }
 
@@ -1365,7 +1365,7 @@ class UpdateGeneratorTest {
         }
         assert(!output.contains("_classifyDriverFailure") &&
             !output.contains("EntTargetAbsentException(")) {
-            "failure classification and target-absence handling belong to UpdateMutationExecutor\n$output"
+            "failure classification and target-absence handling belong to UpdateMutationOperation\n$output"
         }
     }
 
@@ -1551,7 +1551,7 @@ class UpdateGeneratorTest {
             "the schema adapter should supply owner values and relationship persistence separately\n$output"
         }
         assert(!output.contains("driver.update(")) {
-            "UpdateMutationExecutor should own the conditional owner write\n$output"
+            "UpdateMutationOperation should own the conditional owner write\n$output"
         }
     }
 
@@ -1568,7 +1568,7 @@ class UpdateGeneratorTest {
         }
         assert(!output.contains("driver.update(") &&
             !output.contains("EntTargetAbsentException(")) {
-            "owner persistence and vanished-target handling belong to UpdateMutationExecutor\n$output"
+            "owner persistence and vanished-target handling belong to UpdateMutationOperation\n$output"
         }
     }
 
