@@ -94,7 +94,6 @@ internal class PrivacyGenerator(
 
         // Operation input class names. The runtime PrivacyRuleContext holds
         // privacy/client state once for the whole evaluation phase.
-        val createInput = ClassName(packageName, "${schemaName}CreateRuleInput")
         val updateInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
         val deleteInput = ClassName(packageName, "${schemaName}DeleteRuleInput")
 
@@ -115,7 +114,12 @@ internal class PrivacyGenerator(
                         "Treat the entity and all nested values as read-only.\n",
                 )
             }
-            typeAlias(createRule, PRIVACY_RULE.parameterizedBy(readClientClass, createInput))
+            typeAlias(createRule, PRIVACY_RULE.parameterizedBy(readClientClass, candidateClass)) {
+                addKdoc(
+                    "CREATE rules receive the prepared write candidate without per-rule defensive copies.\n" +
+                        "Treat the candidate and all nested values as read-only.\n",
+                )
+            }
             typeAlias(updateRule, PRIVACY_RULE.parameterizedBy(readClientClass, updateInput))
             typeAlias(deleteRule, PRIVACY_RULE.parameterizedBy(readClientClass, deleteInput))
             typeAlias(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, entityClass)) {
@@ -124,7 +128,12 @@ internal class PrivacyGenerator(
                         "Treat the entities and all nested values as read-only.\n",
                 )
             }
-            typeAlias(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, createInput))
+            typeAlias(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, candidateClass)) {
+                addKdoc(
+                    "Batch CREATE rules receive prepared write candidates without per-rule defensive copies.\n" +
+                        "Treat the candidates and all nested values as read-only.\n",
+                )
+            }
             typeAlias(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, updateInput))
             typeAlias(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, deleteInput))
 

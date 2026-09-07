@@ -43,7 +43,7 @@ import kotlin.test.assertTrue
  */
 private val UniqueEmailViaQuery = UserCreateValidationRule { context, item ->
     val client: ReadOnlyEntClient = context.client
-    val taken = client.users.query { where(User.email.eq(item.candidate.email)) }
+    val taken = client.users.query { where(User.email.eq(item.email)) }
         .firstOrNull(context.readViewerContext)
         .getOrThrow() != null
     if (taken) ValidationDecision.Invalid("email already taken", field = "email")
@@ -52,7 +52,7 @@ private val UniqueEmailViaQuery = UserCreateValidationRule { context, item ->
 
 /** Same invariant through the staged index helpers (unique `find()` terminal). */
 private val UniqueEmailViaIndex = UserCreateValidationRule { context, item ->
-    if (context.client.users.indexes.email(item.candidate.email).find(context.readViewerContext).getOrThrow() != null) {
+    if (context.client.users.indexes.email(item.email).find(context.readViewerContext).getOrThrow() != null) {
         ValidationDecision.Invalid("email already taken", field = "email")
     } else {
         ValidationDecision.Valid
@@ -61,7 +61,7 @@ private val UniqueEmailViaIndex = UserCreateValidationRule { context, item ->
 
 /** Existence check via findById on a *different* entity's repo. */
 private val AuthorMustExist = ArticleCreateValidationRule { context, item ->
-    if (context.client.users.findById(context.readViewerContext, item.candidate.authorId).getOrThrow() == null) {
+    if (context.client.users.findById(context.readViewerContext, item.authorId).getOrThrow() == null) {
         ValidationDecision.Invalid("author does not exist", field = "authorId")
     } else {
         ValidationDecision.Valid
@@ -76,10 +76,10 @@ private val AuthorMustExist = ArticleCreateValidationRule { context, item ->
  */
 private val AuthorReachableViaEdges = ArticleCreateValidationRule { context, item ->
     val prior = context.client.articles.query {
-        where(Article.authorId eq item.candidate.authorId)
+        where(Article.authorId eq item.authorId)
         loadAuthor()
     }.all(context.readViewerContext).getOrThrow()
-    val traversed = context.client.articles.query { where(Article.authorId eq item.candidate.authorId) }
+    val traversed = context.client.articles.query { where(Article.authorId eq item.authorId) }
         .queryAuthor().all(context.readViewerContext).getOrThrow()
     if (prior.all { it.edges.author.requireLoaded() != null } && (prior.isEmpty() || traversed.isNotEmpty())) {
         ValidationDecision.Valid

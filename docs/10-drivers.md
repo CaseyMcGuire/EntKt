@@ -73,8 +73,9 @@ interface DatabaseDriver {
   `DatabaseDriver` implementation must provide this metadata lookup.
 - `copyJsonValue(table, column, value)` returns a detached value of the same
   declared Kotlin type using the driver's configured JSON mapper. Generated
-  privacy and validation contexts use it to isolate mutable typed-JSON graphs
-  between rules and from pending writes. `null` returns unchanged; the default
+  mutation preparation uses it to detach caller-owned mutable typed-JSON graphs
+  from pending writes. Rules share the prepared values without per-rule copies
+  and must treat them as read-only. `null` returns unchanged; the default
   rejects non-null values, so every driver that advertises typed JSON support
   must override it. Postgres performs an encode/decode round trip through its
   configured `JsonColumnCodec`. A custom codec's `decode()` must return a fresh

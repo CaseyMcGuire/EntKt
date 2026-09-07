@@ -21,7 +21,7 @@ class RepoGeneratorTest {
     private val generator = RepoGenerator("com.example.ent")
 
     @Test
-    fun `repo specifications construct fresh create and delete rule items`() {
+    fun `repo evaluators share create candidates and delete values without defensive copies`() {
         val schema = RepoBytesRecord()
         finalize(schema)
         val output = generator.generate("RepoBytesRecord", schema).toString()
@@ -29,26 +29,30 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "privacyEvaluator = MutationPrivacyEvaluator( entity = RepoBytesRecordDescriptor, operation = PrivacyOperation.CREATE, rules = configuredPrivacy.createRules, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
+                "privacyEvaluator = MutationPrivacyEvaluator( entity = RepoBytesRecordDescriptor, operation = PrivacyOperation.CREATE, rules = configuredPrivacy.createRules, freshItem = { candidate -> candidate }, )",
             ),
         ) {
-            "the privacy evaluator should provide a fresh detached item for each rule\n$output"
+            "CREATE privacy should receive the prepared candidate directly\n$output"
         }
         assert(
             output.contains(
-                "validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE validation\", rules = configuredValidation.createRules, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
+                "validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE validation\", rules = configuredValidation.createRules, freshItem = { candidate -> candidate }, )",
             ),
         ) {
-            "the validation evaluator should provide a fresh detached item for each rule\n$output"
+            "CREATE validation should receive the prepared candidate directly\n$output"
         }
         assert(output.contains("private val deleteSpec: DeleteMutationSpec<RepoBytesRecord>")) {
             "DELETE should expose one typed runtime specification\n$output"
         }
-        assert(output.contains("freshItem = { item: DeleteRuleCandidate<RepoBytesRecord, RepoBytesRecordWriteCandidate> -> RepoBytesRecordDeleteRuleInput")) {
-            "DELETE privacy should adapt a fresh typed item\n$output"
+        val deleteInput = "freshItem = { item: DeleteRuleCandidate<RepoBytesRecord, RepoBytesRecordWriteCandidate> -> RepoBytesRecordDeleteRuleInput(item.entity, item.candidate) }"
+        assert(Regex(Regex.escape(deleteInput)).findAll(output).count() == 2) {
+            "DELETE privacy and validation should share the entity and candidate\n$output"
         }
-        assert(output.contains("RepoBytesRecordDeleteRuleInput")) {
-            "DELETE validation should adapt a fresh typed item\n$output"
+        assert(output.contains("freshItem = { item: DeleteRuleCandidate<RepoBytesRecord, RepoBytesRecordWriteCandidate> -> item.candidate }")) {
+            "Derived CREATE privacy should receive the DELETE candidate directly\n$output"
+        }
+        assert(!output.contains("CreateRuleInput")) {
+            "CREATE must not wrap its candidate\n$output"
         }
         assert(!output.contains("fun snapshotCreateCandidate")) {
             "rule items should be constructed directly, without callbacks into the repo\n$output"
@@ -73,11 +77,8 @@ class RepoGeneratorTest {
         assert(!loadBinding.contains("copyOf") && !loadBinding.contains(".copy(")) {
             "LOAD must not generate defensive entity copies\n$output"
         }
-        assert(output.contains("item.entity.copy( payload = item.entity.payload.copyOf(), thumbnail = item.entity.thumbnail?.copyOf(), )")) {
-            "delete entities should not alias mutable byte arrays\n$output"
-        }
-        assert(output.contains("item.candidate.copy( payload = item.candidate.payload.copyOf(), thumbnail = item.candidate.thumbnail?.copyOf(), )")) {
-            "delete candidates should not alias mutable byte arrays\n$output"
+        assert(!output.contains("copyOf") && !output.contains(".copy(") && !output.contains("copyJsonValue")) {
+            "Rule wiring must not generate defensive copies\n$output"
         }
         assert(!output.contains("rule.run(")) {
             "generated privacy evaluators should not bypass the shared batch engine\n$output"

@@ -12,7 +12,6 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.UNIT
 import com.squareup.kotlinpoet.asClassName
-import entkt.codegen.lifecycleValueSnapshot
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
@@ -23,13 +22,11 @@ import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.idStrategyName
-import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.mutation.MUTATION_RESULT
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
-import entkt.schema.Field
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PREDICATE = ClassName("entkt.query", "Predicate")
@@ -124,7 +121,6 @@ internal class RepoGenerator(
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val idType = schema.id().type.toTypeName()
-        val fields = scalarFields(schema)
 
         val createLambda = LambdaTypeName.get(
             receiver = createDraftClass,
@@ -196,7 +192,6 @@ internal class RepoGenerator(
                 buildCreateManyMutationOperation(
                     schemaName = schemaName,
                     entityDescriptorClass = entityDescriptorClass,
-                    fields = fields,
                     createDraftClass = createDraftClass,
                     entityClass = entityClass,
                     candidateClass = candidateClass,
@@ -228,7 +223,6 @@ internal class RepoGenerator(
                     entityDescriptorClass = entityDescriptorClass,
                     entityClass = entityClass,
                     candidateClass = candidateClass,
-                    fields = fields,
                 ),
             )
             property(
@@ -514,14 +508,12 @@ internal class RepoGenerator(
     private fun buildCreateManyMutationOperation(
         schemaName: String,
         entityDescriptorClass: ClassName,
-        fields: List<Field>,
         createDraftClass: ClassName,
         entityClass: ClassName,
         candidateClass: ClassName,
         beforeSaveStateClass: ClassName,
         beforeCreateStateClass: ClassName,
     ): PropertySpec {
-        val ruleInputClass = ClassName(packageName, "${schemaName}CreateRuleInput")
         val operationType = CREATE_MANY_MUTATION_OPERATION.parameterizedBy(
             ClassName(packageName, "ReadOnlyEntClient"),
             createDraftClass,
@@ -543,22 +535,14 @@ internal class RepoGenerator(
                 add("entity = %T,\n", entityDescriptorClass)
                 add("operation = %T.CREATE,\n", PRIVACY_OPERATION)
                 add("rules = configuredPrivacy.createRules,\n")
-                add(
-                    "freshItem = { candidate -> %T(%L) },\n",
-                    ruleInputClass,
-                    lifecycleValueSnapshot("candidate", fields, entityClass),
-                )
+                add("freshItem = { candidate -> candidate },\n")
                 unindent()
                 add("),\n")
                 add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName CREATE validation")
                 add("rules = configuredValidation.createRules,\n")
-                add(
-                    "freshItem = { candidate -> %T(%L) },\n",
-                    ruleInputClass,
-                    lifecycleValueSnapshot("candidate", fields, entityClass),
-                )
+                add("freshItem = { candidate -> candidate },\n")
                 unindent()
                 add("),\n")
                 add("hookStateConverter = createConverter,\n")
@@ -600,12 +584,8 @@ internal class RepoGenerator(
         entityDescriptorClass: ClassName,
         entityClass: ClassName,
         candidateClass: ClassName,
-        fields: List<Field>,
     ): List<PropertySpec> {
         val deleteRuleInput = ClassName(packageName, "${schemaName}DeleteRuleInput")
-        val createRuleInput = ClassName(packageName, "${schemaName}CreateRuleInput")
-        val entitySnapshot = lifecycleValueSnapshot("item.entity", fields, entityClass)
-        val candidateSnapshot = lifecycleValueSnapshot("item.candidate", fields, entityClass)
         val ruleCandidateType = DELETE_RULE_CANDIDATE.parameterizedBy(entityClass, candidateClass)
         return listOf(
             property(
@@ -624,11 +604,9 @@ internal class RepoGenerator(
                     add("operation = %T.DELETE,\n", PRIVACY_OPERATION)
                     add("rules = configuredPrivacy.deleteRules,\n")
                     add(
-                        "freshItem = { item: %T -> %T(%L, %L) },\n",
+                        "freshItem = { item: %T -> %T(item.entity, item.candidate) },\n",
                         ruleCandidateType,
                         deleteRuleInput,
-                        entitySnapshot,
-                        candidateSnapshot,
                     )
                     add("fallback = if (configuredPrivacy.deleteDerivesFromCreate) {\n")
                     indent()
@@ -636,10 +614,8 @@ internal class RepoGenerator(
                     indent()
                     add("rules = configuredPrivacy.createRules,\n")
                     add(
-                        "freshItem = { item: %T -> %T(%L) },\n",
+                        "freshItem = { item: %T -> item.candidate },\n",
                         ruleCandidateType,
-                        createRuleInput,
-                        candidateSnapshot,
                     )
                     unindent()
                     add(")\n")
@@ -665,11 +641,9 @@ internal class RepoGenerator(
                     add("lifecycle = %S,\n", "$schemaName DELETE validation")
                     add("rules = configuredValidation.deleteRules,\n")
                     add(
-                        "freshItem = { item: %T -> %T(%L, %L) },\n",
+                        "freshItem = { item: %T -> %T(item.entity, item.candidate) },\n",
                         ruleCandidateType,
                         deleteRuleInput,
-                        entitySnapshot,
-                        candidateSnapshot,
                     )
                     unindent()
                     add(")")

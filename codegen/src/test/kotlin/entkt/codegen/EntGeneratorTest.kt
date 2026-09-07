@@ -8,6 +8,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 private fun finalize(vararg schemas: EntSchema) {
@@ -104,12 +105,12 @@ class EntGeneratorTest {
 
         // Per schema: entity, descriptor, one descriptor per edge, three
         // hook-state files, create draft, create/delete converters, update, query, repo, privacy, validation,
-        // and one same-named rule-input file for each mutation lifecycle.
+        // and same-named compound rule-input files for UPDATE and DELETE.
         // The schema-set-level files are EntReadRuntime, ReadOnlyEntClient, the
         // public client DSL/facades, and three immutable resolved-config types.
         // User additionally gets an index-helper file; Car has no eligible
         // indexes and therefore has no corresponding file.
-        assertEquals(15 * schemas.size + 13 + 1 + 4, files.size)
+        assertEquals(14 * schemas.size + 13 + 1 + 4, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
@@ -117,12 +118,12 @@ class EntGeneratorTest {
                 "CarBeforeSaveState", "CarBeforeCreateState", "CarBeforeUpdateState",
                 "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
                 "CarCreateConverter", "CarDeleteConverter",
-                "CarCreateRuleInput", "CarUpdateRuleInput", "CarDeleteRuleInput",
+                "CarUpdateRuleInput", "CarDeleteRuleInput",
                 "User", "UserDescriptor", "UserCarsEdgeDescriptor",
                 "UserBeforeSaveState", "UserBeforeCreateState", "UserBeforeUpdateState",
                 "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
                 "UserCreateConverter", "UserDeleteConverter",
-                "UserCreateRuleInput", "UserUpdateRuleInput", "UserDeleteRuleInput",
+                "UserUpdateRuleInput", "UserDeleteRuleInput",
                 "UserIndexes",
                 "EntReadRuntime",
                 "ReadOnlyEntClient",
@@ -143,7 +144,7 @@ class EntGeneratorTest {
     }
 
     @Test
-    fun `generated files omit framework comments when schemas have no comments`() {
+    fun `generated files only document rule input ownership when schemas have no comments`() {
         val car = Car()
         val user = User()
         finalize(car, user)
@@ -153,9 +154,13 @@ class EntGeneratorTest {
             .filter { commentStart.containsMatchIn(it.toString()) }
             .map { it.name }
 
-        assertTrue(
-            commentedFiles.isEmpty(),
-            "Generated files contain framework comments: $commentedFiles",
+        assertEquals(
+            setOf(
+                "CarPrivacy", "CarValidation", "CarUpdateRuleInput", "CarDeleteRuleInput",
+                "UserPrivacy", "UserValidation", "UserUpdateRuleInput", "UserDeleteRuleInput",
+            ),
+            commentedFiles.toSet(),
+            "Only rule input ownership contracts should add generated documentation",
         )
     }
 
@@ -338,7 +343,7 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("CarRepo.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarPrivacy.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarValidation.kt")))
-            assertTrue(Files.exists(packageDir.resolve("CarCreateRuleInput.kt")))
+            assertFalse(Files.exists(packageDir.resolve("CarCreateRuleInput.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarUpdateRuleInput.kt")))
             assertTrue(Files.exists(packageDir.resolve("CarDeleteRuleInput.kt")))
             assertTrue(Files.exists(packageDir.resolve("User.kt")))
@@ -351,7 +356,7 @@ class EntGeneratorTest {
             assertTrue(Files.exists(packageDir.resolve("UserRepo.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserPrivacy.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserValidation.kt")))
-            assertTrue(Files.exists(packageDir.resolve("UserCreateRuleInput.kt")))
+            assertFalse(Files.exists(packageDir.resolve("UserCreateRuleInput.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserUpdateRuleInput.kt")))
             assertTrue(Files.exists(packageDir.resolve("UserDeleteRuleInput.kt")))
             for (clientFile in listOf(

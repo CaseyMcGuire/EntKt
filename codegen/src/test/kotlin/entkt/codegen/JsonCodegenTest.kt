@@ -108,17 +108,15 @@ class JsonCodegenTest {
     }
 
     @Test
-    fun `LOAD shares JSON while mutation values and patches keep their snapshots`() {
+    fun `rules share JSON while update preparation still detaches requested patches`() {
         val repo = gen().getValue("JsonArticleRepo")
         val loadBinding = repo.substringAfter("private val loadPrivacyEvaluator:")
             .substringBefore("private val createConverter:")
         assertFalse("freshItem" in loadBinding || "LoadPrivacyItem" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in loadBinding, loadBinding)
-        assertTrue(
-            """metadata = driver.copyJsonValue(JsonArticle.TABLE, "metadata", candidate.metadata)""" in repo,
-            repo,
-        )
-        assertFalse("copyJsonValue(JsonArticle.TABLE, \"metadata\", candidate.metadata) as Meta?" in repo, repo)
+        assertFalse("copyJsonValue" in repo, repo)
+        assertTrue("freshItem = { candidate -> candidate }" in repo, repo)
+        assertFalse("CreateRuleInput" in repo, repo)
 
         val update = gen().getValue("JsonArticleUpdateDraft")
         assertTrue(
@@ -131,11 +129,15 @@ class JsonCodegenTest {
             """driver.copyJsonValue(JsonArticle.TABLE, "metadata",""" in update,
             update,
         )
-        assertTrue("state.before.copy(" in update, update)
+        assertFalse("state.before.copy(" in update, update)
+        assertFalse("state.candidate.copy(" in update, update)
+        assertFalse("state.requestedPatch.copy(" in update, update)
+        assertFalse("state.effectivePatch.copy(" in update, update)
         assertTrue(
-            """metadata = driver.copyJsonValue(JsonArticle.TABLE, "metadata", state.before.metadata)""" in update,
+            "JsonArticleUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )" in update,
             update,
         )
+        assertTrue("freshItem = { state: PreparedState -> state.candidate }" in update, update)
     }
 
     // ── Generic JSON types ─────────────────────────────────────────
@@ -199,17 +201,14 @@ class JsonCodegenTest {
     }
 
     @Test
-    fun `generic JSON is shared for LOAD and remains typed in mutation snapshots`() {
+    fun `generic JSON is shared by LOAD and mutation rules`() {
         val repo = genGeneric().getValue("JsonBoardRepo")
         val loadBinding = repo.substringAfter("private val loadPrivacyEvaluator:")
             .substringBefore("private val createConverter:")
         assertFalse("freshItem" in loadBinding || "LoadPrivacyItem" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in loadBinding, loadBinding)
-        assertTrue(
-            """rects = driver.copyJsonValue(JsonBoard.TABLE, "rects", candidate.rects)""" in repo,
-            repo,
-        )
-        assertFalse("copyJsonValue(JsonBoard.TABLE, \"rects\", candidate.rects) as List<Meta>" in repo, repo)
+        assertFalse("copyJsonValue" in repo, repo)
+        assertTrue("freshItem = { candidate -> candidate }" in repo, repo)
     }
 
     @Test

@@ -472,8 +472,8 @@ internal class CreateGenerator(
         }
 
         // Detach mutable caller-owned values once at the preparation boundary.
-        // Both the driver row and the base WriteCandidate use this same stable
-        // value; per-rule snapshots are copied again by the repo evaluator.
+        // Both the driver row and the WriteCandidate share this prepared value.
+        // Privacy and validation rules must treat it as read-only.
         // A callback that retained the caller's original array / JSON graph
         // therefore cannot change a later rule's input or the pending write.
         val entityClass = ClassName(packageName, schemaName)

@@ -11,7 +11,7 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 
-/** Emits the per-lifecycle inputs shared by generated privacy and validation rules. */
+/** Emits compound UPDATE/DELETE inputs; CREATE rules receive the write candidate directly. */
 internal class LifecycleRuleInputGenerator(
     private val packageName: String,
 ) {
@@ -22,10 +22,6 @@ internal class LifecycleRuleInputGenerator(
         val edgeChanges = ClassName(packageName, "${schemaName}EdgeChangesView")
 
         return listOf(
-            ruleInputFile(
-                ClassName(packageName, "${schemaName}CreateRuleInput"),
-                "candidate" to candidate,
-            ),
             ruleInputFile(
                 ClassName(packageName, "${schemaName}UpdateRuleInput"),
                 "before" to entity,
@@ -49,6 +45,10 @@ internal class LifecycleRuleInputGenerator(
         addType(
             classType(inputClass) {
                 addModifiers(KModifier.DATA)
+                addKdoc(
+                    "Rule inputs share their values without per-rule defensive copies.\n" +
+                        "Treat all properties and nested values as read-only.\n",
+                )
                 primaryConstructor {
                     members.forEach { (name, type) -> parameter(name, type) }
                 }

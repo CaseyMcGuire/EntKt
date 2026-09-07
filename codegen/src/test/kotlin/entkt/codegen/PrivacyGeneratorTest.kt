@@ -26,7 +26,7 @@ class PrivacyGeneratorTest {
         assert(output.contains("typealias UserLoadPrivacyRule = PrivacyRule<ReadOnlyEntClient, User>")) {
             "Should generate load rule typealias\n$output"
         }
-        assert(output.contains("typealias UserCreatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserCreateRuleInput>")) {
+        assert(output.contains("typealias UserCreatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserWriteCandidate>")) {
             "Should generate create rule typealias\n$output"
         }
         assert(output.contains("typealias UserUpdatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserUpdateRuleInput>")) {
@@ -38,7 +38,7 @@ class PrivacyGeneratorTest {
         assert(output.contains("typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, User>")) {
             "Should generate load batch rule typealias\n$output"
         }
-        assert(output.contains("typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserCreateRuleInput>")) {
+        assert(output.contains("typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserWriteCandidate>")) {
             "Should generate create batch rule typealias\n$output"
         }
         assert(output.contains("typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserUpdateRuleInput>")) {

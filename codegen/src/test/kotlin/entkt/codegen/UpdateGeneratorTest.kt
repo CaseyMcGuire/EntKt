@@ -872,18 +872,19 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `update rule items receive fresh immutable edge change snapshots`() {
+    fun `update rule items share prepared values including edge changes`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator
             .generate("M2MPost", post, names)
             .toString()
             .replace("\\s+".toRegex(), " ")
 
-        val snapshot =
-            "state.edgeChanges.copy( tags = snapshotEdgeChangesForInternalUse(state.edgeChanges.tags), )"
-        assert(output.contains("M2MPostUpdateRuleInput") &&
-            Regex(Regex.escape(snapshot)).findAll(output).count() >= 2) {
-            "Every UPDATE rule input should detach edge-change sets for privacy and validation\n$output"
+        val input = "M2MPostUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )"
+        assert(Regex(Regex.escape(input)).findAll(output).count() == 2) {
+            "UPDATE privacy and validation should share prepared values\n$output"
+        }
+        assert(!output.contains("snapshotEdgeChangesForInternalUse(state.edgeChanges")) {
+            "UPDATE rules should not recopy prepared edge changes\n$output"
         }
     }
 
@@ -1505,10 +1506,9 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        val snapshot = "snapshotEdgeChangesForInternalUse(state.edgeChanges.tags)"
-        val occurrences = output.split(snapshot).size - 1
+        val occurrences = output.split("state.edgeChanges,").size - 1
         assert(occurrences == 2) {
-            "Expected one detached edgeChanges snapshot for privacy and one for validation, got $occurrences\n$output"
+            "Expected privacy and validation to receive the prepared edge changes, got $occurrences\n$output"
         }
         assert(Regex(Regex.escape("M2MPostUpdateRuleInput(")).findAll(output).count() == 2) {
             "Both rule adapters should materialize the shared typed input from PreparedState\n$output"

@@ -67,7 +67,7 @@ class BatchLifecycleCodegenCompileTest {
 
                 import com.example.ent.Car
                 import com.example.ent.CarBeforeCreateState
-                import com.example.ent.CarCreateRuleInput
+                import com.example.ent.CarWriteCandidate
                 import com.example.ent.CarCreateValidationRule
                 import com.example.ent.CarCreateBatchValidationRule
                 import com.example.ent.CarLoadPrivacyRule
@@ -95,7 +95,7 @@ class BatchLifecycleCodegenCompileTest {
                 private val scalarCreate = CarCreateValidationRule { _, _ -> ValidationDecision.Valid }
                 private val scalarCreates = arrayOf(scalarCreate)
                 private val batchCreate: CarCreateBatchValidationRule =
-                    batchValidationRule<ReadOnlyEntClient, CarCreateRuleInput> { _, batch ->
+                    batchValidationRule<ReadOnlyEntClient, CarWriteCandidate> { _, batch ->
                         batch.decideEach { ValidationDecision.Valid }
                     }
 

@@ -174,7 +174,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     @Test
     fun `saveAndLoad returns Failed(EntValidationException) when a rule rejects the candidate`() {
         val rejectUnpublished = ArticleCreateValidationRule { _, item ->
-            if (!item.candidate.published) {
+            if (!item.published) {
                 ValidationDecision.Invalid("must be published", field = "published")
             } else {
                 ValidationDecision.Valid

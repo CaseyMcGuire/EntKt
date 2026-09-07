@@ -35,7 +35,7 @@ class MutationValidationEvaluatorTest {
                     if (item.subject.id == 2L) Invalid("second") else ValidationDecision.Valid
                 },
             ),
-            freshItem = { RuleItem(it.copy()) },
+            freshItem = ::RuleItem,
         )
 
         val evaluation = evaluator.evaluate(ruleContext, listOf(Subject(1L), Subject(2L)))
@@ -44,7 +44,7 @@ class MutationValidationEvaluatorTest {
         assertEquals(listOf("first", "second"), evaluation.firstInvalidOrNull()?.violations?.map { it.message })
         val secondSubjectItems = seenItems.filter { it.subject.id == 2L }
         assertNotSame(secondSubjectItems[0], secondSubjectItems[1])
-        assertNotSame(secondSubjectItems[0].subject, secondSubjectItems[1].subject)
+        assertSame(secondSubjectItems[0].subject, secondSubjectItems[1].subject)
     }
 
     @Test

@@ -9,42 +9,8 @@ import entkt.schema.FieldType
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 
 /**
- * Detach every mutable generated property on an entity or write candidate.
- * Byte arrays copy directly; typed JSON values round-trip through the driver's
- * configured mapper so nested mutable collections and arrays are detached too.
- */
-internal fun lifecycleValueSnapshot(
-    source: String,
-    fields: List<Field>,
-    entityClass: ClassName,
-): CodeBlock {
-    val mutableFields = fields.filter { it.type == FieldType.BYTES || it.type == FieldType.JSON }
-    if (mutableFields.isEmpty()) return CodeBlock.of("%L", source)
-
-    return codeBlock {
-        add("%L.copy(\n", source)
-        for (field in mutableFields) {
-            val property = field.apiName
-            if (field.type == FieldType.BYTES) {
-                val nullableAccess = if (field.nullable) "?" else ""
-                add("  %L = %L.%L$nullableAccess.copyOf(),\n", property, source, property)
-            } else {
-                add(
-                    "  %L = driver.copyJsonValue(%T.TABLE, %S, %L.%L),\n",
-                    property,
-                    entityClass,
-                    field.columnName,
-                    source,
-                    property,
-                )
-            }
-        }
-        add(")")
-    }
-}
-
-/**
- * Detach mutable `FieldPatch.Set` entries while preserving `Unset` and
+ * Detach caller-owned mutable `FieldPatch.Set` entries at UPDATE preparation,
+ * not per rule, while preserving `Unset` and
  * explicit `Set(null)`. Immutable fields are absent from generated patches.
  */
 internal fun lifecyclePatchSnapshot(

@@ -58,7 +58,7 @@ internal class ValidationGenerator(
         val configClass = ClassName(packageName, "${schemaName}ValidationConfig")
         val scopeClass = ClassName(packageName, "${schemaName}ValidationScope")
 
-        val createInput = ClassName(packageName, "${schemaName}CreateRuleInput")
+        val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val updateInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
         val deleteInput = ClassName(packageName, "${schemaName}DeleteRuleInput")
 
@@ -71,10 +71,20 @@ internal class ValidationGenerator(
         val deleteBatchRule = "${schemaName}DeleteBatchValidationRule"
 
         return kotlinFile(packageName, "${schemaName}Validation") {
-            typeAlias(createRule, VALIDATION_RULE.parameterizedBy(clientClass, createInput))
+            typeAlias(createRule, VALIDATION_RULE.parameterizedBy(clientClass, candidateClass)) {
+                addKdoc(
+                    "CREATE rules receive the prepared write candidate without per-rule defensive copies.\n" +
+                        "Treat the candidate and all nested values as read-only.\n",
+                )
+            }
             typeAlias(updateRule, VALIDATION_RULE.parameterizedBy(clientClass, updateInput))
             typeAlias(deleteRule, VALIDATION_RULE.parameterizedBy(clientClass, deleteInput))
-            typeAlias(createBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, createInput))
+            typeAlias(createBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, candidateClass)) {
+                addKdoc(
+                    "Batch CREATE rules receive prepared write candidates without per-rule defensive copies.\n" +
+                        "Treat the candidates and all nested values as read-only.\n",
+                )
+            }
             typeAlias(updateBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, updateInput))
             typeAlias(deleteBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, deleteInput))
 

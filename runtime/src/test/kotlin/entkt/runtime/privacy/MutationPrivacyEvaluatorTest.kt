@@ -46,7 +46,7 @@ class MutationPrivacyEvaluatorTest {
     private fun evaluator(
         operation: PrivacyOperation = PrivacyOperation.UPDATE,
         rules: List<BatchPrivacyRule<Any, Record>> = emptyList(),
-        freshItem: (Record) -> Record = { it.copy(payload = it.payload.copyOf()) },
+        freshItem: (Record) -> Record = { it },
         fallback: PrivacyDecisionEvaluator<Any, Record, *>? = null,
     ): MutationPrivacyEvaluator<Any, Record, Record> = MutationPrivacyEvaluator(
         entity = RecordMapping,
@@ -162,11 +162,7 @@ class MutationPrivacyEvaluatorTest {
     }
 
     @Test
-    fun `every primary and fallback rule receives a fresh input snapshot`() {
-        val mutate = PrivacyRule<Any, Record> { _, item ->
-            item.payload[0] = 9
-            PrivacyDecision.Continue
-        }
+    fun `primary and fallback rules can share the original input without copies`() {
         val observed = mutableListOf<Record>()
         val observe = PrivacyRule<Any, Record> { _, item ->
             assertContentEquals(byteArrayOf(1), item.payload)
@@ -174,20 +170,21 @@ class MutationPrivacyEvaluatorTest {
             PrivacyDecision.Continue
         }
         val evaluator = evaluator(
-            rules = listOf(mutate, observe),
+            rules = listOf(observe, observe),
             fallback = PrivacyDecisionEvaluator(
-                rules = listOf(mutate, observe, PrivacyRule<Any, Record> { _, _ -> PrivacyDecision.Allow }),
-                freshItem = { record: Record -> record.copy(payload = record.payload.copyOf()) },
+                rules = listOf(observe, PrivacyRule<Any, Record> { _, _ -> PrivacyDecision.Allow }),
+                freshItem = { record: Record -> record },
             ),
         )
         val record = Record(1)
 
         assertSame(record, evaluator.evaluate(ruleContext, listOf(record)).allowedSubjects().single())
         assertContentEquals(byteArrayOf(1), record.payload)
-        assertEquals(2, observed.size)
-        assertNotSame(record, observed[0])
-        assertNotSame(observed[0], observed[1])
-        assertNotSame(observed[0].payload, observed[1].payload)
+        assertEquals(3, observed.size)
+        observed.forEach {
+            assertSame(record, it)
+            assertSame(record.payload, it.payload)
+        }
     }
 
     @Test

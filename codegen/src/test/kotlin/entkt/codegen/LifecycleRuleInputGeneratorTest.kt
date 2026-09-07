@@ -9,11 +9,11 @@ class LifecycleRuleInputGeneratorTest {
     private val generator = LifecycleRuleInputGenerator("com.example.ent")
 
     @Test
-    fun `generates one same-named file for each mutation lifecycle input`() {
+    fun `generates only the compound update and delete inputs in same-named files`() {
         val files = generator.generate("User")
 
         assertEquals(
-            listOf("UserCreateRuleInput", "UserUpdateRuleInput", "UserDeleteRuleInput"),
+            listOf("UserUpdateRuleInput", "UserDeleteRuleInput"),
             files.map { it.name },
         )
         files.forEach { file ->
@@ -25,16 +25,8 @@ class LifecycleRuleInputGeneratorTest {
     }
 
     @Test
-    fun `create input contains only the normalized write candidate`() {
-        val output = output("UserCreateRuleInput")
-        val constructor = constructorOf(output, "UserCreateRuleInput")
-
-        assert(constructor.contains("val candidate: UserWriteCandidate")) {
-            "Create input should expose the normalized candidate\n$output"
-        }
-        assert(!constructor.contains("before") && !constructor.contains("Patch")) {
-            "Create input should not expose update-only state\n$output"
-        }
+    fun `create rules need no generated wrapper`() {
+        assert(generator.generate("User").none { it.name == "UserCreateRuleInput" })
     }
 
     @Test

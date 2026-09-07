@@ -5,7 +5,7 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
 import example.ent.ReadOnlyEntClient
-import example.ent.PostCreateRuleInput
+import example.ent.PostWriteCandidate
 import example.ent.PostCreatePrivacyRule
 import example.ent.PostDeleteRuleInput
 import example.ent.PostDeletePrivacyRule
@@ -52,7 +52,7 @@ class AllowAuthorLoad : PostLoadPrivacyRule {
 class RequireAuthToCreate : PostCreatePrivacyRule {
     override fun run(
         context: PrivacyRuleContext<ReadOnlyEntClient>,
-        item: PostCreateRuleInput,
+        item: PostWriteCandidate,
     ): PrivacyDecision =
         if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
         else PrivacyDecision.Allow

@@ -39,7 +39,7 @@ import kotlin.test.assertTrue
 // ---- Validation rules ----
 
 private val RejectUnpublishedTitle = ArticleCreateValidationRule { _, item ->
-    if (item.candidate.title.startsWith("DRAFT:") && item.candidate.published) {
+    if (item.title.startsWith("DRAFT:") && item.published) {
         ValidationDecision.Invalid("articles with DRAFT: prefix cannot be published", field = "title")
     } else {
         ValidationDecision.Valid
@@ -47,7 +47,7 @@ private val RejectUnpublishedTitle = ArticleCreateValidationRule { _, item ->
 }
 
 private val RequireMinTitleLength = ArticleCreateValidationRule { _, item ->
-    if (item.candidate.title.length < 3) {
+    if (item.title.length < 3) {
         ValidationDecision.Invalid("title must be at least 3 characters", field = "title")
     } else {
         ValidationDecision.Valid
@@ -55,7 +55,7 @@ private val RequireMinTitleLength = ArticleCreateValidationRule { _, item ->
 }
 
 private val RejectUnpublishedCreate = ArticleCreateValidationRule { _, item ->
-    if (!item.candidate.published) {
+    if (!item.published) {
         ValidationDecision.Invalid("articles must be published on create", field = "published")
     } else {
         ValidationDecision.Valid
@@ -90,21 +90,21 @@ private val RequireAuthForCreate = ArticleCreatePrivacyRule { context, _ ->
 private fun firstPayloadByte(patch: FieldPatch<ByteArray?>): Byte? =
     (patch as? FieldPatch.Set)?.value?.firstOrNull()
 
-private val MutateCreatePayloadPrivacySnapshot = ArticleCreatePrivacyRule { _, item ->
-    item.candidate.payload?.set(0, 99)
+private val MutateCreatePayloadPrivacyCopy = ArticleCreatePrivacyRule { _, item ->
+    item.payload?.copyOf()?.set(0, 99)
     PrivacyDecision.Continue
 }
 
 private val AllowIfCreatePayloadPrivacySnapshotIsStable = ArticleCreatePrivacyRule { _, item ->
-    if (item.candidate.payload?.firstOrNull() == 1.toByte()) PrivacyDecision.Allow
+    if (item.payload?.firstOrNull() == 1.toByte()) PrivacyDecision.Allow
     else PrivacyDecision.Deny("CREATE payload snapshot leaked across rules")
 }
 
-private val MutateUpdatePayloadPrivacySnapshot = ArticleUpdatePrivacyRule { _, item ->
-    item.before.payload?.set(0, 99)
-    item.candidate.payload?.set(0, 99)
-    (item.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
-    (item.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
+private val MutateUpdatePayloadPrivacyCopy = ArticleUpdatePrivacyRule { _, item ->
+    item.before.payload?.copyOf()?.set(0, 99)
+    item.candidate.payload?.copyOf()?.set(0, 99)
+    (item.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.copyOf()?.set(0, 99)
+    (item.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.copyOf()?.set(0, 99)
     PrivacyDecision.Continue
 }
 
@@ -117,21 +117,21 @@ private val AllowIfUpdatePayloadPrivacySnapshotIsStable = ArticleUpdatePrivacyRu
     else PrivacyDecision.Deny("UPDATE payload snapshot leaked across rules")
 }
 
-private val MutateCreatePayloadValidationSnapshot = ArticleCreateValidationRule { _, item ->
-    item.candidate.payload?.set(0, 99)
+private val MutateCreatePayloadValidationCopy = ArticleCreateValidationRule { _, item ->
+    item.payload?.copyOf()?.set(0, 99)
     ValidationDecision.Valid
 }
 
 private val ValidateCreatePayloadSnapshotIsStable = ArticleCreateValidationRule { _, item ->
-    if (item.candidate.payload?.firstOrNull() == 1.toByte()) ValidationDecision.Valid
+    if (item.payload?.firstOrNull() == 1.toByte()) ValidationDecision.Valid
     else ValidationDecision.Invalid("CREATE payload snapshot leaked across rules")
 }
 
-private val MutateUpdatePayloadValidationSnapshot = ArticleUpdateValidationRule { _, item ->
-    item.before.payload?.set(0, 99)
-    item.candidate.payload?.set(0, 99)
-    (item.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
-    (item.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.set(0, 99)
+private val MutateUpdatePayloadValidationCopy = ArticleUpdateValidationRule { _, item ->
+    item.before.payload?.copyOf()?.set(0, 99)
+    item.candidate.payload?.copyOf()?.set(0, 99)
+    (item.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.copyOf()?.set(0, 99)
+    (item.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.copyOf()?.set(0, 99)
     ValidationDecision.Valid
 }
 
@@ -222,12 +222,12 @@ private object ByteArraySnapshotArticlePolicy : EntityPolicy<Article, ArticlePol
     override fun configure(scope: ArticlePolicyScope) = scope.run {
         privacy {
             load(AllowAllLoads)
-            create(MutateCreatePayloadPrivacySnapshot, AllowIfCreatePayloadPrivacySnapshotIsStable)
-            update(MutateUpdatePayloadPrivacySnapshot, AllowIfUpdatePayloadPrivacySnapshotIsStable)
+            create(MutateCreatePayloadPrivacyCopy, AllowIfCreatePayloadPrivacySnapshotIsStable)
+            update(MutateUpdatePayloadPrivacyCopy, AllowIfUpdatePayloadPrivacySnapshotIsStable)
         }
         validation {
-            create(MutateCreatePayloadValidationSnapshot, ValidateCreatePayloadSnapshotIsStable)
-            update(MutateUpdatePayloadValidationSnapshot, ValidateUpdatePayloadSnapshotIsStable)
+            create(MutateCreatePayloadValidationCopy, ValidateCreatePayloadSnapshotIsStable)
+            update(MutateUpdatePayloadValidationCopy, ValidateUpdatePayloadSnapshotIsStable)
         }
     }
 }
@@ -302,7 +302,7 @@ class ValidationIntegrationTest {
     }
 
     @Test
-    fun `byte array mutation-rule snapshots cannot mutate persistence or later rule inputs`() {
+    fun `rules can mutate their own byte array copies without changing shared inputs or persistence`() {
         val client = freshClient(
             viewer = Viewer.User(7L),
             articlePolicy = ByteArraySnapshotArticlePolicy,

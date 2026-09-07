@@ -439,8 +439,8 @@ Shared `viewerContext` and `client` values live on `PrivacyRuleContext`; generat
 rule inputs contain only values that differ per entity or candidate. Mutation
 privacy and validation share the same generated input type for each operation. One
 phase constructs one rule context and passes that exact instance to every
-reached rule. Mutation privacy and validation retain defensive item snapshots;
-LOAD rules receive the original entities directly.
+reached rule. Rules share their input values without per-rule defensive copies;
+LOAD receives entities and CREATE receives prepared write candidates directly.
 
 ### LOAD: the entity itself
 
@@ -461,16 +461,19 @@ This is a rule-author contract, not deep immutability enforced by Kotlin:
 `val` does not prevent array writes or changes to mutable JSON collections.
 Mutating an input can affect later decisions and the data returned to the
 caller. Rules needing mutable scratch data must make their own copies.
-`RuleBatch` still protects batch membership/order, and mutation preparation
-and mutation-rule snapshot guarantees are unchanged.
+`RuleBatch` still protects batch membership/order. Mutation preparation retains
+its separate boundary for detaching caller-owned mutable values.
 
-### CreateRuleInput
+### CREATE: the write candidate itself
 
 ```kotlin
-data class UserCreateRuleInput(
-    val candidate: UserWriteCandidate,  // the values being written
-)
+typealias UserCreatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserWriteCandidate>
+typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserWriteCandidate>
 ```
+
+Scalar CREATE rules take `(context, candidate)`; batch rules receive
+`RuleBatch<UserWriteCandidate>`. Access fields directly, such as
+`candidate.email`. There is no CREATE input wrapper.
 
 ### UpdateRuleInput
 
@@ -543,11 +546,14 @@ data class UserWriteCandidate(
 )
 ```
 
-Each rule receives its own snapshot. Generated `bytes()` values are copied
-directly, and typed JSON values are round-tripped through the driver's
-configured JSON mapper, including values inside update patches. Mutating a
-`ByteArray` or a mutable collection nested in JSON from one rule item cannot
-change the pending database write or another rule's input.
+Mutation privacy and validation share prepared values without per-rule copies,
+including arrays, typed JSON, patches, and relationship changes. Treat every
+input and nested value as read-only. Kotlin `val` does not enforce deep
+immutability: mutating an array or JSON collection can affect later rules and
+the pending database write, including values already checked by earlier rules.
+Rules return decisions; use before-hooks for intended transformations and make
+application-owned copies for mutable scratch data. Preparation still detaches
+caller-owned mutable values before rule evaluation.
 
 ## Rule Derivation
 
@@ -564,7 +570,7 @@ privacy {
 
 When derivation is active, the operation's own rules are evaluated
 first. If all return `Continue`, the create rules are evaluated as a
-fallback (using a `CreateRuleInput` built from the candidate). If
+fallback (receiving the operation's write candidate directly). If
 the create rules also fail to `Allow`, the operation is denied
 (fail-closed).
 
@@ -853,10 +859,9 @@ For each schema with a policy, entkt provides:
 
 | Public type | Purpose |
 |-------------|---------|
-| `{Entity}WriteCandidate` | Snapshot of writable fields for write rules |
+| `{Entity}WriteCandidate` | Shared writable-field values; direct input for CREATE privacy and validation rules |
 | `PrivacyRuleContext<Client>` | Shared supplied `viewerContext` and stable privacy read client |
 | `{Entity}` | Direct input for scalar LOAD rules and each item in batch LOAD rules |
-| `{Entity}CreateRuleInput` | Shared per-candidate input for CREATE privacy and validation rules |
 | `{Entity}UpdateRuleInput` | Shared per-entity input for UPDATE privacy and validation rules |
 | `{Entity}DeleteRuleInput` | Shared per-entity input for DELETE privacy and validation rules |
 | `{Entity}PrivacyScope` | DSL scope inside `privacy { }` |

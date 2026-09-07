@@ -633,36 +633,34 @@ a pre-write contract failure is `NotPersisted`, while a post-write
 returned-LOAD contract failure uses the write state already established by the
 mutation.
 
-### Fresh rule snapshots
+### Shared read-only rule values
 
-Mutation privacy and validation give each rule fresh defensive item snapshots.
-`ByteArray` values are copied directly, while typed JSON values are detached by
-`Driver.copyJsonValue()` through the driver's configured mapper so nested
-mutable collections and arrays do not alias pending writes. Batch evaluation
-preserves that guarantee:
+Privacy and validation share rule values without per-rule defensive copies.
+LOAD receives entities directly; CREATE receives write candidates directly.
+UPDATE/DELETE inputs group their values without detaching them. Batch evaluation
+preserves these guarantees:
 
 - the framework constructs a fresh ordered `RuleBatch` for each registered
   rule;
-- item snapshots within one batch are distinct per item;
+- each input occurrence has an independent decision, even for equal or repeated values;
 - one `PrivacyRuleContext` or `ValidationRuleContext` carries the phase-shared
   read client, and privacy context carries the exact captured viewer value; and
-- application mutation of one rule's snapshot cannot change persistence or a
-  later rule's inputs.
+- rule inputs and all nested values must be treated as read-only.
 
-LOAD privacy is different: each item is the original entity without copying
-its byte arrays or typed JSON. Rules must treat the entity and all nested values
-as read-only. Input mutation is not isolated from later rules or returned data,
-including returned-entity LOAD checks after writes. The ordered `RuleBatch`
-container and per-phase rule context guarantees still apply to LOAD.
+Input mutation is not isolated from later rules, pending writes, or returned
+data, including returned-entity LOAD checks. Rules return decisions; use
+before-hooks for intended transformations and make application-owned copies for
+mutable scratch data. Mutation preparation still detaches caller-owned byte
+arrays and typed JSON before rule evaluation; it does not copy them per rule.
 
-Update edge-change items also rebuild every `Set` as a detached,
-JVM-unmodifiable value. Hook-facing pending-edge sets are unmodifiable as well;
+Update rules share the prepared edge-change values. Hook-facing pending-edge
+sets retain their separate JVM-unmodifiable preparation boundary;
 Kotlin's read-only `Set` interface alone is insufficient because a JVM caller
 can otherwise cast an ordinary `toSet()` result back to `MutableSet`.
 
 Rules read shared privacy/client state directly from their rule context. They
-receive each entity directly for LOAD, and read candidate, patch, or edge-change
-values from generated mutation inputs. No callback needs `batch.first()` to
+receive each entity directly for LOAD, each candidate directly for CREATE, and
+compound inputs for UPDATE/DELETE. No callback needs `batch.first()` to
 recover shared metadata.
 
 Hooks are intentionally different. Before-hooks mutate the pending builders,
@@ -1263,7 +1261,8 @@ Implementation added an entry to `docs/breaking-changes/index.md` covering:
     through the same mapper configuration used for storage.
 13. Scalar privacy and validation callbacks now receive two arguments:
     phase-shared `PrivacyRuleContext` / `ValidationRuleContext` and one
-    item (the entity itself for LOAD, a generated input for mutations). Shared
+    item (the entity for LOAD, the candidate for CREATE, or a compound input
+    for UPDATE/DELETE). Shared
     clients and privacy state no longer appear on every item.
 14. Batch privacy and validation callbacks receive the same shared context plus
     `RuleBatch<Item>`. Rule interfaces therefore gain separate `Client` and
@@ -1435,8 +1434,8 @@ Set-based queries are the intended optimization.
   exception with its positional index.
 - ID-less CREATE items and duplicate or equal inputs retain distinct,
   original-order correlation.
-- Every registered mutation privacy or validation rule receives fresh defensive
-  snapshots. LOAD rules share original entities and must not mutate their inputs.
+- Privacy and validation rules share input values without per-rule defensive
+  copies and must not mutate their inputs or nested values.
 
 ### Privacy
 

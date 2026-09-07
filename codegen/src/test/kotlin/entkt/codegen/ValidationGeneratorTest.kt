@@ -21,7 +21,7 @@ class ValidationGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("typealias UserCreateValidationRule = ValidationRule<ReadOnlyEntClient, UserCreateRuleInput>")) {
+        assert(output.contains("typealias UserCreateValidationRule = ValidationRule<ReadOnlyEntClient, UserWriteCandidate>")) {
             "Should generate create rule typealias\n$output"
         }
         assert(output.contains("typealias UserUpdateValidationRule = ValidationRule<ReadOnlyEntClient, UserUpdateRuleInput>")) {
@@ -30,7 +30,7 @@ class ValidationGeneratorTest {
         assert(output.contains("typealias UserDeleteValidationRule = ValidationRule<ReadOnlyEntClient, UserDeleteRuleInput>")) {
             "Should generate delete rule typealias\n$output"
         }
-        assert(output.contains("typealias UserCreateBatchValidationRule = BatchValidationRule<ReadOnlyEntClient, UserCreateRuleInput>")) {
+        assert(output.contains("typealias UserCreateBatchValidationRule = BatchValidationRule<ReadOnlyEntClient, UserWriteCandidate>")) {
             "Should generate create batch rule typealias\n$output"
         }
         assert(output.contains("typealias UserUpdateBatchValidationRule = BatchValidationRule<ReadOnlyEntClient, UserUpdateRuleInput>")) {

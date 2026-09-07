@@ -30,6 +30,22 @@ above it.
 
 ## Unreleased
 
+- **Pass CREATE candidates directly and share mutation rule values** (`codegen`)
+  `${Entity}CreateRuleInput` is no longer generated. Scalar CREATE privacy and
+  validation rules receive `${Entity}WriteCandidate`; batch rules receive
+  `RuleBatch<WriteCandidate>`. Derived CREATE rules receive the UPDATE/DELETE
+  candidate directly. Mutation rules no longer receive per-rule defensive
+  copies of entities, candidates, patches, byte arrays, typed JSON, or edge
+  changes. Treat all rule inputs and nested values as read-only: mutating them
+  can affect later decisions and the pending database write. Preparation still
+  detaches caller-owned mutable inputs, and batch membership/order remains
+  protected.
+  _Migration:_ regenerate entity code, replace explicit `PostCreateRuleInput`
+  types with `PostWriteCandidate`, and change CREATE-rule accesses from
+  `item.candidate.foo` to `item.foo`. Make application-owned copies for mutable
+  scratch data; use before-hooks for intended transformations. UPDATE/DELETE
+  input wrappers and the named scalar/batch rule aliases remain.
+
 - **Supply mutation rule clients at execution time** (`runtime`, `codegen`)
   Mutation privacy and validation evaluators no longer capture a
   `ruleClientProvider`. They receive `PrivacyRuleContext` or

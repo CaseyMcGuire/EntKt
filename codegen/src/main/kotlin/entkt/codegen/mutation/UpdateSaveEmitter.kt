@@ -19,7 +19,6 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.lifecyclePatchSnapshot
-import entkt.codegen.lifecycleValueSnapshot
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
 import entkt.codegen.metadata.VIEWER_CONTEXT
@@ -60,8 +59,6 @@ private val MUTATION_VALIDATION_EVALUATOR_FACTORY =
     MemberName("entkt.runtime.validation", "mutationValidationEvaluatorForInternalUse")
 private val VALIDATION_DECISION_EVALUATOR_FACTORY =
     MemberName("entkt.runtime.validation", "validationDecisionEvaluatorForInternalUse")
-private val SNAPSHOT_EDGE_CHANGES =
-    MemberName("entkt.runtime.mutation", "snapshotEdgeChangesForInternalUse")
 
 /** Schema-specific artifacts around the reusable runtime UPDATE lifecycle. */
 internal data class UpdateSaveArtifacts(
@@ -131,7 +128,6 @@ internal class UpdateSaveEmitter(
 
     private fun buildOperationProperty(): PropertySpec {
         val updateRuleInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
-        val createRuleInput = ClassName(packageName, "${schemaName}CreateRuleInput")
         return property(
             "updateOperation",
             UPDATE_MUTATION_OPERATION.parameterizedBy(
@@ -156,11 +152,11 @@ internal class UpdateSaveEmitter(
                 add("rules = configuredPrivacy.updateRules,\n")
                 add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
                 indent()
-                add("%L,\n", lifecycleValueSnapshot("state.before", allFields, entityClass))
-                add("%L,\n", lifecyclePatchSnapshot("state.requestedPatch", allFields, entityClass))
-                add("%L,\n", lifecyclePatchSnapshot("state.effectivePatch", allFields, entityClass))
-                add("%L,\n", lifecycleValueSnapshot("state.candidate", allFields, entityClass))
-                add("%L,\n", edgeChangesSnapshot("state.edgeChanges"))
+                add("state.before,\n")
+                add("state.requestedPatch,\n")
+                add("state.effectivePatch,\n")
+                add("state.candidate,\n")
+                add("state.edgeChanges,\n")
                 unindent()
                 add(") },\n")
                 add("fallback = if (configuredPrivacy.updateDerivesFromCreate) {\n")
@@ -169,10 +165,8 @@ internal class UpdateSaveEmitter(
                 indent()
                 add("rules = configuredPrivacy.createRules,\n")
                 add(
-                    "freshItem = { state: %T -> %T(%L) },\n",
+                    "freshItem = { state: %T -> state.candidate },\n",
                     preparedStateClass,
-                    createRuleInput,
-                    lifecycleValueSnapshot("state.candidate", allFields, entityClass),
                 )
                 unindent()
                 add(")\n")
@@ -188,11 +182,11 @@ internal class UpdateSaveEmitter(
                 add("rules = configuredValidation.updateRules,\n")
                 add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
                 indent()
-                add("%L,\n", lifecycleValueSnapshot("state.before", allFields, entityClass))
-                add("%L,\n", lifecyclePatchSnapshot("state.requestedPatch", allFields, entityClass))
-                add("%L,\n", lifecyclePatchSnapshot("state.effectivePatch", allFields, entityClass))
-                add("%L,\n", lifecycleValueSnapshot("state.candidate", allFields, entityClass))
-                add("%L,\n", edgeChangesSnapshot("state.edgeChanges"))
+                add("state.before,\n")
+                add("state.requestedPatch,\n")
+                add("state.effectivePatch,\n")
+                add("state.candidate,\n")
+                add("state.edgeChanges,\n")
                 unindent()
                 add(") },\n")
                 add("additional = if (configuredValidation.updateDerivesFromCreate) {\n")
@@ -202,10 +196,8 @@ internal class UpdateSaveEmitter(
                 add("lifecycle = %S,\n", "$schemaName UPDATE validation")
                 add("rules = configuredValidation.createRules,\n")
                 add(
-                    "freshItem = { state: %T -> %T(%L) },\n",
+                    "freshItem = { state: %T -> state.candidate },\n",
                     preparedStateClass,
-                    createRuleInput,
-                    lifecycleValueSnapshot("state.candidate", allFields, entityClass),
                 )
                 unindent()
                 add(")\n")
@@ -543,23 +535,6 @@ internal class UpdateSaveEmitter(
                 property,
             )
             endControlFlow()
-        }
-    }
-
-    private fun edgeChangesSnapshot(source: String): CodeBlock {
-        if (helperEligibleEdges.isEmpty()) return CodeBlock.of("%L", source)
-        return codeBlock {
-            add("%L.copy(\n", source)
-            helperEligibleEdges.forEach { edge ->
-                add(
-                    "  %L = %M(%L.%L),\n",
-                    edge.mutatorPropertyName,
-                    SNAPSHOT_EDGE_CHANGES,
-                    source,
-                    edge.mutatorPropertyName,
-                )
-            }
-            add(")")
         }
     }
 }

@@ -7,7 +7,7 @@ import entkt.integrationtest.ent.ReadOnlyEntClient
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.ent.UserBeforeCreateState
 import entkt.integrationtest.ent.UserBeforeSaveState
-import entkt.integrationtest.ent.UserCreateRuleInput
+import entkt.integrationtest.ent.UserWriteCandidate
 import entkt.integrationtest.ent.UserCreatePrivacyRule
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
@@ -226,10 +226,10 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
-                    create(batchPrivacyRule<ReadOnlyEntClient, UserCreateRuleInput> { context, batch ->
+                    create(batchPrivacyRule<ReadOnlyEntClient, UserWriteCandidate> { context, batch ->
                         assertEquals(0, recording.callCount("insertMany:users"))
                         createPrivacy = context.viewerContext
-                        events += "createPrivacy:${batch.joinToString { it.candidate.name }}"
+                        events += "createPrivacy:${batch.joinToString { it.name }}"
                         batch.decideEach { PrivacyDecision.Allow }
                     })
                     load(batchPrivacyRule<ReadOnlyEntClient, User> { context, batch ->
@@ -239,9 +239,9 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                     })
                 }
                 validation {
-                    create(batchValidationRule<ReadOnlyEntClient, UserCreateRuleInput> { _, batch ->
+                    create(batchValidationRule<ReadOnlyEntClient, UserWriteCandidate> { _, batch ->
                         assertEquals(0, recording.callCount("insertMany:users"))
-                        events += "validation:${batch.joinToString { it.candidate.name }}"
+                        events += "validation:${batch.joinToString { it.name }}"
                         batch.decideEach { ValidationDecision.Valid }
                     })
                 }
@@ -595,10 +595,10 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy { load(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }) }
                 validation {
-                    create(batchValidationRule<ReadOnlyEntClient, UserCreateRuleInput> { _, batch ->
-                        validatedNames += batch.map { it.candidate.name }
+                    create(batchValidationRule<ReadOnlyEntClient, UserWriteCandidate> { _, batch ->
+                        validatedNames += batch.map { it.name }
                         batch.decideEach { item ->
-                            if (item.candidate.name == "B") {
+                            if (item.name == "B") {
                                 ValidationDecision.Invalid("B is invalid", field = "name")
                             } else {
                                 ValidationDecision.Valid
@@ -647,10 +647,10 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
-                    create(batchPrivacyRule<ReadOnlyEntClient, UserCreateRuleInput> { _, batch ->
-                        privacyBatches += batch.map { it.candidate.name }
+                    create(batchPrivacyRule<ReadOnlyEntClient, UserWriteCandidate> { _, batch ->
+                        privacyBatches += batch.map { it.name }
                         batch.decideEach { item ->
-                            if (item.candidate.name == "B") {
+                            if (item.name == "B") {
                                 PrivacyDecision.Deny("B cannot be created")
                             } else {
                                 PrivacyDecision.Allow
@@ -659,7 +659,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                     })
                 }
                 validation {
-                    create(batchValidationRule<ReadOnlyEntClient, UserCreateRuleInput> { _, batch ->
+                    create(batchValidationRule<ReadOnlyEntClient, UserWriteCandidate> { _, batch ->
                         validationCalls++
                         batch.decideEach { ValidationDecision.Valid }
                     })

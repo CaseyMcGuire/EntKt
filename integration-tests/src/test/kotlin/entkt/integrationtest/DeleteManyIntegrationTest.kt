@@ -3,7 +3,7 @@ package entkt.integrationtest
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.ReadOnlyEntClient
 import entkt.integrationtest.ent.User
-import entkt.integrationtest.ent.UserCreateRuleInput
+import entkt.integrationtest.ent.UserWriteCandidate
 import entkt.integrationtest.ent.UserDeleteRuleInput
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
@@ -463,8 +463,8 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
                         }
                     }
                 })
-                create(batchPrivacyRule<ReadOnlyEntClient, UserCreateRuleInput> { _, batch ->
-                    derivedCreateBatches += batch.map { it.candidate.name }
+                create(batchPrivacyRule<ReadOnlyEntClient, UserWriteCandidate> { _, batch ->
+                    derivedCreateBatches += batch.map { it.name }
                     batch.decideEach { PrivacyDecision.Allow }
                 })
                 deleteDerivesFromCreate()

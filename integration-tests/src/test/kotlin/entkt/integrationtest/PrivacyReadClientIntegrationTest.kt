@@ -73,7 +73,7 @@ private val AllowIfAuthorVisiblyReadable = ArticleLoadPrivacyRule { context, ite
 
 /** Create rule that reads the graph — the transaction-scoping probe. */
 private val AuthorRowMustExist = ArticleCreatePrivacyRule { context, item ->
-    if (context.client.users.findById(context.viewerContext, item.candidate.authorId).getOrThrow() != null) PrivacyDecision.Allow
+    if (context.client.users.findById(context.viewerContext, item.authorId).getOrThrow() != null) PrivacyDecision.Allow
     else PrivacyDecision.Deny("author row not found")
 }
 

@@ -876,7 +876,7 @@ class EntGenerator(
                         "  - more than one artifact generates '$name.kt' — a schema name " +
                             "collides with a derived artifact name (<Schema>Descriptor/" +
                             "<Schema><Edge>EdgeDescriptor/CreateDraft/CreateConverter/DeleteConverter/UpdateDraft/Query/Repo/" +
-                            "Privacy/Validation/CreateRuleInput/UpdateRuleInput/" +
+                            "Privacy/Validation/UpdateRuleInput/" +
                             "DeleteRuleInput/Indexes/Hooks) or a " +
                             "generated client-support file"
                     },

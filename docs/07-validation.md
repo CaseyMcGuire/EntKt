@@ -25,9 +25,9 @@ object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
 class RequireBodyForPublished : PostCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: PostCreateRuleInput,
+        item: PostWriteCandidate,
     ): ValidationDecision =
-        if (item.candidate.published && item.candidate.body.isNullOrBlank()) {
+        if (item.published && item.body.isNullOrBlank()) {
             ValidationDecision.Invalid("published posts must have a body", field = "body")
         } else {
             ValidationDecision.Valid
@@ -135,10 +135,10 @@ val uniqueSlugs: PostCreateBatchValidationRule =
     batchValidationRule { context, batch ->
         val existingSlugs = loadExistingSlugs(
             context.client,
-            batch.map { it.candidate.slug },
+            batch.map { it.slug },
         )
         batch.decideEach { item ->
-            if (item.candidate.slug in existingSlugs) {
+            if (item.slug in existingSlugs) {
                 ValidationDecision.Invalid("slug already taken", field = "slug")
             } else {
                 ValidationDecision.Valid
@@ -256,15 +256,19 @@ privacy and contain only values that
 differ per candidate. The write surface does not exist on the shared client,
 so a validator that tries to create, update, or delete does not compile. One
 phase constructs one rule context and passes that exact instance to every
-validator; each validator still receives fresh defensive item snapshots.
+validator. Inputs share their values without per-rule defensive copies and
+must be treated as read-only, including all nested values.
 
-### CreateRuleInput
+### CREATE: the write candidate itself
 
 ```kotlin
-data class PostCreateRuleInput(
-    val candidate: PostWriteCandidate,
-)
+typealias PostCreateValidationRule = ValidationRule<ReadOnlyEntClient, PostWriteCandidate>
+typealias PostCreateBatchValidationRule = BatchValidationRule<ReadOnlyEntClient, PostWriteCandidate>
 ```
+
+Scalar CREATE validators take `(context, candidate)`; batch validators receive
+`RuleBatch<PostWriteCandidate>`. Access fields directly, such as
+`candidate.title`. There is no CREATE input wrapper.
 
 ### UpdateRuleInput
 
@@ -335,8 +339,8 @@ See [Privacy → Operation Items](06-privacy.md#operation-items).
 ### WriteCandidate
 
 Validators reuse the same `WriteCandidate` data class generated for
-privacy rules. It contains all non-ID fields and edge FK fields as an
-immutable snapshot:
+privacy rules. It contains all non-ID fields and edge FK fields as read-only
+properties (not deeply immutable values):
 
 ```kotlin
 data class PostWriteCandidate(
@@ -349,11 +353,13 @@ data class PostWriteCandidate(
 )
 ```
 
-Each validator receives its own snapshot. Generated `bytes()` values are copied
-directly, and typed JSON values are round-tripped through the driver's
-configured JSON mapper, including values inside update patches. Mutating a
-`ByteArray` or a mutable collection nested in JSON from one validation item
-cannot change the pending database write or another validator's input.
+Validators share prepared values with privacy and other validation rules,
+including arrays, typed JSON, patches, and relationship changes. Mutating any
+of these can change later decisions or the pending database write after privacy
+and earlier validation have already run. Validators must only inspect inputs
+and return decisions; use before-hooks for transformations and make your own
+copies for mutable scratch data. The one-time preparation boundary still
+detaches caller-owned mutable values before rule evaluation.
 
 ## Evaluation Semantics
 
@@ -454,10 +460,10 @@ of truth; the validator improves the error message.
 class UniqueSlug : PostCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: PostCreateRuleInput,
+        item: PostWriteCandidate,
     ): ValidationDecision {
         val existing = context.client.posts.query {
-            where(Post.slug eq item.candidate.slug)
+            where(Post.slug eq item.slug)
         }.firstOrNull(context.readViewerContext).getOrThrow()
         return if (existing != null) ValidationDecision.Invalid("slug already taken")
         else ValidationDecision.Valid
@@ -467,10 +473,10 @@ class UniqueSlug : PostCreateValidationRule {
 class AuthorExists : PostCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: PostCreateRuleInput,
+        item: PostWriteCandidate,
     ): ValidationDecision {
         val author = context.client.users
-            .findById(context.readViewerContext, item.candidate.authorId)
+            .findById(context.readViewerContext, item.authorId)
             .getOrThrow()
         return if (author == null) ValidationDecision.Invalid("author does not exist")
         else ValidationDecision.Valid
@@ -488,9 +494,9 @@ Index helpers work too — they are query sugar and equally read-only:
 class UniqueEmail : UserCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: UserCreateRuleInput,
+        item: UserWriteCandidate,
     ): ValidationDecision =
-        if (context.client.users.indexes.email(item.candidate.email)
+        if (context.client.users.indexes.email(item.email)
                 .find(context.readViewerContext).getOrThrow() != null
         ) {
             ValidationDecision.Invalid("email already taken", field = "email")
@@ -559,7 +565,7 @@ For each schema, entkt provides:
 | `{Entity}UpdateBatchValidationRule` | Typealias for batch update validation rules |
 | `{Entity}DeleteBatchValidationRule` | Typealias for batch delete validation rules |
 | `ValidationRuleContext<Client>` | Shared validation read client for one evaluation phase |
-| `{Entity}CreateRuleInput` | Shared per-candidate input for create privacy and validation rules |
+| `{Entity}WriteCandidate` | Shared writable-field values; direct input for CREATE privacy and validation rules |
 | `{Entity}UpdateRuleInput` | Shared per-entity input for update privacy and validation rules |
 | `{Entity}DeleteRuleInput` | Shared per-entity input for delete privacy and validation rules |
 | `{Entity}ValidationScope` | DSL scope inside `validation { }` |
@@ -591,9 +597,9 @@ query helpers, but cannot create, update, or delete entities.
 class StartBeforeEnd : EventCreateValidationRule {
     override fun validate(
         context: ValidationRuleContext<ReadOnlyEntClient>,
-        item: EventCreateRuleInput,
+        item: EventWriteCandidate,
     ): ValidationDecision =
-        if (item.candidate.startTime >= item.candidate.endTime) {
+        if (item.startTime >= item.endTime) {
             ValidationDecision.Invalid("start time must be before end time")
         } else {
             ValidationDecision.Valid

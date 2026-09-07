@@ -6,6 +6,7 @@ import entkt.integrationtest.ent.ArticleCreateValidationRule
 import entkt.integrationtest.ent.ArticleLoadPrivacyRule
 import entkt.integrationtest.ent.ArticlePolicyScope
 import entkt.integrationtest.ent.ArticleUpdatePrivacyRule
+import entkt.integrationtest.ent.ArticleWriteCandidate
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.schema.ArticleMeta
 import entkt.integrationtest.schema.HighlightRect
@@ -19,6 +20,8 @@ import entkt.runtime.validation.ValidationDecision
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertNotSame
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -108,7 +111,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `mutation privacy and validation detach JSON while LOAD observes returned values`() {
+    fun `mutation privacy and validation share prepared JSON while LOAD observes returned values`() {
         val driver = resetAndDriver()
         val system = EntClient(driver)
         val author = system.users.create {
@@ -119,8 +122,8 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
 
         val firstTags = mutableListOf("first")
         val secondTags = mutableListOf("second")
-        val seenByPrivacy = mutableListOf<List<String>>()
-        val seenByValidation = mutableListOf<List<String>>()
+        val seenByPrivacy = mutableListOf<ArticleWriteCandidate>()
+        val seenByValidation = mutableListOf<ArticleWriteCandidate>()
         val seenByLoad = mutableListOf<List<String>>()
 
         val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
@@ -128,12 +131,11 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
                 privacy {
                     create(
                         ArticleCreatePrivacyRule { _, item ->
-                            @Suppress("UNCHECKED_CAST")
-                            (item.candidate.metadata!!.tags as MutableList<String>) += "privacy mutation"
+                            seenByPrivacy += item
                             PrivacyDecision.Continue
                         },
                         ArticleCreatePrivacyRule { _, item ->
-                            seenByPrivacy += item.candidate.metadata!!.tags.toList()
+                            seenByPrivacy += item
                             PrivacyDecision.Allow
                         },
                     )
@@ -147,12 +149,11 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
                 validation {
                     create(
                         ArticleCreateValidationRule { _, item ->
-                            @Suppress("UNCHECKED_CAST")
-                            (item.candidate.metadata!!.tags as MutableList<String>) += "validation mutation"
+                            seenByValidation += item
                             ValidationDecision.Valid
                         },
                         ArticleCreateValidationRule { _, item ->
-                            seenByValidation += item.candidate.metadata!!.tags.toList()
+                            seenByValidation += item
                             ValidationDecision.Valid
                         },
                     )
@@ -178,15 +179,22 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
         ).getOrThrow()
 
         val expected = listOf(listOf("first"), listOf("second"))
-        assertEquals(expected, seenByPrivacy, "each CREATE privacy rule gets a fresh JSON graph")
-        assertEquals(expected, seenByValidation, "each validation rule gets a fresh JSON graph")
+        assertEquals(expected + expected, seenByPrivacy.map { it.metadata!!.tags })
+        assertEquals(expected + expected, seenByValidation.map { it.metadata!!.tags })
+        for (index in 0..1) {
+            assertSame(seenByPrivacy[index], seenByPrivacy[index + 2])
+            assertSame(seenByPrivacy[index], seenByValidation[index])
+            assertSame(seenByPrivacy[index], seenByValidation[index + 2])
+        }
+        assertNotSame(firstTags, seenByPrivacy[0].metadata!!.tags)
+        assertNotSame(secondTags, seenByPrivacy[1].metadata!!.tags)
         assertEquals(expected, seenByLoad, "LOAD rules observe the returned JSON values")
-        assertEquals(listOf("first"), firstTags, "rule mutation cannot reach caller-owned input")
-        assertEquals(listOf("second"), secondTags, "rule mutation cannot reach caller-owned input")
-        assertEquals(expected, created.map { it.metadata!!.tags }, "mutation-rule changes cannot reach returned rows")
+        assertEquals(listOf("first"), firstTags)
+        assertEquals(listOf("second"), secondTags)
+        assertEquals(expected, created.map { it.metadata!!.tags })
 
         val stored = system.articles.query().all(testViewerContext).getOrThrow().sortedBy { it.title }
-        assertEquals(expected, stored.map { it.metadata!!.tags }, "mutation-rule changes cannot reach persisted rows")
+        assertEquals(expected, stored.map { it.metadata!!.tags })
     }
 
     @Test
@@ -210,7 +218,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
                             PrivacyDecision.Continue
                         },
                         ArticleCreatePrivacyRule { _, item ->
-                            seenCandidate = item.candidate.metadata!!.tags.toList()
+                            seenCandidate = item.metadata!!.tags.toList()
                             PrivacyDecision.Allow
                         },
                     )
