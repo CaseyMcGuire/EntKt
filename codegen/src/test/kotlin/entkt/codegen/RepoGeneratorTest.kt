@@ -154,7 +154,8 @@ class RepoGeneratorTest {
                 $superclass<$name, $idType, ${name}CreateDraft, ${name}UpdateDraft, ${name}Query, ReadOnlyEntClient>(
                       entity = ${name}Descriptor,
                       driver = driver,
-                      mutationExecutor = MutationExecutor(driver, client),
+                      mutationRuntime = client,
+                      readExecutionHost = client,
                       loadPrivacyRules = configuredPrivacy.loadRules,
                       defaultUpdateConsistency = client.defaultUpdateConsistency,
                       defaultRelationshipLocking = client.defaultRelationshipLocking,
@@ -269,13 +270,16 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo supplies a shared executor defaults and a protected update operation`() {
+    fun `repo supplies runtime dependencies defaults and a protected update operation`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(Regex("MutationExecutor\\(driver, client\\)").findAll(output).count() == 1) {
-            "The base should receive one shared mutation executor\n$output"
+        assert(output.contains("driver = driver, mutationRuntime = client, readExecutionHost = client,")) {
+            "The base should receive the driver and runtime dependencies for both executors\n$output"
+        }
+        assert(!output.contains("MutationExecutor(") && !output.contains("ReadQueryExecutor(")) {
+            "Executor construction belongs to the runtime base\n$output"
         }
         assert(output.contains("defaultUpdateConsistency = client.defaultUpdateConsistency"))
         assert(output.contains("defaultRelationshipLocking = client.defaultRelationshipLocking"))
@@ -511,8 +515,8 @@ class RepoGeneratorTest {
         assert(!scalarBinding.contains("readQueryExecutor")) {
             "Scalar DELETE must not carry an unused query executor\n$output"
         }
-        assert(bulkBinding.contains("readQueryExecutor = ReadQueryExecutor(driver, client)")) {
-            "Bulk DELETE must receive the query executor bound to this repository's driver and client\n$output"
+        assert(bulkBinding.contains("readQueryExecutor = readQueryExecutor")) {
+            "Bulk DELETE must receive the query executor constructed by the runtime base\n$output"
         }
         assert(!bulkBinding.contains("CarQuery") && !bulkBinding.contains("newQuery")) {
             "DELETE must not depend on a generated query builder or query factory\n$output"
@@ -686,8 +690,8 @@ class RepoGeneratorTest {
             "DELETE should use a schema-specific converter without calling back into the repo\n$output"
         }
         assert(!output.contains("fun buildDeleteCandidate") && !output.contains("::buildDeleteCandidate"))
-        assert(output.contains("readQueryExecutor = ReadQueryExecutor(driver, client)")) {
-            "DELETE should use the existing runtime query executor\n$output"
+        assert(output.contains("readQueryExecutor = readQueryExecutor")) {
+            "DELETE should use the runtime base's query executor\n$output"
         }
         assert(output.contains("buildDeleteMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter, privacy = configuredPrivacy,")) {
             "DELETE should bind its configured privacy rules\n$output"

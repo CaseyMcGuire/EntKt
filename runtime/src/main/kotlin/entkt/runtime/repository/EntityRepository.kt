@@ -22,6 +22,7 @@ import entkt.runtime.mutation.execution.DeleteManyMutationInput
 import entkt.runtime.mutation.execution.DeleteMutationInput
 import entkt.runtime.mutation.execution.MutationExecutor
 import entkt.runtime.mutation.execution.MutationOperation
+import entkt.runtime.mutation.execution.MutationRuntime
 import entkt.runtime.mutation.execution.UpdateMutationInput
 import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.privacy.LoadPrivacyEvaluator
@@ -30,6 +31,8 @@ import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EntityQueryBuilder
 import entkt.runtime.query.ReadOperation
+import entkt.runtime.query.execution.ReadQueryExecutionHost
+import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
 import entkt.runtime.result.TransactionResult
@@ -56,7 +59,8 @@ abstract class EntityRepository<
 > @EntktInternal protected constructor(
     private val entity: EntityDescriptor<Entity, ID>,
     driver: DatabaseDriver,
-    private val mutationExecutor: MutationExecutor,
+    mutationRuntime: MutationRuntime,
+    readExecutionHost: ReadQueryExecutionHost,
     loadPrivacyRules: List<BatchPrivacyRule<RuleClient, Entity>>,
     private val defaultUpdateConsistency: UpdateConsistency = UpdateConsistency.ReadCurrent,
     private val defaultRelationshipLocking: RelationshipLocking = RelationshipLocking.OwnerOnly,
@@ -65,7 +69,10 @@ abstract class EntityRepository<
         driver.register(entity.schema)
     }
 
+    private val mutationExecutor = MutationExecutor(driver, mutationRuntime)
     private val loadPrivacyEvaluator = LoadPrivacyEvaluator(entity, loadPrivacyRules)
+
+    protected val readQueryExecutor = ReadQueryExecutor<Entity>(driver, readExecutionHost)
 
     protected abstract val self: Self
 

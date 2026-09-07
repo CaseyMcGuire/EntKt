@@ -48,10 +48,6 @@ private val CREATE_MUTATION_INPUT =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationInput")
 private val DELETE_MUTATION_INPUT =
     ClassName("entkt.runtime.mutation.execution", "DeleteMutationInput")
-private val MUTATION_EXECUTOR =
-    ClassName("entkt.runtime.mutation.execution", "MutationExecutor")
-private val READ_QUERY_EXECUTOR =
-    ClassName("entkt.runtime.query.execution", "ReadQueryExecutor")
 private val MUTATION_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "MutationOperation")
 private val BUILD_CREATE_MANY_MUTATION_OPERATION =
@@ -122,7 +118,8 @@ internal class RepoGenerator(
                 add("\n")
                 add("      entity = %T,\n", entityDescriptorClass)
                 add("      driver = driver,\n")
-                add("      mutationExecutor = %T(driver, client),\n", MUTATION_EXECUTOR)
+                add("      mutationRuntime = client,\n")
+                add("      readExecutionHost = client,\n")
                 add("      loadPrivacyRules = configuredPrivacy.loadRules,\n")
                 add("      defaultUpdateConsistency = client.defaultUpdateConsistency,\n")
                 add("      defaultRelationshipLocking = client.defaultRelationshipLocking,\n")
@@ -224,7 +221,7 @@ internal class RepoGenerator(
                     add("privacy = configuredPrivacy,\n")
                     add("validation = configuredValidation,\n")
                     add("ruleInput = ::%T,\n", ClassName(packageName, "${schemaName}DeleteRuleInput"))
-                    add("readQueryExecutor = %T(driver, client),\n", READ_QUERY_EXECUTOR)
+                    add("readQueryExecutor = readQueryExecutor,\n")
                     add("beforeDelete = configuredHooks.beforeDelete,\n")
                     add("afterDelete = configuredHooks.afterDelete,\n")
                     unindent()
