@@ -32,8 +32,8 @@ class WriteCandidateCompileTest {
 
     private fun mutationTypes(candidate: String): List<String> = listOf(
         "CreateMutationConverter<WidgetDraft, $candidate, Widget>",
-        "CreateMutationOperation<Unit, WidgetDraft, $candidate, Widget, Unit, Unit>",
-        "CreateManyMutationOperation<Unit, WidgetDraft, $candidate, Widget, Unit, Unit>",
+        "CreateMutationOperation<Unit, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
+        "CreateManyMutationOperation<Unit, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
         "DeleteMutationConverter<Widget, $candidate>",
         "DeleteMutationOperation<Unit, Widget, $candidate>",
         "DeleteManyMutationOperation<Unit, Widget, $candidate>",
@@ -49,6 +49,8 @@ class WriteCandidateCompileTest {
                 package com.example.app
 
                 import entkt.runtime.entity.EntEntity
+                import entkt.runtime.mutation.BeforeCreateHookState
+                import entkt.runtime.mutation.BeforeSaveHookState
                 import entkt.runtime.mutation.CreateMutationDraft
                 import entkt.runtime.mutation.PreparedCreate
                 import entkt.runtime.mutation.WriteCandidate
@@ -59,6 +61,8 @@ class WriteCandidateCompileTest {
                 class WidgetDraft : CreateMutationDraft<Widget>
                 class WidgetCandidate : WriteCandidate<Widget>
                 class OtherCandidate : WriteCandidate<Other>
+                class BeforeSave : BeforeSaveHookState<Widget>
+                class BeforeCreate : BeforeCreateHookState<Widget>
 
                 ${types.mapIndexed { index, type -> "fun accept$index(value: $type) {}" }.joinToString("\n")}
                 """.trimIndent(),
@@ -99,6 +103,133 @@ class WriteCandidateCompileTest {
             result.messages.contains("bound", ignoreCase = true) && result.messages.contains("WriteCandidate"),
             "Expected a WriteCandidate bound diagnostic for $type:\n${result.messages}",
         )
+    }
+
+    private fun compileOperationFactory(
+        factory: String,
+        mappingEntity: String = "Widget",
+        ruleInputState: String = "WidgetState",
+    ): JvmCompilationResult {
+        val call = when (factory) {
+            "createMany" -> """
+                buildCreateManyMutationOperation(
+                    runtime, entity, createConverter, privacy, validation, createHooks,
+                    beforeSave = emptyList(), beforeCreate = emptyList(), afterCreate = emptyList(),
+                )
+            """.trimIndent()
+            "update" -> """
+                buildUpdateMutationOperation(
+                    entity, runtime, privacy, validation,
+                    ruleInput = { _: $ruleInputState -> Unit },
+                    candidate = { it.candidate },
+                    adapter = updateAdapter,
+                    hooks = updateHooks,
+                )
+            """.trimIndent()
+            "delete" -> """
+                buildDeleteMutationOperation(
+                    entity, deleteConverter, privacy, validation,
+                    ruleInput = { _, _ -> Unit },
+                    beforeDelete = emptyList(), afterDelete = emptyList(),
+                )
+            """.trimIndent()
+            "deleteMany" -> """
+                buildDeleteManyMutationOperation(
+                    entity, deleteConverter, privacy, validation,
+                    ruleInput = { _, _ -> Unit },
+                    readQueryExecutor = queryExecutor,
+                    beforeDelete = emptyList(), afterDelete = emptyList(),
+                )
+            """.trimIndent()
+            else -> error("Unknown factory: $factory")
+        }
+
+        val resultType = when (factory) {
+            "createMany" -> "CreateManyMutationOperation<Unit, WidgetCreateDraft, WidgetCandidate, Widget, BeforeSave, BeforeCreate>"
+            "update" -> "UpdateMutationOperation<Unit, WidgetUpdateDraft, Widget, PendingEdges, WidgetState, BeforeSave, BeforeUpdate>"
+            "delete" -> "DeleteMutationOperation<Unit, Widget, WidgetCandidate>"
+            else -> "DeleteManyMutationOperation<Unit, Widget, WidgetCandidate>"
+        }
+
+        return compile(
+            listOf(
+                SourceFile.kotlin(
+                    "OperationFactoryBounds.kt",
+                    """
+                    @file:OptIn(entkt.query.EntktInternal::class)
+                    package com.example.app
+
+                    import entkt.runtime.entity.EntEntity
+                    import entkt.runtime.entity.EntityDescriptor
+                    import entkt.runtime.mutation.*
+                    import entkt.runtime.mutation.execution.*
+                    import entkt.runtime.privacy.BatchPrivacyRule
+                    import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
+                    import entkt.runtime.query.execution.ReadQueryExecutor
+                    import entkt.runtime.validation.BatchValidationRule
+                    import entkt.runtime.validation.ResolvedEntityValidationConfig
+
+                    data class Widget(override val id: Int) : EntEntity.IntId
+                    data class Other(override val id: Int) : EntEntity.IntId
+                    class WidgetCandidate : WriteCandidate<Widget>
+                    class WidgetState(val candidate: WidgetCandidate) : PreparedUpdateState<Widget>
+                    class OtherState : PreparedUpdateState<Other>
+                    class WidgetCreateDraft : CreateMutationDraft<Widget>
+                    class WidgetUpdateDraft : UpdateMutationDraft<Widget>
+                    class PendingEdges : UpdatePendingEdges<Widget>
+                    class BeforeSave : BeforeSaveHookState<Widget>
+                    class BeforeCreate : BeforeCreateHookState<Widget>
+                    class BeforeUpdate : BeforeUpdateHookState<Widget>
+
+                    fun bind(
+                        entity: EntityDescriptor<$mappingEntity, *>,
+                        privacy: ResolvedEntityPrivacyConfig<
+                            Nothing, BatchPrivacyRule<Unit, WidgetCandidate>,
+                            BatchPrivacyRule<Unit, Unit>, BatchPrivacyRule<Unit, Unit>,
+                        >,
+                        validation: ResolvedEntityValidationConfig<
+                            BatchValidationRule<Unit, WidgetCandidate>,
+                            BatchValidationRule<Unit, Unit>, BatchValidationRule<Unit, Unit>,
+                        >,
+                        runtime: MutationRuntime,
+                        createConverter: CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget>,
+                        createHooks: CreateMutationHookStateConverter<WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>,
+                        updateAdapter: UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, BeforeUpdate>,
+                        updateHooks: UpdateMutationHooks<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>,
+                        deleteConverter: DeleteMutationConverter<Widget, WidgetCandidate>,
+                        queryExecutor: ReadQueryExecutor<Widget>,
+                    ): $resultType = $call
+                    """.trimIndent(),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `operation factories infer matching entity and candidate types`() {
+        for (factory in listOf("createMany", "update", "delete", "deleteMany")) {
+            val result = compileOperationFactory(factory)
+
+            assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+        }
+    }
+
+    @Test
+    fun `each operation factory rejects a descriptor for another entity`() {
+        for (factory in listOf("createMany", "update", "delete", "deleteMany")) {
+            val result = compileOperationFactory(factory, mappingEntity = "Other")
+
+            assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
+            assertTrue(result.messages.contains("type mismatch", ignoreCase = true), result.messages)
+        }
+    }
+
+    @Test
+    fun `update operation factory rejects rule input conversion for another entity state`() {
+        val result = compileOperationFactory("update", ruleInputState = "OtherState")
+
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
+        assertTrue(result.messages.contains("type mismatch", ignoreCase = true), result.messages)
     }
 
     @Test

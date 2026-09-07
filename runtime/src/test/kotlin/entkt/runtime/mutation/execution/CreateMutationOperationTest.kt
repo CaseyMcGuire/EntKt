@@ -8,6 +8,8 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.ActionHook
 import entkt.runtime.hook.TransformingHook
+import entkt.runtime.mutation.BeforeCreateHookState
+import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.mutation.WriteCandidate
@@ -16,8 +18,7 @@ import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.privacy.MutationPrivacyEvaluator
-import entkt.runtime.privacy.PrivacyOperation
+import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.result.EntConflictException
@@ -33,7 +34,7 @@ import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ValidationViolation
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
-import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ResolvedEntityValidationConfig
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -50,6 +51,10 @@ class CreateMutationOperationTest {
         override val id: Long,
         val name: String,
     ) : EntEntity.LongId
+
+    private data class BeforeSaveState(val value: String) : BeforeSaveHookState<Widget>
+
+    private data class BeforeCreateState(val value: String) : BeforeCreateHookState<Widget>
 
     private class RecordingMapping(
         private val events: MutableList<String>,
@@ -139,35 +144,40 @@ class CreateMutationOperationTest {
             }
         }
 
-        val privacyEvaluator = MutationPrivacyEvaluator<Unit, Candidate>(
-                entity = RecordingMapping(events),
-                operation = PrivacyOperation.CREATE,
-                rules = listOf(
-                    batchPrivacyRule<Unit, Candidate> { context, batch ->
-                        events += "create-privacy"
-                        receivedViewerContexts += context.viewerContext
-                        batch.decideEach { createDecision }
-                    },
-                ),
-            )
+        val privacy = ResolvedEntityPrivacyConfig(
+            loadRules = emptyList<Nothing>(),
+            createRules = listOf(
+                batchPrivacyRule<Unit, Candidate> { context, batch ->
+                    events += "create-privacy"
+                    receivedViewerContexts += context.viewerContext
+                    batch.decideEach { createDecision }
+                },
+            ),
+            updateRules = emptyList<Nothing>(),
+            deleteRules = emptyList<Nothing>(),
+            updateDerivesFromCreate = false,
+            deleteDerivesFromCreate = false,
+        )
 
-        val validationEvaluator = MutationValidationEvaluator<Unit, Candidate>(
-                lifecycle = "Widget CREATE validation",
-                rules = listOf(
-                    batchValidationRule<Unit, Candidate> { _, batch ->
-                        events += "validate"
-                        batch.decideEach {
-                            validationViolations.firstOrNull()?.let { violation ->
-                                ValidationDecision.Invalid(
-                                    message = violation.message,
-                                    field = violation.field,
-                                    code = violation.code,
-                                )
-                            } ?: ValidationDecision.Valid
-                        }
-                    },
-                ),
-            )
+        val validation = ResolvedEntityValidationConfig(
+            createRules = listOf(
+                batchValidationRule<Unit, Candidate> { _, batch ->
+                    events += "validate"
+                    batch.decideEach {
+                        validationViolations.firstOrNull()?.let { violation ->
+                            ValidationDecision.Invalid(
+                                message = violation.message,
+                                field = violation.field,
+                                code = violation.code,
+                            )
+                        } ?: ValidationDecision.Valid
+                    }
+                },
+            ),
+            updateRules = emptyList<Nothing>(),
+            deleteRules = emptyList<Nothing>(),
+            updateDerivesFromCreate = false,
+        )
     }
 
     private class RecordingInput(
@@ -751,37 +761,37 @@ class CreateMutationOperationTest {
             }
         }
         val mutationExecutor = MutationExecutor(driver, mutationRuntime)
-        val manyOperation = CreateManyMutationOperation(
+        val manyOperation = buildCreateManyMutationOperation(
             mutationRuntime = mutationRuntime,
             entity = mapping,
             converter = spec.converter,
-            privacyEvaluator = spec.privacyEvaluator,
-            validationEvaluator = spec.validationEvaluator,
+            privacy = spec.privacy,
+            validation = spec.validation,
             hookStateConverter = object :
-                CreateMutationHookStateConverter<RecordingInput, String, String> {
-                override fun toBeforeSaveState(draft: RecordingInput): String =
-                    draft.beforeSaveHookValue()
+                CreateMutationHookStateConverter<RecordingInput, Widget, BeforeSaveState, BeforeCreateState> {
+                override fun toBeforeSaveState(draft: RecordingInput): BeforeSaveState =
+                    BeforeSaveState(draft.beforeSaveHookValue())
 
                 override fun toBeforeCreateState(
                     viewerContext: ViewerContext,
                     draft: RecordingInput,
-                    beforeSaveState: String,
-                ): String = draft.beforeCreateHookValue()
+                    beforeSaveState: BeforeSaveState,
+                ): BeforeCreateState = BeforeCreateState(draft.beforeCreateHookValue())
 
                 override fun toPreparationDraft(
                     originalDraft: RecordingInput,
-                    state: String,
+                    state: BeforeCreateState,
                 ): RecordingInput = originalDraft
             },
             beforeSave = listOf(
-                TransformingHook { value: String ->
-                    events += "before-save:$value"
+                TransformingHook { value: BeforeSaveState ->
+                    events += "before-save:${value.value}"
                     value
                 },
             ),
             beforeCreate = listOf(
-                TransformingHook { value: String ->
-                    events += "before-create:$value"
+                TransformingHook { value: BeforeCreateState ->
+                    events += "before-create:${value.value}"
                     spec.beforeCreateAction()
                     value
                 },
@@ -812,8 +822,10 @@ class CreateMutationOperationTest {
         val spec: RecordingSpec,
         val input: RecordingInput,
         val mutationExecutor: MutationExecutor,
-        val operation: CreateMutationOperation<Unit, RecordingInput, Candidate, Widget, String, String>,
-        val manyOperation: CreateManyMutationOperation<Unit, RecordingInput, Candidate, Widget, String, String>,
+        val operation:
+            CreateMutationOperation<Unit, RecordingInput, Candidate, Widget, BeforeSaveState, BeforeCreateState>,
+        val manyOperation:
+            CreateManyMutationOperation<Unit, RecordingInput, Candidate, Widget, BeforeSaveState, BeforeCreateState>,
         val viewerContext: ViewerContext,
         val recordedFailures: MutableList<EntMutationException>,
     ) {

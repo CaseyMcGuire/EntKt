@@ -2,6 +2,8 @@ package entkt.runtime.mutation.execution
 
 import entkt.query.EntktInternal
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.mutation.BeforeCreateHookState
+import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.WriteCandidate
 
@@ -12,8 +14,8 @@ class CreateMutationOperation<
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
     Entity : EntEntity<*>,
-    BeforeSaveState,
-    BeforeCreateState,
+    BeforeSaveState : BeforeSaveHookState<Entity>,
+    BeforeCreateState : BeforeCreateHookState<Entity>,
     >(
     private val createManyOperation: CreateManyMutationOperation<RuleClient, Draft, Candidate, Entity, BeforeSaveState, BeforeCreateState>,
 ) : MutationOperation<RuleClient, CreateMutationInput<Draft>, Entity> {

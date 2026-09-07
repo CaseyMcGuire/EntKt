@@ -19,14 +19,14 @@ import entkt.runtime.mutation.UpdateConsistency
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.UpdateMutationRequest
 import entkt.runtime.mutation.UpdatePendingEdges
+import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.privacy.MutationPrivacyEvaluator
-import entkt.runtime.privacy.PrivacyOperation
+import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
@@ -42,7 +42,7 @@ import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ValidationViolation
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
-import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ResolvedEntityValidationConfig
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -58,7 +58,11 @@ class UpdateMutationOperationTest {
         val name: String,
     ) : EntEntity.LongId
 
-    private data class State(val name: String) : PreparedUpdateState<Widget>
+    private data class Candidate(val name: String) : WriteCandidate<Widget>
+
+    private data class State(val name: String) : PreparedUpdateState<Widget> {
+        val candidate = Candidate(name)
+    }
 
     private data class PendingEdges(val description: String) : UpdatePendingEdges<Widget>
 
@@ -148,6 +152,8 @@ class UpdateMutationOperationTest {
         supportsOwnerEdgeSerialization: Boolean = false,
         supportsInsertIgnore: Boolean = false,
         supportsRelationshipSerialization: Boolean = false,
+        derivePrivacy: Boolean = false,
+        deriveValidation: Boolean = false,
     ) {
         val events = mutableListOf<String>()
         val driver = RecordingDriver(
@@ -174,6 +180,10 @@ class UpdateMutationOperationTest {
         )
         var privacyDecision: PrivacyDecision = PrivacyDecision.Allow
         var invalids: List<ValidationDecision.Invalid> = emptyList()
+        var createDecision: PrivacyDecision = PrivacyDecision.Allow
+        var createInvalids: List<ValidationDecision.Invalid> = emptyList()
+        val privacyFallbackCandidates = mutableListOf<Candidate>()
+        val validationAdditionalCandidates = mutableListOf<Candidate>()
         var loadDenial: PrivacyDenial? = null
         var relationshipAction: (State, UpdateWriteTracker) -> Unit = { _, _ -> }
         var afterAction: (Widget) -> Unit = {}
@@ -186,10 +196,17 @@ class UpdateMutationOperationTest {
             relationshipLocking = RelationshipLocking.OwnerOnly,
         )
 
-        val privacyEvaluator = MutationPrivacyEvaluator<Any, State>(
-            entity = mapping,
-            operation = PrivacyOperation.UPDATE,
-            rules = listOf(
+        val privacy = ResolvedEntityPrivacyConfig(
+            loadRules = emptyList<Nothing>(),
+            createRules = listOf(
+                batchPrivacyRule<Any, Candidate> { context, candidates ->
+                    assertSame(viewerContext, context.viewerContext)
+                    assertSame(ruleClient, context.client)
+                    privacyFallbackCandidates += candidates.toList()
+                    candidates.decideEach { createDecision }
+                },
+            ),
+            updateRules = listOf(
                 batchPrivacyRule<Any, State> { context, states ->
                     events += "privacy:${states.single().name}"
                     receivedContexts += context.viewerContext
@@ -197,17 +214,28 @@ class UpdateMutationOperationTest {
                     states.decideEach { privacyDecision }
                 },
             ),
+            deleteRules = emptyList<Nothing>(),
+            updateDerivesFromCreate = derivePrivacy,
+            deleteDerivesFromCreate = false,
         )
 
-        val validationEvaluator = MutationValidationEvaluator<Any, State>(
-            lifecycle = "Widget UPDATE validation",
-            rules = listOf(
+        val validation = ResolvedEntityValidationConfig(
+            createRules = listOf(
+                batchValidationRule<Any, Candidate> { context, candidates ->
+                    assertSame(ruleClient, context.client)
+                    validationAdditionalCandidates += candidates.toList()
+                    candidates.decideEach { createInvalids.firstOrNull() ?: ValidationDecision.Valid }
+                },
+            ),
+            updateRules = listOf(
                 batchValidationRule<Any, State> { context, states ->
                     events += "validation:${states.single().name}"
                     receivedClients += context.client
                     states.decideEach { invalids.firstOrNull() ?: ValidationDecision.Valid }
                 },
             ),
+            deleteRules = emptyList<Nothing>(),
+            updateDerivesFromCreate = deriveValidation,
         )
 
         val adapter = object :
@@ -270,11 +298,13 @@ class UpdateMutationOperationTest {
             }
         }
         val mutationExecutor = MutationExecutor(driver, mutationRuntime)
-        val operation = UpdateMutationOperation(
+        val operation = buildUpdateMutationOperation(
             entity = mapping,
             mutationRuntime = mutationRuntime,
-            privacyEvaluator = privacyEvaluator,
-            validationEvaluator = validationEvaluator,
+            privacy = privacy,
+            validation = validation,
+            ruleInput = { state: State -> state },
+            candidate = { it.candidate },
             adapter = adapter,
             hooks = UpdateMutationHooks(
                 converter = object :
@@ -336,6 +366,65 @@ class UpdateMutationOperationTest {
                     applyLoadPrivacy = applyLoadPrivacy,
                 ),
             )
+        }
+    }
+
+    @Test
+    fun `configured update falls back to create privacy only for unresolved input when enabled`() {
+        for (derives in listOf(false, true)) {
+            for (decision in listOf(PrivacyDecision.Allow, PrivacyDecision.Deny("denied"), PrivacyDecision.Continue)) {
+                val fixture = Fixture(derivePrivacy = derives)
+                fixture.privacyDecision = decision
+
+                val result = fixture.execute(applyLoadPrivacy = false)
+
+                val usesFallback = derives && decision == PrivacyDecision.Continue
+                if (decision == PrivacyDecision.Allow || usesFallback) {
+                    assertIs<MutationResult.Success<Widget>>(result)
+                } else {
+                    val failure = assertIs<EntMutationPrivacyDeniedException>(
+                        assertIs<MutationResult.Failed>(result).exception,
+                    )
+                    assertEquals(EntOperation.UPDATE, failure.operation)
+                    assertEquals(MutationWriteState.NotPersisted, failure.writeState)
+                }
+
+                if (usesFallback) {
+                    val prepared = assertIs<UpdatePreparation.Ready<State>>(fixture.preparation)
+                    assertSame(prepared.value.state.candidate, fixture.privacyFallbackCandidates.single())
+                } else {
+                    assertTrue(fixture.privacyFallbackCandidates.isEmpty())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `configured update independently appends create validation even after update violations`() {
+        for (derivePrivacy in listOf(false, true)) {
+            for (deriveValidation in listOf(false, true)) {
+                val fixture = Fixture(derivePrivacy = derivePrivacy, deriveValidation = deriveValidation)
+                fixture.invalids = listOf(ValidationDecision.Invalid("update violation"))
+                fixture.createInvalids = listOf(ValidationDecision.Invalid("create violation"))
+
+                val result = fixture.execute(applyLoadPrivacy = false)
+
+                val failure = assertIs<EntValidationException>(assertIs<MutationResult.Failed>(result).exception)
+                val expected = if (deriveValidation) {
+                    listOf("update violation", "create violation")
+                } else {
+                    listOf("update violation")
+                }
+
+                assertEquals(expected, failure.violations.map { it.message })
+                assertTrue(fixture.privacyFallbackCandidates.isEmpty())
+                if (deriveValidation) {
+                    val prepared = assertIs<UpdatePreparation.Ready<State>>(fixture.preparation)
+                    assertSame(prepared.value.state.candidate, fixture.validationAdditionalCandidates.single())
+                } else {
+                    assertTrue(fixture.validationAdditionalCandidates.isEmpty())
+                }
+            }
         }
     }
 

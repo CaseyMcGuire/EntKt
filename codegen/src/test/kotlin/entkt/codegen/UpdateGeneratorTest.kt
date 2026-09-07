@@ -808,8 +808,8 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         val input = "M2MPostUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )"
-        assert(Regex(Regex.escape(input)).findAll(output).count() == 2) {
-            "UPDATE privacy and validation should share prepared values\n$output"
+        assert(Regex(Regex.escape(input)).findAll(output).count() == 1) {
+            "UPDATE privacy and validation should share one conversion over prepared values\n$output"
         }
         assert(!output.contains("snapshotEdgeChangesForInternalUse(state.edgeChanges")) {
             "UPDATE rules should not recopy prepared edge changes\n$output"
@@ -1440,11 +1440,11 @@ class UpdateGeneratorTest {
             .replace("\\s+".toRegex(), " ")
 
         val occurrences = output.split("state.edgeChanges,").size - 1
-        assert(occurrences == 2) {
-            "Expected privacy and validation to receive the prepared edge changes, got $occurrences\n$output"
+        assert(occurrences == 1) {
+            "Expected one shared conversion with the prepared edge changes, got $occurrences\n$output"
         }
-        assert(Regex(Regex.escape("M2MPostUpdateRuleInput(")).findAll(output).count() == 2) {
-            "Both rule adapters should materialize the shared typed input from PreparedState\n$output"
+        assert(Regex(Regex.escape("M2MPostUpdateRuleInput(")).findAll(output).count() == 1) {
+            "Both evaluators should receive the same typed input conversion from PreparedState\n$output"
         }
         assert(!output.contains("updateDenialReasonOrNull") &&
             !output.contains("evaluateUpdateValidation")) {

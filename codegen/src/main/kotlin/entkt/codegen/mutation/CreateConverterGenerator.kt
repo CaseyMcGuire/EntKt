@@ -47,6 +47,7 @@ internal class CreateConverterGenerator(private val packageName: String) {
         val mutableEdgeFks = edgeFks.filterNot { it.immutable }
         val converterType = CREATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
             createDraftClass,
+            entityClass,
             beforeSaveStateClass,
             beforeCreateStateClass,
         )

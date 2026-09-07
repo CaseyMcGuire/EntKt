@@ -20,8 +20,7 @@ import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.privacy.MutationPrivacyEvaluator
-import entkt.runtime.privacy.PrivacyOperation
+import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EntInterceptorsConfig
 import entkt.runtime.query.ReadOperation
@@ -37,7 +36,7 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
-import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ResolvedEntityValidationConfig
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -150,6 +149,7 @@ class DeleteMutationOperationTest {
     private class Fixture(
         inTransaction: Boolean = false,
         idColumn: String = "id",
+        derivePrivacy: Boolean = false,
     ) {
         val events = mutableListOf<String>()
         val driver = RecordingDriver(events, inTransaction)
@@ -159,6 +159,8 @@ class DeleteMutationOperationTest {
         val failures = mutableListOf<EntMutationException>()
         var privacyDecisions: List<PrivacyDecision> = emptyList()
         var validationDecisions: List<List<ValidationDecision.Invalid>> = emptyList()
+        val convertedCandidates = mutableListOf<Candidate>()
+        val privacyFallbackCandidates = mutableListOf<Candidate>()
         var effectivePredicates: List<Predicate<Widget>> = emptyList()
         var readExecutionFailure: Exception? = null
         val receivedViewerContexts = mutableListOf<ViewerContext>()
@@ -194,20 +196,27 @@ class DeleteMutationOperationTest {
         val converter = object : DeleteMutationConverter<Widget, Candidate> {
             override fun toCandidate(entity: Widget): Candidate {
                 events += "candidate:${entity.id}"
-                return Candidate(entity.name)
+                val candidate = Candidate(entity.name)
+                convertedCandidates += candidate
+                return candidate
             }
         }
 
         val beforeDelete = listOf(ActionHook<Widget> { entity -> events += "before:${entity.id}" })
         val afterDelete = listOf(ActionHook<Widget> { entity -> events += "after:${entity.id}" })
 
-        val privacyEvaluator = MutationPrivacyEvaluator<
-            Any,
-            DeleteRuleCandidate<Widget, Candidate>,
-            >(
-            entity = mapping,
-            operation = PrivacyOperation.DELETE,
-            rules = listOf(
+        val privacy = ResolvedEntityPrivacyConfig(
+            loadRules = emptyList<Nothing>(),
+            createRules = listOf(
+                batchPrivacyRule<Any, Candidate> { context, candidates ->
+                    assertSame(viewerContext, context.viewerContext)
+                    assertSame(ruleClient, context.client)
+                    privacyFallbackCandidates += candidates.toList()
+                    candidates.decideEach { PrivacyDecision.Allow }
+                },
+            ),
+            updateRules = emptyList<Nothing>(),
+            deleteRules = listOf(
                 batchPrivacyRule<Any, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
                     events += "privacy:${batch.joinToString { it.entity.id.toString() }}"
                     receivedViewerContexts += context.viewerContext
@@ -217,14 +226,18 @@ class DeleteMutationOperationTest {
                     }
                 },
             ),
+            updateDerivesFromCreate = false,
+            deleteDerivesFromCreate = derivePrivacy,
         )
 
-        val validationEvaluator = MutationValidationEvaluator<
-            Any,
-            DeleteRuleCandidate<Widget, Candidate>,
-            >(
-            lifecycle = "Widget DELETE validation",
-            rules = listOf(
+        val validation = ResolvedEntityValidationConfig(
+            createRules = listOf(
+                batchValidationRule<Any, Candidate> { _, _ ->
+                    error("DELETE must not derive CREATE validation")
+                },
+            ),
+            updateRules = emptyList<Nothing>(),
+            deleteRules = listOf(
                 batchValidationRule<Any, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
                     events += "validation:${batch.joinToString { it.entity.id.toString() }}"
                     receivedRuleClients += context.client
@@ -234,6 +247,7 @@ class DeleteMutationOperationTest {
                     }
                 },
             ),
+            updateDerivesFromCreate = true,
         )
 
         val mutationRuntime = object : MutationRuntime {
@@ -259,20 +273,22 @@ class DeleteMutationOperationTest {
         fun scalarOperation(
             beforeDelete: List<BatchActionHook<Widget>> = this.beforeDelete,
             afterDelete: List<BatchActionHook<Widget>> = this.afterDelete,
-        ): DeleteMutationOperation<Any, Widget, Candidate> = DeleteMutationOperation(
+        ): DeleteMutationOperation<Any, Widget, Candidate> = buildDeleteMutationOperation(
             entity = mapping,
             converter = converter,
-            privacyEvaluator = privacyEvaluator,
-            validationEvaluator = validationEvaluator,
+            privacy = privacy,
+            validation = validation,
+            ruleInput = ::DeleteRuleCandidate,
             beforeDelete = beforeDelete,
             afterDelete = afterDelete,
         )
 
-        fun manyOperation(): DeleteManyMutationOperation<Any, Widget, Candidate> = DeleteManyMutationOperation(
+        fun manyOperation(): DeleteManyMutationOperation<Any, Widget, Candidate> = buildDeleteManyMutationOperation(
             entity = mapping,
             converter = converter,
-            privacyEvaluator = privacyEvaluator,
-            validationEvaluator = validationEvaluator,
+            privacy = privacy,
+            validation = validation,
+            ruleInput = ::DeleteRuleCandidate,
             readQueryExecutor = ReadQueryExecutor(driver, queryHost),
             beforeDelete = beforeDelete,
             afterDelete = afterDelete,
@@ -297,6 +313,39 @@ class DeleteMutationOperationTest {
             ruleClient = ruleClient,
             input = DeleteManyMutationInput(viewerContext, predicates),
         )
+    }
+
+    @Test
+    fun `configured scalar and bulk delete derive privacy only for unresolved candidates`() {
+        for (bulk in listOf(false, true)) {
+            for (derives in listOf(false, true)) {
+                val fixture = Fixture(inTransaction = bulk, derivePrivacy = derives)
+                fixture.privacyDecisions = if (bulk) {
+                    listOf(PrivacyDecision.Allow, PrivacyDecision.Continue)
+                } else {
+                    listOf(PrivacyDecision.Continue)
+                }
+
+                val result = if (bulk) {
+                    fixture.deleteMany(fixture.viewerContext, emptyList())
+                } else {
+                    fixture.deleteById(fixture.viewerContext, 1L)
+                }
+
+                if (derives) {
+                    val success = assertIs<MutationResult.Success<*>>(result)
+                    assertEquals(if (bulk) 2 else true, success.value)
+                    assertSame(fixture.convertedCandidates.last(), fixture.privacyFallbackCandidates.single())
+                } else {
+                    val failure = assertIs<EntMutationPrivacyDeniedException>(
+                        assertIs<MutationResult.Failed>(result).exception,
+                    )
+                    assertEquals(EntOperation.DELETE, failure.operation)
+                    assertEquals(MutationWriteState.NotPersisted, failure.writeState)
+                    assertTrue(fixture.privacyFallbackCandidates.isEmpty())
+                }
+            }
+        }
     }
 
     @Test

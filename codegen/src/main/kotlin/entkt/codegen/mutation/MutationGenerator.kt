@@ -22,6 +22,8 @@ import entkt.schema.EntSchema
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val BEFORE_SAVE_HOOK_STATE =
     ClassName("entkt.runtime.mutation", "BeforeSaveHookState")
+private val BEFORE_CREATE_HOOK_STATE =
+    ClassName("entkt.runtime.mutation", "BeforeCreateHookState")
 private val BEFORE_UPDATE_HOOK_STATE =
     ClassName("entkt.runtime.mutation", "BeforeUpdateHookState")
 
@@ -91,7 +93,7 @@ internal class MutationGenerator(
             ),
             stateFile(
                 stateClass = beforeCreateClass,
-                marker = null,
+                marker = BEFORE_CREATE_HOOK_STATE.parameterizedBy(entityClass),
                 context = listOf(
                     StateProperty("client", ClassName(packageName, "EntClientScope")),
                     StateProperty("viewerContext", VIEWER_CONTEXT),
@@ -117,12 +119,12 @@ internal class MutationGenerator(
 
     private fun stateFile(
         stateClass: ClassName,
-        marker: TypeName?,
+        marker: TypeName,
         context: List<StateProperty>,
         assignments: List<Assignment>,
     ): FileSpec {
         val stateType = classType(stateClass.simpleName) {
-            marker?.let(::addSuperinterface)
+            addSuperinterface(marker)
             primaryConstructor {
                 addAnnotation(ENTKT_INTERNAL)
                 context.forEach { parameter(it.name, it.type) }

@@ -10,6 +10,8 @@ import entkt.runtime.hook.BatchTransformingHook
 import entkt.runtime.hook.MutationBatch
 import entkt.runtime.hook.runActionHooks
 import entkt.runtime.hook.runTransformingHooks
+import entkt.runtime.mutation.BeforeCreateHookState
+import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.mutation.WriteCandidate
@@ -42,8 +44,8 @@ class CreateManyMutationOperation<
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
     Entity : EntEntity<*>,
-    BeforeSaveState,
-    BeforeCreateState,
+    BeforeSaveState : BeforeSaveHookState<Entity>,
+    BeforeCreateState : BeforeCreateHookState<Entity>,
     >(
     private val mutationRuntime: MutationRuntime,
     private val entity: EntityMapping<Entity>,
@@ -51,7 +53,7 @@ class CreateManyMutationOperation<
     private val privacyEvaluator: MutationPrivacyEvaluator<RuleClient, Candidate>,
     private val validationEvaluator: MutationValidationEvaluator<RuleClient, Candidate>,
     private val hookStateConverter:
-        CreateMutationHookStateConverter<Draft, BeforeSaveState, BeforeCreateState>,
+        CreateMutationHookStateConverter<Draft, Entity, BeforeSaveState, BeforeCreateState>,
     private val beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
     private val beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
     private val afterCreate: List<BatchActionHook<Entity>>,

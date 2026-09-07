@@ -1193,17 +1193,17 @@ class EdgeCodegenTest {
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
         assert(converter.contains("internal class PetCreateConverter"))
-        assert(converter.contains("CreateMutationHookStateConverter<PetCreateDraft, PetBeforeSaveState, PetBeforeCreateState>"))
+        assert(converter.contains("CreateMutationHookStateConverter<PetCreateDraft, Pet, PetBeforeSaveState, PetBeforeCreateState>"))
         assert(converter.contains("CreateMutationConverter<PetCreateDraft, PetWriteCandidate, Pet>"))
         assert(output.contains("private val createConverter: PetCreateConverter = PetCreateConverter(driver, client.hookClientScopeForInternalUse)")) {
             "the repo should construct its schema-specific converter\n$output"
         }
         assert(output.contains("converter = createConverter,") && output.contains("hookStateConverter = createConverter,"))
         assert(!output.contains("::requiredInputViolations") && !output.contains("::resolve") && !output.contains("fun resolve("))
-        assert(!output.contains("beforeSave =") && !output.contains("beforeCreate ="))
+        assert(output.contains("beforeSave = configuredHooks.beforeSave") && output.contains("beforeCreate = configuredHooks.beforeCreate"))
         assert(output.contains("CreateManyMutationOperation<ReadOnlyEntClient, PetCreateDraft, PetWriteCandidate, Pet, PetBeforeSaveState, PetBeforeCreateState>") &&
-            output.contains("privacyEvaluator = MutationPrivacyEvaluator(")) {
-            "rule evaluators should be injected directly into the runtime operation\n$output"
+            output.contains("buildCreateManyMutationOperation(")) {
+            "the runtime factory should construct the operation with its evaluators\n$output"
         }
         assert(!output.contains("MutationLifecycle"))
         assert(output.contains("CreateMutationOperation(createManyMutationOperation)"))
