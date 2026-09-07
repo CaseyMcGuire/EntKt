@@ -98,6 +98,16 @@ class CreateHookStateCompileTest {
         createTypes("SaveState", "OtherCreateState").forEach(::assertHookStateBoundFailure)
     }
 
+    @Test
+    fun `create preparation converter accepts only before-create state for its entity`() {
+        val valid = compileTypes(listOf("CreateMutationConverter<WidgetDraft, WidgetCandidate, Widget, CreateState>"))
+        assertEquals(KotlinCompilation.ExitCode.OK, valid.exitCode, valid.messages)
+
+        for (state in listOf("String", "SaveState", "OtherCreateState")) {
+            assertHookStateBoundFailure("CreateMutationConverter<WidgetDraft, WidgetCandidate, Widget, $state>")
+        }
+    }
+
     private fun assertHookStateBoundFailure(type: String) {
         val result = compileTypes(listOf(type))
 

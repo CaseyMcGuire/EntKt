@@ -9,18 +9,17 @@ import entkt.integrationtest.ent.Note
 import entkt.integrationtest.ent.NoteCreateConverter
 import entkt.integrationtest.ent.NoteCreateDraft
 import entkt.integrationtest.ent.NoteDeleteConverter
-import entkt.integrationtest.ent.Reminder
 import entkt.integrationtest.ent.ReminderCreateConverter
 import entkt.integrationtest.ent.ReminderCreateDraft
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
+import entkt.runtime.mutation.FieldPatch
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotSame
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -39,15 +38,13 @@ class MutationConverterTest {
         }
         val beforeSave = converter.toBeforeSaveState(original).setBody("edited")
         val beforeCreate = converter.toBeforeCreateState(viewerContext, original, beforeSave).setWriter(9L)
-        val preparation = converter.toPreparationDraft(original, beforeCreate)
 
         assertSame(viewerContext, beforeCreate.viewerContext)
         assertSame(client.hookClientScopeForInternalUse, beforeCreate.client)
-        assertNotSame(original, preparation)
         assertEquals("draft", original.body)
         assertEquals(7L, original.writer)
-        assertTrue(converter.requiredInputViolations(preparation).isEmpty())
-        val prepared = converter.resolve(preparation)
+        assertTrue(converter.requiredInputViolations(beforeCreate).isEmpty())
+        val prepared = converter.resolve(original, beforeCreate)
         assertEquals(mapOf("body" to "edited", "author_id" to 9L), prepared.values)
         assertEquals("edited", prepared.candidate.body)
         assertEquals(9L, prepared.candidate.writer)
@@ -60,13 +57,12 @@ class MutationConverterTest {
         val original = ReminderCreateDraft().apply { body = "reminder" }
         val state = converter.toBeforeCreateState(viewerContext, original, converter.toBeforeSaveState(original))
 
-        val unset = converter.toPreparationDraft(original, state)
-        val cleared = converter.toPreparationDraft(original, state.setAssigneeId(null))
+        val cleared = state.setAssigneeId(null)
 
-        assertFalse(unset.isSet(Reminder.assigneeId))
-        assertTrue(cleared.isSet(Reminder.assigneeId))
-        assertNull(cleared.assigneeId)
-        assertNull(converter.resolve(cleared).values["assignee_id"])
+        assertIs<FieldPatch.Unset>(state.assigneeId)
+        assertEquals(FieldPatch.Set(null), cleared.assigneeId)
+        assertNull(converter.resolve(original, state).values["assignee_id"])
+        assertNull(converter.resolve(original, cleared).values["assignee_id"])
     }
 
     @Test
@@ -87,8 +83,9 @@ class MutationConverterTest {
             payload = bytes
         }
 
-        assertTrue(converter.requiredInputViolations(draft).isEmpty())
-        val prepared = converter.resolve(draft)
+        val state = converter.toBeforeCreateState(viewerContext, draft, converter.toBeforeSaveState(draft))
+        assertTrue(converter.requiredInputViolations(state).isEmpty())
+        val prepared = converter.resolve(draft, state)
         bytes[0] = 9
 
         assertContentEquals(byteArrayOf(1, 2), prepared.candidate.payload)

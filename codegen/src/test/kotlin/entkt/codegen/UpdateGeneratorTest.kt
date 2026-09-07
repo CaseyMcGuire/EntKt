@@ -154,13 +154,13 @@ class UpdateGeneratorTest {
 
         val repo = RepoGenerator("com.example.ent").generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
-        assert(repo.contains("hookStateConverter = UserRepo.UpdateHookStateConverter(client)"))
+        assert(repo.contains("adapter = UserUpdateAdapter(driver, client.hookClientScopeForInternalUse)"))
         assert(
-            repo.contains(
+            output.contains(
                 "override fun toBeforeUpdateState( viewerContext: ViewerContext, before: User, pendingEdges: UserPendingEdgeOps, beforeSaveState: UserBeforeSaveState, ): UserBeforeUpdateState = UserBeforeUpdateState(",
             ),
         )
-        assert(repo.contains("name = beforeSaveState.name"))
+        assert(output.contains("name = beforeSaveState.name"))
 
         val checkCallSite = output.indexOf("val requiredViolations = requiredHookStateViolations(hookState)")
         val canonicalPatchPos = output.indexOf("val requestedPatch = buildRequestedPatch(hookState)")
@@ -294,15 +294,14 @@ class UpdateGeneratorTest {
     fun `beforeUpdate hooks receive immutable state converted from beforeSave state`() {
         val user = User()
         finalize(user, Car())
-        val output = RepoGenerator("com.example.ent").generate("User", user).toString()
+        val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("override fun toBeforeSaveState(draft: UserUpdateDraft): UserBeforeSaveState = draft._buildBeforeSaveState()"))
         assert(output.contains("override fun toBeforeUpdateState("))
         assert(output.contains("UserBeforeUpdateState("))
         assert(output.contains("name = beforeSaveState.name"))
-        val adapter = generator.generate("User", user).toString()
-        assert(adapter.contains("val requestedPatch = buildRequestedPatch(hookState)"))
+        assert(output.contains("val requestedPatch = buildRequestedPatch(hookState)"))
         assert(!output.contains("MutationView") && !output.contains("runFresh"))
     }
 
@@ -467,29 +466,33 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `adapter takes only the driver`() {
+    fun `adapter takes only the driver and hook client scope`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("internal class UserUpdateAdapter( private val driver: DatabaseDriver, )")) {
-            "The schema adapter should receive only its storage dependency\n$output"
+        assert(output.contains("internal class UserUpdateAdapter( private val driver: DatabaseDriver, private val client: EntClientScope, )")) {
+            "The schema adapter should receive its storage dependency and the scope exposed by hook states\n$output"
         }
         assert(!output.contains("configuredPrivacy") && !output.contains("configuredValidation") &&
             !output.contains("HookRunner") && !output.contains("UpdateHookStateConverter")) {
-            "Rule and hook wiring belongs to the repository, not the schema adapter\n$output"
+            "The adapter should only construct hook states, not wire or execute hooks and rules\n$output"
         }
     }
 
     @Test
-    fun `draft and adapter have no client dependency`() {
+    fun `draft stays client-free and adapter does not retain the full client`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(!output.contains("EntClient")) {
-            "The adapter should not retain a client to construct its own operation or hook converter\n$output"
+        val draft = output.substringAfter("class UserUpdateDraft").substringBefore("internal class UserUpdateAdapter")
+        assert(!draft.contains("EntClientScope") && !draft.contains("client:")) {
+            "Draft construction should not depend on a client\n$output"
+        }
+        assert(!Regex("\\bEntClient\\b").containsMatchIn(output)) {
+            "The adapter should retain only the hook client scope, not the full client\n$output"
         }
     }
 
@@ -847,7 +850,7 @@ class UpdateGeneratorTest {
     @Test
     fun `beforeUpdate hook state exposes pending edge snapshots but not edge mutators`() {
         val (post, tag, postTag, names) = makeLinkM2MSchemas()
-        val output = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
+        val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("M2MPostBeforeUpdateState("))
@@ -946,9 +949,9 @@ class UpdateGeneratorTest {
         }
         val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
-        assert(repo.contains("UpdateMutationHookStateConverter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostBeforeSaveState, M2MPostBeforeUpdateState>") &&
-            repo.contains("hookStateConverter = M2MPostRepo.UpdateHookStateConverter(client)")) {
-            "The runtime hook lifecycle should receive a typed schema-specific state converter\n$output"
+        assert(output.contains("UpdateMutationHookStateConverter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostBeforeSaveState, M2MPostBeforeUpdateState>") &&
+            repo.contains("adapter = M2MPostUpdateAdapter(driver, client.hookClientScopeForInternalUse)")) {
+            "One schema adapter should implement both runtime preparation and hook-state conversion contracts\n$output"
         }
         assert(!output.contains("beforeSaveValueFactory") && !output.contains("beforeUpdateValueFactory")) {
             "The update adapter should not wire hook inputs through callbacks\n$output"
@@ -967,9 +970,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
-            .replace("\\s+".toRegex(), " ")
-        assert(repo.contains("override fun toBeforeSaveState(draft: M2MPostUpdateDraft): M2MPostBeforeSaveState = draft._buildBeforeSaveState()"))
+        assert(output.contains("override fun toBeforeSaveState(draft: M2MPostUpdateDraft): M2MPostBeforeSaveState = draft._buildBeforeSaveState()"))
         val stateFunction = output.substring(
             output.indexOf("internal fun _buildBeforeSaveState"),
             output.indexOf("internal fun _buildPendingEdgeOps"),
@@ -984,7 +985,7 @@ class UpdateGeneratorTest {
         // change the hook surface.
         val user = User()
         finalize(user, Car())
-        val output = RepoGenerator("com.example.ent").generate("User", user).toString()
+        val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("override fun toBeforeSaveState(draft: UserUpdateDraft): UserBeforeSaveState = draft._buildBeforeSaveState()"))
@@ -1007,7 +1008,7 @@ class UpdateGeneratorTest {
     @Test
     fun `beforeUpdate state constructor receives pendingEdges`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
+        val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("M2MPostBeforeUpdateState("))
@@ -1017,7 +1018,7 @@ class UpdateGeneratorTest {
     @Test
     fun `beforeUpdate state receives the runtime-owned pending-edge snapshot`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
+        val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("pendingEdges = pendingEdges"))
@@ -1052,7 +1053,8 @@ class UpdateGeneratorTest {
             "the capture adapter should return the snapshot to runtime\n$output"
         }
         val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
-        assert(repo.contains("adapter = M2MPostUpdateAdapter(driver)")) {
+            .replace("\\s+".toRegex(), " ")
+        assert(repo.contains("adapter = M2MPostUpdateAdapter(driver, client.hookClientScopeForInternalUse)")) {
             "The repository should inject the typed adapter into the operation\n$repo"
         }
     }

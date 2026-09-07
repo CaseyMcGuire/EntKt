@@ -306,7 +306,7 @@ class RepoGeneratorTest {
         assert(output.contains("defaultUpdateConsistency = client.defaultUpdateConsistency"))
         assert(output.contains("defaultRelationshipLocking = client.defaultRelationshipLocking"))
         assert(output.contains("updateOperation = buildUpdateOperation("))
-        assert(Regex("adapter = CarUpdateAdapter\\(driver\\)").findAll(output).count() == 1)
+        assert(Regex(Regex.escape("CarUpdateAdapter(driver, client.hookClientScopeForInternalUse)")).findAll(output).count() == 1)
         assert(output.contains("buildUpdateOperation( entity = CarDescriptor, mutationRuntime = client, privacy = configuredPrivacy, validation = configuredValidation,"))
         assert(!output.contains("private val updateAdapter:") && !output.contains("updateAdapter.updateOperation"))
         assert(!output.contains("fun executeUpdate(") && !output.contains("mutationExecutor.execute(")) {
@@ -357,16 +357,19 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "hookStateConverter = UserRepo.UpdateHookStateConverter(client), beforeSave = configuredHooks.beforeSave, beforeUpdate = configuredHooks.beforeUpdate, afterUpdate = configuredHooks.afterUpdate,",
+                "adapter = UserUpdateAdapter(driver, client.hookClientScopeForInternalUse), beforeSave = configuredHooks.beforeSave, beforeUpdate = configuredHooks.beforeUpdate, afterUpdate = configuredHooks.afterUpdate,",
             ),
         ) {
-            "The repository should supply the converter and hook lists to the runtime factory\n$output"
+            "The repository should supply one combined adapter and hook lists to the runtime factory\n$output"
         }
         assert(!output.contains("UpdateMutationHooks(") && !output.contains("buildUpdateMutationOperation(")) {
             "The runtime factory should construct the hooks and UPDATE operation\n$output"
         }
-        assert(output.contains("private class UpdateHookStateConverter(")) {
-            "The repository should keep its schema-specific hook-state converter private\n$output"
+        assert(!output.contains("UpdateHookStateConverter") && !output.contains("hookStateConverter =")) {
+            "The repository should not generate or construct a separate update hook-state converter\n$output"
+        }
+        assert(!output.contains("fun toBeforeSaveState(") && !output.contains("fun toBeforeUpdateState(")) {
+            "Hook-state construction should belong to the schema adapter, not the repository\n$output"
         }
         assert(!output.contains("ValueFactory")) {
             "Generated update wiring should not use callback factories\n$output"

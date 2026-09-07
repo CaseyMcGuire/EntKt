@@ -55,7 +55,11 @@ class CreateMutationOperationTest {
 
     private data class BeforeSaveState(val value: String) : BeforeSaveHookState<Widget>
 
-    private data class BeforeCreateState(val value: String) : BeforeCreateHookState<Widget>
+    private data class BeforeCreateState(
+        val value: String,
+        val requiredViolations: List<ValidationViolation>,
+        val prepared: PreparedCreate<Candidate>,
+    ) : BeforeCreateHookState<Widget>
 
     private class RecordingMapping(
         private val events: MutableList<String>,
@@ -130,14 +134,20 @@ class CreateMutationOperationTest {
         var loadDenial: PrivacyDenial? = null
         var loadFailure: Exception? = null
         var beforeCreateAction: () -> Unit = {}
+        var beforeCreateTransform: (BeforeCreateState) -> BeforeCreateState = { it }
         var afterCreateAction: (Widget) -> Unit = {}
         val receivedViewerContexts = mutableListOf<ViewerContext>()
 
-        val converter = object : CreateMutationConverter<RecordingInput, Candidate, Widget> {
-            override fun requiredInputViolations(draft: RecordingInput): List<ValidationViolation> =
-                draft.requiredInputViolations()
+        val converter = object : CreateMutationConverter<RecordingInput, Candidate, Widget, BeforeCreateState> {
+            override fun requiredInputViolations(state: BeforeCreateState): List<ValidationViolation> {
+                events += "required-input"
+                return state.requiredViolations
+            }
 
-            override fun resolve(draft: RecordingInput): PreparedCreate<Candidate> = draft.resolve()
+            override fun resolve(originalDraft: RecordingInput, state: BeforeCreateState): PreparedCreate<Candidate> {
+                events += "prepare"
+                return state.prepared
+            }
 
             override fun fieldViolations(candidate: Candidate): List<ValidationViolation> {
                 events += "field-validation"
@@ -199,16 +209,6 @@ class CreateMutationOperationTest {
             events += "before-create-value"
             return "create"
         }
-
-        fun requiredInputViolations(): List<ValidationViolation> {
-            events += "required-input"
-            return requiredViolations
-        }
-
-        fun resolve(): PreparedCreate<Candidate> {
-            events += "prepare"
-            return prepared
-        }
     }
 
     @Test
@@ -249,6 +249,29 @@ class CreateMutationOperationTest {
             assertSame(fixture.viewerContext, it)
         }
         assertTrue(fixture.recordedFailures.isEmpty())
+    }
+
+    @Test
+    fun `preparation validates and resolves the final hook state without changing the draft`() {
+        val fixture = fixture()
+        val originalPrepared = fixture.input.prepared
+        fixture.input.requiredViolations = listOf(ValidationViolation("name is required", field = "name"))
+        fixture.spec.beforeCreateTransform = { state ->
+            state.copy(
+                requiredViolations = emptyList(),
+                prepared = PreparedCreate(
+                    values = mapOf("name" to "Grace"),
+                    candidate = Candidate("Grace"),
+                ),
+            )
+        }
+
+        val result = fixture.create(fixture.viewerContext, fixture.input, checkReturnedEntityPrivacy = true)
+
+        assertEquals(MutationResult.Success(Widget(1, "Grace")), result)
+        assertEquals(mapOf("name" to "Grace"), fixture.driver.insertedValues)
+        assertSame(originalPrepared, fixture.input.prepared)
+        assertEquals("name", fixture.input.requiredViolations.single().field)
     }
 
     @Test
@@ -512,6 +535,22 @@ class CreateMutationOperationTest {
     }
 
     @Test
+    fun `createMany rejects later missing input before resolving any hook state`() {
+        val fixture = fixture(inTransaction = true)
+        val invalidInput = RecordingInput(fixture.events).apply {
+            requiredViolations = listOf(ValidationViolation("name is required", field = "name"))
+        }
+
+        val result = fixture.createMany(fixture.viewerContext, listOf(fixture.input, invalidInput))
+
+        val failure = assertIs<EntValidationException>(assertIs<MutationResult.Failed>(result).exception)
+        assertEquals("name", failure.violations.single().field)
+        assertEquals(2, fixture.events.count { it == "required-input" })
+        assertFalse("prepare" in fixture.events)
+        assertFalse("insert-many" in fixture.events)
+    }
+
+    @Test
     fun `createMany reports a before hook failure before preparation and persistence`() {
         val fixture = fixture(inTransaction = true)
         val callbackFailure = IllegalArgumentException("before create failed")
@@ -763,7 +802,7 @@ class CreateMutationOperationTest {
         }
         val mutationExecutor = MutationExecutor(driver, mutationRuntime)
         val converter = object :
-            CreateMutationConverter<RecordingInput, Candidate, Widget> by spec.converter,
+            CreateMutationConverter<RecordingInput, Candidate, Widget, BeforeCreateState> by spec.converter,
             CreateMutationHookStateConverter<RecordingInput, Widget, BeforeSaveState, BeforeCreateState> {
             override fun toBeforeSaveState(draft: RecordingInput): BeforeSaveState =
                 BeforeSaveState(draft.beforeSaveHookValue())
@@ -772,12 +811,11 @@ class CreateMutationOperationTest {
                 viewerContext: ViewerContext,
                 draft: RecordingInput,
                 beforeSaveState: BeforeSaveState,
-            ): BeforeCreateState = BeforeCreateState(draft.beforeCreateHookValue())
-
-            override fun toPreparationDraft(
-                originalDraft: RecordingInput,
-                state: BeforeCreateState,
-            ): RecordingInput = originalDraft
+            ): BeforeCreateState = BeforeCreateState(
+                value = draft.beforeCreateHookValue(),
+                requiredViolations = draft.requiredViolations,
+                prepared = draft.prepared,
+            )
         }
         val operations = buildCreateOperations(
             entity = mapping,
@@ -795,7 +833,7 @@ class CreateMutationOperationTest {
                 TransformingHook { value: BeforeCreateState ->
                     events += "before-create:${value.value}"
                     spec.beforeCreateAction()
-                    value
+                    spec.beforeCreateTransform(value)
                 },
             ),
             afterCreate = listOf(

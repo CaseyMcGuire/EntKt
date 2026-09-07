@@ -89,11 +89,11 @@ class CreateGeneratorTest {
 
         assertTrue(
             requiredInputValidation.contains(
-                "if (draft.name == null) return listOf(entkt.runtime.result.ValidationViolation(\"name is required\", field = \"name\"))",
+                "if (state.name.entkt.runtime.mutation.orElse(null) == null) return listOf(entkt.runtime.result.ValidationViolation(\"name is required\", field = \"name\"))",
             ),
             requiredInputValidation,
         )
-        assertTrue(output.contains("val _entktValueName = checkNotNull(this.name)"), output)
+        assertTrue(output.contains("val _entktValueName = checkNotNull(state.name.entkt.runtime.mutation.orElse(null))"), output)
         assertTrue(!output.contains("\"name is required\", field = \"name\""), output)
         assertTrue(!output.contains("ValidationViolation"), output)
         assertTrue(!output.contains("CreatePreparation"), output)
@@ -120,7 +120,7 @@ class CreateGeneratorTest {
 
         assertTrue(
             output.contains(
-                "val _entktValueActive = if (isSet(com.example.ent.User.active)) checkNotNull(this.active)",
+                "val _entktValueActive = if (state.active is entkt.runtime.mutation.FieldPatch.Set) checkNotNull(state.active.value)",
             ),
             output,
         )
@@ -164,7 +164,7 @@ class CreateGeneratorTest {
         assertTrue(draft.contains("class SessionCreateDraft @EntktInternal constructor("), draft)
         assertTrue(draft.contains("@property:EntktInternal"), draft)
         assertTrue(draft.contains("internal val id: String,"), draft)
-        assertTrue(resolver.contains("\"id\" to id"), resolver)
+        assertTrue(resolver.contains("\"id\" to originalDraft.id"), resolver)
     }
 
     private fun resolve(schemaName: String, schema: EntSchema): String =

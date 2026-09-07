@@ -50,7 +50,7 @@ fun <
     beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
     afterCreate: List<BatchActionHook<Entity>>,
 ): CreateMutationOperations<RuleClient, Draft, Entity>
-    where Converter : CreateMutationConverter<Draft, Candidate, Entity>,
+    where Converter : CreateMutationConverter<Draft, Candidate, Entity, BeforeCreateState>,
           Converter : CreateMutationHookStateConverter<Draft, Entity, BeforeSaveState, BeforeCreateState> {
     val many = buildCreateManyMutationOperation(
         entity = entity,
@@ -81,7 +81,7 @@ fun <
 > buildCreateManyMutationOperation(
     entity: EntityMapping<Entity>,
     mutationRuntime: MutationRuntime,
-    converter: CreateMutationConverter<Draft, Candidate, Entity>,
+    converter: CreateMutationConverter<Draft, Candidate, Entity, BeforeCreateState>,
     privacy: ResolvedEntityPrivacyConfig<*, BatchPrivacyRule<RuleClient, Candidate>, *, *>,
     validation: ResolvedEntityValidationConfig<BatchValidationRule<RuleClient, Candidate>, *, *>,
     hookStateConverter: CreateMutationHookStateConverter<Draft, Entity, BeforeSaveState, BeforeCreateState>,
@@ -113,7 +113,7 @@ fun <
     )
 }
 
-/** Bind UPDATE policy and hooks without exposing lifecycle types on the repository. */
+/** Bind UPDATE policy and hooks with one adapter serving preparation and hook conversion. */
 @EntktInternal
 fun <
     RuleClient : EntRuleClient,
@@ -125,6 +125,7 @@ fun <
     BeforeSaveState : BeforeSaveHookState<Entity>,
     BeforeUpdateState : BeforeUpdateHookState<Entity>,
     RuleInput,
+    Adapter,
 > buildUpdateOperation(
     entity: EntityMapping<Entity>,
     mutationRuntime: MutationRuntime,
@@ -135,13 +136,13 @@ fun <
         BatchValidationRule<RuleClient, Candidate>, BatchValidationRule<RuleClient, RuleInput>, *,
     >,
     ruleInput: (State) -> RuleInput,
-    adapter: UpdateMutationAdapter<Draft, Entity, PendingEdges, State, Candidate, BeforeUpdateState>,
-    hookStateConverter:
-        UpdateMutationHookStateConverter<Draft, Entity, PendingEdges, BeforeSaveState, BeforeUpdateState>,
+    adapter: Adapter,
     beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
     beforeUpdate: List<BatchTransformingHook<BeforeUpdateState>>,
     afterUpdate: List<BatchActionHook<Entity>>,
-): MutationOperation<RuleClient, UpdateMutationInput<Draft>, Entity> {
+): MutationOperation<RuleClient, UpdateMutationInput<Draft>, Entity>
+    where Adapter : UpdateMutationAdapter<Draft, Entity, PendingEdges, State, Candidate, BeforeUpdateState>,
+          Adapter : UpdateMutationHookStateConverter<Draft, Entity, PendingEdges, BeforeSaveState, BeforeUpdateState> {
     val updateRuleInput = { prepared: PreparedUpdate<State, Candidate> -> ruleInput(prepared.state) }
 
     val privacyEvaluator = MutationPrivacyEvaluator(
@@ -166,7 +167,7 @@ fun <
     )
 
     val hooks = UpdateMutationHooks(
-        converter = hookStateConverter,
+        converter = adapter,
         beforeSave = beforeSave,
         beforeUpdate = beforeUpdate,
         afterUpdate = afterUpdate,

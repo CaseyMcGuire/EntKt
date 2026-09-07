@@ -12,9 +12,7 @@ import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
-import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.computeEdgeFks
-import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.schema.EntSchema
@@ -55,7 +53,12 @@ internal class CreateConverterGenerator(private val packageName: String) {
             addModifiers(KModifier.INTERNAL)
             addAnnotation(ENTKT_INTERNAL)
             addSuperinterface(converterType)
-            addSuperinterface(CREATE_MUTATION_CONVERTER.parameterizedBy(createDraftClass, candidateClass, entityClass))
+            addSuperinterface(CREATE_MUTATION_CONVERTER.parameterizedBy(
+                createDraftClass,
+                candidateClass,
+                entityClass,
+                beforeCreateStateClass,
+            ))
             primaryConstructor {
                 parameter("driver", DRIVER)
                 parameter("client", clientScopeClass)
@@ -143,29 +146,6 @@ internal class CreateConverterGenerator(private val packageName: String) {
                     unindent()
                     add(")\n")
                 })
-            }
-            function("toPreparationDraft", createDraftClass) {
-                addModifiers(KModifier.OVERRIDE)
-                parameter("originalDraft", createDraftClass)
-                parameter("state", beforeCreateStateClass)
-                if (idStrategyName(schema) == "EXPLICIT") {
-                    statement("val draft = %T(originalDraft.id)", createDraftClass)
-                } else {
-                    statement("val draft = %T()", createDraftClass)
-                }
-                (fields.map { it.apiName } + edgeFks.map { it.propertyName }).forEach { property ->
-                    addCode(
-                        "when (val entry = state.%L) {\n" +
-                            "  %T.Unset -> Unit\n" +
-                            "  is %T.Set -> draft.%L = entry.value\n" +
-                            "}\n",
-                        property,
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                        property,
-                    )
-                }
-                statement("return draft")
             }
             val createGenerator = CreateGenerator(packageName)
             addFunction(createGenerator.buildRequiredInputViolationsFunction(schemaName, schema, schemaNames))

@@ -10,6 +10,7 @@ import entkt.runtime.mutation.FieldPatch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertSame
 
 /** End-to-end coverage for immutable update-hook state transformations. */
 class UpdateHookStateIntegrationTest : PostgresTestBase() {
@@ -132,6 +133,50 @@ class UpdateHookStateIntegrationTest : PostgresTestBase() {
         }.saveAndLoad(testViewerContext).getOrThrow()
 
         assertEquals("Original", current.title)
+    }
+
+    @Test
+    fun `combined adapter carries beforeSave changes and the transaction scope into beforeUpdate`() {
+        var replacementAuthor: User? = null
+        var captured: ArticleBeforeUpdateState? = null
+        val client = EntClient(driver) {
+            hooks {
+                articles {
+                    beforeSave { state ->
+                        val author = replacementAuthor
+                        if (author == null) state
+                        else state.setTitle("before save").setAuthorId(author.id)
+                    }
+                    beforeUpdate { state ->
+                        captured = state
+                        assertSame(testViewerContext, state.viewerContext)
+                        val author = checkNotNull(replacementAuthor)
+                        val loaded = state.client.users.findById(state.viewerContext, author.id).getOrThrow()
+                        assertEquals(author.id, loaded?.id)
+                        state.setTitle("before update")
+                    }
+                }
+            }
+        }
+        val (_, article) = seedArticle(client)
+        val author = client.users.create {
+            name = "Bob"
+            email = "bob@example.com"
+        }.saveAndLoad(testViewerContext).getOrThrow()
+        replacementAuthor = author
+
+        val updated = client.withTransaction { tx ->
+            tx.articles.update(article.id) {
+                title = "caller"
+            }.saveAndLoad(testViewerContext).orRollback()
+        }.getOrThrow()
+
+        val state = checkNotNull(captured)
+        assertEquals(FieldPatch.Set<String?>("before save"), state.title)
+        assertEquals(FieldPatch.Set<Long?>(author.id), state.authorId)
+        assertEquals("Original", state.before.title)
+        assertEquals("before update", updated.title)
+        assertEquals(author.id, updated.authorId)
     }
 
     @Test

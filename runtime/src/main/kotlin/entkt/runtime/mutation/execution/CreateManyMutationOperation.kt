@@ -34,7 +34,7 @@ import java.util.concurrent.CancellationException
 /**
  * Executes the ordered-batch CREATE algorithm using schema-specific converters.
  *
- * A create runs before hooks, validates required inputs, resolves every draft,
+ * A create runs before hooks, validates required inputs, resolves the final hook states,
  * validates resolved fields, evaluates CREATE privacy, evaluates CREATE
  * validation, persists the rows, runs after hooks, and then applies
  * returned-entity LOAD privacy when the terminal exposes entities.
@@ -50,7 +50,7 @@ class CreateManyMutationOperation<
     >(
     private val mutationRuntime: MutationRuntime,
     private val entity: EntityMapping<Entity>,
-    private val converter: CreateMutationConverter<Draft, Candidate, Entity>,
+    private val converter: CreateMutationConverter<Draft, Candidate, Entity, BeforeCreateState>,
     private val privacyEvaluator: MutationPrivacyEvaluator<RuleClient, Candidate>,
     private val validationEvaluator: MutationValidationEvaluator<RuleClient, Candidate>,
     private val hookStateConverter:
@@ -135,16 +135,15 @@ class CreateManyMutationOperation<
             states = beforeCreateStates,
             hooks = beforeCreate,
         )
-        val preparationDrafts = finalHookStates.mapIndexed { index, state ->
-            hookStateConverter.toPreparationDraft(drafts[index], state)
-        }
 
         rejectRequiredInputViolations(
             attempt = attempt,
-            drafts = preparationDrafts,
+            states = finalHookStates,
             entityName = entityName,
         )
-        val resolvedCreates = preparationDrafts.map(converter::resolve)
+        val resolvedCreates = finalHookStates.mapIndexed { index, state ->
+            converter.resolve(drafts[index], state)
+        }
         rejectFieldViolations(
             attempt = attempt,
             entityName = entityName,
@@ -178,11 +177,11 @@ class CreateManyMutationOperation<
     /** Reject missing required inputs before resolution evaluates defaults. */
     private fun rejectRequiredInputViolations(
         attempt: MutationExecution,
-        drafts: List<Draft>,
+        states: List<BeforeCreateState>,
         entityName: String,
     ) {
-        drafts.firstNotNullOfOrNull { draft ->
-            converter.requiredInputViolations(draft).takeIf { it.isNotEmpty() }
+        states.firstNotNullOfOrNull { state ->
+            converter.requiredInputViolations(state).takeIf { it.isNotEmpty() }
         }?.let { violations ->
             attempt.reject(
                 EntValidationException(

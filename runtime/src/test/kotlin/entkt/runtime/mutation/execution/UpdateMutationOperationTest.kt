@@ -237,8 +237,24 @@ class UpdateMutationOperationTest {
             updateDerivesFromCreate = deriveValidation,
         )
 
-        val adapter = object :
-            UpdateMutationAdapter<Draft, Widget, PendingEdges, State, Candidate, BeforeUpdateState> {
+        private val adapter = object :
+            UpdateMutationAdapter<Draft, Widget, PendingEdges, State, Candidate, BeforeUpdateState>,
+            UpdateMutationHookStateConverter<Draft, Widget, PendingEdges, BeforeSaveState, BeforeUpdateState> {
+            override fun toBeforeSaveState(draft: Draft): BeforeSaveState =
+                BeforeSaveState("before-save:before")
+
+            override fun toBeforeUpdateState(
+                viewerContext: ViewerContext,
+                before: Widget,
+                pendingEdges: PendingEdges,
+                beforeSaveState: BeforeSaveState,
+            ): BeforeUpdateState {
+                receivedContexts += viewerContext
+                return BeforeUpdateState(
+                    "before:${before.name}:${pendingEdges.description}",
+                )
+            }
+
             override fun relationshipRequirements(draft: Draft): UpdateRelationshipRequirements =
                 currentRelationshipRequirements
 
@@ -304,29 +320,6 @@ class UpdateMutationOperationTest {
             validation = validation,
             ruleInput = { state: State -> state },
             adapter = adapter,
-            hookStateConverter = object :
-                UpdateMutationHookStateConverter<
-                    Draft,
-                    Widget,
-                    PendingEdges,
-                    BeforeSaveState,
-                    BeforeUpdateState,
-                > {
-                override fun toBeforeSaveState(draft: Draft): BeforeSaveState =
-                    BeforeSaveState("before-save:before")
-
-                override fun toBeforeUpdateState(
-                    viewerContext: ViewerContext,
-                    before: Widget,
-                    pendingEdges: PendingEdges,
-                    beforeSaveState: BeforeSaveState,
-                ): BeforeUpdateState {
-                    receivedContexts += viewerContext
-                    return BeforeUpdateState(
-                        "before:${before.name}:${pendingEdges.description}",
-                    )
-                }
-            },
             beforeSave = listOf(
                 TransformingHook { value: BeforeSaveState ->
                     events += value.description

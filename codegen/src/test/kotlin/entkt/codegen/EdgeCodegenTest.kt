@@ -1194,19 +1194,17 @@ class EdgeCodegenTest {
             .replace("\\s+".toRegex(), " ")
         assert(converter.contains("internal class PetCreateConverter"))
         assert(converter.contains("CreateMutationHookStateConverter<PetCreateDraft, Pet, PetBeforeSaveState, PetBeforeCreateState>"))
-        assert(converter.contains("CreateMutationConverter<PetCreateDraft, PetWriteCandidate, Pet>"))
-        assert(output.contains("private val createConverter: PetCreateConverter = PetCreateConverter(driver, client.hookClientScopeForInternalUse)")) {
+        assert(converter.contains("CreateMutationConverter<PetCreateDraft, PetWriteCandidate, Pet, PetBeforeCreateState>"))
+        assert(output.contains("converter = PetCreateConverter(driver, client.hookClientScopeForInternalUse)")) {
             "the repo should construct its schema-specific converter\n$output"
         }
-        assert(output.contains("converter = createConverter,") && output.contains("hookStateConverter = createConverter,"))
+        assert(!converter.contains("toPreparationDraft") && !converter.contains("PetCreateDraft()"))
         assert(!output.contains("::requiredInputViolations") && !output.contains("::resolve") && !output.contains("fun resolve("))
         assert(output.contains("beforeSave = configuredHooks.beforeSave") && output.contains("beforeCreate = configuredHooks.beforeCreate"))
-        assert(output.contains("CreateManyMutationOperation<ReadOnlyEntClient, PetCreateDraft, PetWriteCandidate, Pet, PetBeforeSaveState, PetBeforeCreateState>") &&
-            output.contains("buildCreateManyMutationOperation(")) {
+        assert(output.contains("createOperations = buildCreateOperations(")) {
             "the runtime factory should construct the operation with its evaluators\n$output"
         }
         assert(!output.contains("MutationLifecycle"))
-        assert(output.contains("CreateMutationOperation(createManyOperation)"))
         assert(!output.contains("CreateMutationSpec") && !output.contains("private class CreateHookStateConverter")) {
             "CREATE should not call back into repository-owned conversion methods\n$output"
         }
@@ -1246,7 +1244,7 @@ class EdgeCodegenTest {
 
         // Save body reads staging directly so unset falls back to the
         // default instead of throwing via the public non-null getter.
-        assert(output.contains("if (isSet(com.example.ent.RequiredFkWithDefaultChild.ownerId)) checkNotNull(this.ownerId)")) {
+        assert(output.contains("if (state.ownerId is entkt.runtime.mutation.FieldPatch.Set) checkNotNull(state.ownerId.value)")) {
             "Required field-backed FK should distinguish explicit assignment from omission\n$output"
         }
         assert(output.contains("else 42")) { output }
@@ -1270,7 +1268,7 @@ class EdgeCodegenTest {
         assert(draftOutput.contains("assignedFields.mark(NullableFkWithDefaultChild.ownerId)")) {
             "The canonical column token should record every write, including null\n$draftOutput"
         }
-        assert(output.contains("if (isSet(com.example.ent.NullableFkWithDefaultChild.ownerId)) this.ownerId else 42")) {
+        assert(output.contains("if (state.ownerId is entkt.runtime.mutation.FieldPatch.Set) state.ownerId.value else 42")) {
             "Resolution should consult assignment state, not value shape\n$output"
         }
     }
@@ -1319,7 +1317,7 @@ class EdgeCodegenTest {
         // typed mutation result.
         assert(
             output.contains(
-                "if (draft.ownerId == null) return listOf(entkt.runtime.result.ValidationViolation(\"ownerId is required\", field = \"ownerId\"))",
+                "if (state.ownerId.entkt.runtime.mutation.orElse(null) == null) return listOf(entkt.runtime.result.ValidationViolation(\"ownerId is required\", field = \"ownerId\"))",
             ),
         ) {
             "Required FK without default should fail required-input validation\n$output"

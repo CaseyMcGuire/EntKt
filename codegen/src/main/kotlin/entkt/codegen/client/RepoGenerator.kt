@@ -12,9 +12,7 @@ import com.squareup.kotlinpoet.NameAllocator
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
-import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
-import entkt.codegen.apiName
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
@@ -25,15 +23,10 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
-import entkt.codegen.metadata.EdgeFk
-import entkt.codegen.metadata.VIEWER_CONTEXT
-import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.idStrategyName
-import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
-import entkt.schema.Field
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENT_CLIENT_NAME = "EntClient"
@@ -45,8 +38,6 @@ private val BUILD_DELETE_MUTATION_OPERATION =
     MemberName("entkt.runtime.mutation.execution", "buildDeleteMutationOperation")
 private val BUILD_DELETE_MANY_MUTATION_OPERATION =
     MemberName("entkt.runtime.mutation.execution", "buildDeleteManyMutationOperation")
-private val UPDATE_MUTATION_HOOK_STATE_CONVERTER =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationHookStateConverter")
 private val GENERATED_ID_REPOSITORY = ClassName("entkt.runtime.repository", "GeneratedIdRepository")
 private val EXPLICIT_ID_REPOSITORY = ClassName("entkt.runtime.repository", "ExplicitIdRepository")
 private val TRANSACTION_SCOPE = ClassName("entkt.runtime.result", "TransactionScope")
@@ -78,7 +69,6 @@ internal class RepoGenerator(
         val entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor")
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val indexesClass = ClassName(packageName, "${schemaName}Indexes")
-        val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
         val entityHooksType = resolvedEntityHooksType(packageName, schemaName)
         val privacyConfigType = resolvedEntityPrivacyConfigType(packageName, schemaName)
         val validationConfigType = resolvedEntityValidationConfigType(packageName, schemaName)
@@ -161,18 +151,6 @@ internal class RepoGenerator(
                 }
             }
             addFunction(buildWithTransaction(repositoryBase, schemaName, schema.clientName))
-            addType(
-                buildHookStateConverterType(
-                    draftClass = updateDraftClass,
-                    entityClass = entityClass,
-                    beforeSaveStateClass = beforeSaveStateClass,
-                    beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState"),
-                    clientClass = clientClass,
-                    pendingEdgeOpsClass = ClassName(packageName, "${schemaName}PendingEdgeOps"),
-                    mutableFields = scalarFields(schema).filterNot { it.immutable },
-                    edgeFks = computeEdgeFks(schema, schemaNames).filterNot { it.immutable },
-                ),
-            )
         }
 
         // The repo class implements the `@EntktInternal`-guarded
@@ -210,8 +188,7 @@ internal class RepoGenerator(
             add(")\n")
             unindent()
             add("},\n")
-            add("adapter = %T(driver),\n", adapterClass)
-            add("hookStateConverter = %T(client),\n", ClassName(packageName, "${schemaName}Repo").nestedClass("UpdateHookStateConverter"))
+            add("adapter = %T(driver, client.hookClientScopeForInternalUse),\n", adapterClass)
             add("beforeSave = configuredHooks.beforeSave,\n")
             add("beforeUpdate = configuredHooks.beforeUpdate,\n")
             add("afterUpdate = configuredHooks.afterUpdate,\n")
@@ -236,64 +213,6 @@ internal class RepoGenerator(
         add("afterDelete = configuredHooks.afterDelete,\n")
         unindent()
         add(")")
-    }
-
-    private fun buildHookStateConverterType(
-        draftClass: ClassName,
-        entityClass: ClassName,
-        beforeSaveStateClass: ClassName,
-        beforeUpdateStateClass: ClassName,
-        clientClass: ClassName,
-        pendingEdgeOpsClass: ClassName,
-        mutableFields: List<Field>,
-        edgeFks: List<EdgeFk>,
-    ): TypeSpec {
-        val converterType = UPDATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
-            draftClass,
-            entityClass,
-            pendingEdgeOpsClass,
-            beforeSaveStateClass,
-            beforeUpdateStateClass,
-        )
-        return classType("UpdateHookStateConverter") {
-            addModifiers(KModifier.PRIVATE)
-            addSuperinterface(converterType)
-            primaryConstructor {
-                parameter("client", clientClass)
-            }
-            property("client", clientClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("client")
-            }
-            function("toBeforeSaveState", beforeSaveStateClass) {
-                addModifiers(KModifier.OVERRIDE)
-                parameter("draft", draftClass)
-                statement("return draft._buildBeforeSaveState()")
-            }
-            function("toBeforeUpdateState", beforeUpdateStateClass) {
-                addModifiers(KModifier.OVERRIDE)
-                parameter("viewerContext", VIEWER_CONTEXT)
-                parameter("before", entityClass)
-                parameter("pendingEdges", pendingEdgeOpsClass)
-                parameter("beforeSaveState", beforeSaveStateClass)
-                addCode(codeBlock {
-                    add("return %T(\n", beforeUpdateStateClass)
-                    indent()
-                    add("client = client.hookClientScopeForInternalUse,\n")
-                    add("viewerContext = viewerContext,\n")
-                    add("before = before,\n")
-                    add("pendingEdges = pendingEdges,\n")
-                    mutableFields.forEach { field ->
-                        add("%L = beforeSaveState.%L,\n", field.apiName, field.apiName)
-                    }
-                    edgeFks.forEach { fk ->
-                        add("%L = beforeSaveState.%L,\n", fk.propertyName, fk.propertyName)
-                    }
-                    unindent()
-                    add(")\n")
-                })
-            }
-        }
     }
 
     /** One schema-specific transaction lookup shared by all inherited bulk terminals. */

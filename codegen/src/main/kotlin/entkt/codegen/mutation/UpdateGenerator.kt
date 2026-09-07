@@ -17,6 +17,7 @@ import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
+import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
@@ -52,6 +53,8 @@ private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP_CLASS = ClassName("entkt.query", "Op")
 private val UPDATE_MUTATION_ADAPTER =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationAdapter")
+private val UPDATE_MUTATION_HOOK_STATE_CONVERTER =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationHookStateConverter")
 
 
 internal class UpdateGenerator(
@@ -80,7 +83,9 @@ internal class UpdateGenerator(
         val draftClass = ClassName(packageName, className)
         val adapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
         val preparedStateClass = adapterClass.nestedClass("PreparedState")
+        val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
         val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
+        val clientScopeClass = ClassName(packageName, "EntClientScope")
 
         // Helper-eligible link-table M2M edges. Each gets a nested mutator
         // class on the update draft. Before-update hook states expose the
@@ -154,11 +159,31 @@ internal class UpdateGenerator(
             )
             primaryConstructor {
                 parameter("driver", DRIVER)
+                parameter("client", clientScopeClass)
             }
             property("driver", DRIVER) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("driver")
             }
+            property("client", clientScopeClass) {
+                addModifiers(KModifier.PRIVATE)
+                initializer("client")
+            }
+            addSuperinterface(
+                UPDATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
+                    draftClass,
+                    entityClass,
+                    pendingEdgeOpsClass,
+                    beforeSaveStateClass,
+                    beforeUpdateStateClass,
+                ),
+            )
+            function("toBeforeSaveState", beforeSaveStateClass) {
+                addModifiers(KModifier.OVERRIDE)
+                parameter("draft", draftClass)
+                statement("return draft._buildBeforeSaveState()")
+            }
+            addFunction(buildToBeforeUpdateStateFunction(schemaName, mutableFields, edgeFks))
             addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
             saveArtifacts.functions.forEach(::addFunction)
             addType(saveArtifacts.preparedStateType)
@@ -168,6 +193,37 @@ internal class UpdateGenerator(
             addAnnotation(entktInternalFileOptIn())
             addType(draftType)
             addType(adapterType)
+        }
+    }
+
+    private fun buildToBeforeUpdateStateFunction(
+        schemaName: String,
+        mutableFields: List<Field>,
+        edgeFks: List<EdgeFk>,
+    ): FunSpec {
+        val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
+        return function("toBeforeUpdateState", beforeUpdateStateClass) {
+            addModifiers(KModifier.OVERRIDE)
+            parameter("viewerContext", VIEWER_CONTEXT)
+            parameter("before", ClassName(packageName, schemaName))
+            parameter("pendingEdges", ClassName(packageName, "${schemaName}PendingEdgeOps"))
+            parameter("beforeSaveState", ClassName(packageName, "${schemaName}BeforeSaveState"))
+            addCode(codeBlock {
+                add("return %T(\n", beforeUpdateStateClass)
+                indent()
+                add("client = client,\n")
+                add("viewerContext = viewerContext,\n")
+                add("before = before,\n")
+                add("pendingEdges = pendingEdges,\n")
+                mutableFields.forEach { field ->
+                    add("%L = beforeSaveState.%L,\n", field.apiName, field.apiName)
+                }
+                edgeFks.forEach { fk ->
+                    add("%L = beforeSaveState.%L,\n", fk.propertyName, fk.propertyName)
+                }
+                unindent()
+                add(")\n")
+            })
         }
     }
 

@@ -21,10 +21,4 @@ interface CreateMutationHookStateConverter<
         draft: Draft,
         beforeSaveState: BeforeSaveState,
     ): BeforeCreateState
-
-    /** Lower the final hook state into the draft shape consumed by preparation. */
-    fun toPreparationDraft(
-        originalDraft: Draft,
-        state: BeforeCreateState,
-    ): Draft
 }

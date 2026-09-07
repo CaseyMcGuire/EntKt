@@ -31,7 +31,7 @@ class WriteCandidateCompileTest {
         }.compile()
 
     private fun mutationTypes(candidate: String): List<String> = listOf(
-        "CreateMutationConverter<WidgetDraft, $candidate, Widget>",
+        "CreateMutationConverter<WidgetDraft, $candidate, Widget, BeforeCreate>",
         "CreateMutationOperation<EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
         "CreateManyMutationOperation<EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
         "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, $candidate, BeforeUpdate>",
@@ -131,6 +131,7 @@ class WriteCandidateCompileTest {
         factory: String,
         mappingEntity: String = "Widget",
         ruleInputState: String = "WidgetState",
+        updateAdapterType: String = "CombinedUpdateAdapter",
     ): JvmCompilationResult {
         val call = when (factory) {
             "create" -> """
@@ -144,7 +145,6 @@ class WriteCandidateCompileTest {
                     entity, runtime, privacy, validation,
                     ruleInput = { _: $ruleInputState -> Unit },
                     adapter = updateAdapter,
-                    hookStateConverter = updateHooks,
                     beforeSave = emptyList(), beforeUpdate = emptyList(), afterUpdate = emptyList(),
                 )
             """.trimIndent()
@@ -213,8 +213,12 @@ class WriteCandidateCompileTest {
                     class BeforeUpdate : BeforeUpdateHookState<Widget>
 
                     abstract class CombinedCreateConverter :
-                        CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget>,
+                        CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget, BeforeCreate>,
                         CreateMutationHookStateConverter<WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>
+
+                    abstract class CombinedUpdateAdapter :
+                        UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeUpdate>,
+                        UpdateMutationHookStateConverter<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>
 
                     fun bind(
                         entity: EntityDescriptor<$mappingEntity, *>,
@@ -228,9 +232,8 @@ class WriteCandidateCompileTest {
                         >,
                         runtime: MutationRuntime,
                         combinedCreateConverter: CombinedCreateConverter,
-                        updateAdapter: UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeUpdate>,
-                        updateHooks: UpdateMutationHookStateConverter<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>,
-                        createConverter: CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget>,
+                        updateAdapter: $updateAdapterType,
+                        createConverter: CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget, BeforeCreate>,
                         createHooks: CreateMutationHookStateConverter<WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>,
                         deleteConverter: DeleteMutationConverter<Widget, WidgetCandidate>,
                         driver: DatabaseDriver,
@@ -240,6 +243,22 @@ class WriteCandidateCompileTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `update factory requires one adapter implementing preparation and hook conversion`() {
+        val incompleteAdapters = mapOf(
+            "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeUpdate>" to
+                "UpdateMutationHookStateConverter",
+            "UpdateMutationHookStateConverter<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>" to
+                "UpdateMutationAdapter",
+        )
+        for ((type, missingContract) in incompleteAdapters) {
+            val result = compileOperationFactory("update", updateAdapterType = type)
+
+            assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
+            assertTrue(result.messages.contains(missingContract), result.messages)
+        }
     }
 
     @Test

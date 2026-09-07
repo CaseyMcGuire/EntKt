@@ -38,6 +38,8 @@ private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val UUID_CLASS = ClassName("java.util", "UUID")
 private val CREATE_MUTATION_DRAFT =
     ClassName("entkt.runtime.mutation", "CreateMutationDraft")
+private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
+private val PATCH_OR_ELSE = MemberName("entkt.runtime.mutation", "orElse")
 
 // ── Shared canonical-mutation emission support ───────────────────────
 // One home for the runtime type references and emission fragments every
@@ -228,14 +230,13 @@ internal class CreateGenerator(
             statement("return column in assignedFields")
         }
 
-    /** Describe required draft inputs for the generated create converter. */
+    /** Describe required inputs in the final before-create hook state. */
     fun buildRequiredInputViolationsFunction(
         schemaName: String,
         schema: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec {
-        val draftClass = ClassName(packageName, "${schemaName}CreateDraft")
-        val entityClass = ClassName(packageName, schemaName)
+        val stateClass = ClassName(packageName, "${schemaName}BeforeCreateState")
         val allFields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
         return function(
@@ -243,17 +244,17 @@ internal class CreateGenerator(
             returnType = List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION),
         ) {
             addModifiers(KModifier.OVERRIDE)
-            parameter("draft", draftClass)
+            parameter("state", stateClass)
             for (field in allFields) {
                 if (field.nullable) continue
                 val prop = field.apiName
                 val condition = if (field.default == null) {
-                    CodeBlock.of("draft.%L == null", prop)
+                    CodeBlock.of("state.%L.%M(null) == null", prop, PATCH_OR_ELSE)
                 } else {
                     CodeBlock.of(
-                        "draft.isSet(%T.%L) && draft.%L == null",
-                        entityClass,
+                        "state.%L is %T.Set && state.%L.value == null",
                         prop,
+                        FIELD_PATCH,
                         prop,
                     )
                 }
@@ -269,12 +270,12 @@ internal class CreateGenerator(
                 if (!fk.required) continue
                 val prop = fk.propertyName
                 val condition = if (fk.default == null) {
-                    CodeBlock.of("draft.%L == null", prop)
+                    CodeBlock.of("state.%L.%M(null) == null", prop, PATCH_OR_ELSE)
                 } else {
                     CodeBlock.of(
-                        "draft.isSet(%T.%L) && draft.%L == null",
-                        entityClass,
+                        "state.%L is %T.Set && state.%L.value == null",
                         prop,
+                        FIELD_PATCH,
                         prop,
                     )
                 }
@@ -290,13 +291,14 @@ internal class CreateGenerator(
         }
     }
 
-    /** Build the schema-specific draft resolver used by scalar and batch create. */
+    /** Resolve final hook fields directly; the original draft supplies only an explicit ID. */
     fun buildResolveFunction(
         schemaName: String,
         schema: EntSchema,
         schemaNames: Map<EntSchema, String>,
     ): FunSpec {
         val draftClass = ClassName(packageName, "${schemaName}CreateDraft")
+        val stateClass = ClassName(packageName, "${schemaName}BeforeCreateState")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val allFields = scalarFields(schema)
         val edgeFks = computeEdgeFks(schema, schemaNames)
@@ -305,18 +307,17 @@ internal class CreateGenerator(
             returnType = PREPARED_CREATE.parameterizedBy(candidateClass),
         ) {
             addModifiers(KModifier.OVERRIDE)
-            parameter("draft", draftClass)
-            beginControlFlow("return draft.run")
+            parameter("originalDraft", draftClass)
+            parameter("state", stateClass)
             emitResolvedCreate(this, schemaName, schema, allFields, edgeFks)
             val candidateArgs = buildCandidateArgs(allFields, edgeFks)
             addStatement("val candidate = %T(${candidateArgs.joinToString(", ")})", candidateClass)
             addCode(codeBlock {
-                add("%T(\n", PREPARED_CREATE)
+                add("return %T(\n", PREPARED_CREATE)
                 add("  values = values,\n")
                 add("  candidate = candidate,\n")
                 add(")\n")
             })
-            endControlFlow()
         }
     }
 
@@ -413,62 +414,64 @@ internal class CreateGenerator(
             val required = !field.nullable && field.default == null
             when {
                 required -> builder.addStatement(
-                    "val %L = checkNotNull(this.%L) { %S }",
+                    "val %L = checkNotNull(state.%L.%M(null)) { %S }",
                     preparationLocal(prop),
                     prop,
+                    PATCH_OR_ELSE,
                     "$prop missing after required-input validation",
                 )
                 field.default != null && field.nullable -> builder.addStatement(
-                    "val %L = if (isSet(%T.%L)) this.%L else %L",
+                    "val %L = if (state.%L is %T.Set) state.%L.value else %L",
                     preparationLocal(prop),
-                    ClassName(packageName, schemaName),
                     prop,
+                    FIELD_PATCH,
                     prop,
                     defaultCodeBlock(field),
                 )
                 field.default != null -> {
                     builder.addStatement(
-                        "val %L = if (isSet(%T.%L)) checkNotNull(this.%L) { %S } else %L",
+                        "val %L = if (state.%L is %T.Set) checkNotNull(state.%L.value) { %S } else %L",
                         preparationLocal(prop),
-                        ClassName(packageName, schemaName),
                         prop,
+                        FIELD_PATCH,
                         prop,
                         "$prop missing after required-input validation",
                         defaultCodeBlock(field),
                     )
                 }
-                else -> builder.addStatement("val %L = this.%L", preparationLocal(prop), prop)
+                else -> builder.addStatement("val %L = state.%L.%M(null)", preparationLocal(prop), prop, PATCH_OR_ELSE)
             }
         }
 
         for (fk in edgeFks) {
             when {
                 fk.required && fk.default != null -> builder.addStatement(
-                    "val %L = if (isSet(%T.%L)) checkNotNull(this.%L) { %S } else %L",
+                    "val %L = if (state.%L is %T.Set) checkNotNull(state.%L.value) { %S } else %L",
                     preparationLocal(fk.propertyName),
-                    ClassName(packageName, schemaName),
                     fk.propertyName,
+                    FIELD_PATCH,
                     fk.propertyName,
                     "${fk.propertyName} missing after required-input validation",
                     fkDefaultCodeBlock(fk),
                 )
                 !fk.required && fk.default != null -> builder.addStatement(
-                    "val %L = if (isSet(%T.%L)) this.%L else %L",
+                    "val %L = if (state.%L is %T.Set) state.%L.value else %L",
                     preparationLocal(fk.propertyName),
-                    ClassName(packageName, schemaName),
                     fk.propertyName,
+                    FIELD_PATCH,
                     fk.propertyName,
                     fkDefaultCodeBlock(fk),
                 )
                 fk.required -> builder.addStatement(
-                    "val %L = checkNotNull(this.%L) { %S }",
+                    "val %L = checkNotNull(state.%L.%M(null)) { %S }",
                     preparationLocal(fk.propertyName),
                     fk.propertyName,
+                    PATCH_OR_ELSE,
                     "${fk.propertyName} missing after required-input validation",
                 )
                 // Nullable + no default: pass through, may be null.
                 else -> builder.addStatement(
-                    "val %L = this.%L", preparationLocal(fk.propertyName), fk.propertyName,
+                    "val %L = state.%L.%M(null)", preparationLocal(fk.propertyName), fk.propertyName, PATCH_OR_ELSE,
                 )
             }
         }
@@ -506,7 +509,7 @@ internal class CreateGenerator(
             if (idStrategy == "CLIENT_UUID") {
                 add("  %S to %T.randomUUID(),\n", "id", UUID_CLASS)
             } else if (idStrategy == "EXPLICIT") {
-                add("  %S to id,\n", "id")
+                add("  %S to originalDraft.id,\n", "id")
             }
 
             for (field in allFields) {
