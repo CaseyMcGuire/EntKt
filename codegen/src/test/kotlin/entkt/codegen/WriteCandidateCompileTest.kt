@@ -132,18 +132,25 @@ class WriteCandidateCompileTest {
         ruleInputState: String = "WidgetState",
     ): JvmCompilationResult {
         val call = when (factory) {
-            "createMany" -> """
-                buildCreateManyMutationOperation(
-                    entity, runtime, createConverter, privacy, validation, createHooks,
+            "create" -> """
+                buildCreateOperations(
+                    entity, runtime, combinedCreateConverter, privacy, validation,
                     beforeSave = emptyList(), beforeCreate = emptyList(), afterCreate = emptyList(),
                 )
             """.trimIndent()
             "update" -> """
-                buildUpdateMutationOperation(
+                buildUpdateOperation(
                     entity, runtime, privacy, validation,
                     ruleInput = { _: $ruleInputState -> Unit },
                     adapter = updateAdapter,
-                    hooks = updateHooks,
+                    hookStateConverter = updateHooks,
+                    beforeSave = emptyList(), beforeUpdate = emptyList(), afterUpdate = emptyList(),
+                )
+            """.trimIndent()
+            "createMany" -> """
+                buildCreateManyMutationOperation(
+                    entity, runtime, createConverter, privacy, validation, createHooks,
+                    beforeSave = emptyList(), beforeCreate = emptyList(), afterCreate = emptyList(),
                 )
             """.trimIndent()
             "delete" -> """
@@ -157,7 +164,7 @@ class WriteCandidateCompileTest {
                 buildDeleteManyMutationOperation(
                     entity, deleteConverter, privacy, validation,
                     ruleInput = { _, _ -> Unit },
-                    readQueryExecutor = queryExecutor,
+                    driver = driver, readExecutionHost = readHost,
                     beforeDelete = emptyList(), afterDelete = emptyList(),
                 )
             """.trimIndent()
@@ -165,8 +172,9 @@ class WriteCandidateCompileTest {
         }
 
         val resultType = when (factory) {
+            "create" -> "CreateMutationOperations<Unit, WidgetCreateDraft, Widget>"
+            "update" -> "MutationOperation<Unit, UpdateMutationInput<WidgetUpdateDraft>, Widget>"
             "createMany" -> "CreateManyMutationOperation<Unit, WidgetCreateDraft, WidgetCandidate, Widget, BeforeSave, BeforeCreate>"
-            "update" -> "UpdateMutationOperation<Unit, WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeSave, BeforeUpdate>"
             "delete" -> "DeleteMutationOperation<Unit, Widget, WidgetCandidate>"
             else -> "DeleteManyMutationOperation<Unit, Widget, WidgetCandidate>"
         }
@@ -179,13 +187,14 @@ class WriteCandidateCompileTest {
                     @file:OptIn(entkt.query.EntktInternal::class)
                     package com.example.app
 
+                    import entkt.runtime.driver.DatabaseDriver
+                    import entkt.runtime.query.execution.ReadQueryExecutionHost
                     import entkt.runtime.entity.EntEntity
                     import entkt.runtime.entity.EntityDescriptor
                     import entkt.runtime.mutation.*
                     import entkt.runtime.mutation.execution.*
                     import entkt.runtime.privacy.BatchPrivacyRule
                     import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
-                    import entkt.runtime.query.execution.ReadQueryExecutor
                     import entkt.runtime.validation.BatchValidationRule
                     import entkt.runtime.validation.ResolvedEntityValidationConfig
 
@@ -201,6 +210,10 @@ class WriteCandidateCompileTest {
                     class BeforeCreate : BeforeCreateHookState<Widget>
                     class BeforeUpdate : BeforeUpdateHookState<Widget>
 
+                    abstract class CombinedCreateConverter :
+                        CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget>,
+                        CreateMutationHookStateConverter<WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>
+
                     fun bind(
                         entity: EntityDescriptor<$mappingEntity, *>,
                         privacy: ResolvedEntityPrivacyConfig<
@@ -212,12 +225,14 @@ class WriteCandidateCompileTest {
                             BatchValidationRule<Unit, Unit>, BatchValidationRule<Unit, Unit>,
                         >,
                         runtime: MutationRuntime,
+                        combinedCreateConverter: CombinedCreateConverter,
+                        updateAdapter: UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeUpdate>,
+                        updateHooks: UpdateMutationHookStateConverter<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>,
                         createConverter: CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget>,
                         createHooks: CreateMutationHookStateConverter<WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>,
-                        updateAdapter: UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeUpdate>,
-                        updateHooks: UpdateMutationHooks<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>,
                         deleteConverter: DeleteMutationConverter<Widget, WidgetCandidate>,
-                        queryExecutor: ReadQueryExecutor<Widget>,
+                        driver: DatabaseDriver,
+                        readHost: ReadQueryExecutionHost,
                     ): $resultType = $call
                     """.trimIndent(),
                 ),
@@ -227,7 +242,7 @@ class WriteCandidateCompileTest {
 
     @Test
     fun `operation factories infer matching entity and candidate types`() {
-        for (factory in listOf("createMany", "update", "delete", "deleteMany")) {
+        for (factory in listOf("create", "createMany", "update", "delete", "deleteMany")) {
             val result = compileOperationFactory(factory)
 
             assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
@@ -236,7 +251,7 @@ class WriteCandidateCompileTest {
 
     @Test
     fun `each operation factory rejects a descriptor for another entity`() {
-        for (factory in listOf("createMany", "update", "delete", "deleteMany")) {
+        for (factory in listOf("create", "createMany", "update", "delete", "deleteMany")) {
             val result = compileOperationFactory(factory, mappingEntity = "Other")
 
             assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)

@@ -761,28 +761,29 @@ class CreateMutationOperationTest {
             }
         }
         val mutationExecutor = MutationExecutor(driver, mutationRuntime)
-        val manyOperation = buildCreateManyMutationOperation(
+        val converter = object :
+            CreateMutationConverter<RecordingInput, Candidate, Widget> by spec.converter,
+            CreateMutationHookStateConverter<RecordingInput, Widget, BeforeSaveState, BeforeCreateState> {
+            override fun toBeforeSaveState(draft: RecordingInput): BeforeSaveState =
+                BeforeSaveState(draft.beforeSaveHookValue())
+
+            override fun toBeforeCreateState(
+                viewerContext: ViewerContext,
+                draft: RecordingInput,
+                beforeSaveState: BeforeSaveState,
+            ): BeforeCreateState = BeforeCreateState(draft.beforeCreateHookValue())
+
+            override fun toPreparationDraft(
+                originalDraft: RecordingInput,
+                state: BeforeCreateState,
+            ): RecordingInput = originalDraft
+        }
+        val operations = buildCreateOperations(
             entity = mapping,
             mutationRuntime = mutationRuntime,
-            converter = spec.converter,
+            converter = converter,
             privacy = spec.privacy,
             validation = spec.validation,
-            hookStateConverter = object :
-                CreateMutationHookStateConverter<RecordingInput, Widget, BeforeSaveState, BeforeCreateState> {
-                override fun toBeforeSaveState(draft: RecordingInput): BeforeSaveState =
-                    BeforeSaveState(draft.beforeSaveHookValue())
-
-                override fun toBeforeCreateState(
-                    viewerContext: ViewerContext,
-                    draft: RecordingInput,
-                    beforeSaveState: BeforeSaveState,
-                ): BeforeCreateState = BeforeCreateState(draft.beforeCreateHookValue())
-
-                override fun toPreparationDraft(
-                    originalDraft: RecordingInput,
-                    state: BeforeCreateState,
-                ): RecordingInput = originalDraft
-            },
             beforeSave = listOf(
                 TransformingHook { value: BeforeSaveState ->
                     events += "before-save:${value.value}"
@@ -809,8 +810,8 @@ class CreateMutationOperationTest {
             spec = spec,
             input = input,
             mutationExecutor = mutationExecutor,
-            operation = CreateMutationOperation(manyOperation),
-            manyOperation = manyOperation,
+            operation = operations.single,
+            manyOperation = operations.many,
             viewerContext = viewerContext,
             recordedFailures = recordedFailures,
         )
@@ -822,10 +823,8 @@ class CreateMutationOperationTest {
         val spec: RecordingSpec,
         val input: RecordingInput,
         val mutationExecutor: MutationExecutor,
-        val operation:
-            CreateMutationOperation<Unit, RecordingInput, Candidate, Widget, BeforeSaveState, BeforeCreateState>,
-        val manyOperation:
-            CreateManyMutationOperation<Unit, RecordingInput, Candidate, Widget, BeforeSaveState, BeforeCreateState>,
+        val operation: MutationOperation<Unit, CreateMutationInput<RecordingInput>, Widget>,
+        val manyOperation: MutationOperation<Unit, CreateManyMutationInput<RecordingInput>, List<Widget>>,
         val viewerContext: ViewerContext,
         val recordedFailures: MutableList<EntMutationException>,
     ) {

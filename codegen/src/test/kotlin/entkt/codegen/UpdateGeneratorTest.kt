@@ -154,7 +154,7 @@ class UpdateGeneratorTest {
 
         val repo = RepoGenerator("com.example.ent").generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
-        assert(repo.contains("converter = UpdateHookStateConverter(client)"))
+        assert(repo.contains("hookStateConverter = UserRepo.UpdateHookStateConverter(client)"))
         assert(
             repo.contains(
                 "override fun toBeforeUpdateState( viewerContext: ViewerContext, before: User, pendingEdges: UserPendingEdgeOps, beforeSaveState: UserBeforeSaveState, ): UserBeforeUpdateState = UserBeforeUpdateState(",
@@ -947,7 +947,7 @@ class UpdateGeneratorTest {
         val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
         assert(repo.contains("UpdateMutationHookStateConverter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostBeforeSaveState, M2MPostBeforeUpdateState>") &&
-            repo.contains("converter = UpdateHookStateConverter(client)")) {
+            repo.contains("hookStateConverter = M2MPostRepo.UpdateHookStateConverter(client)")) {
             "The runtime hook lifecycle should receive a typed schema-specific state converter\n$output"
         }
         assert(!output.contains("beforeSaveValueFactory") && !output.contains("beforeUpdateValueFactory")) {

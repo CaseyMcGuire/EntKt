@@ -11,11 +11,9 @@ import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.NameAllocator
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
-import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.apiName
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
@@ -38,26 +36,15 @@ import entkt.schema.EntSchema
 import entkt.schema.Field
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
-private val INT = Int::class.asClassName()
 private val ENT_CLIENT_NAME = "EntClient"
-private val CREATE_MUTATION_OPERATIONS =
-    ClassName("entkt.runtime.mutation.execution", "CreateMutationOperations")
-private val DELETE_MUTATION_INPUT =
-    ClassName("entkt.runtime.mutation.execution", "DeleteMutationInput")
-private val MUTATION_OPERATION =
-    ClassName("entkt.runtime.mutation.execution", "MutationOperation")
-private val BUILD_UPDATE_MUTATION_OPERATION =
-    MemberName("entkt.runtime.mutation.execution", "buildUpdateMutationOperation")
+private val BUILD_CREATE_OPERATIONS =
+    MemberName("entkt.runtime.mutation.execution", "buildCreateOperations")
+private val BUILD_UPDATE_OPERATION =
+    MemberName("entkt.runtime.mutation.execution", "buildUpdateOperation")
 private val BUILD_DELETE_MUTATION_OPERATION =
     MemberName("entkt.runtime.mutation.execution", "buildDeleteMutationOperation")
 private val BUILD_DELETE_MANY_MUTATION_OPERATION =
     MemberName("entkt.runtime.mutation.execution", "buildDeleteManyMutationOperation")
-private val DELETE_MANY_MUTATION_INPUT =
-    ClassName("entkt.runtime.mutation.execution", "DeleteManyMutationInput")
-private val UPDATE_MUTATION_INPUT =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationInput")
-private val UPDATE_MUTATION_HOOKS =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationHooks")
 private val UPDATE_MUTATION_HOOK_STATE_CONVERTER =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationHookStateConverter")
 private val GENERATED_ID_REPOSITORY = ClassName("entkt.runtime.repository", "GeneratedIdRepository")
@@ -106,15 +93,20 @@ internal class RepoGenerator(
         val typeSpec = classType(className) {
             superclass(repositoryBase)
             addSuperclassConstructorParameter(codeBlock {
-                // KotlinPoet's four-space supertype continuation does not indent explicit newlines.
+                // Supertype arguments use six spaces; expressions add their own nested indentation.
                 add("\n")
-                add("      entity = %T,\n", entityDescriptorClass)
-                add("      driver = driver,\n")
-                add("      mutationRuntime = client,\n")
-                add("      readExecutionHost = client,\n")
-                add("      loadPrivacyRules = configuredPrivacy.loadRules,\n")
-                add("      defaultUpdateConsistency = client.defaultUpdateConsistency,\n")
-                add("      defaultRelationshipLocking = client.defaultRelationshipLocking,\n")
+                repeat(3) { indent() }
+                add("entity = %T,\n", entityDescriptorClass)
+                add("driver = driver,\n")
+                add("mutationRuntime = client,\n")
+                add("loadPrivacyRules = configuredPrivacy.loadRules,\n")
+                add("createOperations = %L,\n", createOperationsExpression(schemaName))
+                add("updateOperation = %L,\n", updateOperationExpression(schemaName))
+                add("deleteOperation = %L,\n", deleteOperationExpression(schemaName, many = false))
+                add("deleteManyOperation = %L,\n", deleteOperationExpression(schemaName, many = true))
+                add("defaultUpdateConsistency = client.defaultUpdateConsistency,\n")
+                add("defaultRelationshipLocking = client.defaultRelationshipLocking,\n")
+                repeat(3) { unindent() }
                 add("    ")
             })
             // The repo is the entity's read surface: query terminals reach
@@ -144,65 +136,6 @@ internal class RepoGenerator(
             property("ruleClient", ruleClientClass) {
                 addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
                 getter { statement("return client.readOnlyClient") }
-            }
-            addProperty(buildUpdateMutationOperationProperty(schemaName))
-            val createConverterClass = ClassName(packageName, "${schemaName}CreateConverter")
-            property("createConverter", createConverterClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("%T(driver, client.hookClientScopeForInternalUse)", createConverterClass)
-            }
-            addProperty(
-                buildCreateOperationsProperty(
-                    createDraftClass = createDraftClass,
-                    entityClass = entityClass,
-                ),
-            )
-            property(
-                "deleteOperation",
-                MUTATION_OPERATION.parameterizedBy(
-                    ClassName(packageName, "ReadOnlyEntClient"),
-                    DELETE_MUTATION_INPUT,
-                    Boolean::class.asClassName(),
-                ),
-            ) {
-                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
-                initializer(codeBlock {
-                    add("%M(\n", BUILD_DELETE_MUTATION_OPERATION)
-                    indent()
-                    add("entity = %T,\n", entityDescriptorClass)
-                    add("converter = %T,\n", ClassName(packageName, "${schemaName}DeleteConverter"))
-                    add("privacy = configuredPrivacy,\n")
-                    add("validation = configuredValidation,\n")
-                    add("ruleInput = ::%T,\n", ClassName(packageName, "${schemaName}DeleteRuleInput"))
-                    add("beforeDelete = configuredHooks.beforeDelete,\n")
-                    add("afterDelete = configuredHooks.afterDelete,\n")
-                    unindent()
-                    add(")")
-                })
-            }
-            property(
-                "deleteManyOperation",
-                MUTATION_OPERATION.parameterizedBy(
-                    ClassName(packageName, "ReadOnlyEntClient"),
-                    DELETE_MANY_MUTATION_INPUT.parameterizedBy(entityClass),
-                    INT,
-                ),
-            ) {
-                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
-                initializer(codeBlock {
-                    add("%M(\n", BUILD_DELETE_MANY_MUTATION_OPERATION)
-                    indent()
-                    add("entity = %T,\n", entityDescriptorClass)
-                    add("converter = %T,\n", ClassName(packageName, "${schemaName}DeleteConverter"))
-                    add("privacy = configuredPrivacy,\n")
-                    add("validation = configuredValidation,\n")
-                    add("ruleInput = ::%T,\n", ClassName(packageName, "${schemaName}DeleteRuleInput"))
-                    add("readQueryExecutor = readQueryExecutor,\n")
-                    add("beforeDelete = configuredHooks.beforeDelete,\n")
-                    add("afterDelete = configuredHooks.afterDelete,\n")
-                    unindent()
-                    add(")")
-                })
             }
             // Index-helper namespace. Emitted only when the schema has at
             // least one eligible index (matching the conditional
@@ -255,55 +188,54 @@ internal class RepoGenerator(
         }
     }
 
-    private fun buildUpdateMutationOperationProperty(schemaName: String): PropertySpec {
-        val entityClass = ClassName(packageName, schemaName)
-        val entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor")
-        val draftClass = ClassName(packageName, "${schemaName}UpdateDraft")
+    private fun updateOperationExpression(schemaName: String): CodeBlock {
         val adapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
-        val preparedStateClass = adapterClass.nestedClass("PreparedState")
-        val updateRuleInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
-        return property(
-            "updateOperation",
-            MUTATION_OPERATION.parameterizedBy(
-                ClassName(packageName, "ReadOnlyEntClient"),
-                UPDATE_MUTATION_INPUT.parameterizedBy(draftClass),
-                entityClass,
-            ),
-        ) {
-            addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
-            initializer(codeBlock {
-                add("%M(\n", BUILD_UPDATE_MUTATION_OPERATION)
-                indent()
-                add("entity = %T,\n", entityDescriptorClass)
-                add("mutationRuntime = client,\n")
-                add("privacy = configuredPrivacy,\n")
-                add("validation = configuredValidation,\n")
-                add("ruleInput = { state: %T ->\n", preparedStateClass)
-                indent()
-                add("%T(\n", updateRuleInput)
-                indent()
-                add("state.before,\n")
-                add("state.requestedPatch,\n")
-                add("state.effectivePatch,\n")
-                add("state.candidate,\n")
-                add("state.edgeChanges,\n")
-                unindent()
-                add(")\n")
-                unindent()
-                add("},\n")
-                add("adapter = %T(driver),\n", adapterClass)
-                add("hooks = %T(\n", UPDATE_MUTATION_HOOKS)
-                indent()
-                add("converter = UpdateHookStateConverter(client),\n")
-                add("beforeSave = configuredHooks.beforeSave,\n")
-                add("beforeUpdate = configuredHooks.beforeUpdate,\n")
-                add("afterUpdate = configuredHooks.afterUpdate,\n")
-                unindent()
-                add("),\n")
-                unindent()
-                add(")")
-            })
+        return codeBlock {
+            add("%M(\n", BUILD_UPDATE_OPERATION)
+            indent()
+            add("entity = %T,\n", ClassName(packageName, "${schemaName}Descriptor"))
+            add("mutationRuntime = client,\n")
+            add("privacy = configuredPrivacy,\n")
+            add("validation = configuredValidation,\n")
+            add("ruleInput = { state: %T ->\n", adapterClass.nestedClass("PreparedState"))
+            indent()
+            add("%T(\n", ClassName(packageName, "${schemaName}UpdateRuleInput"))
+            indent()
+            add("state.before,\n")
+            add("state.requestedPatch,\n")
+            add("state.effectivePatch,\n")
+            add("state.candidate,\n")
+            add("state.edgeChanges,\n")
+            unindent()
+            add(")\n")
+            unindent()
+            add("},\n")
+            add("adapter = %T(driver),\n", adapterClass)
+            add("hookStateConverter = %T(client),\n", ClassName(packageName, "${schemaName}Repo").nestedClass("UpdateHookStateConverter"))
+            add("beforeSave = configuredHooks.beforeSave,\n")
+            add("beforeUpdate = configuredHooks.beforeUpdate,\n")
+            add("afterUpdate = configuredHooks.afterUpdate,\n")
+            unindent()
+            add(")")
         }
+    }
+
+    private fun deleteOperationExpression(schemaName: String, many: Boolean): CodeBlock = codeBlock {
+        add("%M(\n", if (many) BUILD_DELETE_MANY_MUTATION_OPERATION else BUILD_DELETE_MUTATION_OPERATION)
+        indent()
+        add("entity = %T,\n", ClassName(packageName, "${schemaName}Descriptor"))
+        add("converter = %T,\n", ClassName(packageName, "${schemaName}DeleteConverter"))
+        add("privacy = configuredPrivacy,\n")
+        add("validation = configuredValidation,\n")
+        add("ruleInput = ::%T,\n", ClassName(packageName, "${schemaName}DeleteRuleInput"))
+        if (many) {
+            add("driver = driver,\n")
+            add("readExecutionHost = client,\n")
+        }
+        add("beforeDelete = configuredHooks.beforeDelete,\n")
+        add("afterDelete = configuredHooks.afterDelete,\n")
+        unindent()
+        add(")")
     }
 
     private fun buildHookStateConverterType(
@@ -384,32 +316,18 @@ internal class RepoGenerator(
         }
     }
 
-    /** Bind this entity's CREATE dependencies once for its scalar and bulk runtime operations. */
-    private fun buildCreateOperationsProperty(
-        createDraftClass: ClassName,
-        entityClass: ClassName,
-    ): PropertySpec {
-        val operationType = CREATE_MUTATION_OPERATIONS.parameterizedBy(
-            ClassName(packageName, "ReadOnlyEntClient"),
-            createDraftClass,
-            entityClass,
-        )
-        return property("createOperations", operationType) {
-            addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
-            initializer(codeBlock {
-                add("buildCreateOperations(\n")
-                indent()
-                add("converter = createConverter,\n")
-                add("privacy = configuredPrivacy,\n")
-                add("validation = configuredValidation,\n")
-                add("hookStateConverter = createConverter,\n")
-                add("beforeSave = configuredHooks.beforeSave,\n")
-                add("beforeCreate = configuredHooks.beforeCreate,\n")
-                add("afterCreate = configuredHooks.afterCreate,\n")
-                unindent()
-                add(")")
-            })
-        }
+    private fun createOperationsExpression(schemaName: String): CodeBlock = codeBlock {
+        add("%M(\n", BUILD_CREATE_OPERATIONS)
+        indent()
+        add("entity = %T,\n", ClassName(packageName, "${schemaName}Descriptor"))
+        add("mutationRuntime = client,\n")
+        add("converter = %T(driver, client.hookClientScopeForInternalUse),\n", ClassName(packageName, "${schemaName}CreateConverter"))
+        add("privacy = configuredPrivacy,\n")
+        add("validation = configuredValidation,\n")
+        add("beforeSave = configuredHooks.beforeSave,\n")
+        add("beforeCreate = configuredHooks.beforeCreate,\n")
+        add("afterCreate = configuredHooks.afterCreate,\n")
+        unindent()
+        add(")")
     }
-
 }

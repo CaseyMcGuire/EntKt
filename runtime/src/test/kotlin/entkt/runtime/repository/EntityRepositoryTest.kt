@@ -43,7 +43,6 @@ import entkt.runtime.query.EntityQueryBuilder
 import entkt.runtime.query.QuerySource
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
-import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntMutationAlreadyConsumedException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -249,29 +248,21 @@ class EntityRepositoryTest {
     }
 
     @Test
-    fun `base query executor uses the scoped read host and its execution guard`() {
+    fun `repository queries use the scoped read host and its execution guard`() {
         for (inTransaction in listOf(false, true)) {
             for (explicit in listOf(false, true)) {
                 val fixture = Fixture(inTransaction)
-                val executor = if (explicit) {
-                    fixture.explicit.readQueryExecutorForTest()
+                val query = if (explicit) {
+                    fixture.explicit.query()
                 } else {
-                    fixture.generated.readQueryExecutorForTest()
+                    fixture.generated.query()
                 }
                 assertTrue(fixture.readOperations.isEmpty())
                 assertEquals(0, fixture.clientResolutions)
                 val predicates = listOf(Predicate.Leaf<Widget>("name", Op.EQ, "one"))
-                val query = EntityQuery(
-                    entity = Descriptor,
-                    source = QuerySource.Root(),
-                    predicates = predicates,
-                    orderBy = emptyList(),
-                    limit = null,
-                    offset = null,
-                    edges = emptyList(),
-                )
+                query.where(predicates.single())
 
-                val compiled = executor.compileEntityQuery(viewerContext, query, ReadOperation.DELETE_CANDIDATES)
+                val compiled = query.compileEntityQuery(viewerContext, ReadOperation.DELETE_CANDIDATES)
 
                 assertEquals(predicates, compiled.predicates)
                 assertEquals(listOf(ReadOperation.DELETE_CANDIDATES), fixture.readOperations)
@@ -280,7 +271,7 @@ class EntityRepositoryTest {
                 fixture.readFailure = failure
 
                 assertSame(failure, assertFailsWith<IllegalStateException> {
-                    executor.compileEntityQuery(viewerContext, query, ReadOperation.DELETE_CANDIDATES)
+                    query.compileEntityQuery(viewerContext, ReadOperation.DELETE_CANDIDATES)
                 })
                 assertEquals(listOf(ReadOperation.DELETE_CANDIDATES), fixture.readOperations)
             }
@@ -552,19 +543,14 @@ class EntityRepositoryTest {
 
     private class GeneratedRepo(private val fixture: Fixture) :
         GeneratedIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>(
-            Descriptor, fixture.driver, fixture, fixture, fixture.loadPrivacyRules,
+            Descriptor, fixture.driver, fixture, fixture.loadPrivacyRules,
+            CreateMutationOperations(fixture.create, fixture.createMany), fixture.update, fixture.delete, fixture.deleteMany,
             UpdateConsistency.Pessimistic, RelationshipLocking.Canonical,
         ), WidgetReadSurface {
         override val ruleClient: RuleClient get() = fixture.client.also { fixture.clientResolutions++ }
-        override val createOperations = CreateMutationOperations(fixture.create, fixture.createMany)
-        override val updateOperation = fixture.update
-        override val deleteOperation = fixture.delete
-        override val deleteManyOperation = fixture.deleteMany
         override fun newQuery(): WidgetQuery = WidgetQuery(fixture)
         override fun newUpdateDraft(): UpdateDraft = UpdateDraft()
         override fun newCreateDraft(): CreateDraft = CreateDraft().also { fixture.draftsCreated++ }
-
-        fun readQueryExecutorForTest(): ReadQueryExecutor<Widget> = readQueryExecutor
 
         override fun <Result> withTransaction(
             block: TransactionScope.(GeneratedIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>) -> Result,
@@ -579,19 +565,14 @@ class EntityRepositoryTest {
 
     private class ExplicitRepo(private val fixture: Fixture) :
         ExplicitIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>(
-            Descriptor, fixture.driver, fixture, fixture, fixture.loadPrivacyRules,
+            Descriptor, fixture.driver, fixture, fixture.loadPrivacyRules,
+            CreateMutationOperations(fixture.create, fixture.createMany), fixture.update, fixture.delete, fixture.deleteMany,
         ),
         WidgetReadSurface {
         override val ruleClient: RuleClient get() = fixture.client.also { fixture.clientResolutions++ }
-        override val createOperations = CreateMutationOperations(fixture.create, fixture.createMany)
-        override val updateOperation = fixture.update
-        override val deleteOperation = fixture.delete
-        override val deleteManyOperation = fixture.deleteMany
         override fun newQuery(): WidgetQuery = WidgetQuery(fixture)
         override fun newUpdateDraft(): UpdateDraft = UpdateDraft()
         override fun newCreateDraft(id: Long): CreateDraft = CreateDraft(id)
-
-        fun readQueryExecutorForTest(): ReadQueryExecutor<Widget> = readQueryExecutor
 
         override fun <Result> withTransaction(
             block: TransactionScope.(ExplicitIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>) -> Result,

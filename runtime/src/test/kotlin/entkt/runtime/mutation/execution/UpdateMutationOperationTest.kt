@@ -296,55 +296,53 @@ class UpdateMutationOperationTest {
             }
         }
         val mutationExecutor = MutationExecutor(driver, mutationRuntime)
-        val operation = buildUpdateMutationOperation(
+        val operation = buildUpdateOperation(
             entity = mapping,
             mutationRuntime = mutationRuntime,
             privacy = privacy,
             validation = validation,
             ruleInput = { state: State -> state },
             adapter = adapter,
-            hooks = UpdateMutationHooks(
-                converter = object :
-                    UpdateMutationHookStateConverter<
-                        Draft,
-                        Widget,
-                        PendingEdges,
-                        BeforeSaveState,
-                        BeforeUpdateState,
-                    > {
-                    override fun toBeforeSaveState(draft: Draft): BeforeSaveState =
-                        BeforeSaveState("before-save:before")
+            hookStateConverter = object :
+                UpdateMutationHookStateConverter<
+                    Draft,
+                    Widget,
+                    PendingEdges,
+                    BeforeSaveState,
+                    BeforeUpdateState,
+                > {
+                override fun toBeforeSaveState(draft: Draft): BeforeSaveState =
+                    BeforeSaveState("before-save:before")
 
-                    override fun toBeforeUpdateState(
-                        viewerContext: ViewerContext,
-                        before: Widget,
-                        pendingEdges: PendingEdges,
-                        beforeSaveState: BeforeSaveState,
-                    ): BeforeUpdateState {
-                        receivedContexts += viewerContext
-                        return BeforeUpdateState(
-                            "before:${before.name}:${pendingEdges.description}",
-                        )
-                    }
+                override fun toBeforeUpdateState(
+                    viewerContext: ViewerContext,
+                    before: Widget,
+                    pendingEdges: PendingEdges,
+                    beforeSaveState: BeforeSaveState,
+                ): BeforeUpdateState {
+                    receivedContexts += viewerContext
+                    return BeforeUpdateState(
+                        "before:${before.name}:${pendingEdges.description}",
+                    )
+                }
+            },
+            beforeSave = listOf(
+                TransformingHook { value: BeforeSaveState ->
+                    events += value.description
+                    value
                 },
-                beforeSave = listOf(
-                    TransformingHook { value: BeforeSaveState ->
-                        events += value.description
-                        value
-                    },
-                ),
-                beforeUpdate = listOf(
-                    TransformingHook { value: BeforeUpdateState ->
-                        events += value.description
-                        value
-                    },
-                ),
-                afterUpdate = listOf(
-                    ActionHook { entity ->
-                        events += "after:${entity.name}"
-                        afterAction(entity)
-                    },
-                ),
+            ),
+            beforeUpdate = listOf(
+                TransformingHook { value: BeforeUpdateState ->
+                    events += value.description
+                    value
+                },
+            ),
+            afterUpdate = listOf(
+                ActionHook { entity ->
+                    events += "after:${entity.name}"
+                    afterAction(entity)
+                },
             ),
         )
 
@@ -364,6 +362,17 @@ class UpdateMutationOperationTest {
                 ),
             )
         }
+    }
+
+    @Test
+    fun `assembling an update operation does not execute hooks or rules`() {
+        val fixture = Fixture(derivePrivacy = true, deriveValidation = true)
+
+        assertTrue(fixture.events.isEmpty())
+        assertTrue(fixture.receivedContexts.isEmpty())
+        assertTrue(fixture.receivedClients.isEmpty())
+        assertTrue(fixture.privacyFallbackCandidates.isEmpty())
+        assertTrue(fixture.validationAdditionalCandidates.isEmpty())
     }
 
     @Test

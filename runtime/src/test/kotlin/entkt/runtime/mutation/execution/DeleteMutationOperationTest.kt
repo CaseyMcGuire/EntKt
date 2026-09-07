@@ -25,7 +25,6 @@ import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EntInterceptorsConfig
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
-import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -289,7 +288,8 @@ class DeleteMutationOperationTest {
             privacy = privacy,
             validation = validation,
             ruleInput = ::DeleteRuleCandidate,
-            readQueryExecutor = ReadQueryExecutor(driver, queryHost),
+            driver = driver,
+            readExecutionHost = queryHost,
             beforeDelete = beforeDelete,
             afterDelete = afterDelete,
         )

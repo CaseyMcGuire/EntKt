@@ -11,10 +11,14 @@ import entkt.runtime.mutation.PendingCreateMutation
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.UpdateConsistency
 import entkt.runtime.mutation.UpdateMutationDraft
+import entkt.runtime.mutation.execution.CreateMutationOperations
+import entkt.runtime.mutation.execution.DeleteManyMutationInput
+import entkt.runtime.mutation.execution.DeleteMutationInput
+import entkt.runtime.mutation.execution.MutationOperation
 import entkt.runtime.mutation.execution.MutationRuntime
+import entkt.runtime.mutation.execution.UpdateMutationInput
 import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.query.EntityQueryBuilder
-import entkt.runtime.query.execution.ReadQueryExecutionHost
 
 /** CREATE entry point for caller-assigned IDs; intentionally has no no-ID create or batch terminal. */
 abstract class ExplicitIdRepository<
@@ -28,8 +32,11 @@ abstract class ExplicitIdRepository<
     entity: EntityDescriptor<Entity, ID>,
     driver: DatabaseDriver,
     mutationRuntime: MutationRuntime,
-    readExecutionHost: ReadQueryExecutionHost,
     loadPrivacyRules: List<BatchPrivacyRule<RuleClient, Entity>>,
+    createOperations: CreateMutationOperations<RuleClient, CreateDraft, Entity>,
+    updateOperation: MutationOperation<RuleClient, UpdateMutationInput<UpdateDraft>, Entity>,
+    deleteOperation: MutationOperation<RuleClient, DeleteMutationInput, Boolean>,
+    deleteManyOperation: MutationOperation<RuleClient, DeleteManyMutationInput<Entity>, Int>,
     defaultUpdateConsistency: UpdateConsistency = UpdateConsistency.ReadCurrent,
     defaultRelationshipLocking: RelationshipLocking = RelationshipLocking.OwnerOnly,
 ) : EntityRepository<
@@ -39,8 +46,11 @@ abstract class ExplicitIdRepository<
     entity,
     driver,
     mutationRuntime,
-    readExecutionHost,
     loadPrivacyRules,
+    createOperations,
+    updateOperation,
+    deleteOperation,
+    deleteManyOperation,
     defaultUpdateConsistency,
     defaultRelationshipLocking,
 ) {
