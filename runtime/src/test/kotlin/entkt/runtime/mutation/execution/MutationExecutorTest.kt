@@ -40,7 +40,28 @@ class MutationExecutorTest {
         assertEquals(listOf("Widget mutation" to false), harness.runtime.preflights)
         assertSame(input, harness.calls.single().second)
         assertSame(harness.driver, harness.calls.single().first.driver)
+        assertSame(harness.ruleClient, harness.ruleClients.single())
         assertFalse(harness.calls.single().first.isOwnedTransaction)
+    }
+
+    @Test
+    fun `a reusable operation receives the client supplied for each invocation`() {
+        val harness = Harness()
+        val firstClient = Any()
+        val secondClient = Any()
+
+        assertEquals(
+            MutationResult.Success("Ada"),
+            harness.executor.execute(harness.operation, Input("Ada"), firstClient),
+        )
+        assertEquals(
+            MutationResult.Success("Grace"),
+            harness.executor.execute(harness.operation, Input("Grace"), secondClient),
+        )
+
+        assertEquals(2, harness.ruleClients.size)
+        assertSame(firstClient, harness.ruleClients[0])
+        assertSame(secondClient, harness.ruleClients[1])
     }
 
     @Test
@@ -81,6 +102,8 @@ class MutationExecutorTest {
         assertTrue(root.calls.isEmpty())
         assertSame(input, tx.calls.single().second)
         assertSame(tx.driver, tx.calls.single().first.driver)
+        assertSame(tx.ruleClient, tx.ruleClients.single())
+        assertTrue(root.ruleClients.isEmpty())
         assertTrue(tx.calls.single().first.isOwnedTransaction)
         assertTrue(tx.runtime.preflights.isEmpty(), "application policy was already checked at the root")
         assertTrue(tx.runtime.failures.isEmpty())
@@ -281,13 +304,13 @@ class MutationExecutorTest {
         val cause = IllegalStateException("invalid result shape")
         val projected = harness.operation.mapResult<String> { throw cause }
 
-        val failure = unexpected(harness.executor.execute(projected, Input("Ada")))
+        val failure = unexpected(harness.executor.execute(projected, Input("Ada"), harness.ruleClient))
 
         assertEquals(MutationWriteState.Committed, failure.writeState)
         assertSame(cause, failure.cause)
         for (completion in listOf(denied(), MutationCompletion.ReturnFailed(IllegalStateException("LOAD")))) {
             harness.completion = completion
-            val unavailable = failed(harness.executor.execute(projected, Input("Ada")))
+            val unavailable = failed(harness.executor.execute(projected, Input("Ada"), harness.ruleClient))
             assertFalse(unavailable.cause === cause)
         }
     }
@@ -299,7 +322,7 @@ class MutationExecutorTest {
         val cause = IllegalStateException("invalid result shape")
         root.ownedTransaction = { input, capture ->
             tx.executor.executeInOwnedTransactionForInternalUse(
-                tx.operation.mapResult<String> { throw cause }, input, capture,
+                tx.operation.mapResult<String> { throw cause }, input, tx.ruleClient, capture,
             ).asTransactionResult()
         }
 
@@ -339,6 +362,8 @@ class MutationExecutorTest {
         }
         val runtime = RecordingRuntime(events)
         val executor = MutationExecutor(driver, runtime)
+        val ruleClient = Any()
+        val ruleClients = mutableListOf<Any>()
         val calls = mutableListOf<Pair<MutationExecution, Input>>()
         var completion: MutationCompletion<String>? = null
         var writes = true
@@ -346,14 +371,15 @@ class MutationExecutorTest {
         var rejection: EntMutationException? = null
         var ownedTransaction: ((Input, MutationCompletionCapture) -> TransactionResult<MutationCompletion<String>>)? = null
 
-        val operation = object : MutationOperation<Input, String> {
+        val operation = object : MutationOperation<Any, Input, String> {
             override fun requirements(input: Input): MutationRequirements {
                 events += "requirements"
                 return MutationRequirements("Widget mutation", multiWrite, atomic)
             }
 
-            override fun run(execution: MutationExecution, input: Input): MutationCompletion<String> {
+            override fun run(execution: MutationExecution, ruleClient: Any, input: Input): MutationCompletion<String> {
                 events += "run"
+                ruleClients += ruleClient
                 calls += execution to input
                 rejection?.let { execution.reject(it) }
                 if (writes) execution.markWriteSucceeded()
@@ -362,10 +388,10 @@ class MutationExecutorTest {
             }
         }
 
-        fun execute(input: Input = Input("Ada")) = executor.execute(operation, input, ownedTransaction)
+        fun execute(input: Input = Input("Ada")) = executor.execute(operation, input, ruleClient, ownedTransaction)
 
         fun executeOwned(input: Input, capture: MutationCompletionCapture) =
-            executor.executeInOwnedTransactionForInternalUse(operation, input, capture)
+            executor.executeInOwnedTransactionForInternalUse(operation, input, ruleClient, capture)
 
         fun bindTransaction(tx: Harness) {
             ownedTransaction = { input, capture -> tx.executeOwned(input, capture).asTransactionResult() }

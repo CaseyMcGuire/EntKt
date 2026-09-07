@@ -36,6 +36,7 @@ class MutationPrivacyEvaluatorTest {
 
     private val viewerContext = ViewerContext(Viewer.User(7L))
     private val ruleClient = Any()
+    private val ruleContext = PrivacyRuleContext(viewerContext, ruleClient)
     private val mutationOperations = listOf(
         PrivacyOperation.CREATE,
         PrivacyOperation.UPDATE,
@@ -45,14 +46,12 @@ class MutationPrivacyEvaluatorTest {
     private fun evaluator(
         operation: PrivacyOperation = PrivacyOperation.UPDATE,
         rules: List<BatchPrivacyRule<Any, Record>> = emptyList(),
-        ruleClientProvider: () -> Any = { ruleClient },
         freshItem: (Record) -> Record = { it.copy(payload = it.payload.copyOf()) },
         fallback: PrivacyDecisionEvaluator<Any, Record, *>? = null,
     ): MutationPrivacyEvaluator<Any, Record, Record> = MutationPrivacyEvaluator(
         entity = RecordMapping,
         operation = operation,
         rules = rules,
-        ruleClientProvider = ruleClientProvider,
         freshItem = freshItem,
         fallback = fallback,
     )
@@ -62,7 +61,6 @@ class MutationPrivacyEvaluatorTest {
         val contexts = mutableListOf<PrivacyRuleContext<Any>>()
         val primaryBatches = mutableListOf<List<Long>>()
         val fallbackBatches = mutableListOf<List<String>>()
-        var clientResolutions = 0
         val primaryRules = mutableListOf<BatchPrivacyRule<Any, Record>>(
             batchPrivacyRule { context, batch ->
                 contexts += context
@@ -96,15 +94,13 @@ class MutationPrivacyEvaluatorTest {
         )
         val evaluator = evaluator(
             rules = primaryRules,
-            ruleClientProvider = { clientResolutions++; ruleClient },
             fallback = PrivacyDecisionEvaluator(fallbackRules) { record: Record -> record.name },
         )
         primaryRules.clear()
         fallbackRules.clear()
-        assertEquals(0, clientResolutions)
         val states = listOf(Record(1), Record(2), Record(3, "allow"), Record(4, "deny"), Record(5))
 
-        val evaluation = evaluator.evaluate(viewerContext, states)
+        val evaluation = evaluator.evaluate(ruleContext, states)
 
         assertEquals(listOf(listOf(1L, 2L, 3L, 4L, 5L), listOf(3L, 4L, 5L)), primaryBatches)
         assertEquals(listOf(listOf("allow", "deny", "record")), fallbackBatches)
@@ -115,10 +111,9 @@ class MutationPrivacyEvaluatorTest {
             evaluation.deniedOutcomes().map { it.reason },
         )
         evaluation.forEachIndexed { index, outcome -> assertSame(states[index], outcome.subject) }
-        assertEquals(1, clientResolutions)
         assertEquals(3, contexts.size)
         contexts.forEach {
-            assertSame(contexts.first(), it)
+            assertSame(ruleContext, it)
             assertSame(viewerContext, it.viewerContext)
             assertSame(ruleClient, it.client)
         }
@@ -134,7 +129,7 @@ class MutationPrivacyEvaluatorTest {
             )
             for (configuredFallback in listOf(null, fallback)) {
                 val evaluation = evaluator(operation = operation, fallback = configuredFallback)
-                    .evaluate(viewerContext, listOf(record))
+                    .evaluate(ruleContext, listOf(record))
 
                 assertSame(record, evaluation.deniedOutcomes().single().subject)
                 assertEquals(
@@ -146,10 +141,9 @@ class MutationPrivacyEvaluatorTest {
     }
 
     @Test
-    fun `empty and bypassed evaluations skip client rules and converters`() {
+    fun `empty and bypassed evaluations skip rules and converters`() {
         val evaluator = evaluator(
             rules = listOf(PrivacyRule { _, _ -> error("Primary must not run") }),
-            ruleClientProvider = { error("Client must not be resolved") },
             freshItem = { error("Primary input must not be converted") },
             fallback = PrivacyDecisionEvaluator<Any, Record, String>(
                 rules = listOf(PrivacyRule { _, _ -> error("Fallback must not run") }),
@@ -158,9 +152,9 @@ class MutationPrivacyEvaluatorTest {
         )
         val record = Record(1)
 
-        assertTrue(evaluator.evaluate(viewerContext, emptyList()).isEmpty())
+        assertTrue(evaluator.evaluate(ruleContext, emptyList()).isEmpty())
         val allowed = evaluator.evaluate(
-            ViewerContext.privacyBypass_DANGEROUS("mutation evaluator test"),
+            PrivacyRuleContext(ViewerContext.privacyBypass_DANGEROUS("mutation evaluator test"), ruleClient),
             listOf(record, record),
         ).allowedSubjects()
         assertEquals(2, allowed.size)
@@ -188,7 +182,7 @@ class MutationPrivacyEvaluatorTest {
         )
         val record = Record(1)
 
-        assertSame(record, evaluator.evaluate(viewerContext, listOf(record)).allowedSubjects().single())
+        assertSame(record, evaluator.evaluate(ruleContext, listOf(record)).allowedSubjects().single())
         assertContentEquals(byteArrayOf(1), record.payload)
         assertEquals(2, observed.size)
         assertNotSame(record, observed[0])
@@ -214,7 +208,7 @@ class MutationPrivacyEvaluatorTest {
             ),
         )
 
-        val evaluation = evaluator.evaluate(viewerContext, listOf(record, record))
+        val evaluation = evaluator.evaluate(ruleContext, listOf(record, record))
 
         assertEquals(2, evaluation.size)
         assertSame(record, evaluation.allowedSubjects().single())
@@ -232,7 +226,7 @@ class MutationPrivacyEvaluatorTest {
             ),
         )
 
-        assertEquals(1, evaluator.evaluate(viewerContext, listOf(Record(1))).allowedSubjects().size)
+        assertEquals(1, evaluator.evaluate(ruleContext, listOf(Record(1))).allowedSubjects().size)
     }
 
     @Test
@@ -250,7 +244,7 @@ class MutationPrivacyEvaluatorTest {
                     ),
                 )
 
-                assertSame(failure, assertFails { evaluator.evaluate(viewerContext, listOf(Record(1))) })
+                assertSame(failure, assertFails { evaluator.evaluate(ruleContext, listOf(Record(1))) })
             }
         }
     }
@@ -273,7 +267,7 @@ class MutationPrivacyEvaluatorTest {
                 )
 
                 val failure = assertFailsWith<EntBatchRuleContractException> {
-                    evaluator.evaluate(viewerContext, listOf(record))
+                    evaluator.evaluate(ruleContext, listOf(record))
                 }
 
                 assertEquals("StoredRecord ${operation.name} privacy", failure.lifecycle)
@@ -283,23 +277,23 @@ class MutationPrivacyEvaluatorTest {
     }
 
     @Test
-    fun `each evaluation resolves its client and preserves the supplied viewer context`() {
+    fun `each evaluation uses its supplied context without retaining a client or viewer`() {
         val clients = listOf(Any(), Any())
         val viewers = listOf(viewerContext, ViewerContext(Viewer.User(8L)))
         val contexts = mutableListOf<PrivacyRuleContext<Any>>()
-        var calls = 0
+        val suppliedContexts = viewers.mapIndexed { index, viewer -> PrivacyRuleContext(viewer, clients[index]) }
         val evaluator = evaluator(
-            ruleClientProvider = { clients[calls++] },
             rules = listOf(PrivacyRule { context, _ ->
                 contexts += context
                 PrivacyDecision.Allow
             }),
         )
 
-        viewers.forEach { evaluator.evaluate(it, listOf(Record(1))) }
+        suppliedContexts.forEach { evaluator.evaluate(it, listOf(Record(1))) }
 
-        assertEquals(2, calls)
+        assertEquals(2, contexts.size)
         contexts.forEachIndexed { index, context ->
+            assertSame(suppliedContexts[index], context)
             assertSame(clients[index], context.client)
             assertSame(viewers[index], context.viewerContext)
         }
@@ -307,12 +301,9 @@ class MutationPrivacyEvaluatorTest {
     }
 
     @Test
-    fun `LOAD is rejected at construction without resolving the client`() {
+    fun `LOAD is rejected at construction`() {
         val failure = assertFailsWith<IllegalArgumentException> {
-            evaluator(
-                operation = PrivacyOperation.LOAD,
-                ruleClientProvider = { error("Client must not be resolved") },
-            )
+            evaluator(operation = PrivacyOperation.LOAD)
         }
         assertEquals("Use LoadPrivacyEvaluator for LOAD privacy", failure.message)
     }

@@ -7,14 +7,13 @@ import entkt.runtime.entity.EntityMapping
 
 /**
  * Evaluates one entity's mutation privacy policy, including its optional CREATE-rule fallback.
- * The read client is resolved once per non-empty, non-bypassed evaluation, never at construction.
+ * The caller supplies the rule context per evaluation; no client or viewer is retained.
  */
 @EntktInternal
 class MutationPrivacyEvaluator<RuleClient, State, Item>(
     entity: EntityMapping<*>,
     operation: PrivacyOperation,
     rules: List<BatchPrivacyRule<RuleClient, Item>>,
-    private val ruleClientProvider: () -> RuleClient,
     freshItem: (State) -> Item,
     private val fallback: PrivacyDecisionEvaluator<RuleClient, State, *>? = null,
 ) {
@@ -28,18 +27,15 @@ class MutationPrivacyEvaluator<RuleClient, State, Item>(
     private val primary = PrivacyDecisionEvaluator(rules, freshItem)
 
     fun evaluate(
-        viewerContext: ViewerContext,
+        context: PrivacyRuleContext<RuleClient>,
         states: List<State>,
     ): PrivacyEvaluation<State> {
         val stateSnapshot = states.toList()
         val decisions = when {
             stateSnapshot.isEmpty() -> emptyList()
-            viewerContext.viewer is Viewer.PrivacyBypass ->
+            context.viewerContext.viewer is Viewer.PrivacyBypass ->
                 List(stateSnapshot.size) { PrivacyDecision.Allow }
-            else -> evaluateDecisions(
-                PrivacyRuleContext(viewerContext, ruleClientProvider()),
-                stateSnapshot,
-            )
+            else -> evaluateDecisions(context, stateSnapshot)
         }
         return correlatePrivacyEvaluationForInternalUse(
             lifecycle = lifecycle,

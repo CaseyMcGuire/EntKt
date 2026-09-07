@@ -199,7 +199,6 @@ class UpdateMutationOperationTest {
                     states.decideEach { privacyDecision }
                 },
             ),
-            ruleClientProvider = { ruleClient },
             freshItem = { it },
         )
 
@@ -212,7 +211,6 @@ class UpdateMutationOperationTest {
                     states.decideEach { invalids.firstOrNull() ?: ValidationDecision.Valid }
                 },
             ),
-            ruleClientProvider = { ruleClient },
             freshItem = { it },
         )
 
@@ -343,6 +341,7 @@ class UpdateMutationOperationTest {
             currentRelationshipRequirements = relationshipRequirements
             return mutationExecutor.execute(
                 operation = operation,
+                ruleClient = ruleClient,
                 input = UpdateMutationInput(
                     viewerContext = viewerContext,
                     request = request,

@@ -150,7 +150,6 @@ class CreateMutationOperationTest {
                         batch.decideEach { createDecision }
                     },
                 ),
-                ruleClientProvider = { Unit },
                 freshItem = { it },
             )
 
@@ -170,7 +169,6 @@ class CreateMutationOperationTest {
                         }
                     },
                 ),
-                ruleClientProvider = { Unit },
                 freshItem = { it },
             )
     }
@@ -549,7 +547,7 @@ class CreateMutationOperationTest {
         val input = fixture.createManyInput(fixture.viewerContext, blocks)
         blocks.clear()
 
-        val result = fixture.mutationExecutor.execute(fixture.manyOperation, input)
+        val result = fixture.mutationExecutor.execute(fixture.manyOperation, input, Unit)
 
         assertEquals(MutationResult.Success(listOf(Widget(1, "Ada"))), result)
         assertEquals(1, fixture.events.count { it == "construct-draft" })
@@ -596,7 +594,7 @@ class CreateMutationOperationTest {
             newDraft = { throw cause },
         )
 
-        val result = fixture.mutationExecutor.execute(fixture.manyOperation, input)
+        val result = fixture.mutationExecutor.execute(fixture.manyOperation, input, Unit)
 
         val failure = assertIs<EntUnexpectedMutationException>(assertIs<MutationResult.Failed>(result).exception)
         assertEquals(MutationWriteState.NotPersisted, failure.writeState)
@@ -614,6 +612,7 @@ class CreateMutationOperationTest {
 
         val result = fixture.mutationExecutor.execute(
             operation = fixture.manyOperation,
+            ruleClient = Unit,
             input = fixture.createManyInput(fixture.viewerContext, blocks),
         )
 
@@ -634,6 +633,7 @@ class CreateMutationOperationTest {
 
         val result = fixture.mutationExecutor.executeInOwnedTransactionForInternalUse(
             operation = fixture.manyOperation,
+            ruleClient = Unit,
             input = fixture.createManyInput(fixture.viewerContext, blocks),
             completionCapture = capture,
         )
@@ -660,10 +660,10 @@ class CreateMutationOperationTest {
 
             val result = if (owned) {
                 fixture.mutationExecutor.executeInOwnedTransactionForInternalUse(
-                    fixture.manyOperation, input, MutationCompletionCapture(),
+                    fixture.manyOperation, input, Unit, MutationCompletionCapture(),
                 )
             } else {
-                fixture.mutationExecutor.execute(fixture.manyOperation, input)
+                fixture.mutationExecutor.execute(fixture.manyOperation, input, Unit)
             }
 
             val failure = assertIs<MutationResult.Failed>(result).exception
@@ -823,8 +823,8 @@ class CreateMutationOperationTest {
         val spec: RecordingSpec,
         val input: RecordingInput,
         val mutationExecutor: MutationExecutor,
-        val operation: CreateMutationOperation<RecordingInput, Candidate, Widget, String, String>,
-        val manyOperation: CreateManyMutationOperation<RecordingInput, Candidate, Widget, String, String>,
+        val operation: CreateMutationOperation<Unit, RecordingInput, Candidate, Widget, String, String>,
+        val manyOperation: CreateManyMutationOperation<Unit, RecordingInput, Candidate, Widget, String, String>,
         val viewerContext: ViewerContext,
         val recordedFailures: MutableList<EntMutationException>,
     ) {
@@ -834,6 +834,7 @@ class CreateMutationOperationTest {
             checkReturnedEntityPrivacy: Boolean,
         ): MutationResult<Widget> = mutationExecutor.execute(
             operation = operation,
+            ruleClient = Unit,
             input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy),
         )
 
@@ -861,6 +862,7 @@ class CreateMutationOperationTest {
             }
             return mutationExecutor.execute(
                 operation = manyOperation,
+                ruleClient = Unit,
                 input = createManyInput(viewerContext, blocks),
             )
         }

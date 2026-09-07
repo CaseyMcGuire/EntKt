@@ -4,6 +4,7 @@ package entkt.runtime.mutation.execution
 
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -12,17 +13,19 @@ import entkt.runtime.result.EntityKey
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.toValidationViolation
 import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ValidationRuleContext
 
 /** Apply the same privacy-before-validation checks to one candidate or a complete DELETE batch. */
-internal fun <Entity : EntEntity<*>, Candidate> evaluateDeleteRules(
+internal fun <RuleClient, Entity : EntEntity<*>, Candidate> evaluateDeleteRules(
     execution: MutationExecution,
+    ruleClient: RuleClient,
     entityName: String,
     viewerContext: ViewerContext,
     candidates: List<DeleteRuleCandidate<Entity, Candidate>>,
-    privacyEvaluator: MutationPrivacyEvaluator<*, DeleteRuleCandidate<Entity, Candidate>, *>,
-    validationEvaluator: MutationValidationEvaluator<DeleteRuleCandidate<Entity, Candidate>>,
+    privacyEvaluator: MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>, *>,
+    validationEvaluator: MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
 ) {
-    val denial = privacyEvaluator.evaluate(viewerContext, candidates).firstDeniedOrNull()
+    val denial = privacyEvaluator.evaluate(PrivacyRuleContext(viewerContext, ruleClient), candidates).firstDeniedOrNull()
     if (denial != null) {
         execution.reject(
             EntMutationPrivacyDeniedException(
@@ -34,7 +37,7 @@ internal fun <Entity : EntEntity<*>, Candidate> evaluateDeleteRules(
             ),
         )
     }
-    validationEvaluator.evaluate(candidates).firstInvalidOrNull()?.let { invalid ->
+    validationEvaluator.evaluate(ValidationRuleContext(ruleClient), candidates).firstInvalidOrNull()?.let { invalid ->
         execution.reject(
             EntValidationException(
                 entityType = entityName,

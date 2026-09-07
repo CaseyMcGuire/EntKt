@@ -22,11 +22,12 @@ class MutationExecutor(
     /**
      * Check application policy, establish the operation's transaction scope, and resolve its
      * completion. Owned-transaction wiring must select the corresponding transaction-bound
-     * operation so its hooks and rule clients are bound alongside the driver.
+     * operation and supply its read client alongside the transaction's driver.
      */
-    fun <Input, Result> execute(
-        operation: MutationOperation<Input, Result>,
+    fun <RuleClient, Input, Result> execute(
+        operation: MutationOperation<RuleClient, Input, Result>,
         input: Input,
+        ruleClient: RuleClient,
         ownedTransaction: ((
             Input,
             MutationCompletionCapture,
@@ -40,7 +41,7 @@ class MutationExecutor(
             }
             executeOwned(execution, input, runOwnedTransaction)
         } else {
-            complete(operation.run(execution, input), execution.writeState)
+            complete(operation.run(execution, ruleClient, input), execution.writeState)
         }
     }
 
@@ -49,13 +50,14 @@ class MutationExecutor(
      * Lifecycle failures remain Failed so generated wiring can apply orRollback(). Return
      * failures remain neutral until the enclosing transaction determines the write outcome.
      */
-    fun <Input, Result> executeInOwnedTransactionForInternalUse(
-        operation: MutationOperation<Input, Result>,
+    fun <RuleClient, Input, Result> executeInOwnedTransactionForInternalUse(
+        operation: MutationOperation<RuleClient, Input, Result>,
         input: Input,
+        ruleClient: RuleClient,
         completionCapture: MutationCompletionCapture,
     ): MutationResult<MutationCompletion<Result>> = capture(isOwnedTransaction = true) { execution ->
         check(execution.inTransaction) { "Owned mutation execution requires a transaction-scoped driver" }
-        val completion = operation.run(execution, input)
+        val completion = operation.run(execution, ruleClient, input)
         completionCapture.record(completion, execution.writeState)
         MutationResult.Success(completion)
     }

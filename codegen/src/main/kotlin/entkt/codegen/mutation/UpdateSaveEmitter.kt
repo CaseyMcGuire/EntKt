@@ -135,6 +135,7 @@ internal class UpdateSaveEmitter(
         return property(
             "updateOperation",
             UPDATE_MUTATION_OPERATION.parameterizedBy(
+                ClassName(packageName, "ReadOnlyEntClient"),
                 draftClass,
                 entityClass,
                 pendingEdgesClass,
@@ -153,7 +154,6 @@ internal class UpdateSaveEmitter(
                 add("entity = %T,\n", entityDescriptorClass)
                 add("operation = %T.UPDATE,\n", PRIVACY_OPERATION)
                 add("rules = configuredPrivacy.updateRules,\n")
-                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
                 indent()
                 add("%L,\n", lifecycleValueSnapshot("state.before", allFields, entityClass))
@@ -186,7 +186,6 @@ internal class UpdateSaveEmitter(
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE validation")
                 add("rules = configuredValidation.updateRules,\n")
-                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
                 indent()
                 add("%L,\n", lifecycleValueSnapshot("state.before", allFields, entityClass))
@@ -202,7 +201,6 @@ internal class UpdateSaveEmitter(
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE validation")
                 add("rules = configuredValidation.createRules,\n")
-                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { state: %T -> %T(%L) },\n",
                     preparedStateClass,

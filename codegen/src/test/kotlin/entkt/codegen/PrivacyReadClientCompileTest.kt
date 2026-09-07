@@ -109,6 +109,52 @@ class PrivacyReadClientCompileTest {
     }
 
     @Test
+    fun `mutation execution requires the operation's concrete read-client type`() {
+        for (owned in listOf(false, true)) {
+            for (clientType in listOf("ReadOnlyEntClient", "EntClient")) {
+                val method = if (owned) "executeInOwnedTransactionForInternalUse" else "execute"
+                val capture = if (owned) "completionCapture = MutationCompletionCapture()," else ""
+                val result = compile(
+                    generatedSources() + SourceFile.kotlin(
+                        "MutationRuleClientSnippet.kt",
+                        """
+                        @file:OptIn(entkt.query.EntktInternal::class)
+
+                        package com.example.app
+
+                        import com.example.ent.EntClient
+                        import com.example.ent.ReadOnlyEntClient
+                        import entkt.runtime.mutation.execution.MutationCompletionCapture
+                        import entkt.runtime.mutation.execution.MutationExecutor
+                        import entkt.runtime.mutation.execution.MutationOperation
+
+                        fun execute(
+                            executor: MutationExecutor,
+                            operation: MutationOperation<ReadOnlyEntClient, Unit, Unit>,
+                            client: $clientType,
+                        ) = executor.$method(
+                            operation = operation,
+                            input = Unit,
+                            ruleClient = client,
+                            $capture
+                        )
+                        """.trimIndent(),
+                    ),
+                )
+                val expected = if (clientType == "ReadOnlyEntClient") {
+                    KotlinCompilation.ExitCode.OK
+                } else {
+                    KotlinCompilation.ExitCode.COMPILATION_ERROR
+                }
+                assertEquals(expected, result.exitCode, "$method with $clientType:\n${result.messages}")
+                if (expected == KotlinCompilation.ExitCode.COMPILATION_ERROR) {
+                    assertTrue(result.messages.contains("ReadOnlyEntClient"), result.messages)
+                }
+            }
+        }
+    }
+
+    @Test
     fun `privacy rule can explicitly select a bypass context for a terminal`() {
         val result = compile(
             generatedSources() + ruleSnippet(

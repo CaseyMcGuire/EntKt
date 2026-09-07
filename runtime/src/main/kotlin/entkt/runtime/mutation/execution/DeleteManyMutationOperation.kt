@@ -16,14 +16,14 @@ import java.util.concurrent.CancellationException
 
 /** Select, authorize, and persist one atomic DELETE batch with correlated acknowledgements. */
 @EntktInternal
-class DeleteManyMutationOperation<Entity : EntEntity<*>, Candidate>(
+class DeleteManyMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
     private val spec: DeleteMutationSpec<Entity>,
     private val converter: DeleteMutationConverter<Entity, Candidate>,
     private val privacyEvaluator:
-        MutationPrivacyEvaluator<*, DeleteRuleCandidate<Entity, Candidate>, *>,
+        MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>, *>,
     private val validationEvaluator:
-        MutationValidationEvaluator<DeleteRuleCandidate<Entity, Candidate>>,
-) : MutationOperation<DeleteManyMutationInput<Entity>, Int> {
+        MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
+) : MutationOperation<RuleClient, DeleteManyMutationInput<Entity>, Int> {
     override fun requirements(input: DeleteManyMutationInput<Entity>): MutationRequirements =
         MutationRequirements(
             operationName = "${spec.entity.entityName} deleteMany",
@@ -33,14 +33,16 @@ class DeleteManyMutationOperation<Entity : EntEntity<*>, Candidate>(
 
     override fun run(
         execution: MutationExecution,
+        ruleClient: RuleClient,
         input: DeleteManyMutationInput<Entity>,
     ): MutationCompletion<Int> = MutationCompletion.Ready(
-        deleteMany(execution, input.viewerContext, input.predicates),
+        deleteMany(execution, ruleClient, input.viewerContext, input.predicates),
     )
 
     /** Execute DELETE selection, lifecycle phases, and correlated persistence in an active transaction. */
     private fun deleteMany(
         execution: MutationExecution,
+        ruleClient: RuleClient,
         viewerContext: ViewerContext,
         predicates: List<Predicate<Entity>>,
     ): Int {
@@ -53,6 +55,7 @@ class DeleteManyMutationOperation<Entity : EntEntity<*>, Candidate>(
         }
         evaluateDeleteRules(
             execution = execution,
+            ruleClient = ruleClient,
             entityName = spec.entity.entityName,
             viewerContext = viewerContext,
             candidates = candidates,

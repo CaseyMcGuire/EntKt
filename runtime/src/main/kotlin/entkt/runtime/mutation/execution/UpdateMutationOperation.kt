@@ -16,6 +16,7 @@ import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.UpdateMutationRequest
 import entkt.runtime.mutation.UpdatePendingEdges
 import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -27,11 +28,13 @@ import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.toValidationViolation
 import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ValidationRuleContext
 import java.util.concurrent.CancellationException
 
 /** Runs the reusable UPDATE lifecycle around generated schema adapters. */
 @EntktInternal
 class UpdateMutationOperation<
+    RuleClient,
     Draft : UpdateMutationDraft<Entity>,
     Entity : EntEntity<*>,
     PendingEdges : UpdatePendingEdges<Entity>,
@@ -41,8 +44,8 @@ class UpdateMutationOperation<
     >(
     private val entity: EntityMapping<Entity>,
     private val mutationRuntime: MutationRuntime,
-    private val privacyEvaluator: MutationPrivacyEvaluator<*, PreparedState, *>,
-    private val validationEvaluator: MutationValidationEvaluator<PreparedState>,
+    private val privacyEvaluator: MutationPrivacyEvaluator<RuleClient, PreparedState, *>,
+    private val validationEvaluator: MutationValidationEvaluator<RuleClient, PreparedState>,
     private val adapter:
         UpdateMutationAdapter<Draft, Entity, PendingEdges, PreparedState, BeforeUpdateState>,
     private val hooks:
@@ -53,12 +56,13 @@ class UpdateMutationOperation<
             BeforeSaveState,
             BeforeUpdateState,
         >,
-) : MutationOperation<UpdateMutationInput<Draft>, Entity> {
+) : MutationOperation<RuleClient, UpdateMutationInput<Draft>, Entity> {
     override fun requirements(input: UpdateMutationInput<Draft>): MutationRequirements =
         MutationRequirements("${entity.entityName} update")
 
     override fun run(
         execution: MutationExecution,
+        ruleClient: RuleClient,
         input: UpdateMutationInput<Draft>,
     ): MutationCompletion<Entity> {
         val viewerContext = input.viewerContext
@@ -68,8 +72,8 @@ class UpdateMutationOperation<
         val before = loadTarget(execution, request, relationshipRequirements)
         val prepared = prepareUpdate(execution, viewerContext, request, before)
 
-        evaluatePrivacy(execution, viewerContext, request.id, prepared.state)
-        evaluateValidation(execution, prepared.state)
+        evaluatePrivacy(execution, PrivacyRuleContext(viewerContext, ruleClient), request.id, prepared.state)
+        evaluateValidation(execution, ValidationRuleContext(ruleClient), prepared.state)
 
         val resultEntity = if (prepared.isNoOp) {
             before
@@ -229,11 +233,11 @@ class UpdateMutationOperation<
 
     private fun evaluatePrivacy(
         attempt: MutationExecution,
-        viewerContext: ViewerContext,
+        context: PrivacyRuleContext<RuleClient>,
         id: Any,
         state: PreparedState,
     ) {
-        privacyEvaluator.evaluate(viewerContext, listOf(state)).firstDeniedOrNull()?.let { denial ->
+        privacyEvaluator.evaluate(context, listOf(state)).firstDeniedOrNull()?.let { denial ->
             attempt.reject(
                 EntMutationPrivacyDeniedException(
                     writeState = MutationWriteState.NotPersisted,
@@ -248,9 +252,10 @@ class UpdateMutationOperation<
 
     private fun evaluateValidation(
         attempt: MutationExecution,
+        context: ValidationRuleContext<RuleClient>,
         state: PreparedState,
     ) {
-        validationEvaluator.evaluate(listOf(state)).firstInvalidOrNull()?.let { invalid ->
+        validationEvaluator.evaluate(context, listOf(state)).firstInvalidOrNull()?.let { invalid ->
             attempt.reject(
                 EntValidationException(
                     entityType = entity.entityName,

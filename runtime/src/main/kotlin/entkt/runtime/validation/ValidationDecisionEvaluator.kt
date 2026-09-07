@@ -7,20 +7,22 @@ import entkt.runtime.result.EntBatchRuleContractException
 
 /** Intermediate violations retained only while composing a final validation evaluator. */
 @EntktInternal
-fun interface ValidationDecisionEvaluator<Subject> {
-    fun evaluate(subjects: List<Subject>): List<List<ValidationDecision.Invalid>>
+fun interface ValidationDecisionEvaluator<RuleClient, Subject> {
+    fun evaluate(
+        context: ValidationRuleContext<RuleClient>,
+        subjects: List<Subject>,
+    ): List<List<ValidationDecision.Invalid>>
 }
 
-/** Bind one typed validation-rule list, read-client provider, and subject adapter. */
+/** Bind one typed validation-rule list and subject adapter, with a per-call context. */
 @EntktInternal
 fun <RuleClient, Subject, Item> validationDecisionEvaluatorForInternalUse(
     lifecycle: String,
     rules: List<BatchValidationRule<RuleClient, Item>>,
-    ruleClientProvider: () -> RuleClient,
     freshItem: (Subject) -> Item,
-): ValidationDecisionEvaluator<Subject> {
+): ValidationDecisionEvaluator<RuleClient, Subject> {
     val ruleSnapshot = rules.toList()
-    return ValidationDecisionEvaluator { subjects ->
+    return ValidationDecisionEvaluator { context, subjects ->
         if (subjects.isEmpty()) {
             emptyList()
         } else {
@@ -28,7 +30,7 @@ fun <RuleClient, Subject, Item> validationDecisionEvaluatorForInternalUse(
                 lifecycle = lifecycle,
                 items = subjects,
                 rules = ruleSnapshot,
-                context = ValidationRuleContext(ruleClientProvider()),
+                context = context,
                 freshItem = freshItem,
             )
         }
@@ -36,14 +38,14 @@ fun <RuleClient, Subject, Item> validationDecisionEvaluatorForInternalUse(
 }
 
 /** Append every additional violation to its correlated primary subject. */
-internal fun <Subject> ValidationDecisionEvaluator<Subject>.plusForInternalUse(
+internal fun <RuleClient, Subject> ValidationDecisionEvaluator<RuleClient, Subject>.plusForInternalUse(
     lifecycle: String,
-    additional: ValidationDecisionEvaluator<Subject>?,
-): ValidationDecisionEvaluator<Subject> {
+    additional: ValidationDecisionEvaluator<RuleClient, Subject>?,
+): ValidationDecisionEvaluator<RuleClient, Subject> {
     if (additional == null) return this
-    return ValidationDecisionEvaluator { subjects ->
-        val primary = evaluate(subjects)
-        val secondary = additional.evaluate(subjects)
+    return ValidationDecisionEvaluator { context, subjects ->
+        val primary = evaluate(context, subjects)
+        val secondary = additional.evaluate(context, subjects)
         if (primary.size != subjects.size) {
             throw EntBatchRuleContractException(lifecycle, subjects.size, primary.size)
         }

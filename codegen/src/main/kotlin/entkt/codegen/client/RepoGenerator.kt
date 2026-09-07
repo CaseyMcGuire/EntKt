@@ -206,7 +206,11 @@ internal class RepoGenerator(
             )
             property(
                 "createMutationOperation",
-                MUTATION_OPERATION.parameterizedBy(CREATE_MUTATION_INPUT.parameterizedBy(createDraftClass), entityClass),
+                MUTATION_OPERATION.parameterizedBy(
+                    ClassName(packageName, "ReadOnlyEntClient"),
+                    CREATE_MUTATION_INPUT.parameterizedBy(createDraftClass),
+                    entityClass,
+                ),
             ) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("%T(createManyMutationOperation)", CREATE_MUTATION_OPERATION)
@@ -229,7 +233,11 @@ internal class RepoGenerator(
             )
             property(
                 "deleteMutationOperation",
-                MUTATION_OPERATION.parameterizedBy(DELETE_MUTATION_INPUT, Boolean::class.asClassName()),
+                MUTATION_OPERATION.parameterizedBy(
+                    ClassName(packageName, "ReadOnlyEntClient"),
+                    DELETE_MUTATION_INPUT,
+                    Boolean::class.asClassName(),
+                ),
             ) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(
@@ -240,7 +248,11 @@ internal class RepoGenerator(
             }
             property(
                 "deleteManyMutationOperation",
-                MUTATION_OPERATION.parameterizedBy(DELETE_MANY_MUTATION_INPUT.parameterizedBy(entityClass), INT),
+                MUTATION_OPERATION.parameterizedBy(
+                    ClassName(packageName, "ReadOnlyEntClient"),
+                    DELETE_MANY_MUTATION_INPUT.parameterizedBy(entityClass),
+                    INT,
+                ),
             ) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(
@@ -336,6 +348,7 @@ internal class RepoGenerator(
             add("return mutationExecutor.execute(\n")
             indent()
             add("operation = updateAdapter.updateOperation,\n")
+            add("ruleClient = client.readOnlyClient,\n")
             add("input = %T(\n", ClassName("entkt.runtime.mutation.execution", "UpdateMutationInput"))
             indent()
             add("viewerContext = viewerContext,\n")
@@ -361,6 +374,7 @@ internal class RepoGenerator(
                 add("return mutationExecutor.execute(\n")
                 indent()
                 add("operation = deleteMutationOperation.mapResult { Unit },\n")
+                add("ruleClient = client.readOnlyClient,\n")
                 add("input = %T(viewerContext, entity.id),\n", DELETE_MUTATION_INPUT)
                 unindent()
                 add(")\n")
@@ -380,6 +394,7 @@ internal class RepoGenerator(
             add("return mutationExecutor.execute(\n")
             indent()
             add("operation = deleteMutationOperation,\n")
+            add("ruleClient = client.readOnlyClient,\n")
             add("input = %T(viewerContext, id),\n", DELETE_MUTATION_INPUT)
             unindent()
             add(")\n")
@@ -405,6 +420,7 @@ internal class RepoGenerator(
             add("return mutationExecutor.execute(\n")
             indent()
             add("operation = deleteManyMutationOperation,\n")
+            add("ruleClient = client.readOnlyClient,\n")
             add("input = %T(viewerContext, predicates.asList()),\n", DELETE_MANY_MUTATION_INPUT)
             addOwnedTransactionWiring(
                 clientName,
@@ -427,6 +443,7 @@ internal class RepoGenerator(
         add("tx.%L.mutationExecutor.executeInOwnedTransactionForInternalUse(\n", clientName)
         indent()
         add("operation = %L,\n", operation)
+        add("ruleClient = tx.%L.client.readOnlyClient,\n", clientName)
         add("input = input,\n")
         add("completionCapture = completionCapture,\n")
         unindent()
@@ -506,6 +523,7 @@ internal class RepoGenerator(
     ): PropertySpec {
         val ruleInputClass = ClassName(packageName, "${schemaName}CreateRuleInput")
         val operationType = CREATE_MANY_MUTATION_OPERATION.parameterizedBy(
+            ClassName(packageName, "ReadOnlyEntClient"),
             createDraftClass,
             candidateClass,
             entityClass,
@@ -525,7 +543,6 @@ internal class RepoGenerator(
                 add("entity = %T,\n", entityDescriptorClass)
                 add("operation = %T.CREATE,\n", PRIVACY_OPERATION)
                 add("rules = configuredPrivacy.createRules,\n")
-                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { candidate -> %T(%L) },\n",
                     ruleInputClass,
@@ -537,7 +554,6 @@ internal class RepoGenerator(
                 indent()
                 add("lifecycle = %S,\n", "$schemaName CREATE validation")
                 add("rules = configuredValidation.createRules,\n")
-                add("ruleClientProvider = { client.readOnlyClient },\n")
                 add(
                     "freshItem = { candidate -> %T(%L) },\n",
                     ruleInputClass,
@@ -607,7 +623,6 @@ internal class RepoGenerator(
                     add("entity = %T,\n", entityDescriptorClass)
                     add("operation = %T.DELETE,\n", PRIVACY_OPERATION)
                     add("rules = configuredPrivacy.deleteRules,\n")
-                    add("ruleClientProvider = { client.readOnlyClient },\n")
                     add(
                         "freshItem = { item: %T -> %T(%L, %L) },\n",
                         ruleCandidateType,
@@ -636,14 +651,19 @@ internal class RepoGenerator(
                     add(")")
                 })
             },
-            property("deleteValidationEvaluator", MUTATION_VALIDATION_EVALUATOR.parameterizedBy(ruleCandidateType)) {
+            property(
+                "deleteValidationEvaluator",
+                MUTATION_VALIDATION_EVALUATOR.parameterizedBy(
+                    ClassName(packageName, "ReadOnlyEntClient"),
+                    ruleCandidateType,
+                ),
+            ) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(codeBlock {
                     add("%M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
                     indent()
                     add("lifecycle = %S,\n", "$schemaName DELETE validation")
                     add("rules = configuredValidation.deleteRules,\n")
-                    add("ruleClientProvider = { client.readOnlyClient },\n")
                     add(
                         "freshItem = { item: %T -> %T(%L, %L) },\n",
                         ruleCandidateType,
@@ -686,6 +706,7 @@ internal class RepoGenerator(
                 add("return mutationExecutor.execute(\n")
                 indent()
                 add("operation = createMutationOperation.mapResult { Unit },\n")
+                add("ruleClient = client.readOnlyClient,\n")
                 add("input = %T(viewerContext, draft, checkReturnedEntityPrivacy = false),\n", CREATE_MUTATION_INPUT)
                 unindent()
                 add(")\n")
@@ -704,6 +725,7 @@ internal class RepoGenerator(
             add("return mutationExecutor.execute(\n")
             indent()
             add("operation = createMutationOperation,\n")
+            add("ruleClient = client.readOnlyClient,\n")
             add("input = %T(viewerContext, draft, checkReturnedEntityPrivacy = true),\n", CREATE_MUTATION_INPUT)
             unindent()
             add(")\n")
@@ -735,6 +757,7 @@ internal class RepoGenerator(
             add("return mutationExecutor.execute(\n")
             indent()
             add("operation = createManyMutationOperation,\n")
+            add("ruleClient = client.readOnlyClient,\n")
             add("input = %T(viewerContext, blocks.asList(), newDraft = { %T() }),\n", CREATE_MANY_MUTATION_INPUT, createDraftClass)
             addOwnedTransactionWiring(clientName, CodeBlock.of("tx.%L.createManyMutationOperation", clientName))
             unindent()

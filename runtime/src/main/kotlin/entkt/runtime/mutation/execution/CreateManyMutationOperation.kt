@@ -10,6 +10,7 @@ import entkt.runtime.hook.MutationHookRunner
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -20,6 +21,7 @@ import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.toValidationViolation
 import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ValidationRuleContext
 import java.util.concurrent.CancellationException
 
 /**
@@ -32,6 +34,7 @@ import java.util.concurrent.CancellationException
  */
 @EntktInternal
 class CreateManyMutationOperation<
+    RuleClient,
     Draft : CreateMutationDraft<Entity>,
     Candidate,
     Entity : EntEntity<*>,
@@ -41,14 +44,14 @@ class CreateManyMutationOperation<
     private val mutationRuntime: MutationRuntime,
     private val entity: EntityMapping<Entity>,
     private val converter: CreateMutationConverter<Draft, Candidate, Entity>,
-    private val privacyEvaluator: MutationPrivacyEvaluator<*, Candidate, *>,
-    private val validationEvaluator: MutationValidationEvaluator<Candidate>,
+    private val privacyEvaluator: MutationPrivacyEvaluator<RuleClient, Candidate, *>,
+    private val validationEvaluator: MutationValidationEvaluator<RuleClient, Candidate>,
     private val hookStateConverter:
         CreateMutationHookStateConverter<Draft, BeforeSaveState, BeforeCreateState>,
     private val beforeSaveHookRunner: MutationHookRunner<BeforeSaveState>,
     private val beforeCreateHookRunner: MutationHookRunner<BeforeCreateState>,
     private val afterCreateHookRunner: HookRunner<Entity>,
-) : MutationOperation<CreateManyMutationInput<Draft>, List<Entity>> {
+) : MutationOperation<RuleClient, CreateManyMutationInput<Draft>, List<Entity>> {
     internal val entityName: String get() = entity.entityName
 
     override fun requirements(input: CreateManyMutationInput<Draft>): MutationRequirements =
@@ -60,12 +63,14 @@ class CreateManyMutationOperation<
 
     override fun run(
         execution: MutationExecution,
+        ruleClient: RuleClient,
         input: CreateManyMutationInput<Draft>,
     ): MutationCompletion<List<Entity>> {
         if (input.blocks.isEmpty()) return MutationCompletion.Ready(emptyList())
         val drafts = input.blocks.map { block -> input.newDraft().apply(block) }
         return createBatch(
             execution = execution,
+            ruleClient = ruleClient,
             viewerContext = input.viewerContext,
             drafts = drafts,
             persistence = CreatePersistence.Many,
@@ -76,6 +81,7 @@ class CreateManyMutationOperation<
     /** Run the same ordered phases for scalar and bulk terminals. */
     internal fun createBatch(
         execution: MutationExecution,
+        ruleClient: RuleClient,
         viewerContext: ViewerContext,
         drafts: List<Draft>,
         persistence: CreatePersistence,
@@ -83,6 +89,7 @@ class CreateManyMutationOperation<
     ): MutationCompletion<List<Entity>> {
         val created = runCreateLifecycle(
             attempt = execution,
+            ruleClient = ruleClient,
             viewerContext = viewerContext,
             drafts = drafts,
             persistence = persistence,
@@ -98,6 +105,7 @@ class CreateManyMutationOperation<
     /** Run every scalar or batch create phase in lifecycle order. */
     private fun runCreateLifecycle(
         attempt: MutationExecution,
+        ruleClient: RuleClient,
         viewerContext: ViewerContext,
         drafts: List<Draft>,
         persistence: CreatePersistence,
@@ -133,10 +141,11 @@ class CreateManyMutationOperation<
             attempt = attempt,
             entityName = entityName,
             prepared = resolvedCreates,
-            viewerContext = viewerContext,
+            context = PrivacyRuleContext(viewerContext, ruleClient),
         )
         evaluateCreateValidation(
             attempt = attempt,
+            context = ValidationRuleContext(ruleClient),
             entityName = entityName,
             prepared = resolvedCreates,
         )
@@ -196,10 +205,10 @@ class CreateManyMutationOperation<
         attempt: MutationExecution,
         entityName: String,
         prepared: List<PreparedCreate<Candidate>>,
-        viewerContext: ViewerContext,
+        context: PrivacyRuleContext<RuleClient>,
     ) {
         val denial = privacyEvaluator.evaluate(
-            viewerContext = viewerContext,
+            context = context,
             states = prepared.map { it.candidate },
         ).firstDeniedOrNull()
         denial?.let {
@@ -218,10 +227,11 @@ class CreateManyMutationOperation<
     /** Reject the entire create operation when any candidate is invalid. */
     private fun evaluateCreateValidation(
         attempt: MutationExecution,
+        context: ValidationRuleContext<RuleClient>,
         entityName: String,
         prepared: List<PreparedCreate<Candidate>>,
     ) {
-        validationEvaluator.evaluate(prepared.map { it.candidate }).firstInvalidOrNull()?.let { invalid ->
+        validationEvaluator.evaluate(context, prepared.map { it.candidate }).firstInvalidOrNull()?.let { invalid ->
             attempt.reject(
                 EntValidationException(
                     entityType = entityName,

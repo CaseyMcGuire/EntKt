@@ -236,7 +236,6 @@ class DeleteMutationOperationTest {
                     }
                 },
             ),
-            ruleClientProvider = { ruleClient },
             freshItem = { it },
         )
 
@@ -256,7 +255,6 @@ class DeleteMutationOperationTest {
                     }
                 },
             ),
-            ruleClientProvider = { ruleClient },
             freshItem = { it },
         )
 
@@ -282,14 +280,14 @@ class DeleteMutationOperationTest {
 
         fun scalarOperation(
             spec: DeleteMutationSpec<Widget> = this.spec,
-        ): DeleteMutationOperation<Widget, Candidate> = DeleteMutationOperation(
+        ): DeleteMutationOperation<Any, Widget, Candidate> = DeleteMutationOperation(
             spec = spec,
             converter = converter,
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
         )
 
-        fun manyOperation(): DeleteManyMutationOperation<Widget, Candidate> = DeleteManyMutationOperation(
+        fun manyOperation(): DeleteManyMutationOperation<Any, Widget, Candidate> = DeleteManyMutationOperation(
             spec = spec,
             converter = converter,
             privacyEvaluator = privacyEvaluator,
@@ -302,6 +300,7 @@ class DeleteMutationOperationTest {
             spec: DeleteMutationSpec<Widget> = this.spec,
         ): MutationResult<Boolean> = mutationExecutor.execute(
             operation = scalarOperation(spec),
+            ruleClient = ruleClient,
             input = DeleteMutationInput(viewerContext, id),
         )
 
@@ -310,6 +309,7 @@ class DeleteMutationOperationTest {
             predicates: List<Predicate<Widget>>,
         ): MutationResult<Int> = mutationExecutor.execute(
             operation = manyOperation(),
+            ruleClient = ruleClient,
             input = DeleteManyMutationInput(viewerContext, predicates),
         )
     }

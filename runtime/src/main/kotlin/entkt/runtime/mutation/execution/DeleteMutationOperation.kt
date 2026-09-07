@@ -14,27 +14,29 @@ import java.util.concurrent.CancellationException
 
 /** Reload, authorize, and idempotently delete one current row. */
 @EntktInternal
-class DeleteMutationOperation<Entity : EntEntity<*>, Candidate>(
+class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
     private val spec: DeleteMutationSpec<Entity>,
     private val converter: DeleteMutationConverter<Entity, Candidate>,
     private val privacyEvaluator:
-        MutationPrivacyEvaluator<*, DeleteRuleCandidate<Entity, Candidate>, *>,
+        MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>, *>,
     private val validationEvaluator:
-        MutationValidationEvaluator<DeleteRuleCandidate<Entity, Candidate>>,
-) : MutationOperation<DeleteMutationInput, Boolean> {
+        MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
+) : MutationOperation<RuleClient, DeleteMutationInput, Boolean> {
     override fun requirements(input: DeleteMutationInput): MutationRequirements =
         MutationRequirements("${spec.entity.entityName} delete")
 
     override fun run(
         execution: MutationExecution,
+        ruleClient: RuleClient,
         input: DeleteMutationInput,
     ): MutationCompletion<Boolean> = MutationCompletion.Ready(
-        deleteById(execution, input.viewerContext, input.id),
+        deleteById(execution, ruleClient, input.viewerContext, input.id),
     )
 
     /** Reload and idempotently delete one current row. */
     private fun deleteById(
         execution: MutationExecution,
+        ruleClient: RuleClient,
         viewerContext: ViewerContext,
         id: Any,
     ): Boolean {
@@ -49,6 +51,7 @@ class DeleteMutationOperation<Entity : EntEntity<*>, Candidate>(
 
         return deleteLoaded(
             execution = execution,
+            ruleClient = ruleClient,
             viewerContext = viewerContext,
             entity = spec.entity.decode(row),
         )
@@ -56,12 +59,14 @@ class DeleteMutationOperation<Entity : EntEntity<*>, Candidate>(
 
     private fun deleteLoaded(
         execution: MutationExecution,
+        ruleClient: RuleClient,
         viewerContext: ViewerContext,
         entity: Entity,
     ): Boolean {
         val candidate = DeleteRuleCandidate(entity, converter.toCandidate(entity))
         evaluateDeleteRules(
             execution = execution,
+            ruleClient = ruleClient,
             entityName = spec.entity.entityName,
             viewerContext = viewerContext,
             candidates = listOf(candidate),

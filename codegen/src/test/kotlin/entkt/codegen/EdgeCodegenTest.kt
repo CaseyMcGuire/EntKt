@@ -1201,7 +1201,7 @@ class EdgeCodegenTest {
         assert(output.contains("converter = createConverter,") && output.contains("hookStateConverter = createConverter,"))
         assert(!output.contains("::requiredInputViolations") && !output.contains("::resolve") && !output.contains("fun resolve("))
         assert(!output.contains("beforeSave =") && !output.contains("beforeCreate ="))
-        assert(output.contains("CreateManyMutationOperation<PetCreateDraft, PetWriteCandidate, Pet, PetBeforeSaveState, PetBeforeCreateState>") &&
+        assert(output.contains("CreateManyMutationOperation<ReadOnlyEntClient, PetCreateDraft, PetWriteCandidate, Pet, PetBeforeSaveState, PetBeforeCreateState>") &&
             output.contains("privacyEvaluator = MutationPrivacyEvaluator(")) {
             "rule evaluators should be injected directly into the runtime operation\n$output"
         }

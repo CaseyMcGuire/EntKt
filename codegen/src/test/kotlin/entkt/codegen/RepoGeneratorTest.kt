@@ -29,14 +29,14 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "privacyEvaluator = MutationPrivacyEvaluator( entity = RepoBytesRecordDescriptor, operation = PrivacyOperation.CREATE, rules = configuredPrivacy.createRules, ruleClientProvider = { client.readOnlyClient }, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
+                "privacyEvaluator = MutationPrivacyEvaluator( entity = RepoBytesRecordDescriptor, operation = PrivacyOperation.CREATE, rules = configuredPrivacy.createRules, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
             ),
         ) {
             "the privacy evaluator should provide a fresh detached item for each rule\n$output"
         }
         assert(
             output.contains(
-                "validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE validation\", rules = configuredValidation.createRules, ruleClientProvider = { client.readOnlyClient }, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
+                "validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE validation\", rules = configuredValidation.createRules, freshItem = { candidate -> RepoBytesRecordCreateRuleInput(candidate.copy( payload = candidate.payload.copyOf(), thumbnail = candidate.thumbnail?.copyOf(), )) }, )",
             ),
         ) {
             "the validation evaluator should provide a fresh detached item for each rule\n$output"
@@ -281,7 +281,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("mutationExecutor.execute( operation = deleteMutationOperation.mapResult { Unit }, input = DeleteMutationInput(viewerContext, entity.id), )")) {
+        assert(output.contains("mutationExecutor.execute( operation = deleteMutationOperation.mapResult { Unit }, ruleClient = client.readOnlyClient, input = DeleteMutationInput(viewerContext, entity.id), )")) {
             "delete should pass the handle to the bound runtime operation\n$output"
         }
     }
@@ -305,7 +305,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("mutationExecutor.execute( operation = deleteMutationOperation, input = DeleteMutationInput(viewerContext, id), )")) {
+        assert(output.contains("mutationExecutor.execute( operation = deleteMutationOperation, ruleClient = client.readOnlyClient, input = DeleteMutationInput(viewerContext, id), )")) {
             "deleteById should pass the id to the bound runtime operation\n$output"
         }
     }
@@ -358,7 +358,7 @@ class RepoGeneratorTest {
             "update should capture only per-operation state in the draft and request\n$output"
         }
         assert(output.contains("override fun executeUpdate(") &&
-            output.contains("mutationExecutor.execute( operation = updateAdapter.updateOperation, input = UpdateMutationInput( viewerContext = viewerContext, request = request, applyLoadPrivacy = applyLoadPrivacy,")) {
+            output.contains("mutationExecutor.execute( operation = updateAdapter.updateOperation, ruleClient = client.readOnlyClient, input = UpdateMutationInput( viewerContext = viewerContext, request = request, applyLoadPrivacy = applyLoadPrivacy,")) {
             "repository execution should pass the complete request directly to the shared executor\n$output"
         }
     }
@@ -437,12 +437,13 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private val createMutationOperation: MutationOperation<CreateMutationInput<") && !output.contains("CreateOperation")) {
+        assert(output.contains("private val createMutationOperation: MutationOperation<ReadOnlyEntClient, CreateMutationInput<") && !output.contains("CreateOperation")) {
             "the repo should bind a scalar operation returning the entity directly\n$output"
         }
         assert(
             output.contains(
                 "mutationExecutor.execute( operation = createMutationOperation.mapResult { Unit }, " +
+                    "ruleClient = client.readOnlyClient, " +
                     "input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy = false), )",
             ),
         ) {
@@ -450,7 +451,7 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "mutationExecutor.execute( operation = createMutationOperation, input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy = true), )",
+                "mutationExecutor.execute( operation = createMutationOperation, ruleClient = client.readOnlyClient, input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy = true), )",
             ),
         ) {
             "saveAndLoad should use the same bound operation with returned LOAD disclosure\n$output"
@@ -493,7 +494,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private val createManyMutationOperation: CreateManyMutationOperation<CarCreateDraft, CarWriteCandidate, Car, CarBeforeSaveState, CarBeforeCreateState>")) {
+        assert(output.contains("private val createManyMutationOperation: CreateManyMutationOperation<ReadOnlyEntClient, CarCreateDraft, CarWriteCandidate, Car, CarBeforeSaveState, CarBeforeCreateState>")) {
             "the repo should bind one typed create operation\n$output"
         }
         assert(
@@ -534,7 +535,7 @@ class RepoGeneratorTest {
         assert(
             output.contains(
                 "tx.cars.mutationExecutor.executeInOwnedTransactionForInternalUse( " +
-                    "operation = tx.cars.createManyMutationOperation, input = input, " +
+                    "operation = tx.cars.createManyMutationOperation, ruleClient = tx.cars.client.readOnlyClient, input = input, " +
                     "completionCapture = completionCapture, ).orRollback()",
             ),
         ) {
@@ -596,16 +597,17 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("private val deleteMutationOperation: MutationOperation<DeleteMutationInput, Boolean>") && !output.contains("DeleteOperation")) {
+        assert(output.contains("private val deleteMutationOperation: MutationOperation<ReadOnlyEntClient, DeleteMutationInput, Boolean>") && !output.contains("DeleteOperation")) {
             "the scalar DELETE operation should return a Boolean directly\n$output"
         }
         assert(output.contains("DeleteMutationOperation(spec = deleteSpec, converter = CarDeleteConverter,"))
         assert(output.contains("DeleteManyMutationOperation(spec = deleteSpec, converter = CarDeleteConverter,"))
         assert(!output.contains("MutationLifecycle"))
-        assert(output.contains("private val deleteManyMutationOperation: MutationOperation<DeleteManyMutationInput<Car>, Int>"))
+        assert(output.contains("private val deleteManyMutationOperation: MutationOperation<ReadOnlyEntClient, DeleteManyMutationInput<Car>, Int>"))
         assert(
             output.contains(
                 "mutationExecutor.execute( operation = deleteManyMutationOperation, " +
+                    "ruleClient = client.readOnlyClient, " +
                     "input = DeleteManyMutationInput(viewerContext, predicates.asList()), ownedTransaction =",
             ),
         ) {
@@ -632,7 +634,7 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "tx.cars.mutationExecutor.executeInOwnedTransactionForInternalUse( operation = tx.cars.deleteManyMutationOperation, input = input, completionCapture = completionCapture, ).orRollback()",
+                "tx.cars.mutationExecutor.executeInOwnedTransactionForInternalUse( operation = tx.cars.deleteManyMutationOperation, ruleClient = tx.cars.client.readOnlyClient, input = input, completionCapture = completionCapture, ).orRollback()",
             ),
         ) {
             "owned deleteMany work should use the transaction repository's bound operation\n$output"
@@ -991,20 +993,26 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `mutation evaluators capture the stable read-only client`() {
+    fun `mutation operations receive the typed read-only client only at execution time`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
 
-        assert(output.contains("CreateManyMutationOperation<CarCreateDraft, CarWriteCandidate, Car, CarBeforeSaveState, CarBeforeCreateState>")) {
-            "the create operation should not carry a rule-client type\n$output"
+        assert(output.contains("CreateManyMutationOperation<ReadOnlyEntClient, CarCreateDraft, CarWriteCandidate, Car, CarBeforeSaveState, CarBeforeCreateState>")) {
+            "the create operation should require the concrete read-only client\n$output"
         }
         assert(output.contains("DeleteMutationSpec<Car>")) {
             "deleteSpec should not carry a rule-client type\n$output"
         }
-        assert(output.contains("ruleClientProvider = { client.readOnlyClient }")) {
-            "entity-specific evaluators should capture the stable read-only client\n$output"
+        assert(!output.contains("ruleClientProvider")) {
+            "evaluators must not capture a rule-client provider\n$output"
         }
+        val construction = output.substringBefore("\n  init {")
+        assert(!construction.contains("client.readOnlyClient")) {
+            "repository construction must not resolve a read client\n$output"
+        }
+        assert(output.contains("ruleClient = client.readOnlyClient"))
+        assert(output.contains("ruleClient = tx.cars.client.readOnlyClient"))
         assert(!output.contains("asValidationReadClientForInternalUse"))
         assert(!output.contains("asReadClientForInternalUse")) {
             "The arbitrary-context adapter must not be called anymore\n$output"

@@ -30,6 +30,16 @@ above it.
 
 ## Unreleased
 
+- **Supply mutation rule clients at execution time** (`runtime`, `codegen`)
+  Mutation privacy and validation evaluators no longer capture a
+  `ruleClientProvider`. They receive `PrivacyRuleContext` or
+  `ValidationRuleContext` per evaluation. Runtime mutation operations carry a
+  `RuleClient` type parameter, and the executor receives that concrete client
+  per invocation. Owned transactions use their transaction-scoped read client.
+  _Migration:_ regenerate entity code; application CRUD calls are unchanged.
+  Handwritten internal operation wiring must supply `ruleClient` to executor
+  calls and pass the matching context to evaluator calls.
+
 - **Construct mutation privacy evaluators directly** (`runtime`, `codegen`)
   `MutationPrivacyEvaluator` and `PrivacyDecisionEvaluator` are concrete runtime
   classes. Their `*ForInternalUse` factories are removed. The mutation evaluator
