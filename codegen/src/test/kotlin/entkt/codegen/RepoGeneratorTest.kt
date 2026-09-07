@@ -93,13 +93,9 @@ class RepoGeneratorTest {
         assert(validationContexts == 0) {
             "Mutation validation context construction belongs to runtime phases\n$output"
         }
-        val loadBinding = output.substringAfter("protected override val loadPrivacyEvaluator:")
-            .substringBefore("private val createConverter:")
-        assert(!loadBinding.contains("freshItem") && !loadBinding.contains("LoadPrivacyItem")) {
+        assert(output.contains("loadPrivacyRules = configuredPrivacy.loadRules,"))
+        assert(!output.contains("freshItem") && !output.contains("LoadPrivacyItem")) {
             "LOAD should pass entities directly without a wrapper or converter\n$output"
-        }
-        assert(!loadBinding.contains("copyOf") && !loadBinding.contains(".copy(")) {
-            "LOAD must not generate defensive entity copies\n$output"
         }
         assert(!output.contains("copyOf") && !output.contains(".copy(") && !output.contains("copyJsonValue")) {
             "Rule wiring must not generate defensive copies\n$output"
@@ -159,6 +155,7 @@ class RepoGeneratorTest {
                       entity = ${name}Descriptor,
                       driver = driver,
                       mutationExecutor = MutationExecutor(driver, client),
+                      loadPrivacyRules = configuredPrivacy.loadRules,
                       defaultUpdateConsistency = client.defaultUpdateConsistency,
                       defaultRelationshipLocking = client.defaultRelationshipLocking,
                     ),
@@ -297,7 +294,7 @@ class RepoGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString().replace("\\s+".toRegex(), " ")
         val operation = output.substringAfter("protected override val updateOperation:")
-            .substringBefore("protected override val loadPrivacyEvaluator:")
+            .substringBefore("private val createConverter:")
         assert(operation.contains("buildUpdateMutationOperation( entity = UserDescriptor, mutationRuntime = client, privacy = configuredPrivacy, validation = configuredValidation,"))
         val ruleInput = "UserUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )"
         assert(Regex(Regex.escape(ruleInput)).findAll(operation).count() == 1) {
@@ -537,7 +534,7 @@ class RepoGeneratorTest {
             "Privacy configuration should only be a constructor input\n$output"
         }
         assert(!output.contains("privacyConfig."))
-        assert(output.contains("rules = configuredPrivacy.loadRules"))
+        assert(output.contains("loadPrivacyRules = configuredPrivacy.loadRules"))
         assert(output.contains("buildCreateManyMutationOperation( entity = CarDescriptor, mutationRuntime = client, converter = createConverter, privacy = configuredPrivacy, validation = configuredValidation,"))
         assert(output.contains("buildDeleteMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter, privacy = configuredPrivacy,"))
         assert(!output.contains("DerivesFromCreate"))
@@ -564,7 +561,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("CarReadSurface"))
-        assert(output.contains("protected override val loadPrivacyEvaluator: LoadPrivacyEvaluator<ReadOnlyEntClient, Car>"))
+        assert(output.contains("loadPrivacyRules = configuredPrivacy.loadRules,"))
         for (lifecycle in listOf("Load", "Create", "Update", "Delete")) {
             assert(!output.contains("fun has" + lifecycle + "Privacy(")) {
                 "Generated repositories should not duplicate constant privacy flags\n$output"
@@ -574,7 +571,7 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo binds LOAD evaluation without generating rule execution`() {
+    fun `repo delegates LOAD evaluator construction and execution to the runtime base`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString()
@@ -583,13 +580,11 @@ class RepoGeneratorTest {
         assert(!output.contains("fun evaluateLoadPrivacy(")) {
             "The runtime base should satisfy the read surface's correlated LOAD evaluation\n$output"
         }
-        assert(
-            output.contains(
-                "protected override val loadPrivacyEvaluator: LoadPrivacyEvaluator<ReadOnlyEntClient, Car> = LoadPrivacyEvaluator( " +
-                    "entity = CarDescriptor, rules = configuredPrivacy.loadRules, )",
-            ),
-        ) {
-            "LOAD should inject only its descriptor and rules without resolving a client\n$output"
+        assert(output.contains("loadPrivacyRules = configuredPrivacy.loadRules,")) {
+            "LOAD should inject rules into the runtime base without resolving a client\n$output"
+        }
+        assert(!output.contains("LoadPrivacyEvaluator") && !output.contains("val loadPrivacyEvaluator")) {
+            "The runtime base should construct and retain its own LOAD evaluator\n$output"
         }
         assert(!output.contains("loadPrivacyEvaluatorForInternalUse"))
         assert(!output.contains("\"Car LOAD privacy\"") && !output.contains("\"no load rule allowed access\"")) {
@@ -623,8 +618,8 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("= LoadPrivacyEvaluator(")) {
-            "LOAD privacy should delegate through its runtime evaluator\n$output"
+        assert(output.contains("loadPrivacyRules = configuredPrivacy.loadRules,")) {
+            "LOAD privacy should delegate through the runtime base's evaluator\n$output"
         }
         assert(output.contains("privacy = configuredPrivacy")) {
             "write privacy should delegate decisions through runtime evaluators\n$output"

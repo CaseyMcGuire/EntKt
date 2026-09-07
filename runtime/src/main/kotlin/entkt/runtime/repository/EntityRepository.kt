@@ -23,6 +23,7 @@ import entkt.runtime.mutation.execution.DeleteMutationInput
 import entkt.runtime.mutation.execution.MutationExecutor
 import entkt.runtime.mutation.execution.MutationOperation
 import entkt.runtime.mutation.execution.UpdateMutationInput
+import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.privacy.LoadPrivacyEvaluator
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.PrivacyRuleContext
@@ -56,12 +57,15 @@ abstract class EntityRepository<
     private val entity: EntityDescriptor<Entity, ID>,
     driver: DatabaseDriver,
     private val mutationExecutor: MutationExecutor,
+    loadPrivacyRules: List<BatchPrivacyRule<RuleClient, Entity>>,
     private val defaultUpdateConsistency: UpdateConsistency = UpdateConsistency.ReadCurrent,
     private val defaultRelationshipLocking: RelationshipLocking = RelationshipLocking.OwnerOnly,
 ) {
     init {
         driver.register(entity.schema)
     }
+
+    private val loadPrivacyEvaluator = LoadPrivacyEvaluator(entity, loadPrivacyRules)
 
     protected abstract val self: Self
 
@@ -72,7 +76,6 @@ abstract class EntityRepository<
     protected abstract val updateOperation: MutationOperation<RuleClient, UpdateMutationInput<UpdateDraft>, Entity>
     protected abstract val deleteOperation: MutationOperation<RuleClient, DeleteMutationInput, Boolean>
     protected abstract val deleteManyOperation: MutationOperation<RuleClient, DeleteManyMutationInput<Entity>, Int>
-    protected abstract val loadPrivacyEvaluator: LoadPrivacyEvaluator<RuleClient, Entity>
 
     protected abstract fun newQuery(): Query
 

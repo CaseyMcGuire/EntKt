@@ -40,8 +40,6 @@ import entkt.schema.Field
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val INT = Int::class.asClassName()
 private val ENT_CLIENT_NAME = "EntClient"
-private val LOAD_PRIVACY_EVALUATOR =
-    ClassName("entkt.runtime.privacy", "LoadPrivacyEvaluator")
 private val CREATE_MANY_MUTATION_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "CreateManyMutationOperation")
 private val CREATE_MUTATION_OPERATION =
@@ -125,6 +123,7 @@ internal class RepoGenerator(
                 add("      entity = %T,\n", entityDescriptorClass)
                 add("      driver = driver,\n")
                 add("      mutationExecutor = %T(driver, client),\n", MUTATION_EXECUTOR)
+                add("      loadPrivacyRules = configuredPrivacy.loadRules,\n")
                 add("      defaultUpdateConsistency = client.defaultUpdateConsistency,\n")
                 add("      defaultRelationshipLocking = client.defaultRelationshipLocking,\n")
                 add("    ")
@@ -158,12 +157,6 @@ internal class RepoGenerator(
                 getter { statement("return client.readOnlyClient") }
             }
             addProperty(buildUpdateMutationOperationProperty(schemaName))
-            addProperty(
-                buildLoadPrivacyEvaluator(
-                    entityDescriptorClass = entityDescriptorClass,
-                    entityClass = entityClass,
-                ),
-            )
             val createConverterClass = ClassName(packageName, "${schemaName}CreateConverter")
             property("createConverter", createConverterClass) {
                 addModifiers(KModifier.PRIVATE)
@@ -416,28 +409,6 @@ internal class RepoGenerator(
             )
             statement("return client.withTransaction { tx -> block(tx.%N) }", clientName)
         }
-    }
-
-    /** Bind LOAD rules over the original entities to the runtime evaluator. */
-    private fun buildLoadPrivacyEvaluator(
-        entityDescriptorClass: ClassName,
-        entityClass: ClassName,
-    ): PropertySpec = property(
-        "loadPrivacyEvaluator",
-        LOAD_PRIVACY_EVALUATOR.parameterizedBy(
-            ClassName(packageName, "ReadOnlyEntClient"),
-            entityClass,
-        ),
-    ) {
-        addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
-        initializer(codeBlock {
-            add("%T(\n", LOAD_PRIVACY_EVALUATOR)
-            indent()
-            add("entity = %T,\n", entityDescriptorClass)
-            add("rules = configuredPrivacy.loadRules,\n")
-            unindent()
-            add(")")
-        })
     }
 
     /** Bind this entity's CREATE dependencies once for its scalar and bulk runtime operations. */

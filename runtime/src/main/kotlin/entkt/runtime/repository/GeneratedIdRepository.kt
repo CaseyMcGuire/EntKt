@@ -14,6 +14,7 @@ import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.execution.CreateManyMutationInput
 import entkt.runtime.mutation.execution.MutationExecutor
 import entkt.runtime.mutation.execution.MutationOperation
+import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EntityQueryBuilder
 import entkt.runtime.result.MutationResult
@@ -30,12 +31,13 @@ abstract class GeneratedIdRepository<
     entity: EntityDescriptor<Entity, ID>,
     driver: DatabaseDriver,
     mutationExecutor: MutationExecutor,
+    loadPrivacyRules: List<BatchPrivacyRule<RuleClient, Entity>>,
     defaultUpdateConsistency: UpdateConsistency = UpdateConsistency.ReadCurrent,
     defaultRelationshipLocking: RelationshipLocking = RelationshipLocking.OwnerOnly,
 ) : EntityRepository<
     Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient,
     GeneratedIdRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient>,
->(entity, driver, mutationExecutor, defaultUpdateConsistency, defaultRelationshipLocking) {
+>(entity, driver, mutationExecutor, loadPrivacyRules, defaultUpdateConsistency, defaultRelationshipLocking) {
     final override val self: GeneratedIdRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient>
         get() = this
 
