@@ -303,7 +303,9 @@ class RepoGeneratorTest {
             "Both UPDATE evaluators should share one conversion over all prepared rule values\n$output"
         }
         assert(operation.contains("ruleInput = { state: UserUpdateAdapter.PreparedState ->"))
-        assert(operation.contains("candidate = { it.candidate }"))
+        assert(!operation.contains("candidate =")) {
+            "The prepared update should supply its candidate without a generated selector\n$output"
+        }
         assert(operation.contains("privacy = configuredPrivacy, validation = configuredValidation,"))
         assert(output.contains("MutationOperation<ReadOnlyEntClient, UpdateMutationInput<UserUpdateDraft>, User>"))
         assert(!output.contains("ruleClientProvider") && !operation.contains("client.readOnlyClient")) {

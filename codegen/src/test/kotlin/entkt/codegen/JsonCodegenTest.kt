@@ -142,7 +142,7 @@ class JsonCodegenTest {
             "JsonArticleUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )" in updateBinding,
             updateBinding,
         )
-        assertTrue("candidate = { it.candidate }" in updateBinding, updateBinding)
+        assertFalse("candidate =" in updateBinding, updateBinding)
     }
 
     // ── Generic JSON types ─────────────────────────────────────────

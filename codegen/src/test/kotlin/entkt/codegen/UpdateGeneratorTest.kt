@@ -936,10 +936,13 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("UpdateMutationAdapter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostUpdateAdapter.PreparedState, M2MPostBeforeUpdateState>") &&
+        assert(output.contains("UpdateMutationAdapter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostUpdateAdapter.PreparedState, M2MPostWriteCandidate, M2MPostBeforeUpdateState>") &&
             output.contains("override fun capturePendingEdges(") &&
             output.contains("override fun prepare(")) {
             "The generated adapter should implement the typed runtime lifecycle contract\n$output"
+        }
+        assert(output.contains("UpdatePreparation<PreparedState, M2MPostWriteCandidate>")) {
+            "Preparation should expose the typed candidate alongside schema-specific state\n$output"
         }
         val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")

@@ -1,11 +1,13 @@
 package entkt.runtime.mutation.execution
 
 import entkt.query.EntktInternal
+import entkt.runtime.mutation.WriteCandidate
 
 /** Stable output of generated patch lowering, consumed by the runtime update lifecycle. */
 @EntktInternal
-data class PreparedUpdate<State>(
+data class PreparedUpdate<State, Candidate : WriteCandidate<*>>(
     val state: State,
+    val candidate: Candidate,
     val values: Map<String, Any?>,
     val isNoOp: Boolean,
 ) {

@@ -34,6 +34,8 @@ class WriteCandidateCompileTest {
         "CreateMutationConverter<WidgetDraft, $candidate, Widget>",
         "CreateMutationOperation<Unit, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
         "CreateManyMutationOperation<Unit, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
+        "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, $candidate, BeforeUpdate>",
+        "UpdateMutationOperation<Unit, WidgetUpdateDraft, Widget, PendingEdges, WidgetState, $candidate, BeforeSave, BeforeUpdate>",
         "DeleteMutationConverter<Widget, $candidate>",
         "DeleteMutationOperation<Unit, Widget, $candidate>",
         "DeleteManyMutationOperation<Unit, Widget, $candidate>",
@@ -51,18 +53,26 @@ class WriteCandidateCompileTest {
                 import entkt.runtime.entity.EntEntity
                 import entkt.runtime.mutation.BeforeCreateHookState
                 import entkt.runtime.mutation.BeforeSaveHookState
+                import entkt.runtime.mutation.BeforeUpdateHookState
                 import entkt.runtime.mutation.CreateMutationDraft
                 import entkt.runtime.mutation.PreparedCreate
+                import entkt.runtime.mutation.PreparedUpdateState
+                import entkt.runtime.mutation.UpdateMutationDraft
+                import entkt.runtime.mutation.UpdatePendingEdges
                 import entkt.runtime.mutation.WriteCandidate
                 import entkt.runtime.mutation.execution.*
 
                 data class Widget(override val id: Int) : EntEntity.IntId
                 data class Other(override val id: Int) : EntEntity.IntId
                 class WidgetDraft : CreateMutationDraft<Widget>
+                class WidgetUpdateDraft : UpdateMutationDraft<Widget>
+                class WidgetState : PreparedUpdateState<Widget>
+                class PendingEdges : UpdatePendingEdges<Widget>
                 class WidgetCandidate : WriteCandidate<Widget>
                 class OtherCandidate : WriteCandidate<Other>
                 class BeforeSave : BeforeSaveHookState<Widget>
                 class BeforeCreate : BeforeCreateHookState<Widget>
+                class BeforeUpdate : BeforeUpdateHookState<Widget>
 
                 ${types.mapIndexed { index, type -> "fun accept$index(value: $type) {}" }.joinToString("\n")}
                 """.trimIndent(),
@@ -72,7 +82,13 @@ class WriteCandidateCompileTest {
 
     @Test
     fun `mutation types accept candidates for their entity without bounding rule clients`() {
-        val result = compileTypes(mutationTypes("WidgetCandidate") + "PreparedCreate<WidgetCandidate>")
+        val result = compileTypes(
+            mutationTypes("WidgetCandidate") + listOf(
+                "PreparedCreate<WidgetCandidate>",
+                "PreparedUpdate<WidgetState, WidgetCandidate>",
+                "UpdatePreparation<WidgetState, WidgetCandidate>",
+            ),
+        )
 
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
     }
@@ -86,7 +102,12 @@ class WriteCandidateCompileTest {
 
     @Test
     fun `each mutation type rejects candidates that do not implement the marker`() {
-        for (type in mutationTypes("String") + "PreparedCreate<String>") {
+        val types = mutationTypes("String") + listOf(
+            "PreparedCreate<String>",
+            "PreparedUpdate<WidgetState, String>",
+            "UpdatePreparation<WidgetState, String>",
+        )
+        for (type in types) {
             assertCandidateBoundFailure(type)
         }
     }
@@ -121,7 +142,6 @@ class WriteCandidateCompileTest {
                 buildUpdateMutationOperation(
                     entity, runtime, privacy, validation,
                     ruleInput = { _: $ruleInputState -> Unit },
-                    candidate = { it.candidate },
                     adapter = updateAdapter,
                     hooks = updateHooks,
                 )
@@ -146,7 +166,7 @@ class WriteCandidateCompileTest {
 
         val resultType = when (factory) {
             "createMany" -> "CreateManyMutationOperation<Unit, WidgetCreateDraft, WidgetCandidate, Widget, BeforeSave, BeforeCreate>"
-            "update" -> "UpdateMutationOperation<Unit, WidgetUpdateDraft, Widget, PendingEdges, WidgetState, BeforeSave, BeforeUpdate>"
+            "update" -> "UpdateMutationOperation<Unit, WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeSave, BeforeUpdate>"
             "delete" -> "DeleteMutationOperation<Unit, Widget, WidgetCandidate>"
             else -> "DeleteManyMutationOperation<Unit, Widget, WidgetCandidate>"
         }
@@ -172,7 +192,7 @@ class WriteCandidateCompileTest {
                     data class Widget(override val id: Int) : EntEntity.IntId
                     data class Other(override val id: Int) : EntEntity.IntId
                     class WidgetCandidate : WriteCandidate<Widget>
-                    class WidgetState(val candidate: WidgetCandidate) : PreparedUpdateState<Widget>
+                    class WidgetState : PreparedUpdateState<Widget>
                     class OtherState : PreparedUpdateState<Other>
                     class WidgetCreateDraft : CreateMutationDraft<Widget>
                     class WidgetUpdateDraft : UpdateMutationDraft<Widget>
@@ -194,7 +214,7 @@ class WriteCandidateCompileTest {
                         runtime: MutationRuntime,
                         createConverter: CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget>,
                         createHooks: CreateMutationHookStateConverter<WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>,
-                        updateAdapter: UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, BeforeUpdate>,
+                        updateAdapter: UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeUpdate>,
                         updateHooks: UpdateMutationHooks<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>,
                         deleteConverter: DeleteMutationConverter<Widget, WidgetCandidate>,
                         queryExecutor: ReadQueryExecutor<Widget>,

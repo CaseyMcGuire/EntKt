@@ -327,7 +327,6 @@ internal class RepoGenerator(
                 add(")\n")
                 unindent()
                 add("},\n")
-                add("candidate = { it.candidate },\n")
                 add("adapter = %T(driver),\n", adapterClass)
                 add("hooks = %T(\n", UPDATE_MUTATION_HOOKS)
                 indent()

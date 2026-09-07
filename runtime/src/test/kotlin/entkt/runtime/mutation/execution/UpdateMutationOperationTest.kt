@@ -60,9 +60,7 @@ class UpdateMutationOperationTest {
 
     private data class Candidate(val name: String) : WriteCandidate<Widget>
 
-    private data class State(val name: String) : PreparedUpdateState<Widget> {
-        val candidate = Candidate(name)
-    }
+    private data class State(val name: String) : PreparedUpdateState<Widget>
 
     private data class PendingEdges(val description: String) : UpdatePendingEdges<Widget>
 
@@ -175,8 +173,8 @@ class UpdateMutationOperationTest {
             set(value) {
                 driver.loadedRow = value
             }
-        var preparation: UpdatePreparation<State> = UpdatePreparation.Ready(
-            PreparedUpdate(State("after"), mapOf("name" to "after"), isNoOp = false),
+        var preparation: UpdatePreparation<State, Candidate> = UpdatePreparation.Ready(
+            PreparedUpdate(State("after"), Candidate("after"), mapOf("name" to "after"), isNoOp = false),
         )
         var privacyDecision: PrivacyDecision = PrivacyDecision.Allow
         var invalids: List<ValidationDecision.Invalid> = emptyList()
@@ -239,7 +237,7 @@ class UpdateMutationOperationTest {
         )
 
         val adapter = object :
-            UpdateMutationAdapter<Draft, Widget, PendingEdges, State, BeforeUpdateState> {
+            UpdateMutationAdapter<Draft, Widget, PendingEdges, State, Candidate, BeforeUpdateState> {
             override fun relationshipRequirements(draft: Draft): UpdateRelationshipRequirements =
                 currentRelationshipRequirements
 
@@ -254,7 +252,7 @@ class UpdateMutationOperationTest {
                 pendingEdges: PendingEdges,
                 hookState: BeforeUpdateState,
                 scope: UpdatePreparationScope,
-            ): UpdatePreparation<State> {
+            ): UpdatePreparation<State, Candidate> {
                 events += "prepare:${before.name}:${pendingEdges.description}"
                 return preparation
             }
@@ -304,7 +302,6 @@ class UpdateMutationOperationTest {
             privacy = privacy,
             validation = validation,
             ruleInput = { state: State -> state },
-            candidate = { it.candidate },
             adapter = adapter,
             hooks = UpdateMutationHooks(
                 converter = object :
@@ -390,12 +387,37 @@ class UpdateMutationOperationTest {
                 }
 
                 if (usesFallback) {
-                    val prepared = assertIs<UpdatePreparation.Ready<State>>(fixture.preparation)
-                    assertSame(prepared.value.state.candidate, fixture.privacyFallbackCandidates.single())
+                    val prepared = assertIs<UpdatePreparation.Ready<State, Candidate>>(fixture.preparation)
+                    assertSame(prepared.value.candidate, fixture.privacyFallbackCandidates.single())
                 } else {
                     assertTrue(fixture.privacyFallbackCandidates.isEmpty())
                 }
             }
+        }
+    }
+
+    @Test
+    fun `derived create rules receive the prepared candidate for changed and no-op updates`() {
+        for (isNoOp in listOf(false, true)) {
+            val fixture = Fixture(derivePrivacy = true, deriveValidation = true)
+            val candidate = Candidate(if (isNoOp) "before" else "after")
+            fixture.privacyDecision = PrivacyDecision.Continue
+            fixture.preparation = UpdatePreparation.Ready(
+                PreparedUpdate(
+                    state = State("update-rule-state"),
+                    candidate = candidate,
+                    values = if (isNoOp) emptyMap() else mapOf("name" to candidate.name),
+                    isNoOp = isNoOp,
+                ),
+            )
+
+            val result = fixture.execute(applyLoadPrivacy = false)
+
+            assertEquals(MutationResult.Success(Widget(1L, candidate.name)), result)
+            assertTrue("privacy:update-rule-state" in fixture.events)
+            assertTrue("validation:update-rule-state" in fixture.events)
+            assertSame(candidate, fixture.privacyFallbackCandidates.single())
+            assertSame(candidate, fixture.validationAdditionalCandidates.single())
         }
     }
 
@@ -419,8 +441,8 @@ class UpdateMutationOperationTest {
                 assertEquals(expected, failure.violations.map { it.message })
                 assertTrue(fixture.privacyFallbackCandidates.isEmpty())
                 if (deriveValidation) {
-                    val prepared = assertIs<UpdatePreparation.Ready<State>>(fixture.preparation)
-                    assertSame(prepared.value.state.candidate, fixture.validationAdditionalCandidates.single())
+                    val prepared = assertIs<UpdatePreparation.Ready<State, Candidate>>(fixture.preparation)
+                    assertSame(prepared.value.candidate, fixture.validationAdditionalCandidates.single())
                 } else {
                     assertTrue(fixture.validationAdditionalCandidates.isEmpty())
                 }
@@ -572,7 +594,7 @@ class UpdateMutationOperationTest {
     fun `no-op still evaluates rules and load privacy but skips every post-persist phase`() {
         val fixture = Fixture()
         fixture.preparation = UpdatePreparation.Ready(
-            PreparedUpdate(State("before"), emptyMap(), isNoOp = true),
+            PreparedUpdate(State("before"), Candidate("before"), emptyMap(), isNoOp = true),
         )
 
         val result = fixture.execute(applyLoadPrivacy = true)

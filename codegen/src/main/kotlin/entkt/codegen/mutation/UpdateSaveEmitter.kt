@@ -229,7 +229,7 @@ internal class UpdateSaveEmitter(
 
     private fun buildPrepareFunction(): FunSpec = function(
         "prepare",
-        UPDATE_PREPARATION.parameterizedBy(preparedStateClass),
+        UPDATE_PREPARATION.parameterizedBy(preparedStateClass, candidateClass),
     ) {
         addModifiers(KModifier.OVERRIDE)
         parameter("request", UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass))
@@ -303,6 +303,7 @@ internal class UpdateSaveEmitter(
             add("edgeChanges = edgeChanges,\n")
             unindent()
             add("),\n")
+            add("candidate = candidate,\n")
             if (isNoOp) {
                 add("values = emptyMap(),\n")
             } else {

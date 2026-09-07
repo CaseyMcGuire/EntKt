@@ -93,16 +93,17 @@ fun <
         BatchValidationRule<RuleClient, Candidate>, BatchValidationRule<RuleClient, RuleInput>, *,
     >,
     ruleInput: (State) -> RuleInput,
-    candidate: (State) -> Candidate,
-    adapter: UpdateMutationAdapter<Draft, Entity, PendingEdges, State, BeforeUpdateState>,
+    adapter: UpdateMutationAdapter<Draft, Entity, PendingEdges, State, Candidate, BeforeUpdateState>,
     hooks: UpdateMutationHooks<Draft, Entity, PendingEdges, BeforeSaveState, BeforeUpdateState>,
-): UpdateMutationOperation<RuleClient, Draft, Entity, PendingEdges, State, BeforeSaveState, BeforeUpdateState> {
+): UpdateMutationOperation<RuleClient, Draft, Entity, PendingEdges, State, Candidate, BeforeSaveState, BeforeUpdateState> {
+    val updateRuleInput = { prepared: PreparedUpdate<State, Candidate> -> ruleInput(prepared.state) }
+
     val privacyEvaluator = MutationPrivacyEvaluator(
         entity = entity,
         operation = PrivacyOperation.UPDATE,
-        primary = PrivacyDecisionEvaluator(privacy.updateRules, ruleInput),
+        primary = PrivacyDecisionEvaluator(privacy.updateRules, updateRuleInput),
         fallback = if (privacy.updateDerivesFromCreate) {
-            PrivacyDecisionEvaluator(privacy.createRules, candidate)
+            PrivacyDecisionEvaluator(privacy.createRules, PreparedUpdate<State, Candidate>::candidate)
         } else {
             null
         },
@@ -110,9 +111,9 @@ fun <
 
     val validationEvaluator = MutationValidationEvaluator(
         lifecycle = "${entity.entityName} UPDATE validation",
-        primary = ValidationDecisionEvaluator(validation.updateRules, ruleInput),
+        primary = ValidationDecisionEvaluator(validation.updateRules, updateRuleInput),
         additional = if (validation.updateDerivesFromCreate) {
-            ValidationDecisionEvaluator(validation.createRules, candidate)
+            ValidationDecisionEvaluator(validation.createRules, PreparedUpdate<State, Candidate>::candidate)
         } else {
             null
         },

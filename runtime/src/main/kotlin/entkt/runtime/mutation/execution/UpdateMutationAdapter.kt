@@ -7,6 +7,7 @@ import entkt.runtime.mutation.PreparedUpdateState
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.UpdateMutationRequest
 import entkt.runtime.mutation.UpdatePendingEdges
+import entkt.runtime.mutation.WriteCandidate
 
 /** Stateless schema-specific operations required by the reusable UPDATE lifecycle. */
 @EntktInternal
@@ -15,6 +16,7 @@ interface UpdateMutationAdapter<
     Entity : EntEntity<*>,
     PendingEdges : UpdatePendingEdges<Entity>,
     State : PreparedUpdateState<Entity>,
+    Candidate : WriteCandidate<Entity>,
     HookState : BeforeUpdateHookState<Entity>,
     > {
     fun relationshipRequirements(draft: Draft): UpdateRelationshipRequirements =
@@ -28,7 +30,7 @@ interface UpdateMutationAdapter<
         pendingEdges: PendingEdges,
         hookState: HookState,
         scope: UpdatePreparationScope,
-    ): UpdatePreparation<State>
+    ): UpdatePreparation<State, Candidate>
 
     fun persistRelationships(
         request: UpdateMutationRequest<Draft>,

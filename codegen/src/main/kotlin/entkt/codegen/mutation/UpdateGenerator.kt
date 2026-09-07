@@ -148,6 +148,7 @@ internal class UpdateGenerator(
                     entityClass,
                     pendingEdgeOpsClass,
                     preparedStateClass,
+                    ClassName(packageName, "${schemaName}WriteCandidate"),
                     beforeUpdateStateClass,
                 ),
             )
