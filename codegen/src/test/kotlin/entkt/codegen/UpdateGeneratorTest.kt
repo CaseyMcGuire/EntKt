@@ -520,7 +520,7 @@ class UpdateGeneratorTest {
         val privacy = output.substringAfter("privacyEvaluator = ").substringBefore("validationEvaluator = ")
 
         assert(privacy.contains("MutationPrivacyEvaluator( entity = UserDescriptor, operation = PrivacyOperation.UPDATE,"))
-        assert(privacy.contains("rules = configuredPrivacy.updateRules"))
+        assert(privacy.contains("primary = PrivacyDecisionEvaluator( rules = configuredPrivacy.updateRules,"))
         assert(output.contains("UpdateMutationOperation<ReadOnlyEntClient,"))
         assert(!output.contains("ruleClientProvider") && !output.contains("client.readOnlyClient")) {
             "update adapter construction must not resolve or capture a read client\n$output"

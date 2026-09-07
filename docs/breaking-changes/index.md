@@ -30,6 +30,16 @@ above it.
 
 ## Unreleased
 
+- **Bind rule-ready mutation inputs without identity converters** (`runtime`, `codegen`)
+  CREATE privacy and validation wiring no longer supplies `freshItem` identity
+  callbacks. `MutationPrivacyEvaluator<RuleClient, State>` accepts rules over
+  `State` directly; conversions for compound UPDATE/DELETE inputs are bound in
+  its existing primary `PrivacyDecisionEvaluator`. Validation offers a matching
+  direct-input overload. Rule evaluation and input-sharing semantics are unchanged.
+  _Migration:_ regenerate entity code. Handwritten privacy wiring should drop
+  the evaluator's third type argument and omit identity converters; bind actual
+  input conversions through `primary = PrivacyDecisionEvaluator(rules, converter)`.
+
 - **Pass CREATE candidates directly and share mutation rule values** (`codegen`)
   `${Entity}CreateRuleInput` is no longer generated. Scalar CREATE privacy and
   validation rules receive `${Entity}WriteCandidate`; batch rules receive

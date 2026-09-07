@@ -140,7 +140,7 @@ class CreateMutationOperationTest {
             }
         }
 
-        val privacyEvaluator = MutationPrivacyEvaluator<Unit, Candidate, Candidate>(
+        val privacyEvaluator = MutationPrivacyEvaluator<Unit, Candidate>(
                 entity = RecordingMapping(events),
                 operation = PrivacyOperation.CREATE,
                 rules = listOf(
@@ -150,10 +150,9 @@ class CreateMutationOperationTest {
                         batch.decideEach { createDecision }
                     },
                 ),
-                freshItem = { it },
             )
 
-        val validationEvaluator = mutationValidationEvaluatorForInternalUse<Unit, Candidate, Candidate>(
+        val validationEvaluator = mutationValidationEvaluatorForInternalUse<Unit, Candidate>(
                 lifecycle = "Widget CREATE validation",
                 rules = listOf(
                     batchValidationRule<Unit, Candidate> { _, batch ->
@@ -169,7 +168,6 @@ class CreateMutationOperationTest {
                         }
                     },
                 ),
-                freshItem = { it },
             )
     }
 

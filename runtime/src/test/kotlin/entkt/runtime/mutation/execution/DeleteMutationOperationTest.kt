@@ -222,7 +222,6 @@ class DeleteMutationOperationTest {
         val privacyEvaluator = MutationPrivacyEvaluator<
             Any,
             DeleteRuleCandidate<Widget, Candidate>,
-            DeleteRuleCandidate<Widget, Candidate>,
             >(
             entity = mapping,
             operation = PrivacyOperation.DELETE,
@@ -236,12 +235,10 @@ class DeleteMutationOperationTest {
                     }
                 },
             ),
-            freshItem = { it },
         )
 
         val validationEvaluator = mutationValidationEvaluatorForInternalUse<
             Any,
-            DeleteRuleCandidate<Widget, Candidate>,
             DeleteRuleCandidate<Widget, Candidate>,
             >(
             lifecycle = "Widget DELETE validation",
@@ -255,7 +252,6 @@ class DeleteMutationOperationTest {
                     }
                 },
             ),
-            freshItem = { it },
         )
 
         val mutationRuntime = object : MutationRuntime {

@@ -46,15 +46,53 @@ class MutationPrivacyEvaluatorTest {
     private fun evaluator(
         operation: PrivacyOperation = PrivacyOperation.UPDATE,
         rules: List<BatchPrivacyRule<Any, Record>> = emptyList(),
-        freshItem: (Record) -> Record = { it },
+        freshItem: ((Record) -> Record)? = null,
         fallback: PrivacyDecisionEvaluator<Any, Record, *>? = null,
-    ): MutationPrivacyEvaluator<Any, Record, Record> = MutationPrivacyEvaluator(
-        entity = RecordMapping,
-        operation = operation,
-        rules = rules,
-        freshItem = freshItem,
-        fallback = fallback,
-    )
+    ): MutationPrivacyEvaluator<Any, Record> {
+        if (freshItem == null) {
+            return MutationPrivacyEvaluator(RecordMapping, operation, rules, fallback)
+        }
+        return MutationPrivacyEvaluator(
+            entity = RecordMapping,
+            operation = operation,
+            primary = PrivacyDecisionEvaluator(rules, freshItem),
+            fallback = fallback,
+        )
+    }
+
+    @Test
+    fun `direct input constructor preserves subjects and context without a caller converter`() {
+        val seen = mutableListOf<Record>()
+        val rules = mutableListOf<BatchPrivacyRule<Any, Record>>(
+            PrivacyRule { context, item ->
+                assertSame(ruleContext, context)
+                seen += item
+                PrivacyDecision.Continue
+            },
+            batchPrivacyRule { context, batch ->
+                assertSame(ruleContext, context)
+                batch.decideEachIndexed { index, item ->
+                    seen += item
+                    if (index == 0) PrivacyDecision.Deny("first") else PrivacyDecision.Allow
+                }
+            },
+        )
+        val evaluator = MutationPrivacyEvaluator(
+            entity = RecordMapping,
+            operation = PrivacyOperation.CREATE,
+            rules = rules,
+        )
+        rules.clear()
+        val record = Record(1)
+
+        val evaluation = evaluator.evaluate(ruleContext, listOf(record, record))
+
+        assertEquals(4, seen.size)
+        seen.forEach { assertSame(record, it) }
+        assertSame(record, evaluation.allowedSubjects().single())
+        assertSame(record, evaluation.deniedOutcomes().single().subject)
+        assertEquals("first", evaluation.deniedOutcomes().single().reason)
+    }
 
     @Test
     fun `bound primary and fallback rules share one context and only see unresolved states`() {

@@ -16,6 +16,40 @@ class MutationValidationEvaluatorTest {
     private data class RuleItem(val subject: Subject)
 
     @Test
+    fun `direct input overload preserves subjects and context without a caller converter`() {
+        val context = ValidationRuleContext(Any())
+        val seen = mutableListOf<Subject>()
+        val rules = mutableListOf<BatchValidationRule<Any, Subject>>(
+            ValidationRule { suppliedContext, subject ->
+                assertSame(context, suppliedContext)
+                seen += subject
+                ValidationDecision.Valid
+            },
+            batchValidationRule { suppliedContext, batch ->
+                assertSame(context, suppliedContext)
+                batch.decideEachIndexed { index, subject ->
+                    seen += subject
+                    if (index == 0) Invalid("first") else ValidationDecision.Valid
+                }
+            },
+        )
+        val evaluator = mutationValidationEvaluatorForInternalUse(
+            lifecycle = "Subject CREATE validation",
+            rules = rules,
+        )
+        rules.clear()
+        val subject = Subject(1)
+
+        val evaluation = evaluator.evaluate(context, listOf(subject, subject))
+
+        assertEquals(4, seen.size)
+        seen.forEach { assertSame(subject, it) }
+        assertSame(subject, evaluation.validSubjects().single())
+        assertSame(subject, evaluation.firstInvalidOrNull()!!.subject)
+        assertEquals(listOf("first"), evaluation.firstInvalidOrNull()!!.violations.map { it.message })
+    }
+
+    @Test
     fun `evaluator binds its rules and item adapter but receives its context per call`() {
         val ruleClient = Any()
         val ruleContext = ValidationRuleContext(ruleClient)

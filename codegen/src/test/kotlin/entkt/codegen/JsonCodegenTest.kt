@@ -115,7 +115,9 @@ class JsonCodegenTest {
         assertFalse("freshItem" in loadBinding || "LoadPrivacyItem" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in repo, repo)
-        assertTrue("freshItem = { candidate -> candidate }" in repo, repo)
+        val createBinding = repo.substringAfter("private val createManyMutationOperation:")
+            .substringBefore("private val createMutationOperation:")
+        assertFalse("freshItem" in createBinding, createBinding)
         assertFalse("CreateRuleInput" in repo, repo)
 
         val update = gen().getValue("JsonArticleUpdateDraft")
@@ -208,7 +210,9 @@ class JsonCodegenTest {
         assertFalse("freshItem" in loadBinding || "LoadPrivacyItem" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in repo, repo)
-        assertTrue("freshItem = { candidate -> candidate }" in repo, repo)
+        val createBinding = repo.substringAfter("private val createManyMutationOperation:")
+            .substringBefore("private val createMutationOperation:")
+        assertFalse("freshItem" in createBinding, createBinding)
     }
 
     @Test

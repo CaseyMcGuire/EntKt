@@ -10,13 +10,25 @@ import entkt.runtime.entity.EntityMapping
  * The caller supplies the rule context per evaluation; no client or viewer is retained.
  */
 @EntktInternal
-class MutationPrivacyEvaluator<RuleClient, State, Item>(
+class MutationPrivacyEvaluator<RuleClient, State>(
     entity: EntityMapping<*>,
     operation: PrivacyOperation,
-    rules: List<BatchPrivacyRule<RuleClient, Item>>,
-    freshItem: (State) -> Item,
+    private val primary: PrivacyDecisionEvaluator<RuleClient, State, *>,
     private val fallback: PrivacyDecisionEvaluator<RuleClient, State, *>? = null,
 ) {
+    /** Bind rules whose inputs already match the evaluated state, such as CREATE candidates. */
+    constructor(
+        entity: EntityMapping<*>,
+        operation: PrivacyOperation,
+        rules: List<BatchPrivacyRule<RuleClient, State>>,
+        fallback: PrivacyDecisionEvaluator<RuleClient, State, *>? = null,
+    ) : this(
+        entity = entity,
+        operation = operation,
+        primary = PrivacyDecisionEvaluator(rules, freshItem = { state: State -> state }),
+        fallback = fallback,
+    )
+
     private val lifecycle = "${entity.entityName} ${operation.name} privacy"
     private val unresolvedReason = when (operation) {
         PrivacyOperation.CREATE -> "no create rule allowed access"
@@ -24,7 +36,6 @@ class MutationPrivacyEvaluator<RuleClient, State, Item>(
         PrivacyOperation.DELETE -> "no delete rule allowed access"
         PrivacyOperation.LOAD -> throw IllegalArgumentException("Use LoadPrivacyEvaluator for LOAD privacy")
     }
-    private val primary = PrivacyDecisionEvaluator(rules, freshItem)
 
     fun evaluate(
         context: PrivacyRuleContext<RuleClient>,

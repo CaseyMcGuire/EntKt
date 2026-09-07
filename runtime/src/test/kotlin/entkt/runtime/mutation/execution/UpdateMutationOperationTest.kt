@@ -188,7 +188,7 @@ class UpdateMutationOperationTest {
             relationshipLocking = RelationshipLocking.OwnerOnly,
         )
 
-        val privacyEvaluator = MutationPrivacyEvaluator<Any, State, State>(
+        val privacyEvaluator = MutationPrivacyEvaluator<Any, State>(
             entity = mapping,
             operation = PrivacyOperation.UPDATE,
             rules = listOf(
@@ -199,10 +199,9 @@ class UpdateMutationOperationTest {
                     states.decideEach { privacyDecision }
                 },
             ),
-            freshItem = { it },
         )
 
-        val validationEvaluator = mutationValidationEvaluatorForInternalUse<Any, State, State>(
+        val validationEvaluator = mutationValidationEvaluatorForInternalUse<Any, State>(
             lifecycle = "Widget UPDATE validation",
             rules = listOf(
                 batchValidationRule<Any, State> { context, states ->
@@ -211,7 +210,6 @@ class UpdateMutationOperationTest {
                     states.decideEach { invalids.firstOrNull() ?: ValidationDecision.Valid }
                 },
             ),
-            freshItem = { it },
         )
 
         val adapter = object :

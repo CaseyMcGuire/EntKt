@@ -18,7 +18,7 @@ class DeleteMutationOperation<RuleClient, Entity : EntEntity<*>, Candidate>(
     private val spec: DeleteMutationSpec<Entity>,
     private val converter: DeleteMutationConverter<Entity, Candidate>,
     private val privacyEvaluator:
-        MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>, *>,
+        MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
     private val validationEvaluator:
         MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
 ) : MutationOperation<RuleClient, DeleteMutationInput, Boolean> {

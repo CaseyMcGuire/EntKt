@@ -535,14 +535,12 @@ internal class RepoGenerator(
                 add("entity = %T,\n", entityDescriptorClass)
                 add("operation = %T.CREATE,\n", PRIVACY_OPERATION)
                 add("rules = configuredPrivacy.createRules,\n")
-                add("freshItem = { candidate -> candidate },\n")
                 unindent()
                 add("),\n")
                 add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName CREATE validation")
                 add("rules = configuredValidation.createRules,\n")
-                add("freshItem = { candidate -> candidate },\n")
                 unindent()
                 add("),\n")
                 add("hookStateConverter = createConverter,\n")
@@ -593,7 +591,6 @@ internal class RepoGenerator(
                 MUTATION_PRIVACY_EVALUATOR.parameterizedBy(
                     ClassName(packageName, "ReadOnlyEntClient"),
                     ruleCandidateType,
-                    deleteRuleInput,
                 ),
             ) {
                 addModifiers(KModifier.PRIVATE)
@@ -602,12 +599,16 @@ internal class RepoGenerator(
                     indent()
                     add("entity = %T,\n", entityDescriptorClass)
                     add("operation = %T.DELETE,\n", PRIVACY_OPERATION)
+                    add("primary = %T(\n", PRIVACY_DECISION_EVALUATOR)
+                    indent()
                     add("rules = configuredPrivacy.deleteRules,\n")
                     add(
                         "freshItem = { item: %T -> %T(item.entity, item.candidate) },\n",
                         ruleCandidateType,
                         deleteRuleInput,
                     )
+                    unindent()
+                    add("),\n")
                     add("fallback = if (configuredPrivacy.deleteDerivesFromCreate) {\n")
                     indent()
                     add("%T(\n", PRIVACY_DECISION_EVALUATOR)

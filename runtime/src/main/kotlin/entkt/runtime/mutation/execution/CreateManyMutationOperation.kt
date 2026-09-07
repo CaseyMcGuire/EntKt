@@ -44,7 +44,7 @@ class CreateManyMutationOperation<
     private val mutationRuntime: MutationRuntime,
     private val entity: EntityMapping<Entity>,
     private val converter: CreateMutationConverter<Draft, Candidate, Entity>,
-    private val privacyEvaluator: MutationPrivacyEvaluator<RuleClient, Candidate, *>,
+    private val privacyEvaluator: MutationPrivacyEvaluator<RuleClient, Candidate>,
     private val validationEvaluator: MutationValidationEvaluator<RuleClient, Candidate>,
     private val hookStateConverter:
         CreateMutationHookStateConverter<Draft, BeforeSaveState, BeforeCreateState>,

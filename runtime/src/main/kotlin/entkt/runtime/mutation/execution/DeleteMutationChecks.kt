@@ -22,7 +22,7 @@ internal fun <RuleClient, Entity : EntEntity<*>, Candidate> evaluateDeleteRules(
     entityName: String,
     viewerContext: ViewerContext,
     candidates: List<DeleteRuleCandidate<Entity, Candidate>>,
-    privacyEvaluator: MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>, *>,
+    privacyEvaluator: MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
     validationEvaluator: MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
 ) {
     val denial = privacyEvaluator.evaluate(PrivacyRuleContext(viewerContext, ruleClient), candidates).firstDeniedOrNull()

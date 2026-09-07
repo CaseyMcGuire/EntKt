@@ -29,14 +29,14 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "privacyEvaluator = MutationPrivacyEvaluator( entity = RepoBytesRecordDescriptor, operation = PrivacyOperation.CREATE, rules = configuredPrivacy.createRules, freshItem = { candidate -> candidate }, )",
+                "privacyEvaluator = MutationPrivacyEvaluator( entity = RepoBytesRecordDescriptor, operation = PrivacyOperation.CREATE, rules = configuredPrivacy.createRules, )",
             ),
         ) {
             "CREATE privacy should receive the prepared candidate directly\n$output"
         }
         assert(
             output.contains(
-                "validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE validation\", rules = configuredValidation.createRules, freshItem = { candidate -> candidate }, )",
+                "validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE validation\", rules = configuredValidation.createRules, )",
             ),
         ) {
             "CREATE validation should receive the prepared candidate directly\n$output"
@@ -53,6 +53,11 @@ class RepoGeneratorTest {
         }
         assert(!output.contains("CreateRuleInput")) {
             "CREATE must not wrap its candidate\n$output"
+        }
+        val createBinding = output.substringAfter("private val createManyMutationOperation:")
+            .substringBefore("private val createMutationOperation:")
+        assert(!createBinding.contains("freshItem") && !createBinding.contains("candidate ->")) {
+            "CREATE evaluators must not require identity converters\n$output"
         }
         assert(!output.contains("fun snapshotCreateCandidate")) {
             "rule items should be constructed directly, without callbacks into the repo\n$output"
@@ -788,8 +793,9 @@ class RepoGeneratorTest {
         assert(output.contains("fallback = if (configuredPrivacy.deleteDerivesFromCreate)")) {
             "DELETE should configure the runtime's unresolved-candidate fallback\n$output"
         }
-        assert(output.contains("MutationPrivacyEvaluator<ReadOnlyEntClient, DeleteRuleCandidate<Car, CarWriteCandidate>, CarDeleteRuleInput>"))
+        assert(output.contains("MutationPrivacyEvaluator<ReadOnlyEntClient, DeleteRuleCandidate<Car, CarWriteCandidate>>"))
         assert(output.contains("entity = CarDescriptor, operation = PrivacyOperation.DELETE"))
+        assert(output.contains("primary = PrivacyDecisionEvaluator( rules = configuredPrivacy.deleteRules,"))
         val fallback = output.substringAfter("fallback = if (configuredPrivacy.deleteDerivesFromCreate) {")
             .substringBefore("} else {")
         assert(fallback.contains("PrivacyDecisionEvaluator( rules = configuredPrivacy.createRules,")) {

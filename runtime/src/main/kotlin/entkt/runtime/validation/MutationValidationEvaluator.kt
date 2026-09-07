@@ -13,7 +13,20 @@ fun interface MutationValidationEvaluator<RuleClient, Subject> {
     ): ValidationEvaluation<Subject>
 }
 
-/** Build a final evaluator from bound primary rules and optional additional rules. */
+/** Bind rules whose inputs already match the evaluated subjects, such as CREATE candidates. */
+@EntktInternal
+fun <RuleClient, Subject> mutationValidationEvaluatorForInternalUse(
+    lifecycle: String,
+    rules: List<BatchValidationRule<RuleClient, Subject>>,
+    additional: ValidationDecisionEvaluator<RuleClient, Subject>? = null,
+): MutationValidationEvaluator<RuleClient, Subject> = mutationValidationEvaluatorForInternalUse(
+    lifecycle = lifecycle,
+    rules = rules,
+    freshItem = { subject: Subject -> subject },
+    additional = additional,
+)
+
+/** Build a final evaluator from converted primary inputs and optional additional rules. */
 @EntktInternal
 fun <RuleClient, Subject, Item> mutationValidationEvaluatorForInternalUse(
     lifecycle: String,
