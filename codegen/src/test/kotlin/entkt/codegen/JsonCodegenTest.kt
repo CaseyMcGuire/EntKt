@@ -131,15 +131,18 @@ class JsonCodegenTest {
             """driver.copyJsonValue(JsonArticle.TABLE, "metadata",""" in update,
             update,
         )
-        assertFalse("state.before.copy(" in update, update)
-        assertFalse("state.candidate.copy(" in update, update)
-        assertFalse("state.requestedPatch.copy(" in update, update)
-        assertFalse("state.effectivePatch.copy(" in update, update)
+
+        val updateBinding = repo.substringAfter("private val updateMutationOperation:")
+            .substringBefore("private val ")
+        assertFalse("state.before.copy(" in updateBinding, updateBinding)
+        assertFalse("state.candidate.copy(" in updateBinding, updateBinding)
+        assertFalse("state.requestedPatch.copy(" in updateBinding, updateBinding)
+        assertFalse("state.effectivePatch.copy(" in updateBinding, updateBinding)
         assertTrue(
-            "JsonArticleUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )" in update,
-            update,
+            "JsonArticleUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )" in updateBinding,
+            updateBinding,
         )
-        assertTrue("freshItem = { state: PreparedState -> state.candidate }" in update, update)
+        assertTrue("candidate = { it.candidate }" in updateBinding, updateBinding)
     }
 
     // ── Generic JSON types ─────────────────────────────────────────
