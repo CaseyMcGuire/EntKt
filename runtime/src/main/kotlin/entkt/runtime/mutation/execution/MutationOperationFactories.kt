@@ -37,8 +37,8 @@ fun <
     BeforeSaveState : BeforeSaveHookState<Entity>,
     BeforeCreateState : BeforeCreateHookState<Entity>,
 > buildCreateManyMutationOperation(
-    mutationRuntime: MutationRuntime,
     entity: EntityMapping<Entity>,
+    mutationRuntime: MutationRuntime,
     converter: CreateMutationConverter<Draft, Candidate, Entity>,
     privacy: ResolvedEntityPrivacyConfig<*, BatchPrivacyRule<RuleClient, Candidate>, *, *>,
     validation: ResolvedEntityValidationConfig<BatchValidationRule<RuleClient, Candidate>, *, *>,

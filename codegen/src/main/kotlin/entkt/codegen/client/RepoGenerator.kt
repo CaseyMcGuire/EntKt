@@ -174,7 +174,7 @@ internal class RepoGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("%T(driver, client)", MUTATION_EXECUTOR)
             }
-            addProperty(buildUpdateMutationOperation(schemaName))
+            addProperty(buildUpdateMutationOperationProperty(schemaName))
             addProperty(
                 buildLoadPrivacyEvaluator(
                     entityDescriptorClass = entityDescriptorClass,
@@ -187,7 +187,7 @@ internal class RepoGenerator(
                 initializer("%T(driver, client.hookClientScopeForInternalUse)", createConverterClass)
             }
             addProperty(
-                buildCreateManyMutationOperation(
+                buildCreateManyMutationOperationProperty(
                     entityDescriptorClass = entityDescriptorClass,
                     createDraftClass = createDraftClass,
                     entityClass = entityClass,
@@ -334,7 +334,7 @@ internal class RepoGenerator(
         }
     }
 
-    private fun buildUpdateMutationOperation(schemaName: String): PropertySpec {
+    private fun buildUpdateMutationOperationProperty(schemaName: String): PropertySpec {
         val entityClass = ClassName(packageName, schemaName)
         val entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor")
         val draftClass = ClassName(packageName, "${schemaName}UpdateDraft")
@@ -633,7 +633,7 @@ internal class RepoGenerator(
         }
 
     /** Bind this entity's CREATE dependencies once for its scalar and bulk runtime operations. */
-    private fun buildCreateManyMutationOperation(
+    private fun buildCreateManyMutationOperationProperty(
         entityDescriptorClass: ClassName,
         createDraftClass: ClassName,
         entityClass: ClassName,
@@ -654,8 +654,8 @@ internal class RepoGenerator(
             initializer(codeBlock {
                 add("%M(\n", BUILD_CREATE_MANY_MUTATION_OPERATION)
                 indent()
-                add("mutationRuntime = client,\n")
                 add("entity = %T,\n", entityDescriptorClass)
+                add("mutationRuntime = client,\n")
                 add("converter = createConverter,\n")
                 add("privacy = configuredPrivacy,\n")
                 add("validation = configuredValidation,\n")

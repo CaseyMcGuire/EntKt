@@ -29,7 +29,7 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "buildCreateManyMutationOperation( mutationRuntime = client, entity = RepoBytesRecordDescriptor,",
+                "buildCreateManyMutationOperation( entity = RepoBytesRecordDescriptor, mutationRuntime = client,",
             ),
         ) {
             "CREATE evaluator construction belongs to the runtime\n$output"
@@ -787,7 +787,7 @@ class RepoGeneratorTest {
         }
         assert(!output.contains("privacyConfig."))
         assert(output.contains("rules = configuredPrivacy.loadRules"))
-        assert(output.contains("buildCreateManyMutationOperation( mutationRuntime = client, entity = CarDescriptor, converter = createConverter, privacy = configuredPrivacy, validation = configuredValidation,"))
+        assert(output.contains("buildCreateManyMutationOperation( entity = CarDescriptor, mutationRuntime = client, converter = createConverter, privacy = configuredPrivacy, validation = configuredValidation,"))
         assert(output.contains("buildDeleteMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter, privacy = configuredPrivacy,"))
         assert(!output.contains("DerivesFromCreate"))
     }
@@ -893,7 +893,7 @@ class RepoGeneratorTest {
             !output.contains("privacyDecisionEvaluatorForInternalUse")) {
             "privacy evaluators should be constructed directly\n$output"
         }
-        assert(output.contains("buildCreateManyMutationOperation( mutationRuntime = client, entity = CarDescriptor, converter = createConverter, privacy = configuredPrivacy, validation = configuredValidation,"))
+        assert(output.contains("buildCreateManyMutationOperation( entity = CarDescriptor, mutationRuntime = client, converter = createConverter, privacy = configuredPrivacy, validation = configuredValidation,"))
         assert(!output.contains("\"Car CREATE privacy\"") &&
             !output.contains("\"Car DELETE privacy\"") && !output.contains("unresolvedReason")) {
             "mutation privacy diagnostics should be owned by the runtime evaluator\n$output"
@@ -1070,7 +1070,7 @@ class RepoGeneratorTest {
             "Validation configuration should only be a constructor input\n$output"
         }
         assert(!output.contains("validationConfig."))
-        assert(output.contains("buildCreateManyMutationOperation( mutationRuntime = client, entity = CarDescriptor, converter = createConverter, privacy = configuredPrivacy, validation = configuredValidation,"))
+        assert(output.contains("buildCreateManyMutationOperation( entity = CarDescriptor, mutationRuntime = client, converter = createConverter, privacy = configuredPrivacy, validation = configuredValidation,"))
         assert(output.contains("buildDeleteMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter, privacy = configuredPrivacy, validation = configuredValidation,"))
     }
 

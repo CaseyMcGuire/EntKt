@@ -113,7 +113,7 @@ class WriteCandidateCompileTest {
         val call = when (factory) {
             "createMany" -> """
                 buildCreateManyMutationOperation(
-                    runtime, entity, createConverter, privacy, validation, createHooks,
+                    entity, runtime, createConverter, privacy, validation, createHooks,
                     beforeSave = emptyList(), beforeCreate = emptyList(), afterCreate = emptyList(),
                 )
             """.trimIndent()

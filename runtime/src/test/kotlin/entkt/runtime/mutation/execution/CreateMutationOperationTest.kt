@@ -762,8 +762,8 @@ class CreateMutationOperationTest {
         }
         val mutationExecutor = MutationExecutor(driver, mutationRuntime)
         val manyOperation = buildCreateManyMutationOperation(
-            mutationRuntime = mutationRuntime,
             entity = mapping,
+            mutationRuntime = mutationRuntime,
             converter = spec.converter,
             privacy = spec.privacy,
             validation = spec.validation,
