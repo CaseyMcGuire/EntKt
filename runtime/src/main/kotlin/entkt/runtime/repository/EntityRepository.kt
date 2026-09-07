@@ -76,7 +76,14 @@ abstract class EntityRepository<
 
     protected abstract val self: Self
 
-    /** Resolve only when an entry point is called, after client/repository construction is complete. */
+    /**
+     * Resolve only when an entry point is called, after client/repository construction is complete.
+     *
+     * The read-only client currently delegates LOAD privacy to the client's repositories, so
+     * constructor injection would resolve it before those repositories are initialized. Generated
+     * subclasses use a getter to defer access until the repository graph and transaction scope
+     * are ready.
+     */
     protected abstract val ruleClient: RuleClient
 
     protected abstract fun newQuery(): Query
