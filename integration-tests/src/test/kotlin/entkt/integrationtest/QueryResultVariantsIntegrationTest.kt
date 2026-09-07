@@ -46,7 +46,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         override fun configure(scope: ArticlePolicyScope) = scope.run {
             privacy {
                 load(ArticleLoadPrivacyRule { _, item ->
-                    if (item.entity.title == allowedTitle) PrivacyDecision.Allow
+                    if (item.title == allowedTitle) PrivacyDecision.Allow
                     else PrivacyDecision.Deny("not '$allowedTitle'")
                 })
             }
@@ -180,7 +180,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
                     load(ArticleLoadPrivacyRule { _, item ->
-                        when (item.entity.title) {
+                        when (item.title) {
                             "Second" -> throw boom
                             else -> PrivacyDecision.Deny("hidden")
                         }
@@ -240,7 +240,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {
                     load(ArticleLoadPrivacyRule { _, item ->
-                        evaluated.add(item.entity.id)
+                        evaluated.add(item.id)
                         PrivacyDecision.Deny("hidden")
                     })
                 }

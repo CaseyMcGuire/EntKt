@@ -52,12 +52,12 @@ object ArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
 }
 
 private val AllowPublished = ArticleLoadPrivacyRule { _, item ->
-    if (item.entity.published) PrivacyDecision.Allow else PrivacyDecision.Continue
+    if (item.published) PrivacyDecision.Allow else PrivacyDecision.Continue
 }
 
 private val AllowAuthorLoad = ArticleLoadPrivacyRule { context, item ->
     val viewer = context.viewerContext.viewer as? Viewer.User ?: return@ArticleLoadPrivacyRule PrivacyDecision.Continue
-    if (viewer.id == item.entity.authorId) PrivacyDecision.Allow else PrivacyDecision.Continue
+    if (viewer.id == item.authorId) PrivacyDecision.Allow else PrivacyDecision.Continue
 }
 
 private val RequireAuth = ArticleCreatePrivacyRule { context, _ ->
@@ -126,7 +126,7 @@ object ArticlePolicyWithDerived : EntityPolicy<Article, ArticlePolicyScope> {
 
 private val AllowSelfOnly = UserLoadPrivacyRule { context, item ->
     val viewer = context.viewerContext.viewer as? Viewer.User ?: return@UserLoadPrivacyRule PrivacyDecision.Continue
-    if (viewer.id == item.entity.id) PrivacyDecision.Allow else PrivacyDecision.Continue
+    if (viewer.id == item.id) PrivacyDecision.Allow else PrivacyDecision.Continue
 }
 
 // ---- Tests ----

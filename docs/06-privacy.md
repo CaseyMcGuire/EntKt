@@ -17,7 +17,7 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
                 PrivacyRule { context, item ->
                     val v = context.viewerContext.userOrNull()
                         ?: return@PrivacyRule PrivacyDecision.Continue
-                    if (v.id == item.entity.id) PrivacyDecision.Allow
+                    if (v.id == item.id) PrivacyDecision.Allow
                     else PrivacyDecision.Continue
                 },
             )
@@ -163,10 +163,10 @@ val allowReadablePosts: PostLoadBatchPrivacyRule =
         val readableIds = loadReadablePostIds(
             client = context.client,
             viewer = context.viewerContext.viewer,
-            postIds = batch.map { it.entity.id },
+            postIds = batch.map { it.id },
         )
         batch.decideEach { item ->
-            if (item.entity.id in readableIds) PrivacyDecision.Allow
+            if (item.id in readableIds) PrivacyDecision.Allow
             else PrivacyDecision.Deny("post is not visible")
         }
     }
@@ -301,7 +301,7 @@ load(
     PrivacyRule { context, item ->
         val v = context.viewerContext.userOrNull()
             ?: return@PrivacyRule PrivacyDecision.Continue
-        if (v.id == item.entity.id) PrivacyDecision.Allow
+        if (v.id == item.id) PrivacyDecision.Allow
         else PrivacyDecision.Continue
     },
     // Fallthrough: denied (implicit)
@@ -396,12 +396,12 @@ retain the outer operation's viewer explicitly pass `context.viewerContext`,
 preserving that exact instance. Privacy rules are trusted authorization code
 and may deliberately supply another context, including an explicit
 `ViewerContext.privacyBypass_DANGEROUS(reason)`. Writes, transactions, and
-configuration do not exist on the client type, so a rule that tries to mutate
-does not compile:
+configuration do not exist on the client type, so a rule that tries to write
+through `context.client` does not compile:
 
 ```kotlin
 val author = context.client.users
-    .findById(context.viewerContext, item.entity.authorId)
+    .findById(context.viewerContext, item.authorId)
     .getOrThrow()
 ```
 
@@ -435,19 +435,34 @@ with `findById` or `firstOrNull` so its LOAD policy runs. See
 
 ## Rule Inputs
 
-Shared `privacy` and `client` values live on `PrivacyRuleContext`; generated
+Shared `viewerContext` and `client` values live on `PrivacyRuleContext`; generated
 rule inputs contain only values that differ per entity or candidate. Mutation
 privacy and validation share the same generated input type for each operation. One
 phase constructs one rule context and passes that exact instance to every
-reached rule; each rule still receives fresh defensive item snapshots.
+reached rule. Mutation privacy and validation retain defensive item snapshots;
+LOAD rules receive the original entities directly.
 
-### LoadPrivacyItem
+### LOAD: the entity itself
 
 ```kotlin
-data class UserLoadPrivacyItem(
-    val entity: User,       // the entity being loaded
-)
+typealias UserLoadPrivacyRule = PrivacyRule<ReadOnlyEntClient, User>
+typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, User>
 ```
+
+Scalar LOAD rules take `(context, user)`; batch rules take `(context, batch)`
+with a `RuleBatch<User>`. There is no generated LOAD input wrapper.
+
+LOAD rules must treat the entity and all nested values as read-only. EntKt
+does not defensively copy the entity, byte arrays, or typed JSON for each rule.
+Scalar and batch rules share those values with later rules and the returned
+result, including LOAD checks performed after a mutation.
+
+This is a rule-author contract, not deep immutability enforced by Kotlin:
+`val` does not prevent array writes or changes to mutable JSON collections.
+Mutating an input can affect later decisions and the data returned to the
+caller. Rules needing mutable scratch data must make their own copies.
+`RuleBatch` still protects batch membership/order, and mutation preparation
+and mutation-rule snapshot guarantees are unchanged.
 
 ### CreateRuleInput
 
@@ -840,7 +855,7 @@ For each schema with a policy, entkt provides:
 |-------------|---------|
 | `{Entity}WriteCandidate` | Snapshot of writable fields for write rules |
 | `PrivacyRuleContext<Client>` | Shared supplied `viewerContext` and stable privacy read client |
-| `{Entity}LoadPrivacyItem` | Per-entity input for LOAD rules |
+| `{Entity}` | Direct input for scalar LOAD rules and each item in batch LOAD rules |
 | `{Entity}CreateRuleInput` | Shared per-candidate input for CREATE privacy and validation rules |
 | `{Entity}UpdateRuleInput` | Shared per-entity input for UPDATE privacy and validation rules |
 | `{Entity}DeleteRuleInput` | Shared per-entity input for DELETE privacy and validation rules |

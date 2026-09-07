@@ -381,7 +381,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                     override fun configure(scope: entkt.integrationtest.ent.ArticlePolicyScope) = scope.run {
                         privacy {
                             load(entkt.integrationtest.ent.ArticleLoadPrivacyRule { _, item ->
-                                if (item.entity.published) entkt.runtime.privacy.PrivacyDecision.Allow
+                                if (item.published) entkt.runtime.privacy.PrivacyDecision.Allow
                                 else entkt.runtime.privacy.PrivacyDecision.Deny("draft")
                             })
                         }

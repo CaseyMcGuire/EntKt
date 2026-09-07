@@ -435,7 +435,7 @@ private val PublishedOnlyArticleLoads = object : EntityPolicy<Article, ArticlePo
     override fun configure(scope: ArticlePolicyScope) = scope.run {
         privacy {
             load(ArticleLoadPrivacyRule { _, item ->
-                if (item.entity.published) PrivacyDecision.Allow else PrivacyDecision.Continue
+                if (item.published) PrivacyDecision.Allow else PrivacyDecision.Continue
             })
         }
     }

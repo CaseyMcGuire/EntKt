@@ -88,9 +88,11 @@ caller cannot use invariant failures to learn about protected data.
   handles every item that reaches it before the next registered callback runs.
   Ordinary scalar callbacks adapt automatically by visiting those items in
   encounter order; callbacks are never run concurrently.
-- Privacy and validation pass phase-wide state separately from generated
-  item values. Every rule in a phase sees the same shared rule context, while
-  each reached rule receives fresh defensive item snapshots.
+- Privacy and validation pass phase-wide state separately from their
+  item values. Every rule in a phase sees the same shared rule context.
+  Mutation privacy and validation retain defensive item snapshots. LOAD rules
+  receive the original entities directly, including byte arrays and typed JSON,
+  and must not mutate them; this also applies to returned-entity LOAD checks after writes.
 
 ## Reads
 

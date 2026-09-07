@@ -108,7 +108,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `privacy and validation rules receive detached typed JSON snapshots`() {
+    fun `mutation privacy and validation detach JSON while LOAD observes returned values`() {
         val driver = resetAndDriver()
         val system = EntClient(driver)
         val author = system.users.create {
@@ -139,12 +139,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
                     )
                     load(
                         ArticleLoadPrivacyRule { _, item ->
-                            @Suppress("UNCHECKED_CAST")
-                            (item.entity.metadata!!.tags as MutableList<String>) += "load mutation"
-                            PrivacyDecision.Continue
-                        },
-                        ArticleLoadPrivacyRule { _, item ->
-                            seenByLoad += item.entity.metadata!!.tags.toList()
+                            seenByLoad += item.metadata!!.tags.toList()
                             PrivacyDecision.Allow
                         },
                     )
@@ -183,15 +178,15 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
         ).getOrThrow()
 
         val expected = listOf(listOf("first"), listOf("second"))
-        assertEquals(expected, seenByPrivacy, "each privacy rule gets a fresh JSON graph")
+        assertEquals(expected, seenByPrivacy, "each CREATE privacy rule gets a fresh JSON graph")
         assertEquals(expected, seenByValidation, "each validation rule gets a fresh JSON graph")
-        assertEquals(expected, seenByLoad, "each LOAD rule gets a fresh JSON graph")
+        assertEquals(expected, seenByLoad, "LOAD rules observe the returned JSON values")
         assertEquals(listOf("first"), firstTags, "rule mutation cannot reach caller-owned input")
         assertEquals(listOf("second"), secondTags, "rule mutation cannot reach caller-owned input")
-        assertEquals(expected, created.map { it.metadata!!.tags }, "rule mutation cannot reach returned rows")
+        assertEquals(expected, created.map { it.metadata!!.tags }, "mutation-rule changes cannot reach returned rows")
 
         val stored = system.articles.query().all(testViewerContext).getOrThrow().sortedBy { it.title }
-        assertEquals(expected, stored.map { it.metadata!!.tags }, "rule mutation cannot reach persisted rows")
+        assertEquals(expected, stored.map { it.metadata!!.tags }, "mutation-rule changes cannot reach persisted rows")
     }
 
     @Test

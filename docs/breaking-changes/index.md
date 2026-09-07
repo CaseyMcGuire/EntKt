@@ -30,6 +30,23 @@ above it.
 
 ## Unreleased
 
+- **Pass entities directly to LOAD privacy rules** (`codegen`, `runtime`)
+  `${Entity}LoadPrivacyItem` is no longer generated. Scalar LOAD rules receive
+  the entity itself, and batch LOAD rules receive `RuleBatch<Entity>`.
+  `LoadPrivacyEvaluator` no longer takes an item type or conversion callback.
+  Mutation privacy and validation inputs are unchanged.
+  _Migration:_ regenerate entity code, replace explicit `PostLoadPrivacyItem`
+  types with `Post`, and change LOAD-rule field accesses from `item.entity.foo`
+  to `item.foo`. Keep the generated scalar and batch LOAD rule aliases.
+
+- **Treat LOAD privacy inputs as read-only shared values** (`codegen`)
+  LOAD rules now receive the original entity without per-rule defensive copies of
+  byte arrays or typed JSON. Mutating a LOAD input can affect later rules and
+  returned data, including LOAD checks after mutations. Mutation preparation
+  and mutation privacy/validation snapshots are unchanged.
+  _Migration:_ regenerate entity code and remove mutations of LOAD-rule inputs;
+  make application-owned copies when a rule needs mutable scratch data.
+
 - **Resolve client configuration and reuse generic entity hooks** (`codegen`, `runtime`)
   Generated clients now resolve mutable hook, privacy, validation, and
   interceptor DSL values into detached immutable runtime configuration before

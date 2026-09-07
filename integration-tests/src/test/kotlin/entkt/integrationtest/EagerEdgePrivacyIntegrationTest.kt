@@ -15,7 +15,6 @@ import entkt.integrationtest.ent.Post
 import entkt.integrationtest.ent.PostLoadPrivacyRule
 import entkt.integrationtest.ent.PostPolicyScope
 import entkt.integrationtest.ent.Tag
-import entkt.integrationtest.ent.TagLoadPrivacyItem
 import entkt.integrationtest.ent.TagLoadPrivacyRule
 import entkt.integrationtest.ent.TagPolicyScope
 import entkt.integrationtest.ent.User
@@ -124,8 +123,8 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
                             load(TagLoadPrivacyRule { _, item ->
-                                evaluated.add(item.entity.name)
-                                PrivacyDecision.Deny("tag ${item.entity.name} hidden")
+                                evaluated.add(item.name)
+                                PrivacyDecision.Deny("tag ${item.name} hidden")
                             })
                         }
                     }
@@ -171,10 +170,10 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<ReadOnlyEntClient, TagLoadPrivacyItem> { _, batch ->
-                                invocations += batch.map { it.entity.name }
+                            load(batchPrivacyRule<ReadOnlyEntClient, Tag> { _, batch ->
+                                invocations += batch.map { it.name }
                                 batch.decideEach {
-                                    PrivacyDecision.Deny("tag ${it.entity.name} hidden")
+                                    PrivacyDecision.Deny("tag ${it.name} hidden")
                                 }
                             })
                         }
@@ -229,7 +228,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                     override fun configure(scope: PostPolicyScope) = scope.run {
                         privacy {
                             load(PostLoadPrivacyRule { _, item ->
-                                if (item.entity.title == "P2-hidden") PrivacyDecision.Deny("post hidden")
+                                if (item.title == "P2-hidden") PrivacyDecision.Deny("post hidden")
                                 else PrivacyDecision.Allow
                             })
                         }

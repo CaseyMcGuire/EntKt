@@ -90,16 +90,6 @@ private val RequireAuthForCreate = ArticleCreatePrivacyRule { context, _ ->
 private fun firstPayloadByte(patch: FieldPatch<ByteArray?>): Byte? =
     (patch as? FieldPatch.Set)?.value?.firstOrNull()
 
-private val MutateLoadPayloadSnapshot = ArticleLoadPrivacyRule { _, item ->
-    item.entity.payload?.set(0, 99)
-    PrivacyDecision.Continue
-}
-
-private val AllowIfLoadPayloadSnapshotIsStable = ArticleLoadPrivacyRule { _, item ->
-    if (item.entity.payload?.firstOrNull() != 99.toByte()) PrivacyDecision.Allow
-    else PrivacyDecision.Deny("LOAD payload snapshot leaked across rules")
-}
-
 private val MutateCreatePayloadPrivacySnapshot = ArticleCreatePrivacyRule { _, item ->
     item.candidate.payload?.set(0, 99)
     PrivacyDecision.Continue
@@ -231,7 +221,7 @@ object OpenUserPolicy : EntityPolicy<User, UserPolicyScope> {
 private object ByteArraySnapshotArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
     override fun configure(scope: ArticlePolicyScope) = scope.run {
         privacy {
-            load(MutateLoadPayloadSnapshot, AllowIfLoadPayloadSnapshotIsStable)
+            load(AllowAllLoads)
             create(MutateCreatePayloadPrivacySnapshot, AllowIfCreatePayloadPrivacySnapshotIsStable)
             update(MutateUpdatePayloadPrivacySnapshot, AllowIfUpdatePayloadPrivacySnapshotIsStable)
         }
@@ -312,7 +302,7 @@ class ValidationIntegrationTest {
     }
 
     @Test
-    fun `byte array rule snapshots cannot mutate persistence or later rule inputs`() {
+    fun `byte array mutation-rule snapshots cannot mutate persistence or later rule inputs`() {
         val client = freshClient(
             viewer = Viewer.User(7L),
             articlePolicy = ByteArraySnapshotArticlePolicy,

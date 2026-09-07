@@ -133,11 +133,11 @@ The callback invocation count is not itself necessarily expensive. The N+1
 appears when a rule, validator, or hook performs a database query:
 
 ```kotlin
-PrivacyRule<EntPrivacyReadClient, PostLoadPrivacyItem> { context, item ->
+PrivacyRule<EntPrivacyReadClient, Post> { context, item ->
     val membership = context.client.projectMemberships
         .query {
             where(
-                ProjectMembership.projectId eq item.entity.projectId,
+                ProjectMembership.projectId eq item.projectId,
                 ProjectMembership.userId eq context.privacy.userIdOrNull(),
             )
         }
@@ -295,13 +295,13 @@ public fun interface PrivacyRule<in Client, in Item> :
 }
 ```
 
-The same generated item type is used for scalar and batch callbacks. Shared
-viewer/client state is never repeated in those items. For example:
+The same item type is used for scalar and batch callbacks. LOAD rules receive
+the entity directly; mutation rules use generated operation-specific inputs.
+Shared viewer/client state is never repeated in those items. For example:
 
 ```kotlin
-public data class PostLoadPrivacyItem(
-    public val entity: Post,
-)
+typealias PostLoadPrivacyRule = PrivacyRule<EntPrivacyReadClient, Post>
+typealias PostLoadBatchPrivacyRule = BatchPrivacyRule<EntPrivacyReadClient, Post>
 ```
 
 The batch method is deliberately named `runBatch` rather than overloading
@@ -316,7 +316,7 @@ construction while making the two inputs explicit:
 
 ```kotlin
 val allowOwner: PostLoadPrivacyRule = PrivacyRule { context, item ->
-    if (item.entity.ownerId == context.privacy.userIdOrNull()) {
+    if (item.ownerId == context.privacy.userIdOrNull()) {
         PrivacyDecision.Allow
     } else {
         PrivacyDecision.Continue
@@ -342,7 +342,7 @@ Example:
 ```kotlin
 val allowProjectMembers: PostLoadBatchPrivacyRule =
     batchPrivacyRule { context, batch ->
-        val projectIds = batch.map { it.entity.projectId }.distinct()
+        val projectIds = batch.map { it.projectId }.distinct()
         val userId = context.privacy.userIdOrNull()
 
         val visibleProjectIds = context.client.projectMemberships
@@ -357,7 +357,7 @@ val allowProjectMembers: PostLoadBatchPrivacyRule =
             .mapTo(mutableSetOf()) { it.projectId }
 
         batch.decideEach { item ->
-            if (item.entity.projectId in visibleProjectIds) {
+            if (item.projectId in visibleProjectIds) {
                 PrivacyDecision.Allow
             } else {
                 PrivacyDecision.Deny("not a project member")
@@ -537,9 +537,9 @@ Generated operation-specific aliases should expose both forms:
 
 ```kotlin
 typealias PostLoadPrivacyRule =
-    PrivacyRule<EntPrivacyReadClient, PostLoadPrivacyItem>
+    PrivacyRule<EntPrivacyReadClient, Post>
 typealias PostLoadBatchPrivacyRule =
-    BatchPrivacyRule<EntPrivacyReadClient, PostLoadPrivacyItem>
+    BatchPrivacyRule<EntPrivacyReadClient, Post>
 
 typealias PostCreateValidationRule =
     ValidationRule<EntValidationReadClient, PostCreateValidationItem>
@@ -635,7 +635,7 @@ mutation.
 
 ### Fresh rule snapshots
 
-Privacy and validation give each rule fresh immutable item snapshots.
+Mutation privacy and validation give each rule fresh defensive item snapshots.
 `ByteArray` values are copied directly, while typed JSON values are detached by
 `Driver.copyJsonValue()` through the driver's configured mapper so nested
 mutable collections and arrays do not alias pending writes. Batch evaluation
@@ -649,14 +649,21 @@ preserves that guarantee:
 - application mutation of one rule's snapshot cannot change persistence or a
   later rule's inputs.
 
+LOAD privacy is different: each item is the original entity without copying
+its byte arrays or typed JSON. Rules must treat the entity and all nested values
+as read-only. Input mutation is not isolated from later rules or returned data,
+including returned-entity LOAD checks after writes. The ordered `RuleBatch`
+container and per-phase rule context guarantees still apply to LOAD.
+
 Update edge-change items also rebuild every `Set` as a detached,
 JVM-unmodifiable value. Hook-facing pending-edge sets are unmodifiable as well;
 Kotlin's read-only `Set` interface alone is insufficient because a JVM caller
 can otherwise cast an ordinary `toSet()` result back to `MutableSet`.
 
 Rules read shared privacy/client state directly from their rule context. They
-read each entity, candidate, patch, or edge-change value from the corresponding
-generated item. No callback needs `batch.first()` to recover shared metadata.
+receive each entity directly for LOAD, and read candidate, patch, or edge-change
+values from generated mutation inputs. No callback needs `batch.first()` to
+recover shared metadata.
 
 Hooks are intentionally different. Before-hooks mutate the pending builders,
 and later hooks see the effects of earlier hooks according to the documented
@@ -1256,8 +1263,8 @@ Implementation added an entry to `docs/breaking-changes/index.md` covering:
     through the same mapper configuration used for storage.
 13. Scalar privacy and validation callbacks now receive two arguments:
     phase-shared `PrivacyRuleContext` / `ValidationRuleContext` and one
-    generated item. Shared clients and privacy state no longer appear on every
-    generated item.
+    item (the entity itself for LOAD, a generated input for mutations). Shared
+    clients and privacy state no longer appear on every item.
 14. Batch privacy and validation callbacks receive the same shared context plus
     `RuleBatch<Item>`. Rule interfaces therefore gain separate `Client` and
     `Item` type parameters, generated `*Item` types replace the former combined
@@ -1428,8 +1435,8 @@ Set-based queries are the intended optimization.
   exception with its positional index.
 - ID-less CREATE items and duplicate or equal inputs retain distinct,
   original-order correlation.
-- Every registered privacy or validation rule receives fresh defensive
-  snapshots.
+- Every registered mutation privacy or validation rule receives fresh defensive
+  snapshots. LOAD rules share original entities and must not mutate their inputs.
 
 ### Privacy
 

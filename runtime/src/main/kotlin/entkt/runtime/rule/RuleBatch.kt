@@ -8,8 +8,9 @@ import java.util.Collections
  * validation rule.
  *
  * The container copies its input list; it does not by itself make arbitrary
- * item objects transitively immutable. Generated lifecycle items are
- * separately constructed as defensive snapshots. This behaves as a read-only
+ * item objects transitively immutable. LOAD rules receive the original entities;
+ * mutation privacy and validation rules receive defensive snapshots.
+ * Rules must treat their inputs as read-only. This behaves as a read-only
  * [List] for query preparation. Decisions must be
  * returned through [decideEach] or [decideEachIndexed]. Those methods invoke the
  * decision block in this batch's encounter order and bind the resulting value

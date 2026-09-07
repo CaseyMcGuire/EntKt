@@ -52,7 +52,6 @@ private val RESOLVED_ENTITY_PRIVACY_CONFIG =
  * - `{Entity}PrivacyScope` — DSL scope for declaring rules per operation
  * - `{Entity}PolicyScope` — outer scope passed to [EntityPolicy.configure]
  * - `{Entity}WriteCandidate` — snapshot of writable fields for write rules
- * - `{Entity}LoadPrivacyItem` — per-entity snapshot for LOAD rules
  * - `{Entity}{Op}PrivacyRule` and `{Entity}{Op}BatchPrivacyRule` — typealiases for each operation's rule types
  *
  * CREATE, UPDATE, and DELETE rules share the lifecycle inputs emitted by
@@ -95,7 +94,6 @@ internal class PrivacyGenerator(
 
         // Operation input class names. The runtime PrivacyRuleContext holds
         // privacy/client state once for the whole evaluation phase.
-        val loadItem = ClassName(packageName, "${schemaName}LoadPrivacyItem")
         val createInput = ClassName(packageName, "${schemaName}CreateRuleInput")
         val updateInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
         val deleteInput = ClassName(packageName, "${schemaName}DeleteRuleInput")
@@ -111,16 +109,24 @@ internal class PrivacyGenerator(
         val deleteBatchRule = "${schemaName}DeleteBatchPrivacyRule"
 
         return kotlinFile(packageName, "${schemaName}Privacy") {
-            typeAlias(loadRule, PRIVACY_RULE.parameterizedBy(readClientClass, loadItem))
+            typeAlias(loadRule, PRIVACY_RULE.parameterizedBy(readClientClass, entityClass)) {
+                addKdoc(
+                    "LOAD rules receive the original entity without defensive copies.\n" +
+                        "Treat the entity and all nested values as read-only.\n",
+                )
+            }
             typeAlias(createRule, PRIVACY_RULE.parameterizedBy(readClientClass, createInput))
             typeAlias(updateRule, PRIVACY_RULE.parameterizedBy(readClientClass, updateInput))
             typeAlias(deleteRule, PRIVACY_RULE.parameterizedBy(readClientClass, deleteInput))
-            typeAlias(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, loadItem))
+            typeAlias(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, entityClass)) {
+                addKdoc(
+                    "Batch LOAD rules receive the original entities without defensive copies.\n" +
+                        "Treat the entities and all nested values as read-only.\n",
+                )
+            }
             typeAlias(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, createInput))
             typeAlias(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, updateInput))
             typeAlias(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(readClientClass, deleteInput))
-
-            addType(buildLoadItem(entityClass, loadItem))
 
         // WriteCandidate
             addType(buildWriteCandidate(candidateClass, fields, edgeFks))
@@ -179,25 +185,6 @@ internal class PrivacyGenerator(
 
         // PolicyScope
             addType(buildPolicyScope(schemaName, policyScopeClass, privacyScopeClass, configClass))
-        }
-    }
-
-    private fun buildLoadItem(
-        entityClass: ClassName,
-        itemClass: ClassName,
-    ): TypeSpec = privacyItem(itemClass, "entity" to entityClass)
-
-    /** Data shape supplied only to LOAD privacy rules. */
-    private fun privacyItem(
-        itemClass: ClassName,
-        vararg members: Pair<String, com.squareup.kotlinpoet.TypeName>,
-    ): TypeSpec = classType(itemClass) {
-        addModifiers(KModifier.DATA)
-        primaryConstructor {
-            for ((name, type) in members) parameter(name, type)
-        }
-        for ((name, type) in members) {
-            property(name, type) { initializer(name) }
         }
     }
 

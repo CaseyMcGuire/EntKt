@@ -9,7 +9,6 @@ import entkt.integrationtest.ent.UserBeforeCreateState
 import entkt.integrationtest.ent.UserBeforeSaveState
 import entkt.integrationtest.ent.UserCreateRuleInput
 import entkt.integrationtest.ent.UserCreatePrivacyRule
-import entkt.integrationtest.ent.UserLoadPrivacyItem
 import entkt.integrationtest.ent.UserLoadPrivacyRule
 import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
@@ -135,7 +134,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
         override fun configure(scope: UserPolicyScope) = scope.run {
             privacy {
                 load(UserLoadPrivacyRule { _, item ->
-                    if (item.entity.name == hiddenName) PrivacyDecision.Deny("$hiddenName is sealed")
+                    if (item.name == hiddenName) PrivacyDecision.Deny("$hiddenName is sealed")
                     else PrivacyDecision.Allow
                 })
                 create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
@@ -233,9 +232,9 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                         events += "createPrivacy:${batch.joinToString { it.candidate.name }}"
                         batch.decideEach { PrivacyDecision.Allow }
                     })
-                    load(batchPrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem> { context, batch ->
+                    load(batchPrivacyRule<ReadOnlyEntClient, User> { context, batch ->
                         loadPrivacy = context.viewerContext
-                        events += "loadPrivacy:${batch.joinToString { it.entity.name }}"
+                        events += "loadPrivacy:${batch.joinToString { it.name }}"
                         batch.decideEach { PrivacyDecision.Allow }
                     })
                 }
@@ -729,7 +728,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
                     create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
-                    load(batchPrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem> { _, _ -> throw thrown })
+                    load(batchPrivacyRule<ReadOnlyEntClient, User> { _, _ -> throw thrown })
                 }
             }
         }
@@ -753,7 +752,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
                     create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
-                    load(batchPrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem> { context, batch ->
+                    load(batchPrivacyRule<ReadOnlyEntClient, User> { context, batch ->
                         context.client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
                         }.firstOrNull(context.viewerContext).getOrThrow()
@@ -784,7 +783,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
                     create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
-                    load(batchPrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem> { context, batch ->
+                    load(batchPrivacyRule<ReadOnlyEntClient, User> { context, batch ->
                         // Deliberately inspect-and-handle the read failure rather
                         // than throwing it. PostgreSQL still marks the transaction
                         // aborted, so the owned boundary confirms rollback.

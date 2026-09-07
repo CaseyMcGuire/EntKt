@@ -122,7 +122,6 @@ internal class RepoGenerator(
         val entityHooksType = resolvedEntityHooksType(packageName, schemaName)
         val privacyConfigType = resolvedEntityPrivacyConfigType(packageName, schemaName)
         val validationConfigType = resolvedEntityValidationConfigType(packageName, schemaName)
-        val loadItemClass = ClassName(packageName, "${schemaName}LoadPrivacyItem")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val idType = schema.id().type.toTypeName()
@@ -187,8 +186,6 @@ internal class RepoGenerator(
                 buildLoadPrivacyEvaluator(
                     entityDescriptorClass = entityDescriptorClass,
                     entityClass = entityClass,
-                    loadItemClass = loadItemClass,
-                    fields = fields,
                 ),
             )
             val createConverterClass = ClassName(packageName, "${schemaName}CreateConverter")
@@ -454,18 +451,15 @@ internal class RepoGenerator(
             statement("return true")
         }
 
-    /** Bind schema-specific LOAD rules and item snapshots to the reusable runtime evaluator. */
+    /** Bind LOAD rules over the original entities to the runtime evaluator. */
     private fun buildLoadPrivacyEvaluator(
         entityDescriptorClass: ClassName,
         entityClass: ClassName,
-        loadItemClass: ClassName,
-        fields: List<Field>,
     ): PropertySpec = property(
         "loadPrivacyEvaluator",
         LOAD_PRIVACY_EVALUATOR.parameterizedBy(
             ClassName(packageName, "ReadOnlyEntClient"),
             entityClass,
-            loadItemClass,
         ),
     ) {
         addModifiers(KModifier.PRIVATE)
@@ -474,11 +468,6 @@ internal class RepoGenerator(
             indent()
             add("entity = %T,\n", entityDescriptorClass)
             add("rules = configuredPrivacy.loadRules,\n")
-            add(
-                "freshItem = { item -> %T(%L) },\n",
-                loadItemClass,
-                lifecycleValueSnapshot("item", fields, entityClass),
-            )
             unindent()
             add(")")
         })

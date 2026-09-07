@@ -65,8 +65,13 @@ class RepoGeneratorTest {
         assert(validationContexts == 0) {
             "Mutation validation context construction belongs to runtime phases\n$output"
         }
-        assert(output.contains("item.copy( payload = item.payload.copyOf(), thumbnail = item.thumbnail?.copyOf(), )")) {
-            "rule candidates should not alias database-bound byte arrays\n$output"
+        val loadBinding = output.substringAfter("private val loadPrivacyEvaluator:")
+            .substringBefore("private val createConverter:")
+        assert(!loadBinding.contains("freshItem") && !loadBinding.contains("LoadPrivacyItem")) {
+            "LOAD should pass entities directly without a wrapper or converter\n$output"
+        }
+        assert(!loadBinding.contains("copyOf") && !loadBinding.contains(".copy(")) {
+            "LOAD must not generate defensive entity copies\n$output"
         }
         assert(output.contains("item.entity.copy( payload = item.entity.payload.copyOf(), thumbnail = item.entity.thumbnail?.copyOf(), )")) {
             "delete entities should not alias mutable byte arrays\n$output"
@@ -709,12 +714,11 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "private val loadPrivacyEvaluator: LoadPrivacyEvaluator<ReadOnlyEntClient, Car, CarLoadPrivacyItem> = LoadPrivacyEvaluator( " +
-                    "entity = CarDescriptor, rules = configuredPrivacy.loadRules, " +
-                    "freshItem = { item -> CarLoadPrivacyItem(item) }, )",
+                "private val loadPrivacyEvaluator: LoadPrivacyEvaluator<ReadOnlyEntClient, Car> = LoadPrivacyEvaluator( " +
+                    "entity = CarDescriptor, rules = configuredPrivacy.loadRules, )",
             ),
         ) {
-            "LOAD should inject its descriptor, rules, and typed item adapter without resolving a client\n$output"
+            "LOAD should inject only its descriptor and rules without resolving a client\n$output"
         }
         assert(!output.contains("loadPrivacyEvaluatorForInternalUse"))
         assert(!output.contains("\"Car LOAD privacy\"") && !output.contains("\"no load rule allowed access\"")) {

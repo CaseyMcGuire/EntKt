@@ -23,7 +23,7 @@ class PrivacyGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("typealias UserLoadPrivacyRule = PrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem>")) {
+        assert(output.contains("typealias UserLoadPrivacyRule = PrivacyRule<ReadOnlyEntClient, User>")) {
             "Should generate load rule typealias\n$output"
         }
         assert(output.contains("typealias UserCreatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserCreateRuleInput>")) {
@@ -35,7 +35,7 @@ class PrivacyGeneratorTest {
         assert(output.contains("typealias UserDeletePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserDeleteRuleInput>")) {
             "Should generate delete rule typealias\n$output"
         }
-        assert(output.contains("typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserLoadPrivacyItem>")) {
+        assert(output.contains("typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, User>")) {
             "Should generate load batch rule typealias\n$output"
         }
         assert(output.contains("typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserCreateRuleInput>")) {
@@ -50,24 +50,16 @@ class PrivacyGeneratorTest {
     }
 
     @Test
-    fun `generates load item with only the entity`() {
+    fun `LOAD rules use the entity directly without a generated wrapper`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains("data class UserLoadPrivacyItem")) {
-            "Should generate load item\n$output"
+        assert(!output.contains("LoadPrivacyItem")) {
+            "LOAD rules should not require a generated wrapper\n$output"
         }
-        val constructor = constructorOf(output, "UserLoadPrivacyItem")
-        assert(constructor.contains("val entity: User")) {
-            "Load item should have entity\n$output"
-        }
-        assert(!constructor.contains("privacy")) {
-            "Load item must not duplicate shared privacy state\n$output"
-        }
-        assert(!constructor.contains("client")) {
-            "Load item must not duplicate the shared client\n$output"
-        }
+        assert(output.contains("original entity without defensive copies"))
+        assert(output.contains("Treat the entity and all nested values as read-only"))
         assert(!output.contains("val client: EntClient")) {
             "Privacy artifacts should not carry hook-only client state\n$output"
         }
@@ -364,14 +356,6 @@ class PrivacyGeneratorTest {
         assert(output.contains("EdgeChanges()")) {
             "EdgeChangesView constructor should default each field to an empty EdgeChanges\n$output"
         }
-    }
-
-    private fun constructorOf(output: String, className: String): String {
-        val classStart = output.indexOf("data class $className")
-        check(classStart >= 0) { "Missing $className in generated output" }
-        val constructorEnd = output.indexOf("\n)", classStart)
-        check(constructorEnd >= 0) { "Missing constructor end for $className" }
-        return output.substring(classStart, constructorEnd)
     }
 }
 

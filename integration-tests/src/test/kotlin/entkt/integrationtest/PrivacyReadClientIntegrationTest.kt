@@ -58,13 +58,13 @@ private val AllowAllArticleLoads = ArticleLoadPrivacyRule { _, _ -> PrivacyDecis
  */
 private val AllowIfAuthorReadable = ArticleLoadPrivacyRule { context, item ->
     val client: ReadOnlyEntClient = context.client
-    if (client.users.findById(context.viewerContext, item.entity.authorId).getOrThrow() != null) PrivacyDecision.Allow
+    if (client.users.findById(context.viewerContext, item.authorId).getOrThrow() != null) PrivacyDecision.Allow
     else PrivacyDecision.Continue
 }
 
 /** Same invariant on the filtering projection: root denial collapses to null. */
 private val AllowIfAuthorVisiblyReadable = ArticleLoadPrivacyRule { context, item ->
-    if (context.client.users.findById(context.viewerContext, item.entity.authorId).visibleOrNull().getOrThrow() != null) {
+    if (context.client.users.findById(context.viewerContext, item.authorId).visibleOrNull().getOrThrow() != null) {
         PrivacyDecision.Allow
     } else {
         PrivacyDecision.Continue

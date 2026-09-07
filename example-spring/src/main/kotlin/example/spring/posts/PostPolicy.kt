@@ -9,7 +9,6 @@ import example.ent.PostCreateRuleInput
 import example.ent.PostCreatePrivacyRule
 import example.ent.PostDeleteRuleInput
 import example.ent.PostDeletePrivacyRule
-import example.ent.PostLoadPrivacyItem
 import example.ent.PostLoadPrivacyRule
 import example.ent.PostPolicyScope
 import example.ent.PostUpdateRuleInput
@@ -31,9 +30,9 @@ object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
 class AllowPublishedPosts : PostLoadPrivacyRule {
     override fun run(
         context: PrivacyRuleContext<ReadOnlyEntClient>,
-        item: PostLoadPrivacyItem,
+        item: Post,
     ): PrivacyDecision =
-        if (item.entity.published) PrivacyDecision.Allow
+        if (item.published) PrivacyDecision.Allow
         else PrivacyDecision.Continue
 }
 
@@ -41,10 +40,10 @@ class AllowPublishedPosts : PostLoadPrivacyRule {
 class AllowAuthorLoad : PostLoadPrivacyRule {
     override fun run(
         context: PrivacyRuleContext<ReadOnlyEntClient>,
-        item: PostLoadPrivacyItem,
+        item: Post,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User ?: return PrivacyDecision.Continue
-        return if (viewer.id == item.entity.authorId) PrivacyDecision.Allow
+        return if (viewer.id == item.authorId) PrivacyDecision.Allow
         else PrivacyDecision.Continue
     }
 }
