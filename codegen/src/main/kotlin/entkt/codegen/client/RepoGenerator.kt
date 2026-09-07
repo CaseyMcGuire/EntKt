@@ -8,16 +8,20 @@ import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.MemberName
+import com.squareup.kotlinpoet.NameAllocator
+import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.UNIT
+import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.apiName
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.getter
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
@@ -29,26 +33,17 @@ import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.mutation.MUTATION_RESULT
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 import entkt.schema.Field
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
-private val PREDICATE = ClassName("entkt.query", "Predicate")
-private val LIST = ClassName("kotlin.collections", "List")
 private val INT = Int::class.asClassName()
-private val UPDATE_CONSISTENCY = ClassName("entkt.runtime.mutation", "UpdateConsistency")
-private val RELATIONSHIP_LOCKING = ClassName("entkt.runtime.mutation", "RelationshipLocking")
 private val ENT_CLIENT_NAME = "EntClient"
-private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
 private val LOAD_PRIVACY_EVALUATOR =
     ClassName("entkt.runtime.privacy", "LoadPrivacyEvaluator")
-private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val CREATE_MANY_MUTATION_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "CreateManyMutationOperation")
-private val CREATE_MANY_MUTATION_INPUT =
-    ClassName("entkt.runtime.mutation.execution", "CreateManyMutationInput")
 private val CREATE_MUTATION_OPERATION =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationOperation")
 private val CREATE_MUTATION_INPUT =
@@ -71,30 +66,21 @@ private val BUILD_DELETE_MANY_MUTATION_OPERATION =
     MemberName("entkt.runtime.mutation.execution", "buildDeleteManyMutationOperation")
 private val DELETE_MANY_MUTATION_INPUT =
     ClassName("entkt.runtime.mutation.execution", "DeleteManyMutationInput")
-private val PENDING_CREATE_MUTATION =
-    ClassName("entkt.runtime.mutation", "PendingCreateMutation")
-private val CREATE_MUTATION_REPOSITORY =
-    ClassName("entkt.runtime.mutation", "CreateMutationRepository")
-private val PENDING_UPDATE_MUTATION =
-    ClassName("entkt.runtime.mutation", "PendingUpdateMutation")
-private val UPDATE_MUTATION_OPERATION =
-    ClassName("entkt.runtime.mutation.execution", "UpdateMutationOperation")
+private val UPDATE_MUTATION_INPUT =
+    ClassName("entkt.runtime.mutation.execution", "UpdateMutationInput")
 private val UPDATE_MUTATION_HOOKS =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationHooks")
 private val UPDATE_MUTATION_HOOK_STATE_CONVERTER =
     ClassName("entkt.runtime.mutation.execution", "UpdateMutationHookStateConverter")
-private val UPDATE_MUTATION_REQUEST =
-    ClassName("entkt.runtime.mutation", "UpdateMutationRequest")
-private val UPDATE_MUTATION_REPOSITORY =
-    ClassName("entkt.runtime.mutation", "UpdateMutationRepository")
+private val GENERATED_ID_REPOSITORY = ClassName("entkt.runtime.repository", "GeneratedIdRepository")
+private val EXPLICIT_ID_REPOSITORY = ClassName("entkt.runtime.repository", "ExplicitIdRepository")
+private val TRANSACTION_SCOPE = ClassName("entkt.runtime.result", "TransactionScope")
+private val TRANSACTION_RESULT = ClassName("entkt.runtime.result", "TransactionResult")
 
 /**
- * Emits a per-schema repository class. The repo is the only entry point
- * for I/O — it owns the [DatabaseDriver] and exposes `query`, `create`,
- * `update(id)`, and `byId` accessors. Its `init` block registers the
- * entity's [entkt.runtime.driver.EntitySchema] so the driver knows the table
- * layout before any other call lands, and every mutation input it hands back is
- * constructed with the same driver reference.
+ * Wires a schema's objects into its ID-specific runtime repository base.
+ * Common entry points, pending-mutation binding, and executor invocation are inherited;
+ * generated members construct schema-specific values and select the transaction-bound repo.
  *
  * The client supplies the repository's runtime context, hooks, privacy,
  * and validation configuration through the constructor. A repository is
@@ -124,33 +110,24 @@ internal class RepoGenerator(
         val validationConfigType = resolvedEntityValidationConfigType(packageName, schemaName)
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
+        val ruleClientClass = ClassName(packageName, "ReadOnlyEntClient")
         val idType = schema.id().type.toTypeName()
-
-        val createLambda = LambdaTypeName.get(
-            receiver = createDraftClass,
-            returnType = UNIT,
-        )
-        val updateLambda = LambdaTypeName.get(
-            receiver = updateDraftClass,
-            returnType = UNIT,
-        )
-        val queryLambda = LambdaTypeName.get(
-            receiver = queryClass,
-            returnType = UNIT,
+        val generatedId = idStrategyName(schema) != "EXPLICIT"
+        val repositoryBase = (if (generatedId) GENERATED_ID_REPOSITORY else EXPLICIT_ID_REPOSITORY).parameterizedBy(
+            entityClass, idType, createDraftClass, updateDraftClass, queryClass, ruleClientClass,
         )
 
         val typeSpec = classType(className) {
+            superclass(repositoryBase)
+            addSuperclassConstructorParameter("entity = %T", entityDescriptorClass)
+            addSuperclassConstructorParameter("mutationExecutor = %T(driver, client)", MUTATION_EXECUTOR)
+            addSuperclassConstructorParameter("defaultUpdateConsistency = client.defaultUpdateConsistency")
+            addSuperclassConstructorParameter("defaultRelationshipLocking = client.defaultRelationshipLocking")
             // The repo is the entity's read surface: query terminals reach
             // `hasLoadPrivacy()` / `evaluateLoadPrivacy(...)` through the
             // EntReadRuntime contract's `${prop}: ${Entity}ReadSurface`
             // accessor, which EntClient overrides with this repo.
             addSuperinterface(ClassName(packageName, "${schemaName}ReadSurface"))
-            addSuperinterface(
-                CREATE_MUTATION_REPOSITORY.parameterizedBy(createDraftClass, entityClass),
-            )
-            addSuperinterface(
-                UPDATE_MUTATION_REPOSITORY.parameterizedBy(updateDraftClass, entityClass),
-            )
             primaryConstructor {
                 addModifiers(KModifier.INTERNAL)
                 parameter("driver", DRIVER)
@@ -170,9 +147,9 @@ internal class RepoGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("client")
             }
-            property("mutationExecutor", MUTATION_EXECUTOR) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("%T(driver, client)", MUTATION_EXECUTOR)
+            property("ruleClient", ruleClientClass) {
+                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
+                getter { statement("return client.readOnlyClient") }
             }
             addProperty(buildUpdateMutationOperationProperty(schemaName))
             addProperty(
@@ -194,28 +171,29 @@ internal class RepoGenerator(
                     candidateClass = candidateClass,
                     beforeSaveStateClass = beforeSaveStateClass,
                     beforeCreateStateClass = beforeCreateStateClass,
+                    generatedId = generatedId,
                 ),
             )
             property(
-                "createMutationOperation",
+                "createOperation",
                 MUTATION_OPERATION.parameterizedBy(
                     ClassName(packageName, "ReadOnlyEntClient"),
                     CREATE_MUTATION_INPUT.parameterizedBy(createDraftClass),
                     entityClass,
                 ),
             ) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("%T(createManyMutationOperation)", CREATE_MUTATION_OPERATION)
+                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
+                initializer("%T(createManyOperation)", CREATE_MUTATION_OPERATION)
             }
             property(
-                "deleteMutationOperation",
+                "deleteOperation",
                 MUTATION_OPERATION.parameterizedBy(
                     ClassName(packageName, "ReadOnlyEntClient"),
                     DELETE_MUTATION_INPUT,
                     Boolean::class.asClassName(),
                 ),
             ) {
-                addModifiers(KModifier.PRIVATE)
+                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
                 initializer(codeBlock {
                     add("%M(\n", BUILD_DELETE_MUTATION_OPERATION)
                     indent()
@@ -231,14 +209,14 @@ internal class RepoGenerator(
                 })
             }
             property(
-                "deleteManyMutationOperation",
+                "deleteManyOperation",
                 MUTATION_OPERATION.parameterizedBy(
                     ClassName(packageName, "ReadOnlyEntClient"),
                     DELETE_MANY_MUTATION_INPUT.parameterizedBy(entityClass),
                     INT,
                 ),
             ) {
-                addModifiers(KModifier.PRIVATE)
+                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
                 initializer(codeBlock {
                     add("%M(\n", BUILD_DELETE_MANY_MUTATION_OPERATION)
                     indent()
@@ -257,56 +235,30 @@ internal class RepoGenerator(
             addInitializerBlock(
                 CodeBlock.of("driver.register(%T.SCHEMA)\n", entityClass),
             )
-            addFunction(buildQueryEntry(queryClass, clientRef = "client"))
             // Index-helper namespace. Emitted only when the schema has at
             // least one eligible index (matching the conditional
             // `${schemaName}Indexes` file).
             if (indexHelperTree(schema, schemaNames) != null) {
                 addProperty(buildIndexesProperty(indexesClass, clientRef = "client"))
             }
-            addFunction(buildRepoCreate(schema, entityClass, createDraftClass, createLambda))
-            addFunction(buildSaveCreation(createDraftClass))
-            addFunction(buildSaveAndLoadCreation(createDraftClass, entityClass))
-            // Per-operation UpdateConsistency override (transaction locking). Defaults
-            // to the client's `defaultUpdateConsistency` so callers
-            // who don't pass `consistency =` get the configured
-            // baseline (`ReadCurrent` unless the EntClientConfig
-            // sets otherwise).
-            function(
-                "update",
-                PENDING_UPDATE_MUTATION.parameterizedBy(updateDraftClass, entityClass),
-            ) {
-                parameter("id", idType)
-                parameter("consistency", UPDATE_CONSISTENCY) {
-                    defaultValue("client.defaultUpdateConsistency")
-                }
-                // Per-operation RelationshipLocking override.
-                // Defaults to the client's `defaultRelationshipLocking`
-                // (OwnerOnly unless the EntClientConfig sets otherwise).
-                parameter("relationshipLocking", RELATIONSHIP_LOCKING) {
-                    defaultValue("client.defaultRelationshipLocking")
-                }
-                parameter("block", updateLambda)
-                statement("val draft = %T().apply(block)", updateDraftClass)
-                statement(
-                    "val request = %T(id, draft, consistency, relationshipLocking)",
-                    UPDATE_MUTATION_REQUEST,
-                )
-                statement("return %T(request, this)", PENDING_UPDATE_MUTATION)
+            function("newQuery", queryClass) {
+                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
+                statement("return %T(driver, client)", queryClass)
             }
-            addFunction(buildExecuteUpdate(updateDraftClass, entityClass))
-            addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "client"))
-            addFunction(buildDelete(entityClass))
-            addFunction(buildDeleteById(idType))
-            if (idStrategyName(schema) != "EXPLICIT") {
-                addFunction(buildCreateMany(entityClass, createDraftClass, createLambda, schema.clientName))
+            function("newUpdateDraft", updateDraftClass) {
+                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
+                statement("return %T()", updateDraftClass)
             }
-            addFunction(buildDeleteMany(entityClass, schema.clientName))
-            addFunction(buildHasPrivacy("hasLoadPrivacy", readSurfaceOverride = true))
-            addFunction(buildHasPrivacy("hasCreatePrivacy"))
-            addFunction(buildHasPrivacy("hasUpdatePrivacy"))
-            addFunction(buildHasPrivacy("hasDeletePrivacy"))
-            addFunction(buildEvaluateLoadPrivacy(entityClass))
+            function("newCreateDraft", createDraftClass) {
+                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
+                if (generatedId) {
+                    statement("return %T()", createDraftClass)
+                } else {
+                    parameter("id", idType)
+                    statement("return %T(id = id)", createDraftClass)
+                }
+            }
+            addFunction(buildWithTransaction(repositoryBase, schemaName, schema.clientName))
             addType(
                 buildHookStateConverterType(
                     draftClass = updateDraftClass,
@@ -339,24 +291,17 @@ internal class RepoGenerator(
         val entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor")
         val draftClass = ClassName(packageName, "${schemaName}UpdateDraft")
         val adapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
-        val pendingEdgesClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
         val preparedStateClass = adapterClass.nestedClass("PreparedState")
-        val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
-        val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
         val updateRuleInput = ClassName(packageName, "${schemaName}UpdateRuleInput")
         return property(
-            "updateMutationOperation",
-            UPDATE_MUTATION_OPERATION.parameterizedBy(
+            "updateOperation",
+            MUTATION_OPERATION.parameterizedBy(
                 ClassName(packageName, "ReadOnlyEntClient"),
-                draftClass,
+                UPDATE_MUTATION_INPUT.parameterizedBy(draftClass),
                 entityClass,
-                pendingEdgesClass,
-                preparedStateClass,
-                beforeSaveStateClass,
-                beforeUpdateStateClass,
             ),
         ) {
-            addModifiers(KModifier.PRIVATE)
+            addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
             initializer(codeBlock {
                 add("%M(\n", BUILD_UPDATE_MUTATION_OPERATION)
                 indent()
@@ -451,144 +396,25 @@ internal class RepoGenerator(
         }
     }
 
-    private fun buildExecuteUpdate(
-        updateDraftClass: ClassName,
-        entityClass: ClassName,
-    ): FunSpec = function(
-        "executeUpdate",
-        MUTATION_RESULT.parameterizedBy(entityClass),
-    ) {
-        addAnnotation(ENTKT_INTERNAL)
-        addModifiers(KModifier.OVERRIDE)
-        parameter("viewerContext", VIEWER_CONTEXT)
-        parameter(
-            "request",
-            UPDATE_MUTATION_REQUEST.parameterizedBy(updateDraftClass),
-        )
-        parameter("applyLoadPrivacy", Boolean::class.asClassName())
-        addCode(codeBlock {
-            add("return mutationExecutor.execute(\n")
-            indent()
-            add("operation = updateMutationOperation,\n")
-            add("ruleClient = client.readOnlyClient,\n")
-            add("input = %T(\n", ClassName("entkt.runtime.mutation.execution", "UpdateMutationInput"))
-            indent()
-            add("viewerContext = viewerContext,\n")
-            add("request = request,\n")
-            add("applyLoadPrivacy = applyLoadPrivacy,\n")
-            unindent()
-            add("),\n")
-            unindent()
-            add(")\n")
-        })
-    }
-
-    /**
-     * `delete(entity): MutationResult<Unit>` — idempotent entity-handle
-     * delete. `Success(Unit)` means the row is absent afterward,
-     * whether this call deleted it or it was already absent.
-     */
-    private fun buildDelete(entityClass: ClassName): FunSpec =
-        function("delete", MUTATION_RESULT.parameterizedBy(UNIT)) {
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("entity", entityClass)
-            addCode(codeBlock {
-                add("return mutationExecutor.execute(\n")
-                indent()
-                add("operation = deleteMutationOperation,\n")
-                add("ruleClient = client.readOnlyClient,\n")
-                add("input = %T(viewerContext, entity.id),\n", DELETE_MUTATION_INPUT)
-                unindent()
-                add(").withoutValue()\n")
-            })
-        }
-
-    /**
-     * `deleteById(id): MutationResult<Boolean>` — idempotent
-     * delete-by-id preserving the affected-row acknowledgement.
-     */
-    private fun buildDeleteById(
-        idType: com.squareup.kotlinpoet.TypeName,
-    ): FunSpec = function("deleteById", MUTATION_RESULT.parameterizedBy(Boolean::class.asClassName())) {
-        parameter("viewerContext", VIEWER_CONTEXT)
-        parameter("id", idType)
-        addCode(codeBlock {
-            add("return mutationExecutor.execute(\n")
-            indent()
-            add("operation = deleteMutationOperation,\n")
-            add("ruleClient = client.readOnlyClient,\n")
-            add("input = %T(viewerContext, id),\n", DELETE_MUTATION_INPUT)
-            unindent()
-            add(")\n")
-        })
-    }
-
-    /**
-     * `deleteMany(vararg predicates): MutationResult<Int>` — strict,
-     * atomic bulk delete. Candidate selection flows through the
-     * DELETE_CANDIDATES interceptor chain once. DELETE privacy, validation,
-     * and hooks then run phase-major over the complete ordered candidate
-     * list before one logical ID-returning driver delete. The write reasserts
-     * both the approved IDs and the frozen effective predicates; afterDelete
-     * receives only rows the driver confirms it removed.
-     */
-    private fun buildDeleteMany(
-        entityClass: ClassName,
-        clientName: String,
-    ): FunSpec = function("deleteMany", MUTATION_RESULT.parameterizedBy(INT)) {
-        parameter("viewerContext", VIEWER_CONTEXT)
-        parameter("predicates", PREDICATE.parameterizedBy(entityClass)) { addModifiers(KModifier.VARARG) }
-        addCode(codeBlock {
-            add("return mutationExecutor.execute(\n")
-            indent()
-            add("operation = deleteManyMutationOperation,\n")
-            add("ruleClient = client.readOnlyClient,\n")
-            add("input = %T(viewerContext, predicates.asList()),\n", DELETE_MANY_MUTATION_INPUT)
-            addOwnedTransactionWiring(
-                clientName,
-                CodeBlock.of("tx.%L.deleteManyMutationOperation", clientName),
+    /** One schema-specific transaction lookup shared by all inherited bulk terminals. */
+    private fun buildWithTransaction(repositoryBase: TypeName, schemaName: String, clientName: String): FunSpec {
+        val names = NameAllocator()
+        names.newName(schemaName)
+        val result = TypeVariableName(names.newName("Result"))
+        return function("withTransaction", TRANSACTION_RESULT.parameterizedBy(result)) {
+            addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
+            addTypeVariable(result)
+            parameter(
+                "block",
+                LambdaTypeName.get(
+                    receiver = TRANSACTION_SCOPE,
+                    parameters = listOf(ParameterSpec.unnamed(repositoryBase)),
+                    returnType = result,
+                ),
             )
-            unindent()
-            add(")\n")
-        })
-    }
-
-    /** Select transaction-bound dependencies; runtime owns transaction policy and completion handling. */
-    private fun CodeBlock.Builder.addOwnedTransactionWiring(
-        clientName: String,
-        operation: CodeBlock,
-    ) {
-        add("ownedTransaction = { input, completionCapture ->\n")
-        indent()
-        add("client.withTransaction { tx ->\n")
-        indent()
-        add("tx.%L.mutationExecutor.executeInOwnedTransactionForInternalUse(\n", clientName)
-        indent()
-        add("operation = %L,\n", operation)
-        add("ruleClient = tx.%L.client.readOnlyClient,\n", clientName)
-        add("input = input,\n")
-        add("completionCapture = completionCapture,\n")
-        unindent()
-        add(").orRollback()\n")
-        unindent()
-        add("}\n")
-        unindent()
-        add("},\n")
-    }
-
-    // Privacy is fail-closed: every operation requires an explicit Allow, so
-    // every entity is privacy-enforced regardless of which rules are declared.
-    // These flags therefore always report true (the call sites that gate on
-    // them always take the enforce path).
-    //
-    // hasLoadPrivacy is the read surface's flag and overrides
-    // `${Entity}ReadSurface` (public — interface members can't be
-    // internal); the write-side flags stay internal.
-    private fun buildHasPrivacy(name: String, readSurfaceOverride: Boolean = false): FunSpec =
-        function(name, Boolean::class.asClassName()) {
-            addModifiers(if (readSurfaceOverride) KModifier.OVERRIDE else KModifier.INTERNAL)
-            statement("return true")
+            statement("return client.withTransaction { tx -> block(tx.%N) }", clientName)
         }
+    }
 
     /** Bind LOAD rules over the original entities to the runtime evaluator. */
     private fun buildLoadPrivacyEvaluator(
@@ -601,7 +427,7 @@ internal class RepoGenerator(
             entityClass,
         ),
     ) {
-        addModifiers(KModifier.PRIVATE)
+        addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
         initializer(codeBlock {
             add("%T(\n", LOAD_PRIVACY_EVALUATOR)
             indent()
@@ -612,26 +438,6 @@ internal class RepoGenerator(
         })
     }
 
-    private fun buildEvaluateLoadPrivacy(
-        entityClass: ClassName,
-    ): FunSpec =
-        function("evaluateLoadPrivacy", PRIVACY_EVALUATION.parameterizedBy(entityClass)) {
-            addModifiers(KModifier.OVERRIDE)
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("entities", LIST.parameterizedBy(entityClass))
-            addCode(codeBlock {
-                add("return loadPrivacyEvaluator.evaluate(\n")
-                indent()
-                add(
-                    "context = %T(viewerContext, client.readOnlyClient),\n",
-                    ClassName("entkt.runtime.privacy", "PrivacyRuleContext"),
-                )
-                add("entities = entities,\n")
-                unindent()
-                add(")\n")
-            })
-        }
-
     /** Bind this entity's CREATE dependencies once for its scalar and bulk runtime operations. */
     private fun buildCreateManyMutationOperationProperty(
         entityDescriptorClass: ClassName,
@@ -640,6 +446,7 @@ internal class RepoGenerator(
         candidateClass: ClassName,
         beforeSaveStateClass: ClassName,
         beforeCreateStateClass: ClassName,
+        generatedId: Boolean,
     ): PropertySpec {
         val operationType = CREATE_MANY_MUTATION_OPERATION.parameterizedBy(
             ClassName(packageName, "ReadOnlyEntClient"),
@@ -649,8 +456,12 @@ internal class RepoGenerator(
             beforeSaveStateClass,
             beforeCreateStateClass,
         )
-        return property("createManyMutationOperation", operationType) {
-            addModifiers(KModifier.PRIVATE)
+        return property("createManyOperation", operationType) {
+            if (generatedId) {
+                addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
+            } else {
+                addModifiers(KModifier.PRIVATE)
+            }
             initializer(codeBlock {
                 add("%M(\n", BUILD_CREATE_MANY_MUTATION_OPERATION)
                 indent()
@@ -667,93 +478,6 @@ internal class RepoGenerator(
                 add(")")
             })
         }
-    }
-
-    private fun buildRepoCreate(
-        schema: EntSchema,
-        entityClass: ClassName,
-        createDraftClass: ClassName,
-        createLambda: LambdaTypeName,
-    ): FunSpec {
-        val idStrategy = idStrategyName(schema)
-        return function("create", PENDING_CREATE_MUTATION.parameterizedBy(createDraftClass, entityClass)) {
-            if (idStrategy == "EXPLICIT") {
-                parameter("id", schema.id().type.toTypeName())
-            }
-            parameter("block", createLambda)
-            val createArgs = if (idStrategy == "EXPLICIT") "id = id" else ""
-            statement("val draft = %T($createArgs).apply(block)", createDraftClass)
-            statement("return %T(draft, this)", PENDING_CREATE_MUTATION)
-        }
-    }
-
-    private fun buildSaveCreation(createDraftClass: ClassName): FunSpec =
-        function("saveCreation", MUTATION_RESULT.parameterizedBy(UNIT)) {
-            addAnnotation(ENTKT_INTERNAL)
-            addModifiers(KModifier.OVERRIDE)
-            parameter("viewerContext", VIEWER_CONTEXT)
-            parameter("draft", createDraftClass)
-            addCode(codeBlock {
-                add("return mutationExecutor.execute(\n")
-                indent()
-                add("operation = createMutationOperation,\n")
-                add("ruleClient = client.readOnlyClient,\n")
-                add("input = %T(viewerContext, draft, checkReturnedEntityPrivacy = false),\n", CREATE_MUTATION_INPUT)
-                unindent()
-                add(").withoutValue()\n")
-            })
-        }
-
-    private fun buildSaveAndLoadCreation(
-        createDraftClass: ClassName,
-        entityClass: ClassName,
-    ): FunSpec = function("saveAndLoadCreation", MUTATION_RESULT.parameterizedBy(entityClass)) {
-        addAnnotation(ENTKT_INTERNAL)
-        addModifiers(KModifier.OVERRIDE)
-        parameter("viewerContext", VIEWER_CONTEXT)
-        parameter("draft", createDraftClass)
-        addCode(codeBlock {
-            add("return mutationExecutor.execute(\n")
-            indent()
-            add("operation = createMutationOperation,\n")
-            add("ruleClient = client.readOnlyClient,\n")
-            add("input = %T(viewerContext, draft, checkReturnedEntityPrivacy = true),\n", CREATE_MUTATION_INPUT)
-            unindent()
-            add(")\n")
-        })
-    }
-
-    /**
-     * `createMany(*blocks): MutationResult<List<T>>` — strict, atomic,
-     * phase-major bulk create. Every draft and before-hook phase completes,
-     * then CREATE privacy and validation evaluate the complete candidate list,
-     * before one correlated `DatabaseDriver.insertMany` persists the batch. Every row
-     * is hydrated before the single afterCreate phase begins.
-     *
-     * Returned LOAD disclosure uses the same supplied `ViewerContext` instance as
-     * CREATE privacy. A caller-owned transaction maps disclosure failure to
-     * `TransactionPending` and rollback-only. An EntKt-owned transaction
-     * captures it as a neutral value, attempts commit, and reports `Committed`
-     * only after commit is confirmed.
-     */
-    private fun buildCreateMany(
-        entityClass: ClassName,
-        createDraftClass: ClassName,
-        createLambda: LambdaTypeName,
-        clientName: String,
-    ): FunSpec = function("createMany", MUTATION_RESULT.parameterizedBy(LIST.parameterizedBy(entityClass))) {
-        parameter("viewerContext", VIEWER_CONTEXT)
-        parameter("blocks", createLambda) { addModifiers(KModifier.VARARG) }
-        addCode(codeBlock {
-            add("return mutationExecutor.execute(\n")
-            indent()
-            add("operation = createManyMutationOperation,\n")
-            add("ruleClient = client.readOnlyClient,\n")
-            add("input = %T(viewerContext, blocks.asList(), newDraft = { %T() }),\n", CREATE_MANY_MUTATION_INPUT, createDraftClass)
-            addOwnedTransactionWiring(clientName, CodeBlock.of("tx.%L.createManyMutationOperation", clientName))
-            unindent()
-            add(")\n")
-        })
     }
 
 }

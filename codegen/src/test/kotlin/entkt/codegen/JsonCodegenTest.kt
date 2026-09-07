@@ -110,13 +110,13 @@ class JsonCodegenTest {
     @Test
     fun `rules share JSON while update preparation still detaches requested patches`() {
         val repo = gen().getValue("JsonArticleRepo")
-        val loadBinding = repo.substringAfter("private val loadPrivacyEvaluator:")
+        val loadBinding = repo.substringAfter("protected override val loadPrivacyEvaluator:")
             .substringBefore("private val createConverter:")
         assertFalse("freshItem" in loadBinding || "LoadPrivacyItem" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in repo, repo)
-        val createBinding = repo.substringAfter("private val createManyMutationOperation:")
-            .substringBefore("private val createMutationOperation:")
+        val createBinding = repo.substringAfter("protected override val createManyOperation:")
+            .substringBefore("protected override val createOperation:")
         assertFalse("freshItem" in createBinding, createBinding)
         assertFalse("CreateRuleInput" in repo, repo)
 
@@ -132,7 +132,7 @@ class JsonCodegenTest {
             update,
         )
 
-        val updateBinding = repo.substringAfter("private val updateMutationOperation:")
+        val updateBinding = repo.substringAfter("protected override val updateOperation:")
             .substringBefore("private val ")
         assertFalse("state.before.copy(" in updateBinding, updateBinding)
         assertFalse("state.candidate.copy(" in updateBinding, updateBinding)
@@ -208,13 +208,13 @@ class JsonCodegenTest {
     @Test
     fun `generic JSON is shared by LOAD and mutation rules`() {
         val repo = genGeneric().getValue("JsonBoardRepo")
-        val loadBinding = repo.substringAfter("private val loadPrivacyEvaluator:")
+        val loadBinding = repo.substringAfter("protected override val loadPrivacyEvaluator:")
             .substringBefore("private val createConverter:")
         assertFalse("freshItem" in loadBinding || "LoadPrivacyItem" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in loadBinding, loadBinding)
         assertFalse("copyJsonValue" in repo, repo)
-        val createBinding = repo.substringAfter("private val createManyMutationOperation:")
-            .substringBefore("private val createMutationOperation:")
+        val createBinding = repo.substringAfter("protected override val createManyOperation:")
+            .substringBefore("protected override val createOperation:")
         assertFalse("freshItem" in createBinding, createBinding)
     }
 

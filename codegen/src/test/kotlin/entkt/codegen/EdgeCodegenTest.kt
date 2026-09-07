@@ -1206,7 +1206,7 @@ class EdgeCodegenTest {
             "the runtime factory should construct the operation with its evaluators\n$output"
         }
         assert(!output.contains("MutationLifecycle"))
-        assert(output.contains("CreateMutationOperation(createManyMutationOperation)"))
+        assert(output.contains("CreateMutationOperation(createManyOperation)"))
         assert(!output.contains("CreateMutationSpec") && !output.contains("private class CreateHookStateConverter")) {
             "CREATE should not call back into repository-owned conversion methods\n$output"
         }

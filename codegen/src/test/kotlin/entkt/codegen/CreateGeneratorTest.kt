@@ -162,6 +162,7 @@ class CreateGeneratorTest {
         val resolver = resolve("Session", session)
 
         assertTrue(draft.contains("class SessionCreateDraft @EntktInternal constructor("), draft)
+        assertTrue(draft.contains("@property:EntktInternal"), draft)
         assertTrue(draft.contains("internal val id: String,"), draft)
         assertTrue(resolver.contains("\"id\" to id"), resolver)
     }

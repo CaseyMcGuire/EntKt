@@ -2,7 +2,6 @@ package entkt.codegen
 
 import entkt.schema.EntSchema
 import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * Pins the generated shape of the read-client file: `ReadOnlyEntClient` is
@@ -150,14 +149,7 @@ class ReadClientGeneratorTest {
     }
 
     @Test
-    fun `read repo findById is the full repo's findById modulo the runtime host reference`() {
-        // The read client's per-entity repos must not re-implement the
-        // primary-key read path: CarReadRepo's findById is byte-identical
-        // to CarRepo's, with the sole difference that
-        // the read repo reaches its host through `runtime` where the full
-        // repo uses `client`. Any other difference is behavioral drift
-        // between the two read surfaces (privacy, interceptors, capture
-        // boundary diverging by construction site).
+    fun `read repo keeps BY_ID delegation while the writable repo inherits it`() {
         val files = generateFiles()
         val readClient = files.first { it.name == "ReadOnlyEntClient" }.toString()
         val carRepo = files.first { it.name == "CarRepo" }.toString()
@@ -165,14 +157,11 @@ class ReadClientGeneratorTest {
         assert(carReadRepoStart >= 0) { "CarReadRepo not found in\n$readClient" }
 
         val readSpan = findByIdSpan(readClient.substring(carReadRepoStart))
-        val repoSpan = findByIdSpan(carRepo)
-        assertEquals(
-            repoSpan,
-            readSpan.replace("runtime", "client"),
-            "read repo findById must match the full repo's modulo the host reference",
-        )
+        assert(!carRepo.contains("fun findById(")) {
+            "Writable repos should inherit the runtime implementation\n$carRepo"
+        }
 
-        // The shared span contributes the id predicate and delegates
+        // The read-only entry point contributes the id predicate and delegates
         // execution to the runtime query pipeline.
         assert(readSpan.contains("public fun findById(viewerContext: ViewerContext, id: Int): ReadResult<Car?> {")) {
             "findById should retain its nullable ReadResult surface\n$readSpan"

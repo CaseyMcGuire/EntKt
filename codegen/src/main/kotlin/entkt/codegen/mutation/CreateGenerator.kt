@@ -173,7 +173,9 @@ internal class CreateGenerator(
             }
             if (idStrategy == "EXPLICIT") {
                 property("id", idType) {
-                    addAnnotation(ENTKT_INTERNAL)
+                    addAnnotation(annotation(ENTKT_INTERNAL) {
+                        useSiteTarget(AnnotationSpec.UseSiteTarget.PROPERTY)
+                    })
                     addModifiers(KModifier.INTERNAL)
                     initializer("id")
                 }
