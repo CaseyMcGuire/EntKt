@@ -35,7 +35,7 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
-import entkt.runtime.validation.mutationValidationEvaluatorForInternalUse
+import entkt.runtime.validation.MutationValidationEvaluator
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -237,7 +237,7 @@ class DeleteMutationOperationTest {
             ),
         )
 
-        val validationEvaluator = mutationValidationEvaluatorForInternalUse<
+        val validationEvaluator = MutationValidationEvaluator<
             Any,
             DeleteRuleCandidate<Widget, Candidate>,
             >(

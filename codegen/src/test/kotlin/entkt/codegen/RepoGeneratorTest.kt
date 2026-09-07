@@ -36,7 +36,7 @@ class RepoGeneratorTest {
         }
         assert(
             output.contains(
-                "validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"RepoBytesRecord CREATE validation\", rules = configuredValidation.createRules, )",
+                "validationEvaluator = MutationValidationEvaluator( lifecycle = \"RepoBytesRecord CREATE validation\", rules = configuredValidation.createRules, )",
             ),
         ) {
             "CREATE validation should receive the prepared candidate directly\n$output"
@@ -58,6 +58,13 @@ class RepoGeneratorTest {
             .substringBefore("private val createMutationOperation:")
         assert(!createBinding.contains("freshItem") && !createBinding.contains("candidate ->")) {
             "CREATE evaluators must not require identity converters\n$output"
+        }
+        assert(output.contains("primary = ValidationDecisionEvaluator( rules = configuredValidation.deleteRules,")) {
+            "DELETE should inject a concrete typed decision evaluator\n$output"
+        }
+        assert(!output.contains("mutationValidationEvaluatorForInternalUse") &&
+            !output.contains("validationDecisionEvaluatorForInternalUse")) {
+            "Validation wiring should use runtime constructors\n$output"
         }
         assert(!output.contains("fun snapshotCreateCandidate")) {
             "rule items should be constructed directly, without callbacks into the repo\n$output"
@@ -975,7 +982,7 @@ class RepoGeneratorTest {
         assert(!output.contains("fun evaluateCreateValidation")) {
             "CREATE validation should run in the shared runtime lifecycle\n$output"
         }
-        assert(output.contains("validationEvaluator = mutationValidationEvaluatorForInternalUse( lifecycle = \"Car CREATE validation\"")) {
+        assert(output.contains("validationEvaluator = MutationValidationEvaluator( lifecycle = \"Car CREATE validation\"")) {
             "createMutationOperation should capture CREATE validation\n$output"
         }
         assert(output.contains("lifecycle = \"Car DELETE validation\"") &&

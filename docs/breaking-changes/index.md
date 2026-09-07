@@ -30,6 +30,17 @@ above it.
 
 ## Unreleased
 
+- **Construct mutation validation evaluators directly** (`runtime`, `codegen`)
+  `MutationValidationEvaluator` and `ValidationDecisionEvaluator` are concrete
+  runtime classes. Their `*ForInternalUse` factories are removed. CREATE passes
+  its rule list directly to the mutation evaluator constructor; UPDATE/DELETE
+  inject typed decision evaluators for their input conversions. The outer
+  evaluator supplies diagnostics to both primary and additional rules, and all
+  validation errors retain their existing subject and rule order.
+  _Migration:_ regenerate entity code. Handwritten internal wiring should use
+  the constructors; pass `lifecycle` only to `MutationValidationEvaluator`, and
+  bind input conversions in `ValidationDecisionEvaluator(rules, converter)`.
+
 - **Bind rule-ready mutation inputs without identity converters** (`runtime`, `codegen`)
   CREATE privacy and validation wiring no longer supplies `freshItem` identity
   callbacks. `MutationPrivacyEvaluator<RuleClient, State>` accepts rules over

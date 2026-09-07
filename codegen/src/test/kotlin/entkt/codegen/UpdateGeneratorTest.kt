@@ -354,7 +354,7 @@ class UpdateGeneratorTest {
             "No-op preparation should retain the unchanged rule state without owner values\n$output"
         }
         assert(output.contains("privacyEvaluator = MutationPrivacyEvaluator(") &&
-            output.contains("validationEvaluator = mutationValidationEvaluatorForInternalUse(")) {
+            output.contains("validationEvaluator = MutationValidationEvaluator(")) {
             "updateOperation should pass the no-op state through runtime privacy and validation evaluators\n$output"
         }
     }
@@ -521,6 +521,15 @@ class UpdateGeneratorTest {
 
         assert(privacy.contains("MutationPrivacyEvaluator( entity = UserDescriptor, operation = PrivacyOperation.UPDATE,"))
         assert(privacy.contains("primary = PrivacyDecisionEvaluator( rules = configuredPrivacy.updateRules,"))
+        val validation = output.substringAfter("validationEvaluator = ").substringBefore("adapter = this")
+        assert(validation.contains("MutationValidationEvaluator( lifecycle = \"User UPDATE validation\","))
+        assert(validation.contains("primary = ValidationDecisionEvaluator( rules = configuredValidation.updateRules,"))
+        assert(validation.contains("ValidationDecisionEvaluator( rules = configuredValidation.createRules,"))
+        assert(!validation.contains("mutationValidationEvaluatorForInternalUse") &&
+            !validation.contains("validationDecisionEvaluatorForInternalUse"))
+        assert(validation.split("lifecycle =").size - 1 == 1) {
+            "The outer evaluator should supply its lifecycle to primary and additional rules\n$output"
+        }
         assert(output.contains("UpdateMutationOperation<ReadOnlyEntClient,"))
         assert(!output.contains("ruleClientProvider") && !output.contains("client.readOnlyClient")) {
             "update adapter construction must not resolve or capture a read client\n$output"

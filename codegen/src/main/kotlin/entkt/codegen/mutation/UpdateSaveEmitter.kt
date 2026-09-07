@@ -55,10 +55,10 @@ private val MUTATION_PRIVACY_EVALUATOR =
 private val PRIVACY_DECISION_EVALUATOR =
     ClassName("entkt.runtime.privacy", "PrivacyDecisionEvaluator")
 private val PRIVACY_OPERATION = ClassName("entkt.runtime.privacy", "PrivacyOperation")
-private val MUTATION_VALIDATION_EVALUATOR_FACTORY =
-    MemberName("entkt.runtime.validation", "mutationValidationEvaluatorForInternalUse")
-private val VALIDATION_DECISION_EVALUATOR_FACTORY =
-    MemberName("entkt.runtime.validation", "validationDecisionEvaluatorForInternalUse")
+private val MUTATION_VALIDATION_EVALUATOR =
+    ClassName("entkt.runtime.validation", "MutationValidationEvaluator")
+private val VALIDATION_DECISION_EVALUATOR =
+    ClassName("entkt.runtime.validation", "ValidationDecisionEvaluator")
 
 /** Schema-specific artifacts around the reusable runtime UPDATE lifecycle. */
 internal data class UpdateSaveArtifacts(
@@ -180,9 +180,11 @@ internal class UpdateSaveEmitter(
                 add("},\n")
                 unindent()
                 add("),\n")
-                add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
+                add("validationEvaluator = %T(\n", MUTATION_VALIDATION_EVALUATOR)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName UPDATE validation")
+                add("primary = %T(\n", VALIDATION_DECISION_EVALUATOR)
+                indent()
                 add("rules = configuredValidation.updateRules,\n")
                 add("freshItem = { state: %T -> %T(\n", preparedStateClass, updateRuleInput)
                 indent()
@@ -193,11 +195,12 @@ internal class UpdateSaveEmitter(
                 add("state.edgeChanges,\n")
                 unindent()
                 add(") },\n")
+                unindent()
+                add("),\n")
                 add("additional = if (configuredValidation.updateDerivesFromCreate) {\n")
                 indent()
-                add("%M(\n", VALIDATION_DECISION_EVALUATOR_FACTORY)
+                add("%T(\n", VALIDATION_DECISION_EVALUATOR)
                 indent()
-                add("lifecycle = %S,\n", "$schemaName UPDATE validation")
                 add("rules = configuredValidation.createRules,\n")
                 add(
                     "freshItem = { state: %T -> state.candidate },\n",

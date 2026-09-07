@@ -34,7 +34,7 @@ import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ValidationViolation
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
-import entkt.runtime.validation.mutationValidationEvaluatorForInternalUse
+import entkt.runtime.validation.MutationValidationEvaluator
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -152,7 +152,7 @@ class CreateMutationOperationTest {
                 ),
             )
 
-        val validationEvaluator = mutationValidationEvaluatorForInternalUse<Unit, Candidate>(
+        val validationEvaluator = MutationValidationEvaluator<Unit, Candidate>(
                 lifecycle = "Widget CREATE validation",
                 rules = listOf(
                     batchValidationRule<Unit, Candidate> { _, batch ->

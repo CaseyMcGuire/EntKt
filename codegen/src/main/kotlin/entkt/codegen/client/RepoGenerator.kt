@@ -70,8 +70,8 @@ private val DELETE_RULE_CANDIDATE =
 private val PRIVACY_DECISION_EVALUATOR =
     ClassName("entkt.runtime.privacy", "PrivacyDecisionEvaluator")
 private val PRIVACY_OPERATION = ClassName("entkt.runtime.privacy", "PrivacyOperation")
-private val MUTATION_VALIDATION_EVALUATOR_FACTORY =
-    MemberName("entkt.runtime.validation", "mutationValidationEvaluatorForInternalUse")
+private val VALIDATION_DECISION_EVALUATOR =
+    ClassName("entkt.runtime.validation", "ValidationDecisionEvaluator")
 private val PENDING_CREATE_MUTATION =
     ClassName("entkt.runtime.mutation", "PendingCreateMutation")
 private val CREATE_MUTATION_REPOSITORY =
@@ -537,7 +537,7 @@ internal class RepoGenerator(
                 add("rules = configuredPrivacy.createRules,\n")
                 unindent()
                 add("),\n")
-                add("validationEvaluator = %M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
+                add("validationEvaluator = %T(\n", MUTATION_VALIDATION_EVALUATOR)
                 indent()
                 add("lifecycle = %S,\n", "$schemaName CREATE validation")
                 add("rules = configuredValidation.createRules,\n")
@@ -637,15 +637,19 @@ internal class RepoGenerator(
             ) {
                 addModifiers(KModifier.PRIVATE)
                 initializer(codeBlock {
-                    add("%M(\n", MUTATION_VALIDATION_EVALUATOR_FACTORY)
+                    add("%T(\n", MUTATION_VALIDATION_EVALUATOR)
                     indent()
                     add("lifecycle = %S,\n", "$schemaName DELETE validation")
+                    add("primary = %T(\n", VALIDATION_DECISION_EVALUATOR)
+                    indent()
                     add("rules = configuredValidation.deleteRules,\n")
                     add(
                         "freshItem = { item: %T -> %T(item.entity, item.candidate) },\n",
                         ruleCandidateType,
                         deleteRuleInput,
                     )
+                    unindent()
+                    add("),\n")
                     unindent()
                     add(")")
                 })
