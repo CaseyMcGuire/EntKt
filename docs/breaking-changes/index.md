@@ -30,6 +30,15 @@ above it.
 
 ## Unreleased
 
+- **Expose field uniqueness only on supported builders** (`schema`)
+  `.unique()` is no longer a member of the common `FieldBuilder`. Scalar and
+  enum builders retain it; JSON and pgvector fields reject it at compile time
+  instead of during schema construction.
+  _Migration:_ remove unsupported `.unique()` calls on JSON/vector fields.
+  Helpers that configure uniqueness must accept a supported concrete builder
+  instead of an arbitrary `FieldBuilder`. Index APIs and database storage are
+  unchanged.
+
 - **Preserve the JSON type in field builders** (`schema`)
   Both JSON declaration overloads now return `JsonFieldBuilder<T>` and retain
   the declared type on `FieldHandle<T>`, including nested generic types.

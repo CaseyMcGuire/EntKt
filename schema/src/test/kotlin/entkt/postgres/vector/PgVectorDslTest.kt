@@ -61,19 +61,6 @@ class PgVectorDslTest {
         }
     }
 
-    @Test
-    fun `unique on a vector is rejected at build`() {
-        val s = object : EntSchema("u", clientName = "u") {
-            override fun id() = EntId.long()
-            val e by postgresVector("e", 4).unique()
-        }
-        finalize(s)
-        // build() runs in fields(); the native-column .unique() rejection fires there.
-        val err = assertFailsWith<IllegalStateException> { s.fields() }
-        assertTrue("not supported" in (err.message ?: ""), "got: ${err.message}")
-        assertTrue("vector" in (err.message ?: ""), "should name the native type: ${err.message}")
-    }
-
     // ── Vector index validation ────────────────────────────────────
 
     @Test

@@ -15,8 +15,9 @@ Stored as strings in the database.
 
 ## Field modifiers
 
-`.nullable()`, `.unique()`, `.immutable()`,
-`.sensitive()`, `.comment(...)`, `.default(value)` (type-safe per field type).
+All fields expose `.nullable()`, `.immutable()`, `.sensitive()`, and `.comment(...)`.
+Scalar and enum fields also expose `.unique()`; JSON and pgvector fields do not.
+String, boolean, numeric, and enum fields support typed `.default(value)`.
 Instant fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instant.now()`).
 
 Field invariants are runtime validation rules, not schema modifiers. Register

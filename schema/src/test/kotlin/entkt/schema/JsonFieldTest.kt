@@ -121,17 +121,4 @@ class JsonFieldTest {
         val err = assertFailsWith<IllegalStateException> { s.indexes() }
         assertTrue("JSON column" in (err.message ?: ""), "got: ${err.message}")
     }
-
-    @Test
-    fun `unique on a json field is rejected at build`() {
-        val s = object : EntSchema("u", clientName = "u") {
-            override fun id() = EntId.long()
-            val m by json("m", Meta::class).unique()
-        }
-        finalize(s)
-        // build() runs in fields(); the JSON .unique() rejection fires there.
-        val err = assertFailsWith<IllegalStateException> { s.fields() }
-        assertTrue("JSON column" in (err.message ?: ""), "got: ${err.message}")
-        assertTrue("unique" in (err.message ?: "").lowercase(), "got: ${err.message}")
-    }
 }

@@ -157,13 +157,21 @@ These are available on all field types:
 | Modifier | Effect |
 |----------|--------|
 | `.nullable()` | Field is nullable; generated as a Kotlin `T?` |
-| `.unique()` | Adds a unique constraint |
 | `.immutable()` | Omitted from update-draft setters |
 | `.sensitive()` | Excluded from string representations |
-| `.default(value)` | Type-safe default value for creates |
-| `.defaultNow()` | Set to `Instant.now()` on create (INSTANT fields only) |
-| `.updateDefaultNow()` | Set to `Instant.now()` on every update (INSTANT fields only) |
 | `.comment(text)` | Documentation comment |
+
+### Type-Specific Modifiers
+
+| Modifier | Supported field types | Effect |
+|----------|-----------------------|--------|
+| `.unique()` | Scalar and enum fields; not JSON or pgvector | Adds a unique constraint |
+| `.default(value)` | String, boolean, numeric, and enum fields | Type-safe default value for creates |
+| `.defaultNow()` | Instant fields | Set to `Instant.now()` on create |
+| `.updateDefaultNow()` | Instant fields | Default for an unassigned timestamp during an update |
+
+JSON and pgvector fields do not expose `.unique()` or default modifiers,
+including after chained common modifiers. Unsupported calls fail at compile time.
 
 ### Validation Belongs in Client Policies
 
@@ -748,8 +756,8 @@ class Article : EntSchema("articles", clientName = "articles") {
   additionally require `<= 2000`, enforced at `postgresVectorIndex(...)`.
 - The generated property type is `PgVector` (from `entkt.postgres.vector`), a
   content-equal wrapper over `FloatArray`; build one with `PgVector.of(floats)`.
-- `.nullable()` and `.comment(...)` apply; `.unique()` is rejected at build time
-  (a UNIQUE index over a vector is not meaningful).
+- Common field modifiers apply; `.unique()` and default modifiers are not
+  exposed on vector fields and fail at compile time.
 - Index metrics are `VectorMetric.Cosine` / `L2` / `InnerProduct`. Use
   `.hnsw(metric)` or `.ivfflat(metric, lists = N)` (with `lists > 0`). Two vector
   indexes on the same column are allowed when they differ by access method or
@@ -847,9 +855,9 @@ A mismatch fails during application startup. With Jackson, register
 - Configure kotlinx behavior with
   `PostgresDriver(dataSource, jsonCodec = KotlinxJsonCodec(Json { ignoreUnknownKeys = true }))`
   (the default is `KotlinxJsonCodec(Json.Default)`).
-- `.nullable()` and `.comment()` apply; **defaults, `.unique()`, primary keys, and
-  JSON indexes are rejected** with a clear error. Database-specific JSON indexes
-  can be added via manual migrations.
+- Common field modifiers apply; defaults and `.unique()` are not exposed and
+  fail at compile time. Primary keys and JSON indexes remain unsupported by
+  the schema DSL. Database-specific JSON indexes can be added via manual migrations.
 - The generated column ref is a narrow `JsonColumn` -- it exposes **null checks
   only** (`Pet.metadata.isNull()` / `.isNotNull()` on nullable columns). Equality,
   membership, ordering, containment, and path predicates are out of scope in V1.

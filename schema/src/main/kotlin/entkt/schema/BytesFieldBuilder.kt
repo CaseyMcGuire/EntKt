@@ -1,3 +1,5 @@
 package entkt.schema
 
-class BytesFieldBuilder internal constructor(name: String) : FieldBuilder<BytesFieldBuilder, ByteArray>(name, FieldType.BYTES)
+class BytesFieldBuilder internal constructor(name: String) : FieldBuilder<BytesFieldBuilder, ByteArray>(name, FieldType.BYTES) {
+    fun unique(): BytesFieldBuilder = apply { setUnique() }
+}

@@ -1,11 +1,9 @@
 package entkt.schema
 
 /**
- * Builder for a Postgres `pgvector` column. Declares no modifiers of its own
- * and does not override the final
- * `build()`: `.nullable()` / `.comment()` are inherited and valid;
- * `.unique()` is inherited too but rejected by `build()`; length/default
- * modifiers live only on the scalar builders, so they are absent here.
+ * Builder for a Postgres `pgvector` column. Inherits `.nullable()`,
+ * `.immutable()`, `.sensitive()`, and `.comment()`. Uniqueness and default
+ * modifiers are not exposed for vector fields.
  *
  * The dimensions and native storage are attached at registration via
  * `setNativeStorage(...)` (see `EntSchema.registerPostgresVector`), mirroring

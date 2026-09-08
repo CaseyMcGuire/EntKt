@@ -2,6 +2,8 @@ package entkt.schema
 
 class EnumFieldBuilder<E : Enum<E>> internal constructor(name: String) :
     FieldBuilder<EnumFieldBuilder<E>, E>(name, FieldType.ENUM) {
+    fun unique(): EnumFieldBuilder<E> = apply { setUnique() }
+
     /**
      * Set the column default to [value]. The default is rendered into
      * migration DDL as the constant's [Enum.name] (e.g. `DEFAULT 'MEDIUM'`).

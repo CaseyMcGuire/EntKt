@@ -204,9 +204,9 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
      * `List`. Declare generic shapes with the reified overload, which captures
      * the full type: `json<List<HighlightRect>>("rects")`.
      *
-     * `.nullable()` and `.comment()` apply; `.unique()`, defaults, primary keys,
-     * and JSON indexes are rejected. Equality/membership/ordering predicates are
-     * out of scope in V1 — the generated column ref exposes null checks only.
+     * Common field modifiers apply; `.unique()` and defaults are not exposed.
+     * Primary keys and JSON indexes are rejected. Equality/membership/ordering
+     * predicates are out of scope in V1 — the generated column ref exposes null checks only.
      *
      * Registering a JSON field with a driver that does not support typed JSON
      * fails at `register()`.

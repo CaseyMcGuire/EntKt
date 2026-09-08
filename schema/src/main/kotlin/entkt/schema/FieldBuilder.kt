@@ -76,7 +76,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     }
 
     private var nullable: Boolean = false
-    private var unique: Boolean = false
+    private var isUnique: Boolean = false
     private var immutable: Boolean = false
     private var sensitive: Boolean = false
     private var default: Any? = null
@@ -94,10 +94,10 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     private fun self(): Self = this as Self
 
     fun nullable(): Self = apply { checkNotFrozen(); nullable = true }.let { self() }
-    fun unique(): Self = apply { checkNotFrozen(); unique = true }.let { self() }
     fun immutable(): Self = apply { checkNotFrozen(); immutable = true }.let { self() }
     fun sensitive(): Self = apply { checkNotFrozen(); sensitive = true }.let { self() }
     protected fun setDefault(value: Any) { checkNotFrozen(); default = value }
+    protected fun setUnique() { checkNotFrozen(); isUnique = true }
     fun comment(text: String): Self = apply { checkNotFrozen(); comment = text }.let { self() }
 
     @PublishedApi
@@ -131,17 +131,14 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
         if (immutable && updateDefault != null) {
             error("Field '$fieldName' cannot be both immutable and have an updateDefault — immutable fields are never updated")
         }
-        // Native columns inherit the base modifier surface but reject the ones
-        // that don't make sense. A UNIQUE index over a native value
-        // such as a high-dimensional vector is broken.
+        // Backstop internal metadata: native builders do not expose uniqueness.
         val nativeStorage = storage
-        if (nativeStorage is ColumnStorage.Native && unique) {
+        if (nativeStorage is ColumnStorage.Native && isUnique) {
             error("Field '$fieldName' is a native ${nativeStorage.typeName} column; .unique() is not supported")
         }
-        // Typed JSON columns inherit the base modifier surface but reject the
-        // ones deferred in V1: a UNIQUE/default over a whole jsonb document.
+        // JSON uniqueness and defaults are not exposed by the public builder.
         if (type == FieldType.JSON) {
-            if (unique) error("Field '$fieldName' is a JSON column; .unique() is not supported")
+            if (isUnique) error("Field '$fieldName' is a JSON column; .unique() is not supported")
             if (default != null) error("Field '$fieldName' is a JSON column; defaults are not supported")
         }
         // Non-finite IEEE values (NaN / ±Infinity) have no portable SQL
@@ -162,7 +159,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
             name = fieldName,
             type = type,
             nullable = nullable,
-            unique = unique,
+            unique = isUnique,
             immutable = immutable,
             sensitive = sensitive,
             default = default,
