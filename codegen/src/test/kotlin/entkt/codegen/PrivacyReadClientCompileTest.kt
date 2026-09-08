@@ -22,10 +22,10 @@ import kotlin.test.assertTrue
  * Also pins removal of the former rule-client factories: they remain
  * unresolved even from same-module code carrying `@OptIn(EntktInternal)`.
  *
- * The validation-context twin lives in [ValidationReadClientCompileTest];
- * both contexts expose the same client type, so the exhaustive member probes
- * live here and the validation test keeps its original write-surface coverage.
- * Shared-type coverage lives in [ReadOnlyEntClientCompileTest].
+ * Both privacy and validation contexts expose the same client type, so the
+ * forbidden-member probes live here. [ValidationReadClientCompileTest] checks
+ * the validation read surface; [ReadOnlyEntClientCompileTest] checks the shared
+ * client type.
  */
 class PrivacyReadClientCompileTest {
 
