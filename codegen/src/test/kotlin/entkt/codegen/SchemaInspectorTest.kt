@@ -38,7 +38,7 @@ private class InspPost : EntSchema("posts", clientName = "inspPosts") {
 
 private class InspProfile : EntSchema("profiles", clientName = "inspProfiles") {
     override fun id() = EntId.uuid()
-    val bio by text("bio").nullable()
+    val bio by string("bio").nullable()
     val user by belongsTo<InspProfileUser>("user")
         .inverse(InspProfileUser::profile).unique()
 }
@@ -89,15 +89,15 @@ private class InspLinkPostTag : EntSchema("link_post_tags", clientName = "inspLi
 }
 
 private class InspTimestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt by time("created_at").defaultNow().immutable()
-    val updatedAt by time("updated_at").defaultNow().updateDefaultNow()
+    val createdAt by instant("created_at").defaultNow().immutable()
+    val updatedAt by instant("updated_at").defaultNow().updateDefaultNow()
 }
 
 private class InspEvent : EntSchema("events", clientName = "inspEvents") {
     override fun id() = EntId.long()
     val timestamps = include(::InspTimestamps)
     val name by string("name")
-    val deletedAt by time("deleted_at").nullable()
+    val deletedAt by instant("deleted_at").nullable()
     val byCreatedAt = index("idx_events_created_at", timestamps.createdAt)
     val byDeletedAt = index("idx_events_deleted_at", deletedAt).where("deleted_at IS NULL")
 }

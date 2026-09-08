@@ -34,8 +34,8 @@ class Ticket : EntSchema("tickets", clientName = "tickets") {
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val createdAt by time("created_at").immutable()
-    val updatedAt by time("updated_at")
+    val createdAt by instant("created_at").immutable()
+    val updatedAt by instant("updated_at")
     val name by string("name")
     val age by int("age").nullable()
     val email by string("email").unique()

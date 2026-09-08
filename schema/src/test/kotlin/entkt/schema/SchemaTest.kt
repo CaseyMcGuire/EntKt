@@ -32,7 +32,7 @@ class User : EntSchema("users", clientName = "users") {
     val email by string("email").unique()
     val role by enum<Role>("role").default(Role.USER)
     val active by bool("active").default(true)
-    val createdAt by time("created_at").immutable()
+    val createdAt by instant("created_at").immutable()
 
     val cars by hasMany<Car>("cars")
 
@@ -51,7 +51,7 @@ class Group : EntSchema("groups", clientName = "groups") {
 
 class UserGroup : EntSchema("user_groups", clientName = "userGroups") {
     override fun id() = EntId.int()
-    val joinedAt by time("joined_at")
+    val joinedAt by instant("joined_at")
 
     val userId by int("user_id")
     val groupId by int("group_id")
@@ -78,15 +78,15 @@ class Company : EntSchema("companies", clientName = "companies") {
 }
 
 class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt by time("created_at").defaultNow().immutable()
-    val updatedAt by time("updated_at").defaultNow().updateDefaultNow()
+    val createdAt by instant("created_at").defaultNow().immutable()
+    val updatedAt by instant("updated_at").defaultNow().updateDefaultNow()
 }
 
 class SoftDelete(
     scope: EntMixin.Scope,
     private val indexName: String,
 ) : EntMixin(scope) {
-    val deletedAt by time("deleted_at").nullable()
+    val deletedAt by instant("deleted_at").nullable()
     val byDeletedAt = index(indexName, deletedAt)
 }
 
@@ -107,7 +107,7 @@ class NoteWithInitMixin : EntSchema("notes", clientName = "noteWithInitMixins") 
         include(::Timestamps)
     }
 
-    val body by text("body")
+    val body by string("body")
 }
 
 // Schemas for computed-getter detection tests (must be file-level for forward references)
@@ -461,7 +461,7 @@ class SchemaTest {
     @Test
     fun `immutable field with updateDefaultNow is rejected`() {
         assertFailsWith<IllegalStateException> {
-            TimeFieldBuilder("updated_at")
+            InstantFieldBuilder("updated_at")
                 .immutable()
                 .updateDefaultNow()
                 .build()
@@ -709,7 +709,7 @@ class SchemaTest {
         val schema = object : EntSchema("object", clientName = "kwCheck") {
             override fun id() = EntId.long()
             val category by string("class")
-            val whenever by time("when")
+            val whenever by instant("when")
         }
         assertEquals("object", schema.tableName)
         assertEquals(

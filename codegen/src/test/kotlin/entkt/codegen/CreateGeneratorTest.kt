@@ -14,7 +14,7 @@ class Session : EntSchema("sessions", clientName = "sessions") {
 private class CreateEvent : EntSchema("events", clientName = "createEvents") {
     override fun id() = EntId.int()
     val title by string("title")
-    val createdAt by time("created_at").defaultNow().immutable()
+    val createdAt by instant("created_at").defaultNow().immutable()
 }
 
 private enum class CreateStatus { LOW, MEDIUM, HIGH }

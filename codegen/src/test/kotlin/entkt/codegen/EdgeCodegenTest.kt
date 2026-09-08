@@ -56,7 +56,7 @@ class Team : EntSchema("teams", clientName = "teams") {
 
 class TeamMember : EntSchema("team_members", clientName = "teamMembers") {
     override fun id() = EntId.int()
-    val joinedAt by time("joined_at")
+    val joinedAt by instant("joined_at")
     val teamId by int("team_id")
     val memberId by int("member_id")
 
@@ -75,7 +75,7 @@ class Person : EntSchema("persons", clientName = "persons") {
 
 class Friendship : EntSchema("friendships", clientName = "friendships") {
     override fun id() = EntId.int()
-    val createdAt by time("created_at")
+    val createdAt by instant("created_at")
     val personId by int("person_id")
     val friendId by int("friend_id")
 
@@ -94,7 +94,7 @@ class Project : EntSchema("projects", clientName = "projects") {
 
 class ProjectAssignment : EntSchema("project_assignments", clientName = "projectAssignments") {
     override fun id() = EntId.int()
-    val assignedAt by time("assigned_at")
+    val assignedAt by instant("assigned_at")
     val projectId by int("project_id")
     val assigneeId by int("assignee_id")
     val reviewerId by int("reviewer_id").nullable()

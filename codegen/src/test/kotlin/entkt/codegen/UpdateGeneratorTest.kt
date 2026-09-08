@@ -10,7 +10,7 @@ import kotlin.test.Test
 private class UpdateDefaultEntity : EntSchema("update_default_entities", clientName = "updateDefaultEntities") {
     override fun id() = EntId.int()
     val name by string("name")
-    val updatedAt by time("updated_at").updateDefaultNow()
+    val updatedAt by instant("updated_at").updateDefaultNow()
 }
 
 private class LongUpdateAssignmentEntity : EntSchema(
@@ -561,9 +561,9 @@ class UpdateGeneratorTest {
         }
     }
 
-    // NOTE: The old test `updateDefault Now on non-TIME field is rejected` has been
+    // NOTE: The old test `updateDefault Now on non-INSTANT field is rejected` has been
     // removed because the typed builder API now prevents this at compile time —
-    // updateDefaultNow() only exists on TimeFieldBuilder.
+    // updateDefaultNow() only exists on InstantFieldBuilder.
 
     // ---------- link-table M2M mutator generation ----------
 
@@ -1551,7 +1551,7 @@ private class M2MMember : EntSchema("m2m_members", clientName = "m2MMembers") {
 }
 private class M2MTeamMembership : EntSchema("m2m_memberships", clientName = "m2MTeamMemberships") {
     override fun id() = EntId.long()
-    val joinedAt by time("joined_at")
+    val joinedAt by instant("joined_at")
     val team by belongsTo<M2MTeam>("team")
     val member by belongsTo<M2MMember>("member")
 }

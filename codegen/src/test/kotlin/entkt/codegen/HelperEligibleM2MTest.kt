@@ -45,7 +45,7 @@ private class HeMember : EntSchema("he_members", clientName = "heMembers") {
 
 private class HeMembership : EntSchema("he_memberships", clientName = "heMemberships") {
     override fun id() = EntId.long()
-    val joinedAt by time("joined_at")
+    val joinedAt by instant("joined_at")
     val team by belongsTo<HeTeam>("team")
     val member by belongsTo<HeMember>("member")
 }

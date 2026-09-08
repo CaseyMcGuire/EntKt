@@ -28,9 +28,9 @@ class EntViewerFiltersTest {
         assertEquals(Predicate.Leaf<Any>("c", Op.EQ, "x"), leaf(FieldType.STRING, EntViewerFilterOp.EQ, "x"))
         assertEquals(
             Predicate.Leaf<Any>("c", Op.EQ, java.time.Instant.parse("2026-01-01T00:00:00Z")),
-            leaf(FieldType.TIME, EntViewerFilterOp.EQ, "2026-01-01T00:00:00Z"),
+            leaf(FieldType.INSTANT, EntViewerFilterOp.EQ, "2026-01-01T00:00:00Z"),
         )
-        assertEquals(Op.CONTAINS, leaf(FieldType.TEXT, EntViewerFilterOp.CONTAINS, "x").op)
+        assertEquals(Op.CONTAINS, leaf(FieldType.STRING, EntViewerFilterOp.CONTAINS, "x").op)
         assertEquals(Op.HAS_PREFIX, leaf(FieldType.STRING, EntViewerFilterOp.PREFIX, "x").op)
     }
 
@@ -39,7 +39,7 @@ class EntViewerFiltersTest {
         for ((type, bad) in listOf(
             FieldType.INT to "nope",
             FieldType.BOOL to "TRUE",
-            FieldType.TIME to "yesterday",
+            FieldType.INSTANT to "yesterday",
             FieldType.UUID to "123",
         )) {
             val ex = assertFailsWith<EntViewerBadRequestException>("$type") {

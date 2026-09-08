@@ -27,7 +27,7 @@ class BuildMemberManifestTest {
     /** Schema with mutable + immutable scalars + an FK. */
     private class Article : EntSchema("articles", clientName = "articles") {
         override fun id() = EntId.long()
-        val createdAt by time("created_at").immutable()
+        val createdAt by instant("created_at").immutable()
         val title by string("title")
         val author by belongsTo<Author>("author")
     }

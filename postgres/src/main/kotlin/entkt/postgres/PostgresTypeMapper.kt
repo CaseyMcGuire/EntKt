@@ -33,13 +33,13 @@ class PostgresTypeMapper : TypeMapper {
             }
         }
         return when (fieldType) {
-            FieldType.STRING, FieldType.TEXT, FieldType.ENUM -> "text"
+            FieldType.STRING, FieldType.ENUM -> "text"
             FieldType.BOOL -> "boolean"
             FieldType.INT -> "integer"
             FieldType.LONG -> "bigint"
             FieldType.FLOAT -> "real"
             FieldType.DOUBLE -> "double precision"
-            FieldType.TIME -> "timestamptz"
+            FieldType.INSTANT -> "timestamptz"
             FieldType.UUID -> "uuid"
             FieldType.BYTES -> "bytea"
             // Native type: render the column's declared SQL type verbatim,

@@ -19,5 +19,5 @@ class Order : EntSchema("orders", clientName = "orders") {
     val discount by double("discount").nullable()
     val status by enum<OrderStatus>("status")
     val region by string("region").nullable()
-    val placedAt by time("placed_at")
+    val placedAt by instant("placed_at")
 }

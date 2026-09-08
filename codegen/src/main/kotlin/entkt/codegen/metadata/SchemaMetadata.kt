@@ -170,7 +170,7 @@ internal fun columnMetadataFor(
             // caller should express the intent as a beforeUpdate or
             // afterUpdate hook on the owner entity instead.
             //
-            // Today only `time().updateDefaultNow()` exposes the DSL,
+            // Today only `instant().updateDefaultNow()` exposes the DSL,
             // and `time` can't match any current FK target id type
             // (Int / Long / UUID / String), so the type-mismatch check
             // above fires first under the current DSL. This check is

@@ -8,6 +8,6 @@ import entkt.schema.EntMixin
  * builder won't get a setter for it.
  */
 class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt by time("created_at").immutable()
-    val updatedAt by time("updated_at")
+    val createdAt by instant("created_at").immutable()
+    val updatedAt by instant("updated_at")
 }

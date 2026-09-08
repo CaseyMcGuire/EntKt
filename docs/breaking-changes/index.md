@@ -30,6 +30,16 @@ above it.
 
 ## Unreleased
 
+- **Use `string()` and `instant()` for text and timestamp fields** (`schema`, `runtime`)
+  The redundant `text()` builder and `FieldType.TEXT` are removed. `time()`,
+  `TimeFieldBuilder`, and `FieldType.TIME` are renamed to `instant()`,
+  `InstantFieldBuilder`, and `FieldType.INSTANT`, without compatibility aliases.
+  _Migration:_ replace `text(...)` with `string(...)` and `time(...)` with
+  `instant(...)`, including in mixins; update explicit builder and metadata
+  references, then regenerate code. PostgreSQL storage remains `text` and
+  `timestamptz`, and timestamp defaults retain their existing behavior. No
+  database migration is required.
+
 - **Preserve the enum type in field builders** (`schema`)
   `EnumFieldBuilder<E>` retains the declared enum type through modifiers,
   delegated properties, and mixins. Defaults from another enum now fail at

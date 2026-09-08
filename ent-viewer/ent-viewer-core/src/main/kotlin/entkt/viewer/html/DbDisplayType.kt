@@ -22,13 +22,13 @@ internal fun dbDisplayType(schema: EntitySchema, column: ColumnMetadata): String
         }
     }
     return when (column.type) {
-        FieldType.STRING, FieldType.TEXT, FieldType.ENUM -> "text"
+        FieldType.STRING, FieldType.ENUM -> "text"
         FieldType.BOOL -> "boolean"
         FieldType.INT -> "integer"
         FieldType.LONG -> "bigint"
         FieldType.FLOAT -> "real"
         FieldType.DOUBLE -> "double precision"
-        FieldType.TIME -> "timestamptz"
+        FieldType.INSTANT -> "timestamptz"
         FieldType.UUID -> "uuid"
         FieldType.BYTES -> "bytea"
         FieldType.JSON -> "jsonb"

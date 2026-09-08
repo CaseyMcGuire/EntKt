@@ -391,7 +391,7 @@ class MemberCollisionValidationTest {
         class Post : EntSchema("posts", clientName = "posts") {
             override fun id() = EntId.long()
             val title by string("title")
-            val createdAt by time("created_at").immutable()
+            val createdAt by instant("created_at").immutable()
             val author by belongsTo<Author>("author")
         }
 

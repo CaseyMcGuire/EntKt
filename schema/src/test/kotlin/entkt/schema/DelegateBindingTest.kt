@@ -46,7 +46,7 @@ class DelegateBindingTest {
         class Article : EntSchema("articles", clientName = "articles") {
             override fun id() = EntId.long()
             val publicTitle by string("legacy_title_txt")
-            val publishedAt by time("published_timestamp")
+            val publishedAt by instant("published_timestamp")
         }
         val schema = Article()
         val title = fieldByColumn(schema, "legacy_title_txt")
@@ -409,8 +409,8 @@ class DelegateBindingTest {
 }
 
 private class BindingTimestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt by time("created_at")
-    val updatedAt by time("updated_at")
+    val createdAt by instant("created_at")
+    val updatedAt by instant("updated_at")
 }
 
 private class Article2 : EntSchema("articles2", clientName = "articles2") {
@@ -434,16 +434,16 @@ private class Junction2 : EntSchema("junction2", clientName = "junction2") {
 
 private class LazyMixin(scope: EntMixin.Scope) : EntMixin(scope) {
     @Suppress("unused")
-    val lazyField by lazy { time("lazy_col") }
+    val lazyField by lazy { instant("lazy_col") }
 }
 
 private class AssignMixin(scope: EntMixin.Scope) : EntMixin(scope) {
     @Suppress("unused")
-    val plain = time("plain_col")
+    val plain = instant("plain_col")
 }
 
 private open class BaseMixin(scope: EntMixin.Scope) : EntMixin(scope) {
-    val inherited by time("inherited_col")
+    val inherited by instant("inherited_col")
 }
 
 private class DerivedMixin(scope: EntMixin.Scope) : BaseMixin(scope)
@@ -453,14 +453,14 @@ private class InnerMixin(scope: EntMixin.Scope) : EntMixin(scope) {
 }
 
 private class OuterMixin(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt by time("created_at")
-    val updatedAt by time("updated_at")
+    val createdAt by instant("created_at")
+    val updatedAt by instant("updated_at")
     val inner = include(::InnerMixin)
 }
 
 private class HandleLazyMixin(scope: EntMixin.Scope) : EntMixin(scope) {
     @Suppress("unused")
-    val hidden: FieldHandle<java.time.Instant> by lazy { time("hidden_col") }
+    val hidden: FieldHandle<java.time.Instant> by lazy { instant("hidden_col") }
 }
 
 private class SmuggleChild : EntSchema("smuggle_children", clientName = "smuggleChildren") {

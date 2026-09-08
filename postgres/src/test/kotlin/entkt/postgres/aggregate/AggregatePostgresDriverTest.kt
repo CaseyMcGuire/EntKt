@@ -52,7 +52,7 @@ class AggregatePostgresDriverTest {
             ColumnMetadata("rating", FieldType.DOUBLE, nullable = true),
             ColumnMetadata("category", FieldType.STRING, nullable = false),
             ColumnMetadata("status", FieldType.ENUM, nullable = false),
-            ColumnMetadata("created_at", FieldType.TIME, nullable = false),
+            ColumnMetadata("created_at", FieldType.INSTANT, nullable = false),
             ColumnMetadata("payload", FieldType.BYTES, nullable = true),
         ),
         edges = emptyMap(),

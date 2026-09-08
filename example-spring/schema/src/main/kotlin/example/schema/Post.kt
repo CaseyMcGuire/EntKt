@@ -13,7 +13,7 @@ class Post : EntSchema("posts", clientName = "posts") {
     val timestamps = include(::Timestamps)
 
     val title by string("title")
-    val body by text("body")
+    val body by string("body")
     val published by bool("published").default(false)
 
     val author by belongsTo<User>("author").inverse(User::posts)

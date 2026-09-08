@@ -116,13 +116,13 @@ class Ticket : EntSchema("tickets", clientName = "tickets") {
     override fun id() = EntId.int()
 
     val title by string("title")
-    val body by text("body")
+    val body by string("body")
     val active by bool("active").default(true)
     val count by int("count")
     val bigNumber by long("big_number")
     val score by float("score")
     val preciseScore by double("precise_score")
-    val createdAt by time("created_at").immutable()
+    val createdAt by instant("created_at").immutable()
     val externalId by uuid("external_id")
     val data by bytes("data")
     val priority by enum<Priority>("priority").default(Priority.LOW)
@@ -134,13 +134,12 @@ class Ticket : EntSchema("tickets", clientName = "tickets") {
 | Builder | `FieldType` | Kotlin type | Postgres type |
 |---------|------------|-------------|---------------|
 | `string()` | `STRING` | `String` | `text` |
-| `text()` | `TEXT` | `String` | `text` |
 | `bool()` | `BOOL` | `Boolean` | `boolean` |
 | `int()` | `INT` | `Int` | `integer` |
 | `long()` | `LONG` | `Long` | `bigint` |
 | `float()` | `FLOAT` | `Float` | `real` |
 | `double()` | `DOUBLE` | `Double` | `double precision` |
-| `time()` | `TIME` | `Instant` | `timestamptz` |
+| `instant()` | `INSTANT` | `Instant` | `timestamptz` |
 | `uuid()` | `UUID` | `UUID` | `uuid` |
 | `bytes()` | `BYTES` | `ByteArray` | `bytea` |
 | `enum<E>()` | `ENUM` | `E` | `text` |
@@ -162,8 +161,8 @@ These are available on all field types:
 | `.immutable()` | Omitted from update-draft setters |
 | `.sensitive()` | Excluded from string representations |
 | `.default(value)` | Type-safe default value for creates |
-| `.defaultNow()` | Set to `Instant.now()` on create (TIME fields only) |
-| `.updateDefaultNow()` | Set to `Instant.now()` on every update (TIME fields only) |
+| `.defaultNow()` | Set to `Instant.now()` on create (INSTANT fields only) |
+| `.updateDefaultNow()` | Set to `Instant.now()` on every update (INSTANT fields only) |
 | `.comment(text)` | Documentation comment |
 
 ### Validation Belongs in Client Policies
@@ -734,7 +733,7 @@ import entkt.postgres.vector.*   // postgresVector, postgresVectorIndex, VectorM
 class Article : EntSchema("articles", clientName = "articles") {
     override fun id() = EntId.long()
 
-    val title by text("title")
+    val title by string("title")
 
     // A vector(1536) column, generated as a `PgVector` property.
     val embedding by postgresVector("embedding", dimensions = 1536).nullable()
@@ -869,8 +868,8 @@ Reusable local field/index bundles can be shared via `EntMixin` and
 
 ```kotlin
 class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt by time("created_at").immutable()
-    val updatedAt by time("updated_at")
+    val createdAt by instant("created_at").immutable()
+    val updatedAt by instant("updated_at")
 }
 
 class User : EntSchema("users", clientName = "users") {

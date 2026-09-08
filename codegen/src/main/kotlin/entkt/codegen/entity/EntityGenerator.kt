@@ -511,7 +511,7 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: Cla
     // the first type argument; the value type is the second (when the
     // column class takes one).
     return when (type) {
-        FieldType.STRING, FieldType.TEXT -> {
+        FieldType.STRING -> {
             val cls = if (nullable) ClassName("entkt.query", "NullableStringColumn")
             else ClassName("entkt.query", "StringColumn")
             // StringColumn<E> takes only the entity-scope parameter;
@@ -532,7 +532,7 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: Cla
             else ClassName("entkt.query", "FloatingColumn")
             cls.parameterizedBy(entityClass, type.toTypeName())
         }
-        FieldType.TIME -> {
+        FieldType.INSTANT -> {
             val cls = if (nullable) ClassName("entkt.query", "NullableComparableColumn")
             else ClassName("entkt.query", "ComparableColumn")
             cls.parameterizedBy(entityClass, type.toTypeName())

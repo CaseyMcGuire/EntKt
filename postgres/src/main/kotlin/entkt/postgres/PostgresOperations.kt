@@ -22,7 +22,7 @@ import java.sql.ResultSet
 private val NUMERIC_FIELD_TYPES =
     setOf(FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE)
 private val COMPARABLE_FIELD_TYPES =
-    NUMERIC_FIELD_TYPES + setOf(FieldType.STRING, FieldType.TEXT, FieldType.TIME)
+    NUMERIC_FIELD_TYPES + setOf(FieldType.STRING, FieldType.INSTANT)
 // Group keys add the non-comparable scalars (bool/uuid/enum); bytes, pgvector,
 // and JSON are excluded (they have no group-key meaning).
 private val GROUPABLE_FIELD_TYPES =
@@ -361,7 +361,7 @@ internal class PostgresOperations(
         val arrayTypeName = when (fkType) {
             FieldType.INT -> "integer"
             FieldType.LONG -> "bigint"
-            FieldType.STRING, FieldType.TEXT -> "text"
+            FieldType.STRING -> "text"
             FieldType.UUID -> "uuid"
             else -> error(
                 "'${query.targetTable}.$fkColumn' is $fkType, which cannot transport " +

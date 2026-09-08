@@ -21,5 +21,5 @@ class Memo : EntSchema("memos", clientName = "memos") {
     override fun id() = EntId.long()
 
     val softDelete = include(::DeletedAt)
-    val body by text("body")
+    val body by string("body")
 }

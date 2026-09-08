@@ -145,13 +145,12 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
         builder.also { validateName(it.fieldName, "Field"); checkNotFinalized(); it.declarationOwner = this; _fields.add(it) }
 
     protected fun string(name: String): StringFieldBuilder = registerField(StringFieldBuilder(name))
-    protected fun text(name: String): TextFieldBuilder = registerField(TextFieldBuilder(name))
     protected fun bool(name: String): BoolFieldBuilder = registerField(BoolFieldBuilder(name))
     protected fun int(name: String): IntFieldBuilder = registerField(IntFieldBuilder(name))
     protected fun long(name: String): LongFieldBuilder = registerField(LongFieldBuilder(name))
     protected fun float(name: String): FloatFieldBuilder = registerField(FloatFieldBuilder(name))
     protected fun double(name: String): DoubleFieldBuilder = registerField(DoubleFieldBuilder(name))
-    protected fun time(name: String): TimeFieldBuilder = registerField(TimeFieldBuilder(name))
+    protected fun instant(name: String): InstantFieldBuilder = registerField(InstantFieldBuilder(name))
     protected fun uuid(name: String): UuidFieldBuilder = registerField(UuidFieldBuilder(name))
     protected fun bytes(name: String): BytesFieldBuilder = registerField(BytesFieldBuilder(name))
 
@@ -318,13 +317,12 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
     }
 
     @PublishedApi internal fun stringForMixin(name: String): StringFieldBuilder = string(name)
-    @PublishedApi internal fun textForMixin(name: String): TextFieldBuilder = text(name)
     @PublishedApi internal fun boolForMixin(name: String): BoolFieldBuilder = bool(name)
     @PublishedApi internal fun intForMixin(name: String): IntFieldBuilder = int(name)
     @PublishedApi internal fun longForMixin(name: String): LongFieldBuilder = long(name)
     @PublishedApi internal fun floatForMixin(name: String): FloatFieldBuilder = float(name)
     @PublishedApi internal fun doubleForMixin(name: String): DoubleFieldBuilder = double(name)
-    @PublishedApi internal fun timeForMixin(name: String): TimeFieldBuilder = time(name)
+    @PublishedApi internal fun instantForMixin(name: String): InstantFieldBuilder = instant(name)
     @PublishedApi internal fun uuidForMixin(name: String): UuidFieldBuilder = uuid(name)
     @PublishedApi internal fun bytesForMixin(name: String): BytesFieldBuilder = bytes(name)
     @PublishedApi internal inline fun <reified E : Enum<E>> enumForMixin(name: String): EnumFieldBuilder<E> =
@@ -478,7 +476,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
             error(
                 "Mixin '$mixinName': property '${prop.name}' holds a schema builder but never " +
                     "bound a declaration name. Declare it directly with `by` — for example " +
-                    "`val ${prop.name} by time(\"...\")`. A wrapper delegate such as " +
+                    "`val ${prop.name} by instant(\"...\")`. A wrapper delegate such as " +
                     "`by lazy { ... }` or a computed getter (`get() = ...`) does not register a " +
                     "declaration, and would silently drop the column.",
             )

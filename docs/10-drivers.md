@@ -342,13 +342,13 @@ error rather than a silent no-op.
 
 | FieldType | Postgres Type |
 |-----------|--------------|
-| `STRING`, `TEXT`, `ENUM` | `text` |
+| `STRING`, `ENUM` | `text` |
 | `BOOL` | `boolean` |
 | `INT` | `integer` |
 | `LONG` | `bigint` |
 | `FLOAT` | `real` |
 | `DOUBLE` | `double precision` |
-| `TIME` | `timestamptz` |
+| `INSTANT` | `timestamptz` |
 | `UUID` | `uuid` |
 | `BYTES` | `bytea` |
 | `PGVECTOR` | `vector(n)` (pgvector) |

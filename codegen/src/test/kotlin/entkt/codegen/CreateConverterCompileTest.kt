@@ -20,7 +20,7 @@ class CreateConverterCompileTest {
         val title by string("title").immutable()
         val description by string("description").nullable().default("default-description")
         val published by bool("published").default(false)
-        val createdAt by time("created_at").defaultNow().immutable()
+        val createdAt by instant("created_at").defaultNow().immutable()
         val ownerId by long("owner_id").default(42L)
         val owner by belongsTo<Owner>("owner").field(ownerId)
         val reviewerId by long("reviewer_id").nullable().default(43L)

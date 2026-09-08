@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
 
 private class VecDdlArticle : EntSchema("articles", clientName = "vecDdlArticles") {
     override fun id() = EntId.long()
-    val title by text("title")
+    val title by string("title")
     val embedding by postgresVector("embedding", 1536).nullable()
     val embHnsw = postgresVectorIndex("idx_articles_embedding_hnsw", embedding).hnsw(VectorMetric.Cosine)
 }
@@ -85,12 +85,12 @@ class PgVectorDdlTest {
     fun `a vector dimension change is classified manual via the type-change path`() {
         class Big : EntSchema("articles", clientName = "bigs") {
             override fun id() = EntId.long()
-            val title by text("title")
+            val title by string("title")
             val embedding by postgresVector("embedding", 3072).nullable()
         }
         class Small : EntSchema("articles", clientName = "smalls") {
             override fun id() = EntId.long()
-            val title by text("title")
+            val title by string("title")
             val embedding by postgresVector("embedding", 1536).nullable()
         }
         val result = differ.diff(normalized(Big()), normalized(Small()))

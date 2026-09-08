@@ -653,11 +653,11 @@ private val QUOTED_DEFAULT_LITERAL =
 fun formatSqlDefault(fieldType: FieldType, value: Any?): String? {
     if (value == null) return null
     return when (fieldType) {
-        // defaultNow() is the only TIME default the DSL exposes, stored
+        // defaultNow() is the only INSTANT default the DSL exposes, stored
         // as the sentinel string "now".
-        FieldType.TIME -> if (value == "now") "now()" else sqlStringLiteral(value.toString())
+        FieldType.INSTANT -> if (value == "now") "now()" else sqlStringLiteral(value.toString())
         FieldType.ENUM -> sqlStringLiteral((value as? Enum<*>)?.name ?: value.toString())
-        FieldType.STRING, FieldType.TEXT -> sqlStringLiteral(value.toString())
+        FieldType.STRING -> sqlStringLiteral(value.toString())
         FieldType.BOOL -> value.toString()
         // Numeric literals render bare. Non-finite floats (NaN / ±Infinity)
         // are rejected upstream at FieldBuilder.build(), so value.toString()

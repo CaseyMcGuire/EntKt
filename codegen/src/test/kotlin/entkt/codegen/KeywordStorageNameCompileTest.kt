@@ -25,7 +25,7 @@ private class KeywordStorage : EntSchema("object", clientName = "keywordStorages
     override fun id() = EntId.long()
 
     val category by string("class")
-    val whenever by time("when")
+    val whenever by instant("when")
     val truthy by bool("true")
     val related by hasMany<KeywordItem>("object")
 

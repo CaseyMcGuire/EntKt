@@ -81,7 +81,7 @@ data class ColumnMetadata(
      * Default value declared on the schema DSL (`.default(...)` /
      * `.defaultNow()`), or null when none. Holds the raw Kotlin value —
      * a primitive, an enum constant, or the sentinel `"now"` for a
-     * `TIME` `defaultNow()` — which each
+     * `INSTANT` `defaultNow()` — which each
      * [entkt.migrations.TypeMapper] converts into a SQL `DEFAULT`
      * expression for its dialect.
      *

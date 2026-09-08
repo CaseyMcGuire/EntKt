@@ -28,5 +28,5 @@ package entkt.schema
  * rows for admin review") are hot enough to need one.
  */
 class DeletedAt(scope: EntMixin.Scope) : EntMixin(scope) {
-    val deletedAt by time("deleted_at").nullable()
+    val deletedAt by instant("deleted_at").nullable()
 }

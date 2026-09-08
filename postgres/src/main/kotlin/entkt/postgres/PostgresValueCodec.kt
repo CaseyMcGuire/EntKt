@@ -103,18 +103,18 @@ internal class PostgresValueCodec(
             return
         }
         when (type) {
-            FieldType.STRING, FieldType.TEXT, FieldType.ENUM ->
+            FieldType.STRING, FieldType.ENUM ->
                 stmt.setString(idx, value as String)
             FieldType.BOOL -> stmt.setBoolean(idx, value as Boolean)
             FieldType.INT -> stmt.setInt(idx, exactInt(value))
             FieldType.LONG -> stmt.setLong(idx, exactLong(value))
             FieldType.FLOAT -> stmt.setFloat(idx, boundedFloat(value))
             FieldType.DOUBLE -> stmt.setDouble(idx, boundedDouble(value))
-            FieldType.TIME -> {
+            FieldType.INSTANT -> {
                 val instant = when (value) {
                     is Instant -> value
                     is OffsetDateTime -> value.toInstant()
-                    else -> error("Unsupported TIME value: ${value::class}")
+                    else -> error("Unsupported INSTANT value: ${value::class}")
                 }
                 stmt.setObject(idx, instant.atOffset(ZoneOffset.UTC))
             }
@@ -241,13 +241,13 @@ internal class PostgresValueCodec(
     )
 
     private fun jdbcTypeFor(type: FieldType?): Int = when (type) {
-        FieldType.STRING, FieldType.TEXT, FieldType.ENUM -> Types.VARCHAR
+        FieldType.STRING, FieldType.ENUM -> Types.VARCHAR
         FieldType.BOOL -> Types.BOOLEAN
         FieldType.INT -> Types.INTEGER
         FieldType.LONG -> Types.BIGINT
         FieldType.FLOAT -> Types.REAL
         FieldType.DOUBLE -> Types.DOUBLE
-        FieldType.TIME -> Types.TIMESTAMP_WITH_TIMEZONE
+        FieldType.INSTANT -> Types.TIMESTAMP_WITH_TIMEZONE
         FieldType.UUID -> Types.OTHER
         FieldType.BYTES -> Types.BINARY
         FieldType.PGVECTOR -> Types.OTHER
@@ -265,7 +265,7 @@ internal class PostgresValueCodec(
 
     fun decodeColumn(rs: ResultSet, table: String, col: ColumnMetadata): Any? {
         return when (col.type) {
-            FieldType.STRING, FieldType.TEXT, FieldType.ENUM -> rs.getString(col.name)
+            FieldType.STRING, FieldType.ENUM -> rs.getString(col.name)
             FieldType.BOOL -> {
                 val v = rs.getBoolean(col.name)
                 if (rs.wasNull()) null else v
@@ -286,7 +286,7 @@ internal class PostgresValueCodec(
                 val v = rs.getDouble(col.name)
                 if (rs.wasNull()) null else v
             }
-            FieldType.TIME ->
+            FieldType.INSTANT ->
                 rs.getObject(col.name, OffsetDateTime::class.java)?.toInstant()
             FieldType.UUID -> rs.getObject(col.name, UUID::class.java)
             FieldType.BYTES -> rs.getBytes(col.name)

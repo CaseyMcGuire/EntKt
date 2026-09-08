@@ -6,6 +6,6 @@ package entkt.schema
  * expression to emit in the generated update builder.
  */
 sealed class UpdateDefault {
-    /** Emit `Instant.now()` — only valid on TIME fields. */
+    /** Emit `Instant.now()` — only valid on INSTANT fields. */
     data object Now : UpdateDefault()
 }

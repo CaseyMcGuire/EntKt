@@ -43,7 +43,7 @@ Reusable mappings should also be possible:
 
 ```kotlin
 object EmailMapping : ScalarMapping<Email, String> {
-    override val storageType = FieldType.TEXT
+    override val storageType = FieldType.STRING
     override fun encode(value: Email): String = value.value
     override fun decode(value: String): Email = Email(value)
 }
@@ -57,7 +57,7 @@ storage scalar type, encode function, decode function.
 ## Behavior
 
 - Generated entity/create/update APIs expose the domain type (`Email`).
-- `ColumnMetadata.type` remains the scalar storage type (`TEXT` in the example).
+- `ColumnMetadata.type` remains the scalar storage type (`STRING` in the example).
 - A storage carrier records the conversion metadata for codegen, not for driver
   dispatch.
 - `default(...)`, query predicates, indexes, and uniqueness use the encoded storage

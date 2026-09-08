@@ -127,7 +127,7 @@ class PostgresDdlTest {
         class Users : EntSchema("users", clientName = "userses") {
             override fun id() = EntId.int()
             val name by string("name")
-            val bio by text("bio").nullable()
+            val bio by string("bio").nullable()
         }
 
         val ddl = renderDdl(Users())
@@ -192,13 +192,12 @@ class PostgresDdlTest {
         class AllTypes : EntSchema("all_types", clientName = "allTypeses") {
             override fun id() = EntId.int()
             val aString by string("a_string")
-            val aText by text("a_text")
             val aBool by bool("a_bool")
             val anInt by int("an_int")
             val aLong by long("a_long")
             val aFloat by float("a_float")
             val aDouble by double("a_double")
-            val aTime by time("a_time")
+            val aTime by instant("a_time")
             val aUuid by uuid("a_uuid")
             val someBytes by bytes("some_bytes")
             val anEnum by enum<Priority>("an_enum")
@@ -211,7 +210,6 @@ class PostgresDdlTest {
                 CREATE TABLE "all_types" (
                   "id" serial PRIMARY KEY,
                   "a_string" text NOT NULL,
-                  "a_text" text NOT NULL,
                   "a_bool" boolean NOT NULL,
                   "an_int" integer NOT NULL,
                   "a_long" bigint NOT NULL,
@@ -238,7 +236,7 @@ class PostgresDdlTest {
             val big by long("big").default(100L)
             val ratio by double("ratio").default(1.5)
             val priority by enum<Priority>("priority").default(Priority.MEDIUM)
-            val createdAt by time("created_at").defaultNow()
+            val createdAt by instant("created_at").defaultNow()
             val note by string("note").default("n/a").nullable()
         }
 
@@ -528,7 +526,7 @@ class PostgresDdlTest {
             override fun id() = EntId.long()
             val slug by string("slug").unique()
             val authorId by int("author_id")
-            val createdAt by time("created_at")
+            val createdAt by instant("created_at")
             val byAuthorDate = index("idx_posts_author_date", authorId, createdAt)
         }
 

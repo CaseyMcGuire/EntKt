@@ -33,13 +33,13 @@ class NormalizedSchemaTest {
                 }
             }
             return when (fieldType) {
-                FieldType.STRING, FieldType.TEXT, FieldType.ENUM -> "text"
+                FieldType.STRING, FieldType.ENUM -> "text"
                 FieldType.BOOL -> "boolean"
                 FieldType.INT -> "integer"
                 FieldType.LONG -> "bigint"
                 FieldType.FLOAT -> "real"
                 FieldType.DOUBLE -> "double precision"
-                FieldType.TIME -> "timestamptz"
+                FieldType.INSTANT -> "timestamptz"
                 FieldType.UUID -> "uuid"
                 FieldType.BYTES -> "bytea"
                 FieldType.PGVECTOR -> "vector" // test fake; real mapping uses storage.sqlType (Phase 4)
@@ -59,7 +59,7 @@ class NormalizedSchemaTest {
             columns = listOf(
                 ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
                 ColumnMetadata("name", FieldType.STRING, nullable = false),
-                ColumnMetadata("bio", FieldType.TEXT, nullable = true),
+                ColumnMetadata("bio", FieldType.STRING, nullable = true),
             ),
             edges = emptyMap(),
         )
@@ -128,8 +128,8 @@ class NormalizedSchemaTest {
                 ColumnMetadata("count", FieldType.INT, nullable = false, default = 5),
                 ColumnMetadata("active", FieldType.BOOL, nullable = false, default = true),
                 ColumnMetadata("color", FieldType.ENUM, nullable = false, default = Color.GREEN),
-                ColumnMetadata("created_at", FieldType.TIME, nullable = false, default = "now"),
-                ColumnMetadata("bio", FieldType.TEXT, nullable = true),
+                ColumnMetadata("created_at", FieldType.INSTANT, nullable = false, default = "now"),
+                ColumnMetadata("bio", FieldType.STRING, nullable = true),
             ),
             edges = emptyMap(),
         )
@@ -148,13 +148,13 @@ class NormalizedSchemaTest {
     @Test
     fun `formatSqlDefault renders each type`() {
         assertEquals("'hi'", formatSqlDefault(FieldType.STRING, "hi"))
-        assertEquals("'O''Brien'", formatSqlDefault(FieldType.TEXT, "O'Brien"))
+        assertEquals("'O''Brien'", formatSqlDefault(FieldType.STRING, "O'Brien"))
         assertEquals("true", formatSqlDefault(FieldType.BOOL, true))
         assertEquals("42", formatSqlDefault(FieldType.INT, 42))
         assertEquals("100", formatSqlDefault(FieldType.LONG, 100L))
         assertEquals("1.5", formatSqlDefault(FieldType.DOUBLE, 1.5))
         assertEquals("'GREEN'", formatSqlDefault(FieldType.ENUM, Color.GREEN))
-        assertEquals("now()", formatSqlDefault(FieldType.TIME, "now"))
+        assertEquals("now()", formatSqlDefault(FieldType.INSTANT, "now"))
         assertEquals("2.5", formatSqlDefault(FieldType.FLOAT, 2.5f))
         assertNull(formatSqlDefault(FieldType.INT, null))
     }
@@ -250,7 +250,7 @@ class NormalizedSchemaTest {
             idStrategy = IdStrategy.AUTO_INT,
             columns = listOf(
                 ColumnMetadata("id", FieldType.INT, nullable = false, primaryKey = true),
-                ColumnMetadata(longName, FieldType.TEXT, nullable = true),
+                ColumnMetadata(longName, FieldType.STRING, nullable = true),
             ),
             edges = emptyMap(),
         )

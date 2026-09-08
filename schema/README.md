@@ -4,8 +4,8 @@ Declarative schema DSL — `EntSchema`, field/edge/index builders, `FieldType`.
 
 ## Field types
 
-`STRING`, `TEXT`, `BOOL`, `INT`, `LONG`, `FLOAT`, `DOUBLE`,
-`TIME` (`Instant`), `UUID`, `BYTES`, `ENUM` (Kotlin enum classes via
+`STRING`, `BOOL`, `INT`, `LONG`, `FLOAT`, `DOUBLE`,
+`INSTANT` (`Instant`), `UUID`, `BYTES`, `ENUM` (Kotlin enum classes via
 `enum<E>()`).
 
 **Enums:** `enum<MyStatus>("status")` binds the field to a Kotlin enum
@@ -17,7 +17,7 @@ Stored as strings in the database.
 
 `.nullable()`, `.unique()`, `.immutable()`,
 `.sensitive()`, `.comment(...)`, `.default(value)` (type-safe per field type).
-Time fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instant.now()`).
+Instant fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instant.now()`).
 
 Field invariants are runtime validation rules, not schema modifiers. Register
 helpers such as `minLength(UserWriteCandidate::name, 2)` in an `EntityPolicy`
@@ -44,8 +44,8 @@ into a schema with `include(...)`. Relationship edges stay on the host schema.
 
 ```kotlin
 class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt = time("created_at").immutable()
-    val updatedAt = time("updated_at")
+    val createdAt = instant("created_at").immutable()
+    val updatedAt = instant("updated_at")
 }
 
 class Post : EntSchema("posts") {

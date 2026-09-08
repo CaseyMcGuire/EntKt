@@ -115,9 +115,9 @@ internal class IndexChild(val column: ResolvedIndexColumn, val node: IndexPrefix
 
 /** A column type is range-eligible when it maps to a comparable query column (gt/gte/lt/lte). */
 private fun isComparable(type: FieldType): Boolean = when (type) {
-    FieldType.STRING, FieldType.TEXT,
+    FieldType.STRING,
     FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE,
-    FieldType.TIME -> true
+    FieldType.INSTANT -> true
     else -> false
 }
 

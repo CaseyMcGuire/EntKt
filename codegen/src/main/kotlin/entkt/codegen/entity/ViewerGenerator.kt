@@ -134,13 +134,13 @@ internal class ViewerGenerator(private val packageName: String) {
 
     /** Kotlin-facing display type: scalars fixed, enums/JSON from the schema field. */
     private fun entTypeDisplay(col: ColumnDescriptor, field: entkt.schema.Field?): String = when (col.type) {
-        FieldType.STRING, FieldType.TEXT -> "String"
+        FieldType.STRING -> "String"
         FieldType.BOOL -> "Boolean"
         FieldType.INT -> "Int"
         FieldType.LONG -> "Long"
         FieldType.FLOAT -> "Float"
         FieldType.DOUBLE -> "Double"
-        FieldType.TIME -> "Instant"
+        FieldType.INSTANT -> "Instant"
         FieldType.UUID -> "UUID"
         FieldType.BYTES -> "ByteArray"
         FieldType.ENUM -> field?.enumClass?.simpleName ?: "enum"
@@ -346,7 +346,7 @@ internal class ViewerGenerator(private val packageName: String) {
                     ?: col.name
                 val access = if (col.nullable) "entity.$prop?" else "entity.$prop"
                 when (col.type) {
-                    FieldType.STRING, FieldType.TEXT ->
+                    FieldType.STRING ->
                         CodeBlock.of("%L", "entity.$prop")
                     FieldType.ENUM ->
                         CodeBlock.of("%L", "$access.name")

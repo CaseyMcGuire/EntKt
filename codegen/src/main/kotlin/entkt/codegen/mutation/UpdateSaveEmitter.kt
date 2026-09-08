@@ -522,7 +522,7 @@ private fun emitCandidateConstruction(
 
 private fun updateDefaultCodeBlock(field: Field): CodeBlock = when (field.updateDefault!!) {
     is UpdateDefault.Now -> {
-        require(field.type == FieldType.TIME) {
+        require(field.type == FieldType.INSTANT) {
             "Field '${field.apiName}' has UpdateDefault.Now but type is ${field.type}"
         }
         CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))

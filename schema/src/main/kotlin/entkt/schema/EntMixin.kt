@@ -17,13 +17,12 @@ abstract class EntMixin protected constructor(
     internal val schema: Scope = scope
 
     protected fun string(name: String) = schema.string(name)
-    protected fun text(name: String) = schema.text(name)
     protected fun bool(name: String) = schema.bool(name)
     protected fun int(name: String) = schema.int(name)
     protected fun long(name: String) = schema.long(name)
     protected fun float(name: String) = schema.float(name)
     protected fun double(name: String) = schema.double(name)
-    protected fun time(name: String) = schema.time(name)
+    protected fun instant(name: String) = schema.instant(name)
     protected fun uuid(name: String) = schema.uuid(name)
     protected fun bytes(name: String) = schema.bytes(name)
 
@@ -39,13 +38,12 @@ abstract class EntMixin protected constructor(
         internal val host: EntSchema,
     ) {
         fun string(name: String) = host.stringForMixin(name)
-        fun text(name: String) = host.textForMixin(name)
         fun bool(name: String) = host.boolForMixin(name)
         fun int(name: String) = host.intForMixin(name)
         fun long(name: String) = host.longForMixin(name)
         fun float(name: String) = host.floatForMixin(name)
         fun double(name: String) = host.doubleForMixin(name)
-        fun time(name: String) = host.timeForMixin(name)
+        fun instant(name: String) = host.instantForMixin(name)
         fun uuid(name: String) = host.uuidForMixin(name)
         fun bytes(name: String) = host.bytesForMixin(name)
 

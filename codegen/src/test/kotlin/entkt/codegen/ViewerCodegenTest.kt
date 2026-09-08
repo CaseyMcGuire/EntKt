@@ -13,7 +13,7 @@ private class ViewerUser : EntSchema("viewer_users", clientName = "viewerUsers")
     val name by string("name")
     val secret by string("secret").sensitive()
     val tier by enum<Tier>("tier")
-    val bio by text("bio").nullable()
+    val bio by string("bio").nullable()
     val posts by hasMany<ViewerPost>("posts")
 }
 

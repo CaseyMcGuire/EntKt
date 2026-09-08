@@ -18,7 +18,7 @@ private data class Other(val count: Int)
 
 private class JsonDoc : EntSchema("json_docs", clientName = "jsonDocs") {
     override fun id() = EntId.long()
-    val title by text("title")
+    val title by string("title")
     val metadata by json("metadata", Meta::class).nullable()
 }
 

@@ -46,7 +46,7 @@ private class IdxAuthor : EntSchema("authors", clientName = "idxAuthors") {
 private class IdxPost : EntSchema("posts", clientName = "idxPosts") {
     override fun id() = EntId.long()
     val title by string("title")
-    val createdAt by time("created_at")
+    val createdAt by instant("created_at")
     val sequence by long("sequence")
     val status by string("status")
     val author by belongsTo<IdxAuthor>("author")
@@ -167,8 +167,8 @@ private class IdxNoIndex : EntSchema("plain", clientName = "idxNoIndexes") {
 private class IdxRangeNameCollision : EntSchema("rnc", clientName = "idxRangeNameCollisions") {
     override fun id() = EntId.long()
     val authorId by long("author_id")
-    val createdAt by time("created_at")
-    val createdAtRange by time("created_at_range")
+    val createdAt by instant("created_at")
+    val createdAtRange by instant("created_at_range")
     val i1 = index("idx_rnc_created", authorId, createdAt)
     val i2 = index("idx_rnc_created_range", authorId, createdAtRange)
 }

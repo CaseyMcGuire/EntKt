@@ -61,7 +61,7 @@ object EntViewerFilters {
             )
         }
         val value: Any = when (column.type) {
-            FieldType.STRING, FieldType.TEXT -> raw
+            FieldType.STRING -> raw
             FieldType.BOOL -> when (raw) {
                 "true" -> true
                 "false" -> false
@@ -71,7 +71,7 @@ object EntViewerFilters {
             FieldType.LONG -> raw.toLongOrNull() ?: bad(column, raw, "an integer")
             FieldType.FLOAT -> raw.toFloatOrNull() ?: bad(column, raw, "a number")
             FieldType.DOUBLE -> raw.toDoubleOrNull() ?: bad(column, raw, "a number")
-            FieldType.TIME -> try {
+            FieldType.INSTANT -> try {
                 Instant.parse(raw)
             } catch (_: Exception) {
                 bad(column, raw, "an ISO-8601 instant")
@@ -97,8 +97,8 @@ object EntViewerFilters {
 
     /** Ops the viewer supports per field type; display-only types support none. */
     fun supportedOps(type: FieldType): Set<EntViewerFilterOp> = when (type) {
-        FieldType.STRING, FieldType.TEXT -> STRING_OPS
-        FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE, FieldType.TIME -> COMPARISON_OPS
+        FieldType.STRING -> STRING_OPS
+        FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE, FieldType.INSTANT -> COMPARISON_OPS
         FieldType.BOOL, FieldType.UUID, FieldType.ENUM -> EQUALITY_OPS
         FieldType.BYTES, FieldType.JSON, FieldType.PGVECTOR -> emptySet()
     }

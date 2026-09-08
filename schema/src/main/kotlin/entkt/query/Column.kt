@@ -79,7 +79,7 @@ open class Column<E : Any, T>(override val name: String) : ColumnReference<E> {
 open class ComparableColumn<E : Any, T : Comparable<T>>(name: String) :
     Column<E, T>(name), GroupableColumn<E, T> {
     // Group keys for comparable columns are already decoded to their Kotlin type
-    // by the driver (e.g. TIME → Instant, INT → Int), so decoding is identity.
+    // by the driver (e.g. INSTANT → Instant, INT → Int), so decoding is identity.
     @Suppress("UNCHECKED_CAST")
     override fun decodeKey(raw: Any?): T? = raw as T?
 

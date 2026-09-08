@@ -35,7 +35,7 @@ class FlywayMigrationWorkflowTest {
             ColumnMetadata("big_count", FieldType.LONG, nullable = false, default = 100L),
             ColumnMetadata("ratio", FieldType.DOUBLE, nullable = false, default = 1.5),
             ColumnMetadata("color", FieldType.ENUM, nullable = false, default = FwColor.GREEN),
-            ColumnMetadata("created_at", FieldType.TIME, nullable = false, default = "now"),
+            ColumnMetadata("created_at", FieldType.INSTANT, nullable = false, default = "now"),
             ColumnMetadata("note", FieldType.STRING, nullable = true, default = "n/a"),
         ),
         edges = emptyMap(),

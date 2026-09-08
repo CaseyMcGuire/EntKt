@@ -526,7 +526,7 @@ internal class CreateGenerator(
     private fun defaultCodeBlock(field: Field): CodeBlock {
         val value = field.default!!
         return when {
-            field.type == FieldType.TIME && value == "now" ->
+            field.type == FieldType.INSTANT && value == "now" ->
                 CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))
             field.type == FieldType.ENUM -> {
                 require(value is Enum<*>) {

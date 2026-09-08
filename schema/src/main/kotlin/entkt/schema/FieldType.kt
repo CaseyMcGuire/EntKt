@@ -2,13 +2,12 @@ package entkt.schema
 
 enum class FieldType {
     STRING,
-    TEXT,
     BOOL,
     INT,
     LONG,
     FLOAT,
     DOUBLE,
-    TIME,
+    INSTANT,
     UUID,
     BYTES,
     ENUM,

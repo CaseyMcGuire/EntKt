@@ -8,13 +8,13 @@ import kotlin.test.assertTrue
 private class DeletableMemo : EntSchema("memos", clientName = "deletableMemos") {
     override fun id() = EntId.long()
     val softDelete = include(::DeletedAt)
-    val body by text("body")
+    val body by string("body")
 }
 
 /** Schema fixture without the mixin, for negative checks. */
 private class PlainMemo : EntSchema("plain_memos", clientName = "plainMemos") {
     override fun id() = EntId.long()
-    val body by text("body")
+    val body by string("body")
 }
 
 class DeletedAtTest {
@@ -25,7 +25,7 @@ class DeletedAtTest {
     }
 
     @Test
-    fun `including DeletedAt adds a single nullable deleted_at field of type TIME`() {
+    fun `including DeletedAt adds a single nullable deleted_at field of type INSTANT`() {
         val memo = finalized(DeletableMemo())
         val fields = memo.fields()
 
@@ -33,7 +33,7 @@ class DeletedAtTest {
         assertEquals(listOf("deleted_at", "body"), fields.map { it.name })
 
         val deletedAt = fields[0]
-        assertEquals(FieldType.TIME, deletedAt.type)
+        assertEquals(FieldType.INSTANT, deletedAt.type)
         assertTrue(deletedAt.nullable, "deleted_at must be nullable so a live row can hold null")
     }
 
