@@ -30,6 +30,14 @@ above it.
 
 ## Unreleased
 
+- **Preserve the enum type in field builders** (`schema`)
+  `EnumFieldBuilder<E>` retains the declared enum type through modifiers,
+  delegated properties, and mixins. Defaults from another enum now fail at
+  compile time instead of schema construction.
+  _Migration:_ add the enum type to explicit builder annotations, such as
+  `EnumFieldBuilder<Status>`. Inferred declarations are unchanged; no database
+  migration is required.
+
 - **Move field validators from schemas to client policies** (`schema`, `runtime`, `codegen`)
   Field-builder validators and `entkt.schema.Validator` / `ValidatorSpec` /
   `Validators` are removed. Runtime helpers return ordinary validation rules;

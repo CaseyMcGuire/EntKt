@@ -207,7 +207,7 @@ With this declaration:
 - Query predicates accept enum values: `Ticket.priority eq Priority.HIGH`
 - The `.default()` method requires a constant from the same enum class —
   passing a value from a different enum (e.g. `OtherEnum.FOO`) is rejected
-  at schema construction time
+  at compile time, including after chained modifiers and in mixins
 
 Values are stored using the enum constant's name and returned as the declared
 enum type.

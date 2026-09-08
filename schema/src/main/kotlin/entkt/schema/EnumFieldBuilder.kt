@@ -1,6 +1,7 @@
 package entkt.schema
 
-class EnumFieldBuilder internal constructor(name: String) : FieldBuilder<EnumFieldBuilder, Enum<*>>(name, FieldType.ENUM) {
+class EnumFieldBuilder<E : Enum<E>> internal constructor(name: String) :
+    FieldBuilder<EnumFieldBuilder<E>, E>(name, FieldType.ENUM) {
     /**
      * Set the column default to [value]. The default is rendered into
      * migration DDL as the constant's [Enum.name] (e.g. `DEFAULT 'MEDIUM'`).
@@ -10,5 +11,5 @@ class EnumFieldBuilder internal constructor(name: String) : FieldBuilder<EnumFie
      * metadata-only `SET DEFAULT` migration that does not backfill existing
      * rows. See the rename caveat on `EntSchema.enum`.
      */
-    fun default(value: Enum<*>): EnumFieldBuilder = apply { setDefault(value) }
+    fun default(value: E): EnumFieldBuilder<E> = apply { setDefault(value) }
 }

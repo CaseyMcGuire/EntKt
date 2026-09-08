@@ -177,12 +177,12 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
      * backfill existing rows (`UPDATE … SET col = 'NORMAL' WHERE col =
      * 'MEDIUM'`) in a hand-written migration, then retire the old name.
      */
-    protected inline fun <reified E : Enum<E>> enum(name: String): EnumFieldBuilder =
+    protected inline fun <reified E : Enum<E>> enum(name: String): EnumFieldBuilder<E> =
         enum(name, E::class)
 
     @PublishedApi
-    internal fun enum(name: String, enumClass: KClass<out Enum<*>>): EnumFieldBuilder =
-        EnumFieldBuilder(name).also {
+    internal fun <E : Enum<E>> enum(name: String, enumClass: KClass<E>): EnumFieldBuilder<E> =
+        EnumFieldBuilder<E>(name).also {
             validateName(name, "Field")
             checkNotFinalized()
             it.setEnumClass(enumClass)
@@ -327,7 +327,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
     @PublishedApi internal fun timeForMixin(name: String): TimeFieldBuilder = time(name)
     @PublishedApi internal fun uuidForMixin(name: String): UuidFieldBuilder = uuid(name)
     @PublishedApi internal fun bytesForMixin(name: String): BytesFieldBuilder = bytes(name)
-    @PublishedApi internal inline fun <reified E : Enum<E>> enumForMixin(name: String): EnumFieldBuilder =
+    @PublishedApi internal inline fun <reified E : Enum<E>> enumForMixin(name: String): EnumFieldBuilder<E> =
         enum(name, E::class)
 
     // ── Edge builder methods ───────────────────────────────────────

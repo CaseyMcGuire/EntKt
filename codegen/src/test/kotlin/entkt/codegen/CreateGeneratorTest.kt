@@ -4,7 +4,6 @@ import entkt.codegen.mutation.CreateGenerator
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class Session : EntSchema("sessions", clientName = "sessions") {
@@ -19,7 +18,6 @@ private class CreateEvent : EntSchema("events", clientName = "createEvents") {
 }
 
 private enum class CreateStatus { LOW, MEDIUM, HIGH }
-private enum class OtherCreateStatus { PENDING, ACCEPTED }
 
 private class DefaultedCreateEnum : EntSchema(
     "defaulted_enum_entities",
@@ -133,18 +131,6 @@ class CreateGeneratorTest {
         assertTrue(eventOutput.contains("Instant.now()"), eventOutput)
         assertTrue(enumOutput.contains("CreateStatus.LOW"), enumOutput)
         assertTrue(enumOutput.contains("_entktValuePriority.name"), enumOutput)
-    }
-
-    @Test
-    fun `wrong enum defaults remain a schema error`() {
-        val schema = object : EntSchema("wrong_enum", clientName = "wrongEnums") {
-            override fun id() = EntId.int()
-            val status by enum<CreateStatus>("status").default(OtherCreateStatus.PENDING)
-        }
-        finalizeCreateSchemas(schema)
-        assertFailsWith<IllegalArgumentException> {
-            resolve("WrongEnum", schema)
-        }
     }
 
     @Test

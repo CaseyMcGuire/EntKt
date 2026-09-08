@@ -560,18 +560,18 @@ class SchemaTest {
     }
 
     @Test
-    fun `typed enum default rejects constant from wrong enum class`() {
+    fun `enum default rejects mismatched internal enum metadata`() {
         assertFailsWith<IllegalArgumentException> {
-            EnumFieldBuilder("priority").apply {
+            EnumFieldBuilder<OnDelete>("priority").apply {
                 setEnumClass(TaskStatus::class)
-                default(OnDelete.CASCADE) // wrong enum class
+                default(OnDelete.CASCADE)
             }.build()
         }
     }
 
     @Test
     fun `typed enum default accepts constant from correct enum class`() {
-        val field = EnumFieldBuilder("priority").apply {
+        val field = EnumFieldBuilder<TaskStatus>("priority").apply {
             setEnumClass(TaskStatus::class)
             default(TaskStatus.TODO)
         }.build()
