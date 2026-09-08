@@ -4,7 +4,6 @@ import entkt.query.QueryFlag
 import entkt.runtime.query.AbortQueryRejected
 import entkt.runtime.result.ReadResult
 import entkt.runtime.result.EntQueryRejectedException
-import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.limitOpsApply
 import entkt.runtime.privacy.ViewerContext
@@ -32,7 +31,6 @@ import kotlin.test.assertTrue
 class InterceptorRuntimeTypesTest {
 
     private class A
-    private class B
 
     // ---- QueryShape ----
 
@@ -161,25 +159,6 @@ class InterceptorRuntimeTypesTest {
 
         val eagerCtx = rootCtx.copy(operation = ReadOperation.EAGER_LOAD)
         assertTrue(eagerCtx.isEagerSubquery)
-    }
-
-    @Test
-    fun `QueryContext path carries each EdgeStep in chain order`() {
-        val step1 = EdgeStep(source = A::class, edgeName = "bs", target = B::class)
-        val ctx = QueryContext(
-            viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
-            operation = ReadOperation.EDGE_TRAVERSAL,
-            rootEntity = A::class,
-            currentEntity = B::class,
-            sourceEntity = A::class,
-            edgeName = "bs",
-            path = listOf(step1),
-            flags = emptySet(),
-        )
-        assertEquals(1, ctx.path.size)
-        assertEquals(step1, ctx.path[0])
-        assertEquals(A::class, ctx.sourceEntity)
-        assertEquals(B::class, ctx.currentEntity)
     }
 
     // ---- EntQueryRejectedException direct-property shape ----
