@@ -216,18 +216,6 @@ private class HasOneParentSchema : EntSchema("parents", clientName = "hasOnePare
 
 // ---------- HasOne eager loading test schemas ----------
 
-private class ProfileSchema : EntSchema("profiles", clientName = "profileSchemas") {
-    override fun id() = EntId.int()
-    val bio by string("bio")
-    val owner by belongsTo<HasOneEagerParentSchema>("owner").unique().inverse(HasOneEagerParentSchema::profile)
-}
-
-private class HasOneEagerParentSchema : EntSchema("parents", clientName = "hasOneEagerParentSchemas") {
-    override fun id() = EntId.int()
-    val name by string("name")
-    val profile by hasOne<ProfileSchema>("profile")
-}
-
 private class ProfileSchema2 : EntSchema("profiles", clientName = "profileSchema2s") {
     override fun id() = EntId.int()
     val bio by string("bio")
@@ -1741,29 +1729,6 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `to-one eager resolution omits the redundant safe-call for a required FK`() {
-        val (_, names, byName) = createAllSchemas()
-
-        // Pet.owner is nullable → ownerId is Long?, so the safe-call is needed.
-        val petOut = QueryGenerator("com.example.ent")
-            .generate("Pet", byName["Pet"]!!, names).toString()
-        assert(petOut.contains("entity.ownerId?.let { targetMap[it] }")) {
-            "Nullable FK should keep the safe-call\n$petOut"
-        }
-
-        // RequiredPet.owner is required → ownerId is Long (non-null), so the
-        // safe-call would be a redundant-warning; resolve via a plain lookup.
-        val reqOut = QueryGenerator("com.example.ent")
-            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
-        assert(reqOut.contains("targetMap[entity.ownerId]")) {
-            "Required FK should use a plain map lookup (no redundant ?.)\n$reqOut"
-        }
-        assert(!reqOut.contains("entity.ownerId?.let")) {
-            "Required FK should not emit a redundant safe-call\n$reqOut"
-        }
-    }
-
     @Test
     fun `query generates loadMembers for M2M edge`() {
         val (_, names, byName) = createAllSchemas()
@@ -1792,110 +1757,6 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `query generates loadEdges for schemas with edges`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString()
-
-        assert(output.contains("fun loadEdges(")) {
-            "Should generate loadEdges method\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `selected edge adapter delegates graph completion to loadEdges`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString()
-
-        assert(output.contains("query.loadEdges(entities, viewerContext)")) {
-            "the selected-edge adapter should delegate graph completion after root privacy\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `to-many eager loading queries target with IN predicate on FK column`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        // Owner eager-loads pets via the IN predicate on target (Pet)
-        // FK column. Eager-load Leaf is target-scoped: Predicate.Leaf<Pet>.
-        assert(output.contains("Predicate.Leaf<Pet>(\"owner_id\", Op.IN, sourceIds)")) {
-            "Should build IN predicate on the FK column scoped to target\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `to-one eager loading queries target by id`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        // Pet eager-loads owner (Owner) by id: Predicate.Leaf<Owner>.
-        assert(output.contains("Predicate.Leaf<Owner>(\"id\", Op.IN, fkValues)")) {
-            "Should build IN predicate on target id column scoped to target\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `M2M eager loading queries junction table then target`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("\"team_members\"")) {
-            "Should query junction table\n$output"
-        }
-        // The junction discovery pass runs the JUNCTION entity's read
-        // interceptors with EAGER_JUNCTION and its structural
-        // source-FK IN, typed to the junction entity.
-        assert(output.contains("Predicate.Leaf<TeamMember>(\"team_id\", Op.IN, sourceIds)")) {
-            "Should predicate the junction pass on the source FK, typed to the junction entity\n$output"
-        }
-        assert(output.contains("runReadInterceptors(ReadOperation.EAGER_JUNCTION")) {
-            "Should run the junction entity's interceptors before the junction read\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `every eager assignment path wraps its result in EdgeState Loaded`() {
-        val (_, names, byName) = createAllSchemas()
-
-        // to-many (Owner.pets): empty groups collapse to
-        // Loaded(emptyList()), never Unloaded.
-        val ownerOut = QueryGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
-        assert(ownerOut.contains("EdgeState.Loaded(loadedGroups[entity.id] ?: emptyList())")) {
-            "to-many eager assignment should wrap in EdgeState.Loaded\n$ownerOut"
-        }
-
-        // belongsTo with a nullable FK (Pet.owner): safe-call lookup inside Loaded.
-        val petOut = QueryGenerator("com.example.ent")
-            .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
-        assert(petOut.contains("EdgeState.Loaded(entity.ownerId?.let { targetMap[it] })")) {
-            "nullable-FK belongsTo eager assignment should wrap in EdgeState.Loaded\n$petOut"
-        }
-
-        // belongsTo with a required FK (RequiredPet.owner): plain lookup
-        // inside Loaded — still nullable, the target can be filtered out.
-        val reqOut = QueryGenerator("com.example.ent")
-            .generate("RequiredPet", byName["RequiredPet"]!!, names).toString().replace("\\s+".toRegex(), " ")
-        assert(reqOut.contains("EdgeState.Loaded(targetMap[entity.ownerId])")) {
-            "required-FK belongsTo eager assignment should wrap in EdgeState.Loaded\n$reqOut"
-        }
-
-        // M2M (Team.members): same grouped shape as to-many.
-        // (The hasOne path is pinned in `hasOne eager loading queries
-        // target by FK not source FK`.)
-        val teamOut = QueryGenerator("com.example.ent")
-            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
-        assert(teamOut.contains("EdgeState.Loaded(loadedGroups[entity.id] ?: emptyList())")) {
-            "M2M eager assignment should wrap in EdgeState.Loaded\n$teamOut"
-        }
-    }
-
     @Test
     fun `load-edge builder configuration stays a private nullable query field`() {
         val (_, names, byName) = createAllSchemas()
@@ -1914,106 +1775,6 @@ class EdgeCodegenTest {
         }
     }
 
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `eager privacy batches ordered deduped targets and filters by target id`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        // The per-parent window is collapsed to target IDs, then the
-        // original target-query order is retained while duplicate IDs
-        // are removed. One positional LOAD batch covers that complete
-        // edge block.
-        assert(
-            output.contains(
-                "val inWindowTargetIds = loadedGroups.values.flatten().mapTo(mutableSetOf()) { it.id } " +
-                    "val privacyTargets = decodedTargets.map { it.second }.filter { it.id in inWindowTargetIds }.distinctBy { it.id } " +
-                    "val privacyDenials = eagerClient.pets.loadDenials(eagerViewerContext, privacyTargets)",
-            ),
-        ) {
-            "Eager LOAD privacy should batch the in-window targets in ordered, ID-deduplicated form\n$output"
-        }
-        val batchCalls = Regex(
-            Regex.escape("eagerClient.pets.loadDenials(eagerViewerContext, privacyTargets)"),
-        ).findAll(output).count()
-        assert(batchCalls == 1) {
-            "The emitted pets edge block should make exactly one plural LOAD call; found $batchCalls\n$output"
-        }
-
-        // filterVisible derives an ID set from the positional result and
-        // applies it to every parent group. Entity equality is not used:
-        // distinct instances representing the same target stay aligned.
-        assert(
-            output.contains(
-                "if (eagerPetsFilterVisible) { val visibleTargetIds = privacyTargets.zip(privacyDenials) " +
-                    ".filter { (_, denial) -> denial == null } " +
-                    ".mapTo(mutableSetOf()) { (entity, _) -> entity.id } " +
-                    "loadedGroups = loadedGroups.mapValues { (_, list) -> list.filter { it.id in visibleTargetIds } } }",
-            ),
-        ) {
-            "filterVisible eager loading should retain targets by ID from the positional privacy result\n$output"
-        }
-
-        // Strict mode reports the first denied target in batch order and
-        // never evaluates targets again merely to choose a denial.
-        assert(output.contains("else { val denial = privacyDenials.firstOrNull { it != null } if (denial != null) {")) {
-            "Strict eager loading should select the first non-null positional denial\n$output"
-        }
-        assert(
-            output.contains(
-                "throw EntPrivacyDeniedException(LoadDenialOrigin.SelectedEdgePath(eagerDenialPath.map { " +
-                    "SelectedEdgeStep(it.source.simpleName!!, it.edgeName, it.target.simpleName!!) }), listOf(denial))",
-            ),
-        ) {
-            "Strict eager denial should use a SelectedEdgePath origin\n$output"
-        }
-        assert(!output.contains("eagerClient.pets.loadDenialOrNull")) {
-            "Eager privacy must not regress to per-target singleton calls\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `every eager edge shape emits exactly one plural LOAD call`() {
-        val (_, names, byName) = createAllSchemas()
-        val generator = QueryGenerator("com.example.ent")
-        val outputs = listOf(
-            "hasMany" to generator.generate("Owner", byName["Owner"]!!, names).toString(),
-            "belongsTo" to generator.generate("Pet", byName["Pet"]!!, names).toString(),
-            "manyToMany" to generator.generate("Team", byName["Team"]!!, names).toString(),
-        ) + run {
-            val parent = HasOneEagerParentSchema()
-            val profile = ProfileSchema()
-            finalize(parent, profile)
-            val hasOneNames = mapOf<EntSchema, String>(parent to "Parent", profile to "Profile")
-            listOf("hasOne" to generator.generate("Parent", parent, hasOneNames).toString())
-        }
-
-        // KotlinPoet wraps long statements, so the argument list may span
-        // lines depending on how long the target's clientName is. Match
-        // across whitespace — wrapping is formatting, not semantics.
-        val eagerBatchCall = Regex("eagerClient\\.\\w+\\.loadDenials\\(eagerViewerContext,\\s*privacyTargets\\)")
-        val eagerSingletonCall = Regex("eagerClient\\.\\w+\\.loadDenialOrNull\\(")
-        for ((shape, source) in outputs) {
-            val batchCalls = eagerBatchCall.findAll(source).count()
-            assert(batchCalls == 1) {
-                "$shape should emit exactly one plural LOAD call for its one eager edge block; found $batchCalls\n$source"
-            }
-            assert(!eagerSingletonCall.containsMatchIn(source)) {
-                "$shape eager privacy should not emit a per-target singleton LOAD call\n$source"
-            }
-        }
-
-        val manyToManySource = outputs.single { it.first == "manyToMany" }.second
-            .replace("\\s+".toRegex(), " ")
-        assert(
-            manyToManySource.contains(
-                "val privacyTargets = orderedTargets.filter { it.id in inWindowTargetIds }.distinctBy { it.id }",
-            ),
-        ) {
-            "M2M eager privacy should preserve target-query order while deduplicating shared target IDs\n$manyToManySource"
-        }
-    }
-
     // ---------- Self-referential M2M ----------
 
     @Test
@@ -2027,18 +1788,6 @@ class EdgeCodegenTest {
         }
         assert(output.contains("junctionTargetColumn = \"friend_id\"")) {
             "Target FK should be friend_id (not person_id again)\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `self-referential M2M query uses correct junction FKs`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Person", byName["Person"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        // Junction discovery pass, typed to the junction entity.
-        assert(output.contains("Predicate.Leaf<Friendship>(\"person_id\", Op.IN, sourceIds)")) {
-            "Should predicate the junction pass on source FK person_id, typed to the junction entity\n$output"
         }
     }
 
@@ -2378,107 +2127,6 @@ class EdgeCodegenTest {
         assertContains(err.message!!, "EXPLICIT")
     }
 
-    // ---------- Per-group limit/offset in eager loading ----------
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `to-many eager loading applies limit per group not globally`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        // The batch fetch routes through the runtime-owned direct
-        // to-many executor: the statement carries no LIMIT/OFFSET —
-        // a native driver applies each parent's window in storage,
-        // and the emulated fallback fetches everything and windows
-        // per group in Kotlin below.
-        assert(output.contains("val related = executeDirectToMany(")) {
-            "to-many fetch should route through the runtime direct to-many executor\n$output"
-        }
-        assert(output.contains("pairs.drop(perGroupOffset).take(perGroupLimit)")) {
-            "Should apply limit/offset per group on the emulated path\n$output"
-        }
-        // Under STORAGE_NATIVE the rows are already windowed — the
-        // Kotlin drop/take must not run a second time.
-        assert(output.contains("val windowInStorage = related.strategy == EagerWindowStrategy.STORAGE_NATIVE")) {
-            "Should skip the Kotlin window when storage applied it\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `M2M eager loading applies limit per group not globally`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("subSpec.orderBy, null, null)")) {
-            "Target query should not pass limit/offset to driver\n$output"
-        }
-        assert(output.contains("perGroupOffset") && output.contains("perGroupLimit")) {
-            "Should apply limit/offset per group\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `M2M eager loading dedups duplicate (source, target) junction rows`() {
-        // throughEntity junctions can legitimately carry duplicate
-        // (source_id, target_id) pairs (the row carries distinct
-        // payload — there's no required pair-uniqueness index for
-        // throughEntity, only for throughLink). Without dedup, the
-        // eager-load helper would append the same target twice to one
-        // source's group, while the EXISTS-based queryX traversal
-        // returns each target once — and per-group drop/take would
-        // slice from a duplicated list.
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        // Membership lookup uses Set (LinkedHashSet via mutableSetOf),
-        // not List. Duplicate junction rows collapse to one membership.
-        assert(output.contains("MutableSet<Any?>")) {
-            "Membership lookup must use a Set so duplicate (source, target) junction rows dedup\n$output"
-        }
-        assert(output.contains("mutableSetOf()")) {
-            "Should initialize per-target-id source bucket with mutableSetOf()\n$output"
-        }
-        // Negative: the old List form would not dedup.
-        assert(!output.contains("MutableList<Any?>")) {
-            "Should not use MutableList for the membership lookup (dedup needs Set)\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `M2M eager loading groups by iterating ordered target rows, not junction rows`() {
-        // Iterating junctionRows here would group in driver-default
-        // junction order — which is unrelated to `subQuery.orderFields`
-        // — so a later `drop(offset).take(limit)` per group would pick
-        // the wrong subset for `loadTags { orderBy(...); limit(...) }`.
-        // The fix builds a target→sources membership lookup from the
-        // junction rows, then iterates targetRows (already ordered by
-        // `subQuery.orderFields`) and appends each target to its
-        // source groups.
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        // The loop that populates the grouped map must iterate
-        // targetRows, not junctionRows.
-        assert(output.contains("for (row in targetRows)")) {
-            "M2M eager grouping must iterate ordered targetRows\n$output"
-        }
-        // Membership lookup: target id → list of sources.
-        assert(output.contains("sourcesByTargetId")) {
-            "Should build a target→sources membership lookup\n$output"
-        }
-        // Negative: the old "iterate junctionRows + targetById lookup"
-        // shape would lose ordering.
-        assert(!output.contains("for (jr in junctionRows) { val target = targetById[")) {
-            "Should not iterate junctionRows when building groups\n$output"
-        }
-        assert(!output.contains("val targetById = targetRows.map")) {
-            "Should not pre-build targetById; iterating targetRows directly preserves order\n$output"
-        }
-    }
-
     // ---------- Ambiguous junction disambiguation ----------
 
     @Test
@@ -2643,27 +2291,6 @@ class EdgeCodegenTest {
     }
 
     // ---------- HasOne eager loading ----------
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `hasOne eager loading queries target by FK not source FK`() {
-        val parent = HasOneEagerParentSchema()
-        val profile = ProfileSchema()
-        finalize(parent, profile)
-        val names = mapOf<EntSchema, String>(parent to "Parent", profile to "Profile")
-        val output = QueryGenerator("com.example.ent")
-            .generate("Parent", parent, names).toString().replace("\\s+".toRegex(), " ")
-
-        // Parent eager-loads Profile target via FK on target side.
-        assert(output.contains("Predicate.Leaf<Profile>(\"owner_id\", Op.IN, sourceIds)")) {
-            "Should query target by FK column (target-scoped Predicate.Leaf<Profile>), not source FK\n$output"
-        }
-        assert(output.contains("groupBy { (row, _) -> row[\"owner_id\"] }")) {
-            "Should group row-order-decoded targets by FK column\n$output"
-        }
-        assert(output.contains("EdgeState.Loaded(loadedGroups[entity.id]?.firstOrNull())")) {
-            "Should map source.id to grouped target, collapsing to a single Loaded entity\n$output"
-        }
-    }
 
     @Test
     fun `hasOne Edges property is EdgeState of nullable entity not list`() {

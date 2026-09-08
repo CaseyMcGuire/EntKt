@@ -11,18 +11,6 @@ private fun finalize(vararg schemas: EntSchema) {
     schemas.forEach { it.finalize(registry) }
 }
 
-// A 1:1 pair — the shared Car/User fixtures only cover hasMany /
-// belongsTo, and hasOne emits a distinct eager-load block.
-private class OneOwner : EntSchema("one_owners", clientName = "oneOwners") {
-    override fun id() = entkt.schema.EntId.long()
-    val badge by hasOne<OneBadge>("badge")
-}
-
-private class OneBadge : EntSchema("one_badges", clientName = "oneBadges") {
-    override fun id() = entkt.schema.EntId.long()
-    val owner by belongsTo<OneOwner>("owner").inverse(OneOwner::badge).unique()
-}
-
 class QueryGeneratorTest {
 
     private val generator = QueryGenerator("com.example.ent")
@@ -151,92 +139,6 @@ class QueryGeneratorTest {
         }
         assert(!output.contains("override fun freezeQuery(")) {
             "freezing must not conceal interceptor execution behind its name\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `eager loads skip the target fetch when the window admits nothing`() {
-        val car = Car()
-        val user = User()
-        finalize(car, user)
-        // Eager blocks are only emitted when the edge target can be
-        // named, so the schemaNames map is required here.
-        val output = generator.generate("User", user, mapOf(user to "User", car to "Car"))
-            .toString().replace("\\s+".toRegex(), " ")
-
-        // A window that admits nothing would discard every fetched row,
-        // so the round trip is pure waste — likewise when there are no
-        // parents at all and the IN could match nothing. Those data
-        // gates live in the runtime's executeDirectToMany; generated
-        // code hands it the parent keys and the frozen window so the
-        // gate decision stays driver-independent, while the
-        // interceptor pass above always runs.
-        assert(output.contains("val related = executeDirectToMany(")) {
-            "to-many eager fetch should route through the runtime direct to-many executor\n$output"
-        }
-        assert(output.contains("window = PerParentWindow(offset = perGroupOffset, limit = subSpec.limit)")) {
-            "the runtime executor should receive the frozen per-parent window\n$output"
-        }
-        assert(output.contains("emulationPredicates = subSpec.predicates,")) {
-            "the emulated fallback should receive the complete frozen predicate list\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `to-many eager loads probe the driver's native window capability`() {
-        val car = Car()
-        val user = User()
-        finalize(car, user)
-        val output = generator.generate("User", user, mapOf(user to "User", car to "Car"))
-            .toString().replace("\\s+".toRegex(), " ")
-
-        // The capability is sampled ONCE, BEFORE the interceptor
-        // chain: a native driver transports the structural
-        // relationship IN as one typed-array bind, so the running
-        // bind budget must not charge one scalar bind per parent key
-        // — and the SAME sample routes the fetch, so budgeting and
-        // routing cannot disagree against an unstable capability.
-        assert(output.contains("val toManyWindowCapability = driver.directToManyWindowCapability()")) {
-            "to-many eager block should sample the driver capability once\n$output"
-        }
-        assert(
-            output.contains("val nativeToManyWindows = toManyWindowCapability == DirectToManyWindowCapability.NATIVE"),
-        ) {
-            "the bind-budget flag should derive from the one sample\n$output"
-        }
-        assert(output.contains("structuralSingleBindTransport = nativeToManyWindows")) {
-            "the capability should drive the structural bind-budget accounting\n$output"
-        }
-        assert(output.contains("capability = toManyWindowCapability,")) {
-            "the runtime executor should receive the same capability sample\n$output"
-        }
-        // The driver receives the frozen predicates minus the
-        // separately-attributed relationship constraint on the native
-        // path.
-        assert(output.contains("targetPredicates = subSpec.nonStructuralPredicates,")) {
-            "the native path should hand the driver only non-structural predicates\n$output"
-        }
-    }
-
-    @Suppress("unused") // Runtime execution coverage lives in runtime and integration tests.
-    fun `a hasOne eager load also skips the fetch for a positive offset`() {
-        // hasOne requires its inverse belongsTo to declare `.unique()`
-        // (SchemaMetadata enforces it), so the unique index guarantees at
-        // most one row per source — `drop(1)` provably leaves nothing.
-        // The to-many paths can't use offset that way: skipping rows in a
-        // group of many still leaves others.
-        val owner = OneOwner()
-        val badge = OneBadge()
-        finalize(owner, badge)
-        val output = generator
-            .generate("OneOwner", owner, mapOf(owner to "OneOwner", badge to "OneBadge"))
-            .toString().replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("val targetInWindow = perGroupOffset == 0 && perGroupLimit > 0")) {
-            "hasOne should treat a positive offset as an empty window\n$output"
-        }
-        assert(output.contains("val targetRows = if (targetInWindow && sourceIds.isNotEmpty()) driver.query(")) {
-            "hasOne eager fetch should be gated on that window and a non-empty parent set\n$output"
         }
     }
 
