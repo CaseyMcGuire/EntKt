@@ -4,7 +4,6 @@ package entkt.query
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
  * Contract test for [EntktInternal] — pins the parts of the annotation
@@ -21,12 +20,6 @@ import kotlin.test.assertTrue
  * configured message). The `@RequiresOptIn` meta-annotation is not
  * always projected through `KClass<*>.annotations` at runtime, so we
  * don't try to read level/message reflectively here.
- *
- * As a smoke test we also exercise that `EntktInternal` is structurally
- * usable as an opt-in marker — this file declares
- * `@file:OptIn(EntktInternal::class)` so any test method below that
- * touches an `@EntktInternal` declaration would compile only if the
- * opt-in is recognized.
  */
 class EntktInternalTest {
 
@@ -44,15 +37,5 @@ class EntktInternalTest {
                 "output lives in a different module than :schema). " +
                 "SOURCE or RUNTIME retention would break this.",
         )
-    }
-
-    @Test
-    fun `EntktInternal is structurally usable as an opt-in marker`() {
-        // If EntktInternal were not a valid @RequiresOptIn-marked
-        // annotation, the file-level @file:OptIn(EntktInternal::class)
-        // at the top of this file would be a compile error
-        // ("This declaration is not an opt-in requirement marker").
-        // The fact that this test class compiles is the assertion.
-        assertTrue(true)
     }
 }
