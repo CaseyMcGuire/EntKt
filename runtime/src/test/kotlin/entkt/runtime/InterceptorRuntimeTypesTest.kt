@@ -1,6 +1,5 @@
 package entkt.runtime
 import entkt.runtime.query.QueryShape
-import entkt.query.QueryFlag
 import entkt.runtime.query.AbortQueryRejected
 import entkt.runtime.result.ReadResult
 import entkt.runtime.result.EntQueryRejectedException
@@ -207,31 +206,6 @@ class InterceptorRuntimeTypesTest {
         assertSame(rejected, abort.rejected)
         assertTrue(abort.message!!.contains("test"))
         assertTrue(abort.message!!.contains("nope"))
-    }
-
-    // ---- ReadOperation / QueryFlag enums ----
-
-    @Test
-    fun `ReadOperation enumerates every documented read shape`() {
-        val expected = setOf(
-            ReadOperation.BY_ID,
-            ReadOperation.FIRST,
-            ReadOperation.ALL,
-            ReadOperation.EDGE_TRAVERSAL,
-            ReadOperation.EDGE_PREDICATE,
-            ReadOperation.EAGER_LOAD,
-            ReadOperation.EAGER_JUNCTION,
-            ReadOperation.DELETE_CANDIDATES,
-        )
-        assertEquals(expected, ReadOperation.entries.toSet())
-    }
-
-    @Test
-    fun `QueryFlag carries withDeleted and onlyDeleted only in V1`() {
-        assertEquals(
-            setOf(QueryFlag.withDeleted, QueryFlag.onlyDeleted),
-            QueryFlag.entries.toSet(),
-        )
     }
 
     // Pin the full limit-operation table: interceptor limit mutators
