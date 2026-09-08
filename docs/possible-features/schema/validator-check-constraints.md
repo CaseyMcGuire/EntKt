@@ -2,12 +2,15 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Superseded proposal; not implemented. Schema validators have been removed in
+favor of [client-policy field rules](../../07-validation.md#field-validation-rules).
+The historical design below assumes the old schema DSL. Future database CHECK
+support should use explicit schema constraints, not derive DDL from client
+policy registrations.
 
 Companion to [Enum Value CHECK Constraints](enum-value-check-constraints.md)
 (same mechanism, enum value sets instead of validators) and to the
-validators section of [Schema](../../02-schema.md#validators), which
-documents today's behavior: validators are application-tier only.
+validation section of [Schema](../../02-schema.md#validation-belongs-in-client-policies).
 
 ## Motivation
 

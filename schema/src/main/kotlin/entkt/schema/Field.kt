@@ -10,7 +10,6 @@ data class Field(
     val default: Any? = null,
     val updateDefault: UpdateDefault? = null,
     val enumClass: kotlin.reflect.KClass<out Enum<*>>? = null,
-    val validators: List<Validator> = emptyList(),
     val comment: String? = null,
     /**
      * Kotlin `val` name of the delegated schema property that declared

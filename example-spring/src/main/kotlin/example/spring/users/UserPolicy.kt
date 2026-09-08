@@ -5,6 +5,10 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
+import entkt.runtime.validation.max
+import entkt.runtime.validation.maxLength
+import entkt.runtime.validation.min
+import entkt.runtime.validation.minLength
 import example.ent.ReadOnlyEntClient
 import example.ent.User
 import example.ent.UserDeleteRuleInput
@@ -12,6 +16,7 @@ import example.ent.UserDeletePrivacyRule
 import example.ent.UserPolicyScope
 import example.ent.UserUpdateRuleInput
 import example.ent.UserUpdatePrivacyRule
+import example.ent.UserWriteCandidate
 
 object UserPolicy : EntityPolicy<User, UserPolicyScope> {
     override fun configure(scope: UserPolicyScope) = scope.run {
@@ -22,6 +27,15 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
             create(allowAll)
             update(AllowSelfUpdate())
             delete(AllowSelfDelete())
+        }
+        validation {
+            create(
+                minLength(UserWriteCandidate::name, 1),
+                maxLength(UserWriteCandidate::name, 64),
+                min(UserWriteCandidate::age, 0),
+                max(UserWriteCandidate::age, 150),
+            )
+            updateDerivesFromCreate()
         }
     }
 }

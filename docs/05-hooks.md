@@ -274,7 +274,7 @@ For a **create** operation, the full execution order is:
 
 1. Enforce the configured transaction requirement.
 2. Run `beforeSave`, then `beforeCreate`.
-3. Apply defaults and field validators.
+3. Check required inputs, apply defaults, and check storage shape.
 4. Run CREATE privacy and entity validation.
 5. Persist the entity.
 6. Run `afterCreate`.
@@ -290,7 +290,7 @@ For an **update**:
 3. Capture pending edge intent, then run `beforeSave` and `beforeUpdate`.
    Each `beforeUpdate` hook receives a fresh `patch` snapshot and the same
    read-only `pendingEdges` snapshot.
-4. Check required fields, apply update defaults, and run field validators.
+4. Check required fields, apply update defaults, and check storage shape.
 5. Calculate `edgeChanges`, then run UPDATE privacy and entity validation.
 6. Persist scalar and edge changes.
 7. Run `afterUpdate`.

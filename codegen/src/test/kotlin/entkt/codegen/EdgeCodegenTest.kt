@@ -301,22 +301,6 @@ private class SensitiveFkChild : EntSchema("sensitive_children", clientName = "s
     val owner by belongsTo<SensitiveFkParent>("owner").field(ownerId)
 }
 
-// ---------- Schema for field-backed FK validator propagation ----------
-
-private class ValidatedFkParent : EntSchema("validated_parents", clientName = "validatedFkParents") {
-    override fun id() = EntId.long()
-}
-
-/**
- * Backing field carries a `.positive()` validator. The relationship
- * code path must invoke the same validator on both create and update.
- */
-private class ValidatedFkChild : EntSchema("validated_children", clientName = "validatedFkChilds") {
-    override fun id() = EntId.int()
-    val ownerId by long("owner_id").positive()
-    val owner by belongsTo<ValidatedFkParent>("owner").field(ownerId)
-}
-
 // ---------- Schema for immutable field-backed FK tests ----------
 
 private class ImmutableFkParent : EntSchema("immutable_parents", clientName = "immutableFkParents") {
@@ -647,24 +631,6 @@ private class ReverseOrderIdxLinkPostTag : EntSchema("rev_idx_link_post_tags", c
     val pair = index("idx_rev_link_post_tags_tag_post", tag.fk, post.fk).unique()
 }
 
-// Junction with a field-backed FK that carries a validator (violates rule 3).
-private class ValidatorBackingLinkPost : EntSchema("val_link_posts", clientName = "validatorBackingLinkPosts") {
-    override fun id() = EntId.long()
-    val tags by manyToMany<ValidatorBackingLinkTag>("tags")
-        .throughLink<ValidatorBackingLinkPostTag>(ValidatorBackingLinkPostTag::post, ValidatorBackingLinkPostTag::tag)
-}
-private class ValidatorBackingLinkTag : EntSchema("val_link_tags", clientName = "validatorBackingLinkTags") {
-    override fun id() = EntId.long()
-}
-private class ValidatorBackingLinkPostTag : EntSchema("val_link_post_tags", clientName = "validatorBackingLinkPostTags") {
-    override fun id() = EntId.long()
-    val postIdCol by long("post_id_col").positive()
-    val tagIdCol by long("tag_id_col")
-    val post by belongsTo<ValidatorBackingLinkPost>("post").field(postIdCol).onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<ValidatorBackingLinkTag>("tag").field(tagIdCol).onDelete(OnDelete.CASCADE)
-    val pair = index("idx_val_link_post_tags_post_tag", post.fk, tag.fk).unique()
-}
-
 // Junction with a third belongsTo beyond sourceEdge/targetEdge
 // (violates rule 1a — adds an FK column the helpers would not populate).
 // Mirrors a multi-tenant link table where the schema author tried to
@@ -782,14 +748,6 @@ class EdgeCodegenTest {
         schemaNames: Map<EntSchema, String>,
     ): String = CreateGenerator("com.example.ent")
         .buildRequiredInputViolationsFunction(schemaName, schema, schemaNames)
-        .toString()
-
-    private fun createFieldViolations(
-        schemaName: String,
-        schema: EntSchema,
-        schemaNames: Map<EntSchema, String>,
-    ): String = CreateGenerator("com.example.ent")
-        .buildCreateFieldViolationsFunction(schemaName, schema, schemaNames)
         .toString()
 
     private fun createAllSchemas(): Triple<
@@ -1036,51 +994,6 @@ class EdgeCodegenTest {
         }
         assert(!output.contains("ownerId=\${ownerId}") && !output.contains("ownerId=\$ownerId")) {
             "Sensitive FK must not leak via the unredacted interpolation\n$output"
-        }
-    }
-
-    @Test
-    fun `create runs backing-field validators on field-backed FK value`() {
-        val parent = ValidatedFkParent()
-        val child = ValidatedFkChild()
-        finalize(parent, child)
-        val names = mapOf<EntSchema, String>(parent to "ValidatedFkParent", child to "ValidatedFkChild")
-        val output = createFieldViolations("ValidatedFkChild", child, names)
-            .replace("\\s+".toRegex(), " ")
-
-        // The `.positive()` check runs against the stable resolved candidate,
-        // keyed off the FK property name.
-        assert(
-            output.contains(
-                "if (candidate.ownerId <= 0) return listOf(entkt.runtime.result.ValidationViolation",
-            ),
-        ) {
-            "Create should return a validation Failed for the .positive() FK validator\n$output"
-        }
-    }
-
-    @Test
-    fun `update runs backing-field validators on FK patch Set entries`() {
-        val parent = ValidatedFkParent()
-        val child = ValidatedFkChild()
-        finalize(parent, child)
-        val names = mapOf<EntSchema, String>(parent to "ValidatedFkParent", child to "ValidatedFkChild")
-        val output = UpdateGenerator("com.example.ent")
-            .generate("ValidatedFkChild", child, names).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        // The validator must run inside an `if (ownerId_eff is FieldPatch.Set)`
-        // block so Unset entries are not validated.
-        assert(output.contains("ownerId_eff = effectivePatch.ownerId")) {
-            "Update should bind the FK's effectivePatch entry to a local for validation\n$output"
-        }
-        assert(
-            output.contains(
-                "if (ownerId_eff is FieldPatch.Set) { val ownerId_v = ownerId_eff.value " +
-                    "if (ownerId_v <= 0) return UpdatePreparation.Invalid(listOf(ValidationViolation(\"value must be positive\", field = \"ownerId\"))) }",
-            ),
-        ) {
-            "Update preparation should return Invalid for Set entries failing the .positive() FK validator\n$output"
         }
     }
 
@@ -2044,18 +1957,6 @@ class EdgeCodegenTest {
             SchemaInput(ReverseOrderIdxLinkTag()),
             SchemaInput(ReverseOrderIdxLinkPostTag()),
         ))
-    }
-
-    @Test
-    fun `throughLink junction with validator on FK backing field is rejected`() {
-        val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
-                SchemaInput(ValidatorBackingLinkPost()),
-                SchemaInput(ValidatorBackingLinkTag()),
-                SchemaInput(ValidatorBackingLinkPostTag()),
-            ))
-        }
-        assertContains(err.message!!, "validator")
     }
 
     @Test

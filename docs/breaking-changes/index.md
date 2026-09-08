@@ -30,6 +30,22 @@ above it.
 
 ## Unreleased
 
+- **Move field validators from schemas to client policies** (`schema`, `runtime`, `codegen`)
+  Field-builder validators and `entkt.schema.Validator` / `ValidatorSpec` /
+  `Validators` are removed. Runtime helpers return ordinary validation rules;
+  the client registration DSL is unchanged.
+  _Migration:_ remove `.minLength(...)`, `.maxLength(...)`, `.notEmpty()`,
+  `.match(...)`, `.min(...)`, `.max(...)`, and sign modifiers from schemas.
+  Register replacements such as `create(minLength(UserWriteCandidate::name, 2))`
+  in a policy on every relevant client. Use `matches` for the old `.match`;
+  numeric bounds now use the property's numeric type. Add
+  `updateDerivesFromCreate()` for shared candidate invariants, or explicit update
+  rules for changed-field-only checks. Configured rules now run after privacy,
+  aggregate violations, and derived update rules check unchanged fields too.
+  Required-field and storage-shape checks remain automatic. Regenerate code;
+  this change does not require a database migration. See
+  [Field Validation Rules](../07-validation.md#field-validation-rules).
+
 - **Bind mutation candidates to their entity** (`runtime`, `codegen`)
   Generated `${Entity}WriteCandidate` types now implement `WriteCandidate<Entity>`.
   CREATE/DELETE operations, their converters, and `DeleteRuleCandidate` require

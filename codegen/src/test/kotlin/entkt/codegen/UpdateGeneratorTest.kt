@@ -467,50 +467,14 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `save emits validation for mutable validated fields`() {
+    fun `save retains structural checks without emitting policy field rules`() {
         val schema = ValidatedEntity()
         finalize(schema)
         val output = generator.generate("ValidatedEntity", schema).toString()
 
-        // Validators run on the unwrapped patched value (`name_v`, etc.).
-        assert(output.contains("name_v.length < 3")) {
-            "Should emit minLength check on patched value\n$output"
-        }
-        assert(output.contains("name_v.length > 100")) {
-            "Should emit maxLength check on patched value\n$output"
-        }
-        assert(output.contains("name_v.isEmpty()")) {
-            "Should emit notEmpty check on patched value\n$output"
-        }
-    }
-
-    @Test
-    fun `save guards validation by FieldPatch_Set so unset fields do not validate`() {
-        val schema = ValidatedEntity()
-        finalize(schema)
-        val output = generator.generate("ValidatedEntity", schema).toString()
-
-        // Outer guard: only validate when the field is in the effective patch.
-        assert(output.contains("if (name_eff is FieldPatch.Set)")) {
-            "Should guard required-field validation with `is FieldPatch.Set`\n$output"
-        }
-        // Nullable field (`nickname`) gets an inner null guard since validators
-        // don't apply when the patched value itself is null.
-        assert(output.contains("if (nickname_eff is FieldPatch.Set)") && output.contains("if (nickname_v != null)")) {
-            "Should guard nullable-field validation with `is FieldPatch.Set` plus inner null check\n$output"
-        }
-    }
-
-    @Test
-    fun `save does not validate immutable fields in update`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-
-        // createdAt is immutable — should not have validation
-        assert(!output.contains("createdAt.length")) {
-            "Should not validate immutable fields\n$output"
-        }
+        assert(output.contains("requiredHookStateViolations")) { output }
+        assert(!output.contains("name_v") && !output.contains("nickname_v")) { output }
+        assert(!output.contains("Regex(") && !output.contains("value must")) { output }
     }
 
     @Test
@@ -546,19 +510,18 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `validation appears after effective patch and before driver write set`() {
+    fun `effective patch is prepared before the driver write set`() {
         val schema = ValidatedEntity()
         finalize(schema)
         val output = generator.generate("ValidatedEntity", schema).toString()
 
         val patchPos = output.indexOf("val effectivePatch")
-        val validationPos = output.indexOf("name_v.length < 3")
         val rowMapPos = output.indexOf("val values = mutableMapOf<String, Any?>")
-        assert(patchPos != -1 && validationPos != -1 && rowMapPos != -1) {
-            "Expected effective patch, validation, and write set markers in output\n$output"
+        assert(patchPos != -1 && rowMapPos != -1) {
+            "Expected effective patch and write set markers in output\n$output"
         }
-        assert(patchPos < validationPos && validationPos < rowMapPos) {
-            "Validation should appear after effective patch and before driver write set\n$output"
+        assert(patchPos < rowMapPos) {
+            "Effective patch should be prepared before the driver write set\n$output"
         }
     }
 

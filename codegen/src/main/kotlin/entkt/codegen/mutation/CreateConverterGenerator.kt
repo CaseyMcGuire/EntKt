@@ -150,7 +150,7 @@ internal class CreateConverterGenerator(private val packageName: String) {
             val createGenerator = CreateGenerator(packageName)
             addFunction(createGenerator.buildRequiredInputViolationsFunction(schemaName, schema, schemaNames))
             addFunction(createGenerator.buildResolveFunction(schemaName, schema, schemaNames))
-            addFunction(createGenerator.buildCreateFieldViolationsFunction(schemaName, schema, schemaNames))
+            addFunction(createGenerator.buildCreateFieldViolationsFunction(schemaName, schema))
         }
         return kotlinFile(packageName, className) {
             addAnnotation(entktInternalFileOptIn())

@@ -32,7 +32,6 @@ import entkt.codegen.metadata.toTypeName
 import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
-import entkt.schema.ValidatorSpec
 
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val UUID_CLASS = ClassName("java.util", "UUID")
@@ -321,15 +320,13 @@ internal class CreateGenerator(
         }
     }
 
-    /** Describe schema-field constraints on the stable resolved candidate. */
+    /** Check storage shape on the stable resolved candidate; policy rules own field validation. */
     fun buildCreateFieldViolationsFunction(
         schemaName: String,
         schema: EntSchema,
-        schemaNames: Map<EntSchema, String>,
     ): FunSpec {
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
         val allFields = scalarFields(schema)
-        val edgeFks = computeEdgeFks(schema, schemaNames)
         return function(
             "fieldViolations",
             returnType = List::class.asClassName().parameterizedBy(MUTATION_VALIDATION_VIOLATION),
@@ -337,15 +334,6 @@ internal class CreateGenerator(
             addModifiers(KModifier.OVERRIDE)
             parameter("candidate", candidateClass)
             for (field in allFields) {
-                if (field.validators.isNotEmpty()) {
-                    emitFieldViolationChecks(
-                        builder = this,
-                        prop = "candidate.${field.apiName}",
-                        fieldName = field.apiName,
-                        validators = field.validators,
-                        nullable = field.nullable,
-                    )
-                }
                 if (field.type == FieldType.PGVECTOR) {
                     val dimensions =
                         (field.storage as? entkt.schema.ColumnStorage.Native)?.dimensions
@@ -374,16 +362,6 @@ internal class CreateGenerator(
                         field.apiName,
                     )
                 }
-            }
-            for (fk in edgeFks) {
-                if (fk.validators.isEmpty()) continue
-                emitFieldViolationChecks(
-                    builder = this,
-                    prop = "candidate.${fk.propertyName}",
-                    fieldName = fk.propertyName,
-                    validators = fk.validators,
-                    nullable = !fk.required,
-                )
             }
             addStatement("return emptyList()")
         }
@@ -631,135 +609,4 @@ internal class CreateGenerator(
         }
     }
 
-}
-
-/**
- * Emit inline validation checks for a single field's validators.
- * When [nullable] is true, the checks are wrapped in `if (prop != null) { ... }`.
- * The caller supplies [invalidPreparationType] so the runtime executor can
- * classify and record the preparation failure at the shared lifecycle boundary.
- */
-internal fun emitFieldValidation(
-    builder: FunSpec.Builder,
-    prop: String,
-    fieldName: String,
-    validators: List<entkt.schema.Validator>,
-    nullable: Boolean,
-    invalidPreparationType: ClassName,
-) {
-    if (nullable) {
-        builder.beginControlFlow("if (%L != null)", prop)
-    }
-    for (validator in validators) {
-        val spec = validator.spec
-            ?: error("Validator '${validator.name}' on field '$fieldName' has no spec — codegen cannot emit it")
-        val failure = CodeBlock.of(
-            "%T.Invalid(listOf(%T(%S, field = %S)))",
-            invalidPreparationType,
-            MUTATION_VALIDATION_VIOLATION,
-            validator.message,
-            fieldName,
-        )
-        emitValidatorCheck(
-            builder,
-            prop,
-            spec,
-            failure,
-        )
-    }
-    if (nullable) {
-        builder.endControlFlow()
-    }
-}
-
-/** Emit field checks whose failure returns validation violations directly. */
-private fun emitFieldViolationChecks(
-    builder: FunSpec.Builder,
-    prop: String,
-    fieldName: String,
-    validators: List<entkt.schema.Validator>,
-    nullable: Boolean,
-) {
-    if (nullable) {
-        builder.beginControlFlow("if (%L != null)", prop)
-    }
-    for (validator in validators) {
-        val spec = validator.spec
-            ?: error("Validator '${validator.name}' on field '$fieldName' has no spec — codegen cannot emit it")
-        val failure = CodeBlock.of(
-            "listOf(%T(%S, field = %S))",
-            MUTATION_VALIDATION_VIOLATION,
-            validator.message,
-            fieldName,
-        )
-        emitValidatorCheck(builder, prop, spec, failure)
-    }
-    if (nullable) {
-        builder.endControlFlow()
-    }
-}
-
-private fun emitValidatorCheck(
-    builder: FunSpec.Builder,
-    prop: String,
-    spec: ValidatorSpec,
-    failure: CodeBlock,
-) {
-    when (spec) {
-        is ValidatorSpec.MinLength -> builder.addStatement(
-            "if (%L.length < %L) return·%L",
-            prop, spec.min, failure,
-        )
-        is ValidatorSpec.MaxLength -> builder.addStatement(
-            "if (%L.length > %L) return·%L",
-            prop, spec.max, failure,
-        )
-        is ValidatorSpec.NotEmpty -> builder.addStatement(
-            "if (%L.isEmpty()) return·%L",
-            prop, failure,
-        )
-        is ValidatorSpec.Match -> {
-            // Regex / RegexOption go through %T, never raw text —
-            // kotlin.text is default-imported, so a raw name would
-            // resolve against same-package declarations first. (The
-            // shadowed-name validation independently rejects entities
-            // named after these.)
-            val regexClass = ClassName("kotlin.text", "Regex")
-            if (spec.options.isEmpty()) {
-                builder.addStatement(
-                    "if (!%T(%S).matches(%L)) return·%L",
-                    regexClass, spec.pattern, prop, failure,
-                )
-            } else {
-                val regexOptionClass = ClassName("kotlin.text", "RegexOption")
-                val optionsLiteral = spec.options.joinToString(", ") { "%T.${it.name}" }
-                builder.addStatement(
-                    "if (!%T(%S, setOf($optionsLiteral)).matches(%L)) return·%L",
-                    regexClass, spec.pattern,
-                    *spec.options.map { regexOptionClass }.toTypedArray(),
-                    prop, failure,
-                )
-            }
-        }
-        is ValidatorSpec.Min -> builder.addStatement(
-            "if (%L < %L) return·%L",
-            prop, spec.min, failure,
-        )
-        is ValidatorSpec.Max -> builder.addStatement(
-            "if (%L > %L) return·%L",
-            prop, spec.max, failure,
-        )
-        is ValidatorSpec.Positive -> builder.addStatement(
-            "if (%L <= 0) return·%L",
-            prop, failure,
-        )
-        is ValidatorSpec.Negative -> builder.addStatement(
-            "if (%L >= 0) return·%L",
-            prop, failure,
-        )
-        is ValidatorSpec.NonNegative -> builder.addStatement(
-            "if (%L < 0) return·%L",
-            prop, failure,
-        )
-    }
 }

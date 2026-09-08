@@ -276,12 +276,6 @@ internal class UpdateSaveEmitter(
         endControlFlow()
 
         emitEffectivePatchConstruction(this, patchClass, mutableFields, edgeFks)
-        mutableFields.filter { it.validators.isNotEmpty() }.forEach {
-            emitPatchEntryValidation(this, it)
-        }
-        edgeFks.filter { it.validators.isNotEmpty() }.forEach {
-            emitFkPatchEntryValidation(this, it)
-        }
         statement("val values = mutableMapOf<String, Any?>()")
         emitOwnerValues(this)
         emitCandidateConstruction(this, candidateClass, allFields, allEdgeFks)
@@ -485,44 +479,6 @@ private fun emitEffectivePatchConstruction(
         }
         add(")\n")
     })
-}
-
-private fun emitPatchEntryValidation(builder: FunSpec.Builder, field: Field) {
-    val property = field.apiName
-    val local = "${property}_eff"
-    builder.addStatement("val %L = effectivePatch.%L", local, property)
-    builder.beginControlFlow("if (%L is %T.Set)", local, FIELD_PATCH)
-    builder.addStatement("val %L_v = %L.value", property, local)
-    if (field.nullable) builder.beginControlFlow("if (%L_v != null)", property)
-    emitFieldValidation(
-        builder,
-        "${property}_v",
-        property,
-        field.validators,
-        nullable = false,
-        invalidPreparationType = UPDATE_PREPARATION,
-    )
-    if (field.nullable) builder.endControlFlow()
-    builder.endControlFlow()
-}
-
-private fun emitFkPatchEntryValidation(builder: FunSpec.Builder, fk: EdgeFk) {
-    val property = fk.propertyName
-    val local = "${property}_eff"
-    builder.addStatement("val %L = effectivePatch.%L", local, property)
-    builder.beginControlFlow("if (%L is %T.Set)", local, FIELD_PATCH)
-    builder.addStatement("val %L_v = %L.value", property, local)
-    if (!fk.required) builder.beginControlFlow("if (%L_v != null)", property)
-    emitFieldValidation(
-        builder,
-        "${property}_v",
-        property,
-        fk.validators,
-        nullable = false,
-        invalidPreparationType = UPDATE_PREPARATION,
-    )
-    if (!fk.required) builder.endControlFlow()
-    builder.endControlFlow()
 }
 
 private fun emitCandidateConstruction(

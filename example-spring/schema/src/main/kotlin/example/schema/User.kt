@@ -11,9 +11,9 @@ class User : EntSchema("users", clientName = "users") {
 
     val timestamps = include(::Timestamps)
 
-    val name by string("name").minLength(1).maxLength(64)
+    val name by string("name")
     val email by string("email").unique()
-    val age by int("age").nullable().min(0).max(150)
+    val age by int("age").nullable()
     val active by bool("active").default(true)
 
     val posts by hasMany<Post>("posts")

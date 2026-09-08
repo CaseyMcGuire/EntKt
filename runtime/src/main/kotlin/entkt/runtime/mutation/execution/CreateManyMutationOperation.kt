@@ -193,7 +193,7 @@ class CreateManyMutationOperation<
         }
     }
 
-    /** Reject schema-field violations before CREATE privacy sees candidates. */
+    /** Reject invalid storage shape before CREATE privacy sees candidates. */
     private fun rejectFieldViolations(
         attempt: MutationExecution,
         entityName: String,

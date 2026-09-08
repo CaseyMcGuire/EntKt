@@ -137,7 +137,7 @@ internal fun columnMetadataFor(
 ): List<ColumnDescriptor> {
     val fields = schema.fields()
     // Column metadata is storage-oriented: backing FK columns come from
-    // the declared field (which carries the comment, default, validators)
+    // the declared field (which carries the comment and default)
     // with edge metadata layered on via `explicitFieldEdges`. Drop
     // field-backed entries from the FK list here so the same column
     // isn't emitted twice.

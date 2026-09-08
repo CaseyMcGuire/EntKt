@@ -104,7 +104,7 @@ class DelegateBindingTest {
         }
         class Post : EntSchema("posts", clientName = "posts") {
             override fun id() = EntId.long()
-            val title by string("title").maxLength(64)
+            val title by string("title").default("Untitled")
             val authorId by long("author_id")
             val writer by belongsTo<Target>("writer").field(authorId).nullable()
             val byAuthor = index("idx_post_author", authorId)

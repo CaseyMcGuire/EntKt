@@ -123,7 +123,7 @@ class DelegateBindingCompileFailTest {
             }
             class Post : EntSchema("posts", clientName = "posts") {
                 override fun id() = EntId.long()
-                val title: StringFieldBuilder by string("title").maxLength(64)
+                val title: StringFieldBuilder by string("title").default("Untitled")
                 val tagId: LongFieldBuilder by long("tag_id")
                 val tag: BelongsToBuilder<Tag> by belongsTo<Tag>("tag").field(tagId)
             }

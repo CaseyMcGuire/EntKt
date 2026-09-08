@@ -50,7 +50,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
      * Declared on the self-typed base so **one** operator pair covers
      * every field builder subclass while preserving each one's concrete
      * static type: `val title by string("t")` has type
-     * [StringFieldBuilder], so `.maxLength(64)` still resolves, and a
+     * [StringFieldBuilder], so `.default("Untitled")` still resolves, and a
      * handle passed to `index(...)`, `.field(...)`, or an inverse
      * reference keeps its exact type.
      */
@@ -84,7 +84,6 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     private var enumClass: kotlin.reflect.KClass<out Enum<*>>? = null
     private var storage: ColumnStorage? = null
     private var jsonType: kotlin.reflect.KType? = null
-    protected var validators: MutableList<Validator> = mutableListOf()
 
     protected fun setUpdateDefault(value: UpdateDefault) {
         checkNotFrozen()
@@ -100,7 +99,6 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
     fun sensitive(): Self = apply { checkNotFrozen(); sensitive = true }.let { self() }
     protected fun setDefault(value: Any) { checkNotFrozen(); default = value }
     fun comment(text: String): Self = apply { checkNotFrozen(); comment = text }.let { self() }
-    protected fun validate(validator: Validator): Self = apply { checkNotFrozen(); validators.add(validator) }.let { self() }
 
     @PublishedApi
     internal fun setEnumClass(klass: kotlin.reflect.KClass<out Enum<*>>) {
@@ -170,7 +168,6 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
             default = default,
             updateDefault = updateDefault,
             enumClass = enumClass,
-            validators = validators,
             comment = comment,
             declarationName = declarationName,
             storage = storage,

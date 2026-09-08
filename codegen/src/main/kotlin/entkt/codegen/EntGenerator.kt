@@ -446,8 +446,8 @@ private fun validateM2MOrientation(
  * Rules enforced here:
  * 1. Junction has exactly `id` + the two FK columns (no payload fields).
  * 2. Both junction `belongsTo` edges are non-null.
- * 3. The FK backing fields carry no write-time modifiers (validators,
- *    sensitive, default, updateDefault, immutable).
+ * 3. The FK backing fields carry no write-time modifiers (sensitive,
+ *    default, updateDefault, immutable).
  * 4. Both junction `belongsTo` edges declare `OnDelete.CASCADE`
  *    explicitly.
  * 5. Junction id strategy is not `EXPLICIT` (auto-numeric or
@@ -609,14 +609,6 @@ private fun validateThroughLinkJunctions(
             val fieldsByName = junction.fields().associateBy { it.name }
             for ((label, fkCol) in listOf("source" to sourceFkCol, "target" to targetFkCol)) {
                 val backing = fieldsByName[fkCol] ?: continue // synthesized FK has no backing Field, nothing to check
-                if (backing.validators.isNotEmpty()) {
-                    error(
-                        "$ctx: $label FK backing field '${backing.apiName}' (column '${backing.name}') carries " +
-                            "${backing.validators.size} validator(s); throughLink helpers bypass " +
-                            "junction CREATE validation, so the validator would silently not run. " +
-                            "Move the field to a throughEntity junction or drop the validator.",
-                    )
-                }
                 if (backing.sensitive) {
                     error(
                         "$ctx: $label FK backing field '${backing.apiName}' (column '${backing.name}') is `.sensitive()`; " +

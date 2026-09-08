@@ -19,9 +19,9 @@ Stored as strings in the database.
 `.sensitive()`, `.comment(...)`, `.default(value)` (type-safe per field type).
 Time fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instant.now()`).
 
-**Type-specific validators** (enforced as inline checks in generated `save()` methods):
-- Strings: `.minLength()`, `.maxLength()`, `.notEmpty()`, `.match(regex)`
-- Numbers: `.min()`, `.max()`, `.positive()`, `.negative()`, `.nonNegative()`
+Field invariants are runtime validation rules, not schema modifiers. Register
+helpers such as `minLength(UserWriteCandidate::name, 2)` in an `EntityPolicy`
+on the client. See [Field Validation Rules](../docs/07-validation.md#field-validation-rules).
 
 ## Id strategies
 

@@ -6,7 +6,6 @@ import entkt.schema.EntSchema
 import entkt.schema.Field
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
-import entkt.schema.Validator
 
 /**
  * A foreign-key surface derived from a `belongsTo` edge. For implicit
@@ -56,14 +55,6 @@ data class EdgeFk(
      * edge-level immutability modifier is added in a future feature.
      */
     val immutable: Boolean = false,
-    /**
-     * Field-level validators carried from the backing field declaration
-     * (e.g. `long("owner_id").positive()`). Implicit FKs have no DSL
-     * surface for validators, so this is empty for them. Generated
-     * create and update validation runs these on FK Set entries the
-     * same way it does for scalar fields.
-     */
-    val validators: List<Validator> = emptyList(),
     /**
      * `true` when the backing field is `.sensitive()`. The generated
      * entity `toString()` redacts the FK value as `***` for sensitive
@@ -144,7 +135,6 @@ fun computeEdgeFks(
                     isFieldBacked = true,
                     default = backingField?.default,
                     immutable = backingField?.immutable == true,
-                    validators = backingField?.validators ?: emptyList(),
                     sensitive = backingField?.sensitive == true,
                     comment = backingField?.comment ?: edge.comment,
                 )

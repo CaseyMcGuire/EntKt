@@ -31,10 +31,10 @@ private class DefaultedCreateEnum : EntSchema(
 
 class ValidatedEntity : EntSchema("validated_entities", clientName = "validatedEntities") {
     override fun id() = EntId.int()
-    val name by string("name").minLength(3).maxLength(100).notEmpty()
-    val age by int("age").positive()
-    val nickname by string("nickname").nullable().match(Regex("^[a-z]+$"))
-    val code by string("code").match(Regex("^[a-z]+$", RegexOption.IGNORE_CASE))
+    val name by string("name")
+    val age by int("age")
+    val nickname by string("nickname").nullable()
+    val code by string("code")
 }
 
 private fun finalizeCreateSchemas(vararg schemas: EntSchema) {
@@ -75,7 +75,7 @@ class CreateGeneratorTest {
     }
 
     @Test
-    fun `required inputs resolution and field validation are separate`() {
+    fun `required inputs remain checked but policy field rules are not generated`() {
         val schema = ValidatedEntity()
         finalizeCreateSchemas(schema)
 
@@ -98,14 +98,8 @@ class CreateGeneratorTest {
         assertTrue(!output.contains("ValidationViolation"), output)
         assertTrue(!output.contains("CreatePreparation"), output)
         assertTrue(output.contains("PreparedCreate<"), output)
-        assertTrue(fieldValidation.contains("candidate.name.length < 3"), fieldValidation)
-        assertTrue(fieldValidation.contains("candidate.name.length > 100"), fieldValidation)
-        assertTrue(fieldValidation.contains("candidate.age <= 0"), fieldValidation)
-        assertTrue(fieldValidation.contains("if (candidate.nickname != null)"), fieldValidation)
-        assertTrue(
-            fieldValidation.contains("setOf(kotlin.text.RegexOption.IGNORE_CASE)"),
-            fieldValidation,
-        )
+        assertTrue(fieldValidation.contains("= emptyList()"), fieldValidation)
+        assertTrue(!fieldValidation.contains("candidate."), fieldValidation)
         assertTrue(output.indexOf("val _entktValueName") < output.indexOf("val values:"), output)
         assertTrue(!generatedResolver.contains(Regex("return\\s*\\n")), generatedResolver)
     }
@@ -185,6 +179,5 @@ class CreateGeneratorTest {
         generator.buildCreateFieldViolationsFunction(
             schemaName = schemaName,
             schema = schema,
-            schemaNames = mapOf(schema to schemaName),
         ).toString()
 }

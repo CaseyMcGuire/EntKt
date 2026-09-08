@@ -124,16 +124,17 @@ import entkt.schema.*
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val name by string("name").minLength(1).maxLength(64)
+    val name by string("name")
     val email by string("email").unique()
-    val age by int("age").nullable().min(0).max(150)
+    val age by int("age").nullable()
     val active by bool("active").default(true)
 }
 ```
 
-This declares a `users` table with a UUID primary key, a required `name`
-with length constraints, a unique `email`, a nullable `age`, and a
-boolean `active` that defaults to `true`.
+This declares a `users` table with a UUID primary key, a required `name`,
+a unique `email`, a nullable `age`, and a boolean `active` that defaults to
+`true`. Register length and range rules in a client policy using
+[field validation helpers](07-validation.md#field-validation-rules).
 
 ## Using the Generated Code
 

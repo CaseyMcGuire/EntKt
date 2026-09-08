@@ -8,7 +8,7 @@ import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.result.ValidationViolation
 
-/** Schema-specific hook-state resolution and field constraints; no lifecycle ordering or I/O. */
+/** Schema-specific hook-state resolution and storage-shape checks; no lifecycle ordering or I/O. */
 @EntktInternal
 interface CreateMutationConverter<
     Draft : CreateMutationDraft<Entity>,
@@ -21,5 +21,6 @@ interface CreateMutationConverter<
     /** Resolve fields from [state]; [originalDraft] supplies only the explicit ID, when configured. */
     fun resolve(originalDraft: Draft, state: BeforeCreateState): PreparedCreate<Candidate>
 
+    /** Structural storage checks, such as vector dimensions; configured field rules run separately. */
     fun fieldViolations(candidate: Candidate): List<ValidationViolation>
 }

@@ -1,7 +1,7 @@
 # Operation Lifecycle
 
 EntKt has several ways to participate in an operation: read interceptors,
-hooks, field validation, entity validation, write privacy, and LOAD privacy.
+hooks, structural checks, entity validation, write privacy, and LOAD privacy.
 They solve different problems and run at different points.
 
 This guide explains which mechanism to use and the order in which each CRUD
@@ -16,8 +16,8 @@ operation applies them.
 | `beforeCreate` | Create-only normalization or enrichment | Set `createdAt` or derive an initial value |
 | `beforeUpdate` | Update-only behavior that needs the stored row or requested patch | Record an audit entry when a value changes |
 | `beforeDelete` | Trusted work immediately before an authorized delete | Prepare delete-side cleanup |
-| Field validator | Validate one field independently | Enforce length or numeric range |
-| Entity validator | Enforce an invariant involving multiple fields or a database lookup | Ensure a date range is valid |
+| Structural check | Ensure a mutation has required inputs and valid storage shape | Require a value or the correct vector dimensions |
+| Entity validator | Enforce field or cross-field invariants, optionally with database lookups | Enforce a length limit or ensure a date range is valid |
 | Write privacy | Decide whether the viewer may create, update, or delete | Require ownership or an administrator role |
 | LOAD privacy | Decide whether a materialized entity may be returned | Hide private notes from other users |
 | After hook | Observe the persisted entity after a database statement succeeds | Inspect driver-generated values |
@@ -60,15 +60,14 @@ beforeUpdate { ctx ->
 `beforeSave` runs first, so the operation-specific hook can refine or override
 its assignments.
 
-### Field Validation vs. Entity Validation
+### Structural Checks vs. Configured Validation
 
-Use a field validator when a value can be judged on its own. Use an entity
-validator when the rule depends on several fields, the stored entity, an edge,
-or a database query.
-
-Field validation runs before write privacy because it checks the shape of the
-pending request. Entity validation runs after write privacy so an unauthorized
-caller cannot use invariant failures to learn about protected data.
+Required-field and storage-shape checks run before write privacy so the
+framework can construct a usable candidate. Length, range, regex, and other
+domain rules are registered in client policies. Field helpers such as
+`minLength(UserWriteCandidate::name, 2)` return ordinary entity validation rules;
+they run after write privacy, alongside cross-field and database-backed rules.
+See [Field Validation Rules](07-validation.md#field-validation-rules).
 
 ## General Guarantees
 
@@ -139,7 +138,7 @@ and interceptors, and [Privacy](06-privacy.md) for LOAD-denial handling.
 ```mermaid
 flowchart TD
     beforeSave["beforeSave"] --> beforeCreate["beforeCreate"]
-    beforeCreate --> fields["Defaults and field validation"]
+    beforeCreate --> fields["Defaults and structural checks"]
     fields --> privacy["CREATE privacy"]
     privacy --> validation["CREATE entity validation"]
     validation --> insert["Insert"]
@@ -150,10 +149,10 @@ flowchart TD
 
 Important behavior:
 
-- Before hooks run before defaults and field validation. A hook can populate or
+- Before hooks run before defaults and structural checks. A hook can populate or
   repair a value before it is checked.
-- CREATE privacy sees the resolved candidate after hooks, defaults, and field
-  checks.
+- CREATE privacy sees the resolved candidate after hooks, defaults, and structural
+  checks. Configured field rules run only after privacy allows it.
 - A privacy denial stops entity validation, insertion, and later hooks.
 - `save()` runs the write lifecycle through `afterCreate` but does not disclose
   the entity, so it skips returned LOAD privacy.
@@ -168,7 +167,7 @@ Important behavior:
 flowchart TD
     current["Load the current entity"] --> beforeSave["beforeSave"]
     beforeSave --> beforeUpdate["beforeUpdate"]
-    beforeUpdate --> fields["Defaults and field validation"]
+    beforeUpdate --> fields["Defaults and structural checks"]
     fields --> privacy["UPDATE privacy"]
     privacy --> validation["UPDATE entity validation"]
     validation --> update["Persist changes"]
@@ -233,7 +232,7 @@ signature:
 flowchart TD
     blocks["Apply all create blocks"] --> beforeSave["beforeSave — all inputs"]
     beforeSave --> beforeCreate["beforeCreate — all inputs"]
-    beforeCreate --> fields["Defaults and field validation — all inputs"]
+    beforeCreate --> fields["Defaults and structural checks — all inputs"]
     fields --> privacy["CREATE privacy — all candidates"]
     privacy --> validation["CREATE entity validation — all candidates"]
     validation --> insert["DatabaseDriver.insertMany — prepared batch"]

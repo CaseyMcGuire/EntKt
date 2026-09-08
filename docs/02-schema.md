@@ -9,7 +9,7 @@ property declarations.
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val name by string("name").minLength(1).maxLength(64)
+    val name by string("name")
     val email by string("email").unique()
 
     val posts by hasMany<Post>("posts")
@@ -115,10 +115,10 @@ Fields are declared as property declarations on the schema class:
 class Ticket : EntSchema("tickets", clientName = "tickets") {
     override fun id() = EntId.int()
 
-    val title by string("title").minLength(1).maxLength(200)
+    val title by string("title")
     val body by text("body")
     val active by bool("active").default(true)
-    val count by int("count").positive()
+    val count by int("count")
     val bigNumber by long("big_number")
     val score by float("score")
     val preciseScore by double("precise_score")
@@ -166,32 +166,22 @@ These are available on all field types:
 | `.updateDefaultNow()` | Set to `Instant.now()` on every update (TIME fields only) |
 | `.comment(text)` | Documentation comment |
 
-### Validators
+### Validation Belongs in Client Policies
 
-String fields:
-
-```kotlin
-string("name").minLength(1).maxLength(100).notEmpty()
-string("slug").match(Regex("^[a-z0-9-]+$"))
-```
-
-Numeric fields (`int`, `long`, `float`, `double`):
+Schemas describe storage and generated types. Length, regex, and numeric
+range checks are ordinary runtime validation rules registered through the
+client's `EntityPolicy`, not field-builder modifiers:
 
 ```kotlin
-int("age").min(0).max(150)
-int("quantity").positive()
-int("balance").nonNegative()
-double("temperature").negative()
+// Inside a User policy's validation block:
+create(minLength(UserWriteCandidate::name, 2))
+updateDerivesFromCreate()
 ```
 
-The generated create and update save terminals enforce these validators.
-A failure is `MutationResult.Failed(EntValidationException)` whose
-`violations` carry structured, field-named `ValidationViolation` entries;
-`.getOrThrow()` throws that stored exception.
-These validators are not database constraints: for example,
-`maxLength(255)` still creates a `text` column rather than `varchar(255)` or
-a `CHECK` constraint. Writes made outside entkt must enforce the same
-invariants separately.
+See [Field Validation Rules](07-validation.md#field-validation-rules) for
+helpers and registration. These rules do not change column types or emit
+database constraints, and apply only to clients that register the policy.
+Required-field and storage-shape checks remain automatic.
 
 ### Enums
 

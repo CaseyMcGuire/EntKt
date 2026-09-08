@@ -4,6 +4,8 @@ import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
+import entkt.runtime.validation.maxLength
+import entkt.runtime.validation.minLength
 import example.ent.ReadOnlyEntClient
 import example.ent.PostWriteCandidate
 import example.ent.PostCreatePrivacyRule
@@ -22,6 +24,13 @@ object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
             create(RequireAuthToCreate())
             update(AllowAuthorUpdate())
             delete(AllowAuthorDelete())
+        }
+        validation {
+            create(
+                minLength(PostWriteCandidate::title, 1),
+                maxLength(PostWriteCandidate::title, 200),
+            )
+            updateDerivesFromCreate()
         }
     }
 }

@@ -1,6 +1,6 @@
 # Entity Validation
 
-Entity validation rules enforce data model invariants that go beyond
+Entity validation rules enforce data model invariants, including simple
 per-field constraints. They run after privacy checks (so unauthorized
 users never see validation errors) and before the database write.
 
@@ -46,6 +46,81 @@ class CannotDeletePublishedPost : PostDeleteValidationRule {
         }
 }
 ```
+
+## Field Validation Rules
+
+Use runtime property-reference helpers for simple field invariants. They return
+ordinary `ValidationRule`s and register through the existing client policy DSL;
+there are no schema validators or extra generated validation scopes.
+
+```kotlin
+import entkt.runtime.validation.minLength
+import entkt.runtime.validation.maxLength
+import entkt.runtime.validation.matches
+import entkt.runtime.validation.min
+import entkt.runtime.validation.max
+
+object UserPolicy : EntityPolicy<User, UserPolicyScope> {
+    override fun configure(scope: UserPolicyScope) = scope.run {
+        // Configure privacy here as appropriate for your application.
+        validation {
+            create(
+                minLength(UserWriteCandidate::name, 2),
+                maxLength(UserWriteCandidate::name, 64),
+                matches(UserWriteCandidate::email, Regex(".+@.+")),
+                min(UserWriteCandidate::age, 0),
+                max(UserWriteCandidate::age, 150),
+            )
+            updateDerivesFromCreate()
+        }
+    }
+}
+
+val client = EntClient(driver) {
+    policies { users(UserPolicy) }
+}
+```
+
+All helpers live in `entkt.runtime.validation`:
+
+| Helper | Non-null value must satisfy |
+|---|---|
+| `minLength(property, min)` | Kotlin `String.length >= min` |
+| `maxLength(property, max)` | Kotlin `String.length <= max` |
+| `notEmpty(property)` | String is not empty; whitespace is allowed |
+| `matches(property, regex)` | The entire string matches, with the supplied regex options |
+| `min(property, min)` / `max(property, max)` | Inclusive numeric bound |
+| `positive(property)` / `negative(property)` / `nonNegative(property)` | Numeric value is `> 0`, `< 0`, or `>= 0` |
+
+The property reference provides the value type and Kotlin property name for
+`ValidationViolation.field`; no string field name or cast is needed. String
+rules reject numeric properties at compile time. Numeric bounds must have
+the property's numeric type (for example, `min(Candidate::count, 1L)` for a
+`Long`); integral comparisons do not convert values to `Double`. Lengths count
+UTF-16 code units, just like Kotlin `String.length`, not Unicode code points.
+Negative length bounds and non-finite numeric bounds fail at registration.
+Floating-point `NaN` values fail numeric checks.
+
+Null values pass these helpers. Nullability and missing required assignments
+remain the responsibility of the generated structural checks. A non-null empty
+string is still checked. The helpers do not trim, normalize, mutate candidates,
+or query the database.
+
+Rules run on final values after hooks and defaults, **after write privacy**.
+They use the existing scalar/batch evaluation and violation aggregation. With
+`updateDerivesFromCreate()`, every create rule also checks the full update
+candidate, including unchanged fields and assignment-free updates. Use explicit
+update rules with `requestedPatch` or `effectivePatch` for changed-field-only
+validation. Derivation applies to all create rules; reserve it for candidate
+invariants, not create-specific database lookups.
+
+These checks are client configuration, not storage constraints. Clients that
+do not register the policy do not enforce them; derived transaction clients
+inherit the policy. They neither change column types nor emit `CHECK`
+constraints. Use database constraints for invariants that must hold across
+every writer. `throughLink` relationship helpers bypass the junction's policy;
+use `throughEntity` and mutate the junction through its repository when its
+writes require validation.
 
 ## Concepts
 
@@ -395,7 +470,7 @@ all checks.
 
 ```
 1. beforeSave and beforeCreate hooks
-2. defaults and field validation
+2. required inputs, defaults, and storage-shape checks
 3. CREATE privacy
 4. CREATE entity validation
 5. persistence
@@ -408,7 +483,7 @@ all checks.
 ```
 1. current-entity load (absent target → Failed(EntTargetAbsentException))
 2. beforeSave and beforeUpdate hooks
-3. required-field checks, update defaults, and field validation
+3. required-field checks, update defaults, and storage-shape checks
 4. UPDATE privacy
 5. UPDATE entity validation
 6. persistence
@@ -432,11 +507,10 @@ save completes as `Success`.
 5. afterDelete hooks
 ```
 
-Field validation runs before privacy because it validates local request
-shape and generated schema constraints (minLength, maxLength, etc.) — these
-do not read stored data. Entity validation runs after privacy to
-prevent domain and data-existence leaks through validation errors
-(e.g. "slug already exists" or "recipient not found").
+Only structural checks, such as missing required assignments and invalid
+vector dimensions, run before privacy. All configured validation rules,
+including field helpers, run after privacy to prevent domain and data-existence
+leaks through validation errors (e.g. "slug already exists" or "recipient not found").
 
 ## Validators That Query
 
@@ -590,9 +664,9 @@ query helpers, but cannot create, update, or delete entities.
 
 | Concept | Purpose | Runs | Bypassed by System? |
 |---------|---------|------|---------------------|
-| Field validation | Per-field constraints (minLength, max, etc.) | Before privacy | No |
+| Structural checks | Required inputs and storage shape | Before privacy | No |
 | Privacy | Authorization — who can perform the operation | Before validation | Yes |
-| Entity validation | Cross-field / cross-entity invariants | After privacy | No |
+| Entity validation (including field helpers) | Field, cross-field, and cross-entity invariants | After privacy | No |
 | Hooks | Side effects (timestamps, logging, notifications) | Before validation + privacy (mutate), after write (react) | No |
 
 ## Examples

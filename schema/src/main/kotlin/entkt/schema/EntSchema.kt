@@ -19,7 +19,7 @@ import kotlin.reflect.typeOf
  * ```kotlin
  * class User : EntSchema("users", clientName = "users") {
  *     override fun id() = EntId.long()
- *     val name by string("name").minLength(1).maxLength(64)
+ *     val name by string("name")
  *     val posts by hasMany<Post>("posts")
  * }
  * ```

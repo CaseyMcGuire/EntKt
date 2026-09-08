@@ -15,9 +15,9 @@ For guides, see the [documentation](docs/index.md).
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val name by string("name").minLength(1).maxLength(64)
+    val name by string("name")
     val email by string("email").unique()
-    val age by int("age").nullable().min(0).max(150)
+    val age by int("age").nullable()
     val active by bool("active").default(true)
 
     val posts by hasMany<Post>("posts")
@@ -70,6 +70,10 @@ client.withTransaction { tx ->
     tx.posts.create { title = "Hello"; authorId = bob.id }.save(viewerContext).orRollback()
 }.getOrThrow()
 ```
+
+Field invariants belong in client-registered validation policies, not schema
+declarations. Runtime helpers such as `minLength(UserWriteCandidate::name, 2)`
+register through the existing validation DSL; see [Field Validation Rules](docs/07-validation.md#field-validation-rules).
 
 See [`:example-spring`](example-spring/README.md) for a runnable Spring
 Boot REST API example backed by Postgres.

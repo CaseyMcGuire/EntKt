@@ -27,9 +27,9 @@ class Car : EntSchema("cars", clientName = "cars") {
 
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.int()
-    val name by string("name").minLength(1).maxLength(100)
-    val age by int("age").nullable().positive()
-    val email by string("email").unique().notEmpty().match(Regex(".+@.+\\..+"))
+    val name by string("name")
+    val age by int("age").nullable()
+    val email by string("email").unique()
     val role by enum<Role>("role").default(Role.USER)
     val active by bool("active").default(true)
     val createdAt by time("created_at").immutable()
@@ -254,41 +254,6 @@ class SchemaTest {
     @Test
     fun `schema with no edges returns empty list`() {
         assertEquals(emptyList(), car.edges())
-    }
-
-    @Test
-    fun `validators are attached to fields`() {
-        val fields = user.fields()
-
-        val name = fields[0]
-        assertEquals(2, name.validators.size)
-        assertEquals("minLength(1)", name.validators[0].name)
-        assertEquals("maxLength(100)", name.validators[1].name)
-
-        val age = fields[1]
-        assertEquals(1, age.validators.size)
-        assertEquals("positive", age.validators[0].name)
-
-        val email = fields[2]
-        assertEquals(2, email.validators.size)
-        assertEquals("notEmpty", email.validators[0].name)
-        assertEquals("match(.+@.+\\..+)", email.validators[1].name)
-    }
-
-    @Test
-    fun `validators check values correctly`() {
-        val minLength = Validators.minLength(3)
-        assertTrue(minLength.check("abc"))
-        assertFalse(minLength.check("ab"))
-
-        val positive = Validators.positive()
-        assertTrue(positive.check(5))
-        assertFalse(positive.check(-1))
-        assertFalse(positive.check(0))
-
-        val match = Validators.match(Regex(".+@.+\\..+"))
-        assertTrue(match.check("user@example.com"))
-        assertFalse(match.check("not-an-email"))
     }
 
     @Test
@@ -778,16 +743,4 @@ class SchemaTest {
         }
     }
 
-    @Test
-    fun `non-finite numeric validator bounds are rejected`() {
-        val nan = assertFailsWith<IllegalStateException> { Validators.min(Double.NaN) }
-        assertContains(nan.message!!, "finite")
-        assertFailsWith<IllegalStateException> { Validators.max(Double.POSITIVE_INFINITY) }
-        assertFailsWith<IllegalStateException> { Validators.min(Float.NEGATIVE_INFINITY) }
-        assertFailsWith<IllegalStateException> { Validators.max(Float.NaN) }
-
-        // Finite bounds are unaffected, including non-floating types.
-        assertEquals("min(1.5)", Validators.min(1.5).name)
-        assertEquals("max(10)", Validators.max(10).name)
-    }
 }

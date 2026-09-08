@@ -47,7 +47,8 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 - [Audit Fields](schema/audit-fields.md)
 - [Custom Scalar Converters](schema/custom-scalar-converters.md)
 - [Enum Value CHECK Constraints](schema/enum-value-check-constraints.md)
-- [Validator-Derived CHECK Constraints](schema/validator-check-constraints.md)
+- [Validator-Derived CHECK Constraints](schema/validator-check-constraints.md) — superseded;
+  future CHECK support should be an explicit schema feature, independent of client validation
 
 ## Codegen And Tooling
 
