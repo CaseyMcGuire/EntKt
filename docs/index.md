@@ -29,3 +29,7 @@ that talk to a pluggable `DatabaseDriver`.
 The numbered guides above are the API documentation. The feature indexes are
 design records for contributors and may discuss code generation, runtime
 plumbing, SQL lowering, and other implementation details.
+
+## Maintainer Guides
+
+- [Publishing](publishing.md) -- local artifact preparation, credentials, and manual Maven Central releases

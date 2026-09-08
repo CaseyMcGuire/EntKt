@@ -12,11 +12,16 @@ into your build.
 
 ## Setup
 
+The examples target `0.1.0-alpha.1`. Until its public release, run
+`./gradlew publishToMavenLocal` from the EntKt checkout first. After release,
+consumers can remove `mavenLocal()` and resolve EntKt from Maven Central.
+
 ```kotlin
 // settings.gradle.kts
 pluginManagement {
     repositories {
         mavenLocal()
+        mavenCentral() // EntKt plugin markers are published here.
         gradlePluginPortal()
     }
 }
@@ -25,8 +30,8 @@ pluginManagement {
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("io.entkt") version "0.1.0-SNAPSHOT"
-    id("io.entkt.flyway") version "0.1.0-SNAPSHOT" // optional
+    id("io.entkt") version "0.1.0-alpha.1"
+    id("io.entkt.flyway") version "0.1.0-alpha.1" // optional
 }
 
 repositories {
@@ -46,14 +51,14 @@ dependencies {
     schemas(project(":schema"))  // your schema module
 
     // Codegen + migration tooling (runs in a separate JVM)
-    entktCodegen("io.entkt:codegen:0.1.0-SNAPSHOT")
-    entktCodegen("io.entkt:postgres:0.1.0-SNAPSHOT")
-    entktCodegen("io.entkt:flyway:0.1.0-SNAPSHOT") // only if using io.entkt.flyway
+    entktCodegen("io.entkt:codegen:0.1.0-alpha.1")
+    entktCodegen("io.entkt:postgres:0.1.0-alpha.1")
+    entktCodegen("io.entkt:flyway:0.1.0-alpha.1") // only if using io.entkt.flyway
 
     // Runtime dependencies for your application
-    implementation("io.entkt:runtime:0.1.0-SNAPSHOT")
-    implementation("io.entkt:postgres:0.1.0-SNAPSHOT")
-    implementation("io.entkt:migrations:0.1.0-SNAPSHOT")
+    implementation("io.entkt:runtime:0.1.0-alpha.1")
+    implementation("io.entkt:postgres:0.1.0-alpha.1")
+    implementation("io.entkt:migrations:0.1.0-alpha.1")
 }
 ```
 

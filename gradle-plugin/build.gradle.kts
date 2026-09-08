@@ -1,11 +1,9 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     `java-gradle-plugin`
-    `maven-publish`
+    alias(libs.plugins.maven.publish)
+    alias(libs.plugins.dokka)
 }
-
-group = "io.entkt"
-version = "0.1.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
@@ -37,25 +35,15 @@ gradlePlugin {
     plugins {
         create("entkt") {
             id = "io.entkt"
+            displayName = "EntKt"
+            description = "Generate typed Kotlin entities and repositories from EntKt schemas"
             implementationClass = "entkt.gradle.EntktPlugin"
         }
         create("entkt-flyway") {
             id = "io.entkt.flyway"
+            displayName = "EntKt Flyway"
+            description = "Generate and validate Flyway migrations from EntKt schemas"
             implementationClass = "entkt.gradle.EntktFlywayPlugin"
-        }
-    }
-}
-
-publishing {
-    publications.withType<MavenPublication>().configureEach {
-        pom {
-            licenses {
-                license {
-                    name.set("Apache License, Version 2.0")
-                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
-                    distribution.set("repo")
-                }
-            }
         }
     }
 }

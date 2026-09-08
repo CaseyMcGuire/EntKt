@@ -1,27 +1,8 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     `java-library`
-    `maven-publish`
-}
-
-group = "io.entkt"
-version = "0.1.0-SNAPSHOT"
-
-publishing {
-    publications {
-        create<MavenPublication>("maven") {
-            from(components["java"])
-            pom {
-                licenses {
-                    license {
-                        name.set("Apache License, Version 2.0")
-                        url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
-                        distribution.set("repo")
-                    }
-                }
-            }
-        }
-    }
+    alias(libs.plugins.maven.publish)
+    alias(libs.plugins.dokka)
 }
 
 repositories {

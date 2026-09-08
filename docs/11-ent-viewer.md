@@ -18,9 +18,9 @@ entkt {
 }
 
 dependencies {
-    implementation("io.entkt:ent-viewer-core:0.1.0-SNAPSHOT")
+    implementation("io.entkt:ent-viewer-core:0.1.0-alpha.1")
     // Spring Boot apps: auto-mounts the EntViewer bean you declare.
-    implementation("io.entkt:ent-viewer-spring:0.1.0-SNAPSHOT")
+    implementation("io.entkt:ent-viewer-spring:0.1.0-alpha.1")
 }
 ```
 
