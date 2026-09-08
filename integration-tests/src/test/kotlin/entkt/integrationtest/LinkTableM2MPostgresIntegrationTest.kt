@@ -6,6 +6,7 @@ import entkt.integrationtest.ent.PostPolicyScope
 import entkt.integrationtest.ent.PostUpdatePrivacyRule
 import entkt.integrationtest.ent.PostUpdateValidationRule
 import entkt.postgres.PostgresDriver
+import entkt.runtime.mutation.EdgeChanges
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
@@ -106,9 +107,12 @@ class LinkTableM2MPostgresIntegrationTest {
 
     private fun assertSetsAreReadOnly(vararg sets: Set<Long>?) {
         sets.filterNotNull().forEach { set ->
-            @Suppress("UNCHECKED_CAST")
-            assertFailsWith<UnsupportedOperationException> {
-                (set as MutableSet<Long>).clear()
+            // Kotlin's immutable empty set rejects the MutableSet cast itself.
+            // Java-backed read-only sets allow the cast but reject modification.
+            if (set is MutableSet<Long>) {
+                assertFailsWith<UnsupportedOperationException> {
+                    set.add(Long.MIN_VALUE)
+                }
             }
         }
     }
@@ -294,7 +298,7 @@ class LinkTableM2MPostgresIntegrationTest {
     }
 
     @Test
-    fun `hook and rule edge snapshots cannot mutate later contexts or junction writes`() {
+    fun `hook edge snapshots stay read-only while rules share prepared relationship changes`() {
         val viewerContext = ViewerContext(Viewer.User(1L))
         val seedClient = freshClient()
         val post = seedClient.posts.create { title = "Hello" }.saveAndLoad(testViewerContext).getOrThrow()
@@ -308,22 +312,23 @@ class LinkTableM2MPostgresIntegrationTest {
         val hookSnapshots = mutableListOf<Set<Long>>()
         val privacySnapshots = mutableListOf<Pair<Set<Long>, Set<Long>>>()
         val validationSnapshots = mutableListOf<Pair<Set<Long>, Set<Long>>>()
+        var sharedRuleChanges: EdgeChanges<Long>? = null
         val policy = object : EntityPolicy<Post, PostPolicyScope> {
             override fun configure(scope: PostPolicyScope) = scope.run {
                 privacy {
                     update(
                         PostUpdatePrivacyRule { _, item ->
                             val changes = item.edgeChanges.tags
+                            sharedRuleChanges = changes
                             assertSetsAreReadOnly(
                                 changes.requestedSet,
                                 changes.requestedAdds,
                                 changes.requestedRemoves,
-                                changes.added,
-                                changes.removed,
                             )
                             PrivacyDecision.Continue
                         },
                         PostUpdatePrivacyRule { _, item ->
+                            assertSame(sharedRuleChanges, item.edgeChanges.tags)
                             privacySnapshots += item.edgeChanges.tags.run {
                                 added.toSet() to removed.toSet()
                             }
@@ -335,16 +340,17 @@ class LinkTableM2MPostgresIntegrationTest {
                     update(
                         PostUpdateValidationRule { _, item ->
                             val changes = item.edgeChanges.tags
+                            // Prepared rule values are shared, not defensively copied per rule.
+                            assertSame(sharedRuleChanges, changes)
                             assertSetsAreReadOnly(
                                 changes.requestedSet,
                                 changes.requestedAdds,
                                 changes.requestedRemoves,
-                                changes.added,
-                                changes.removed,
                             )
                             ValidationDecision.Valid
                         },
                         PostUpdateValidationRule { _, item ->
+                            assertSame(sharedRuleChanges, item.edgeChanges.tags)
                             validationSnapshots += item.edgeChanges.tags.run {
                                 added.toSet() to removed.toSet()
                             }

@@ -187,32 +187,35 @@ class EntktPluginTest {
             assertTrue(repoContent.contains("import entkt.runtime.driver.DatabaseDriver"), "Should import DatabaseDriver")
             assertTrue(repoContent.contains("driver: DatabaseDriver"), "Should take DatabaseDriver in constructor")
             assertTrue(
-                repoContent.contains("fun create(block: PetCreateDraft.() -> Unit):") &&
-                    repoContent.contains("PendingCreateMutation<PetCreateDraft, Pet>"),
-                "Repo should expose create(block)",
-            )
-            // transaction locking: `update(...)` accepts an optional UpdateConsistency
-            // per-save argument that defaults to the client's configured
-            // default. The signature wraps across multiple lines under
-            // KotlinPoet, so check the constituents rather than the full
-            // signature string.
-            assertTrue(repoContent.contains("fun update("), "Repo should expose update(...)")
-            assertTrue(repoContent.contains("id: Int"), "update should take id")
-            assertTrue(
-                repoContent.contains("consistency: UpdateConsistency = client.defaultUpdateConsistency"),
-                "update should take a per-save UpdateConsistency override defaulting to the client's default",
+                repoFlat.contains(
+                    "GeneratedIdRepository<Pet, Int, PetCreateDraft, PetUpdateDraft, PetQuery, ReadOnlyEntClient>",
+                ),
+                "Repo should inherit its typed CRUD API from GeneratedIdRepository",
             )
             assertTrue(
-                repoFlat.contains("block: PetUpdateDraft.() -> Unit"),
-                "update should take a draft block",
+                repoFlat.contains("defaultUpdateConsistency = client.defaultUpdateConsistency"),
+                "Repo should pass the client's update consistency default to the runtime base",
             )
             assertTrue(
-                repoFlat.contains("): PendingUpdateMutation<PetUpdateDraft, Pet>"),
-                "update should return PendingUpdateMutation<PetUpdateDraft, Pet>",
+                repoFlat.contains("defaultRelationshipLocking = client.defaultRelationshipLocking"),
+                "Repo should pass the client's relationship locking default to the runtime base",
             )
             assertTrue(
-                repoContent.contains("fun query(block: PetQuery.() -> Unit = {}): PetQuery"),
-                "Repo should expose query(block)",
+                repoFlat.contains("override fun newCreateDraft(): PetCreateDraft = PetCreateDraft()"),
+                "Repo should supply its schema-specific create draft",
+            )
+            assertTrue(
+                repoFlat.contains("override fun newUpdateDraft(): PetUpdateDraft = PetUpdateDraft()"),
+                "Repo should supply its schema-specific update draft",
+            )
+            assertTrue(
+                repoFlat.contains("override fun newQuery(): PetQuery = PetQuery(driver, client)"),
+                "Repo should supply its schema-specific query",
+            )
+            assertTrue(
+                !repoContent.contains("fun create(") && !repoContent.contains("fun update(") &&
+                    !repoContent.contains("fun query("),
+                "Repo should not duplicate runtime-owned entry points",
             )
 
             // EntClient wires repos together — this is the DI entry point
