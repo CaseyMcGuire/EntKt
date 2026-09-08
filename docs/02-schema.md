@@ -803,6 +803,11 @@ class Pet : EntSchema("pets", clientName = "pets") {
 }
 ```
 
+Both `json<T>(...)` and `json(..., T::class)` return `JsonFieldBuilder<T>`.
+The schema field handle retains `T` through modifiers and delegation, including
+nested generic types. Code generation separately retains the full `KType` for
+serialization; the builder itself does not require a serializer.
+
 **JSON mapper.** kotlinx.serialization is the default and the zero-config
 path: apply the Kotlin serialization compiler plugin
 (`org.jetbrains.kotlin.plugin.serialization`), have

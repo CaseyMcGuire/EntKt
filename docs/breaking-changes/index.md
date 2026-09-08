@@ -30,6 +30,14 @@ above it.
 
 ## Unreleased
 
+- **Preserve the JSON type in field builders** (`schema`)
+  Both JSON declaration overloads now return `JsonFieldBuilder<T>` and retain
+  the declared type on `FieldHandle<T>`, including nested generic types.
+  _Migration:_ add the value type to explicit builder annotations, such as
+  `JsonFieldBuilder<Metadata>`, or use `JsonFieldBuilder<*>` for inspection.
+  Inferred declarations, generated value types, serialization, and database
+  storage are unchanged.
+
 - **Use `string()` and `instant()` for text and timestamp fields** (`schema`, `runtime`)
   The redundant `text()` builder and `FieldType.TEXT` are removed. `time()`,
   `TimeFieldBuilder`, and `FieldType.TIME` are renamed to `instant()`,

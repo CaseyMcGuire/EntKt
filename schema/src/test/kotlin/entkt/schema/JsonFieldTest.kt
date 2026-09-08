@@ -14,10 +14,10 @@ private data class Meta(val nickname: String?, val tags: List<String>)
 private class JsonSchema : EntSchema("docs", clientName = "jsonSchemas") {
     override fun id() = EntId.long()
     val title by string("title")
-    val metadata by json("metadata", Meta::class).nullable()
-    val required by json<Meta>("required")
-    val items by json<List<Meta>>("items")
-    val labels by json<Map<String, Meta?>>("labels").nullable()
+    val metadata: JsonFieldBuilder<Meta> by json("metadata", Meta::class).nullable()
+    val required: JsonFieldBuilder<Meta> by json<Meta>("required")
+    val items: JsonFieldBuilder<List<Meta>> by json<List<Meta>>("items")
+    val labels: JsonFieldBuilder<Map<String, Meta?>> by json<Map<String, Meta?>>("labels").nullable()
 }
 
 class JsonFieldTest {

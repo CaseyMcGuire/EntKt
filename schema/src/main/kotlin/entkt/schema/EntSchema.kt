@@ -211,7 +211,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
      * Registering a JSON field with a driver that does not support typed JSON
      * fails at `register()`.
      */
-    protected fun <T : Any> json(name: String, klass: KClass<T>): JsonFieldBuilder {
+    protected fun <T : Any> json(name: String, klass: KClass<T>): JsonFieldBuilder<T> {
         require(klass.typeParameters.isEmpty()) {
             "json(\"$name\", ${klass.simpleName}::class): ${klass.simpleName} has type parameters, " +
                 "which a KClass cannot carry — declare the full type with the reified overload, " +
@@ -234,12 +234,12 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
      * any opt-ins required by kotlinx array serializer factories in generated
      * source, so applications do not need to enable them globally.
      */
-    protected inline fun <reified T : Any> json(name: String): JsonFieldBuilder =
+    protected inline fun <reified T : Any> json(name: String): JsonFieldBuilder<T> =
         registerJson(name, typeOf<T>())
 
     @PublishedApi
-    internal fun registerJson(name: String, type: KType): JsonFieldBuilder =
-        JsonFieldBuilder(name).also {
+    internal fun <T : Any> registerJson(name: String, type: KType): JsonFieldBuilder<T> =
+        JsonFieldBuilder<T>(name).also {
             validateName(name, "Field")
             checkNotFinalized()
             validateJsonType(name, type)

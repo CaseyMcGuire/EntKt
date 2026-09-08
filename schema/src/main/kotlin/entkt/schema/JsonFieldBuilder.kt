@@ -11,9 +11,9 @@ package entkt.schema
  * `List<HighlightRect>`; `@Serializable` under the default kotlinx JSON
  * mapper) is attached at registration via `setJsonType(...)`
  * (see `EntSchema.registerJson`), mirroring how `enum` attaches its
- * `enumClass`. The value type parameter is `Any?` (the schema module never
- * references the user's class or its serializer); the generated entity
- * property is the supplied type, resolved by codegen from `Field.jsonType`.
+ * `enumClass`. [T] preserves that type on the schema field handle without
+ * requiring a serializer; codegen still uses `Field.jsonType` to resolve
+ * the generated property type and serialization metadata.
  */
-class JsonFieldBuilder internal constructor(name: String) :
-    FieldBuilder<JsonFieldBuilder, Any?>(name, FieldType.JSON)
+class JsonFieldBuilder<T : Any> internal constructor(name: String) :
+    FieldBuilder<JsonFieldBuilder<T>, T>(name, FieldType.JSON)
