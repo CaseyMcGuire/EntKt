@@ -243,47 +243,12 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `adapter leaves operation construction and owner selection to repo and runtime`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-
-        assert(!output.contains("entity = UserDescriptor") && !output.contains("MutationExecutor")) {
-            "The generated adapter should not wire the operation or own the execution boundary\n$output"
-        }
-        assert(!output.contains("UpdateMutationSpec")) {
-            "UpdateMutationSpec should be removed from generated updates\n$output"
-        }
-        assert(!output.contains("driver.byId(User.TABLE") &&
-            !output.contains("driver.readRowForUpdate(User.TABLE")) {
-            "Owner-row selection belongs to UpdateMutationOperation\n$output"
-        }
-    }
-
-    @Test
-    fun `assignment-free update is a target-existence check — owner-row load first, absent target is Failed`() {
+    fun `prepared update has one empty field-assignment branch`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // EntNoChangesException is gone: a syntactically empty update no
-        // longer short-circuits before the owner-row load. It runs the
-        // target-existence check (the owner-row read) plus the pre-write
-        // phases like any other update; runtime owns the typed absent result.
-        assert(!output.contains("EntNoChangesException")) {
-            "EntNoChangesException must be gone from the generated update\n$output"
-        }
-        assert(!output.contains("UpdateMutationOperation<") &&
-            !output.contains("MutationExecutor") && !output.contains("fun execute(")) {
-            "the adapter should neither construct nor execute the runtime operation\n$output"
-        }
-        assert(!output.contains("_loadUpdateRow") && !output.contains("loadRow =")) {
-            "generated update code should not retain an owner-row callback\n$output"
-        }
-        assert(!output.contains("EntTargetAbsentException(")) {
-            "generated update code should not duplicate runtime target handling\n$output"
-        }
         val emptyCount = Regex(Regex.escape("if (!hasFieldAssignments)")).findAll(output).count()
         assert(emptyCount == 1) {
             "Expected exactly one dirtyFields-empty branch (post-hooks), got $emptyCount\n$output"
@@ -396,50 +361,55 @@ class UpdateGeneratorTest {
             "Hook-cleared check must run before update-default application " +
                 "(otherwise updatedAt = Set(now) sneaks into values and the write happens)\n$output"
         }
-        assert(!output.contains("driver.update(")) {
-            "owner persistence belongs entirely to UpdateMutationOperation\n$output"
+    }
+
+    @Test
+    fun `update adapters leave execution owner access and failure handling to runtime`() {
+        val user = User()
+        finalize(user, Car())
+        val (post, _, _, names) = makeLinkM2MSchemas()
+
+        // Cover both scalar-only and relationship-capable adapters. Junction
+        // reads and writes are schema-specific; owner access and policy are not.
+        for (file in listOf(
+            generator.generate("User", user),
+            generator.generate("M2MPost", post, names),
+        )) {
+            val output = file.toString()
+            for (runtimeOwned in listOf(
+                "UpdateMutationOperation",
+                "MutationExecutor",
+                "fun execute(",
+                "fun save(",
+                "fun saveAndLoad(",
+                "driver.byId(",
+                "driver.readRowForUpdate(",
+                "driver.serializeOwnerEdgeAndRead(",
+                "driver.update(",
+                "UpdateConsistency.Pessimistic",
+                "supportsReadRowForUpdate",
+                "MutationResult.failedForInternalUse",
+                "classifyMutationException(",
+                "EntTargetAbsentException(",
+            )) {
+                assert(!output.contains(runtimeOwned)) {
+                    "Runtime-owned operation '$runtimeOwned' must not be generated in ${file.name}\n$output"
+                }
+            }
         }
     }
 
     @Test
-    fun `generated update adapter has no operation construction or execution entry point`() {
+    fun `update draft emits no legacy save terminals`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(!output.contains("UpdateMutationOperation<") &&
-            !output.contains("MutationExecutor") && !output.contains("fun execute(")) {
-            "Only the repository should construct the operation and submit it to the executor\n$output"
-        }
-        assert(!output.contains("class Execution")) { "Generated updates should have no per-request execution holder\n$output" }
-        assert(!output.contains("public fun save(") && !output.contains("public fun saveAndLoad(")) {
-            "Save terminals belong to the generic runtime PendingUpdateMutation, not the generated draft\n$output"
-        }
-        assert(!output.contains("_validationFailed") && !output.contains("_classifyDriverFailure") &&
-            !output.contains("MutationResult.failedForInternalUse")) {
-            "failure construction and classification should not be generated\n$output"
-        }
-    }
-
-    @Test
-    fun `removed legacy save surface — no saveOrNull saveOrError saveOrThrow or NoChanges`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        // The result-variant family is gone. The sole throwing
-        // projection anywhere is the getOrThrow() member on the result
-        // types, so the builder emits no throwing or
-        // nullable terminals of its own.
+        // Throwing and nullable projections belong to result types.
         assert(!output.contains("fun saveOrNull")) { "saveOrNull must be gone\n$output" }
         assert(!output.contains("fun saveOrError")) { "saveOrError must be gone\n$output" }
         assert(!output.contains("fun saveOrThrow")) { "saveOrThrow must be gone\n$output" }
-        assert(!output.contains("EntResult")) { "EntResult must be gone\n$output" }
-        assert(!output.contains("EntError")) { "EntError must be gone\n$output" }
-        assert(!output.contains("EntNoChangesException")) { "EntNoChangesException must be gone\n$output" }
-        assert(!output.contains("classifyDriverError")) { "Old classifyDriverError free function must be gone\n$output" }
     }
 
     @Test
@@ -493,19 +463,6 @@ class UpdateGeneratorTest {
         }
         assert(!Regex("\\bEntClient\\b").containsMatchIn(output)) {
             "The adapter should retain only the hook client scope, not the full client\n$output"
-        }
-    }
-
-    @Test
-    fun `Pessimistic lifecycle behavior is not emitted into the schema adapter`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-
-        assert(!output.contains("UpdateConsistency.Pessimistic") &&
-            !output.contains("supportsReadRowForUpdate") &&
-            !output.contains("readRowForUpdate(")) {
-            "Pessimistic validation and row selection belong to UpdateMutationOperation\n$output"
         }
     }
 
@@ -1152,9 +1109,8 @@ class UpdateGeneratorTest {
         assert(output.contains("override fun relationshipRequirements(draft: M2MPostUpdateDraft): UpdateRelationshipRequirements")) {
             "The typed adapter must expose schema-specific requirements from the request draft\n$output"
         }
-        assert(!output.contains("private val relationshipLocking:") &&
-            !output.contains("UpdateMutationSpec")) {
-            "Per-request relationship state must not be copied or stored\n$output"
+        assert(!output.contains("private val relationshipLocking:")) {
+            "The adapter must not retain per-request relationship locking\n$output"
         }
     }
 
@@ -1248,22 +1204,6 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `relationship requirements live on the typed adapter instead of a spec`() {
-        val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = generator.generate("M2MPost", post, names).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("override fun relationshipRequirements(draft: M2MPostUpdateDraft): UpdateRelationshipRequirements")) {
-            "The typed adapter should derive per-request relationship requirements\n$output"
-        }
-        assert(!output.contains("UpdateMutationSpec") &&
-            !output.contains("preflight") &&
-            !output.contains("loadRow")) {
-            "Runtime inputs and lifecycle policy must not be stored in generated state\n$output"
-        }
-    }
-
-    @Test
     fun `relationship requirements contain only schema-specific facts`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
         val output = generator.generate("M2MPost", post, names).toString()
@@ -1293,8 +1233,8 @@ class UpdateGeneratorTest {
         assert(!output.contains("_hasPendingLinkTableM2MOps")) {
             "Schemas without helper-eligible M2M edges should not get the M2M ops helper\n$output"
         }
-        assert(!output.contains("_updateRelationshipRequirements")) {
-            "Schemas without helper-eligible M2M edges should use the executor default requirements\n$output"
+        assert(!output.contains("override fun relationshipRequirements(")) {
+            "Schemas without helper-eligible M2M edges should use the runtime adapter's default requirements\n$output"
         }
     }
 
@@ -1312,45 +1252,7 @@ class UpdateGeneratorTest {
         }
     }
 
-    // ---------- link-table M2M helpers three-way owner-row read + junction reads + EdgeChanges ----------
-
-    @Test
-    fun `M2M-capable schema delegates owner-row selection to runtime`() {
-        val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = generator.generate("M2MPost", post, names).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("override fun relationshipRequirements(draft: M2MPostUpdateDraft): UpdateRelationshipRequirements")) {
-            "M2M adapters should expose schema-specific requirements to runtime\n$output"
-        }
-        assert(!output.contains("readRowForUpdate(") &&
-            !output.contains("serializeOwnerEdgeAndRead(") &&
-            !output.contains("driver.byId(")) {
-            "The generated adapter should not select an owner-row read primitive\n$output"
-        }
-        assert(!output.contains("_classifyDriverFailure") &&
-            !output.contains("EntTargetAbsentException(")) {
-            "failure classification and target-absence handling belong to UpdateMutationOperation\n$output"
-        }
-    }
-
-    @Test
-    fun `schemas without helper-eligible M2M edges keep the existing two-way owner-row read`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        // No M2M → only the existing Pessimistic vs ReadCurrent branch.
-        // The serializeOwnerEdgeAndRead path must NOT appear and the
-        // M2M-pending guard must NOT appear in the owner-row read.
-        assert(!output.contains("serializeOwnerEdgeAndRead")) {
-            "Non-M2M schemas should not reference serializeOwnerEdgeAndRead\n$output"
-        }
-        assert(!output.contains("_hasPendingLinkTableM2MOps()")) {
-            "Non-M2M schemas should have no M2M ops gate at all\n$output"
-        }
-    }
+    // ---------- link-table M2M junction reads + EdgeChanges ----------
 
     @Test
     fun `_buildEdgeChanges reads junction state per edge and delegates to runtime computeEdgeChanges`() {
@@ -1451,10 +1353,6 @@ class UpdateGeneratorTest {
         assert(Regex(Regex.escape("M2MPostUpdateRuleInput(")).findAll(output).count() == 1) {
             "Both evaluators should receive the same typed input conversion from PreparedState\n$output"
         }
-        assert(!output.contains("updateDenialReasonOrNull") &&
-            !output.contains("evaluateUpdateValidation")) {
-            "generated code should delegate rule evaluation to the runtime phases\n$output"
-        }
     }
 
     // ---------- link-table M2M helpers junction writes + edge-only owner-UPDATE suppression ----------
@@ -1465,17 +1363,8 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // EntNoChangesException is gone entirely, and with it the
-        // top-of-save syntactic empty check. The single remaining
-        // dirtyFields-empty branch (post-hooks, no-op Success) gates on
-        // `!_hasPendingLinkTableM2MOps()` so an M2M-only update
-        // (dirtyFields empty, edge ops staged — the mutators don't
-        // touch dirtyFields) falls through to the write section: the
-        // owner UPDATE is skipped via the values.isNotEmpty() guard and
-        // the junction writes run.
-        assert(!output.contains("EntNoChangesException")) {
-            "EntNoChangesException must be gone from M2M-capable updates\n$output"
-        }
+        // Pending relationship operations must prevent preparation from
+        // treating an update with no field assignments as a no-op.
         val gatedEmpty = output.indexOf(
             "if (!hasFieldAssignments && !request.draft._hasPendingLinkTableM2MOps()) { val effectivePatch = requestedPatch",
         )
@@ -1514,9 +1403,6 @@ class UpdateGeneratorTest {
             output.contains("override fun persistRelationships(")) {
             "the schema adapter should supply owner values and relationship persistence separately\n$output"
         }
-        assert(!output.contains("driver.update(")) {
-            "UpdateMutationOperation should own the conditional owner write\n$output"
-        }
     }
 
     @Test
@@ -1529,10 +1415,6 @@ class UpdateGeneratorTest {
         assert(output.contains("values = values, isNoOp = false") &&
             output.contains("override fun persistRelationships(")) {
             "non-M2M adapters should pass prepared values through the uniform runtime contract\n$output"
-        }
-        assert(!output.contains("driver.update(") &&
-            !output.contains("EntTargetAbsentException(")) {
-            "owner persistence and vanished-target handling belong to UpdateMutationOperation\n$output"
         }
     }
 

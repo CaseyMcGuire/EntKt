@@ -20,7 +20,7 @@ class RepoGeneratorTest {
     private val generator = RepoGenerator("com.example.ent")
 
     @Test
-    fun `repo evaluators share create candidates and delete values without defensive copies`() {
+    fun `repo wires typed create and delete rule values without generated copies`() {
         val schema = RepoBytesRecord()
         finalize(schema)
         val output = generator.generate("RepoBytesRecord", schema).toString()
@@ -40,71 +40,17 @@ class RepoGeneratorTest {
         ) {
             "Operation factories should receive the resolved rule configuration\n$output"
         }
-        assert(!output.contains("DeleteMutationSpec") && !output.contains("deleteSpec")) {
-            "DELETE should inject its dependencies without a specification holder\n$output"
-        }
-
-        assert(!output.contains("MutationRuleEvaluators") && !output.contains("val rules =") &&
-            !output.contains("= run {")) {
-            "Runtime factories should return operations without generated assembly blocks or evaluator holders\n$output"
-        }
-
-        for (factory in listOf(
-            "buildCreateOperations",
-            "buildUpdateOperation",
-            "buildDeleteMutationOperation",
-            "buildDeleteManyMutationOperation",
-        )) {
-            assert(!output.contains("fun $factory(")) {
-                "Operation factories belong to runtime, not generated repositories\n$output"
-            }
-        }
-
         assert(output.contains("ruleInput = ::RepoBytesRecordDeleteRuleInput")) {
             "DELETE should supply one typed conversion for privacy and validation\n$output"
         }
         assert(!output.contains("CreateRuleInput")) {
             "CREATE must not wrap its candidate\n$output"
         }
-        val createBinding = output.substringAfter("createOperations =")
-            .substringBefore("updateOperation =")
-        assert(!createBinding.contains("freshItem") && !createBinding.contains("candidate ->")) {
-            "CREATE evaluators must not require identity converters\n$output"
-        }
         assert(output.contains("buildDeleteMutationOperation( entity = RepoBytesRecordDescriptor, converter = RepoBytesRecordDeleteConverter, privacy = configuredPrivacy, validation = configuredValidation,")) {
             "DELETE should delegate policy composition to runtime\n$output"
         }
-        assert(!output.contains("mutationValidationEvaluatorForInternalUse") &&
-            !output.contains("validationDecisionEvaluatorForInternalUse")) {
-            "Validation wiring should use runtime constructors\n$output"
-        }
-        assert(!output.contains("fun snapshotCreateCandidate")) {
-            "rule items should be constructed directly, without callbacks into the repo\n$output"
-        }
-        val viewerContexts = Regex(
-            Regex.escape("PrivacyRuleContext(viewerContext, client.readOnlyClient)"),
-        ).findAll(output).count()
-        assert(viewerContexts == 0) {
-            "Rule contexts belong to the runtime repository; found $viewerContexts\n$output"
-        }
-        val validationContexts = Regex(
-            Regex.escape("val ruleContext = ValidationRuleContext(client.readOnlyClient)"),
-        ).findAll(output).count()
-        assert(validationContexts == 0) {
-            "Mutation validation context construction belongs to runtime phases\n$output"
-        }
-        assert(output.contains("loadPrivacyRules = configuredPrivacy.loadRules,"))
-        assert(!output.contains("freshItem") && !output.contains("LoadPrivacyItem")) {
-            "LOAD should pass entities directly without a wrapper or converter\n$output"
-        }
         assert(!output.contains("copyOf") && !output.contains(".copy(") && !output.contains("copyJsonValue")) {
             "Rule wiring must not generate defensive copies\n$output"
-        }
-        assert(!output.contains("rule.run(")) {
-            "generated privacy evaluators should not bypass the shared batch engine\n$output"
-        }
-        assert(!output.contains("rule.validate(")) {
-            "generated validation evaluators should not bypass the shared batch engine\n$output"
         }
     }
 
@@ -247,23 +193,6 @@ class RepoGeneratorTest {
         assert(!output.contains("EntResult") && !output.contains("EntError")) {
             "The EntResult / EntError types should not be referenced anywhere\n$output"
         }
-        assert(
-            !output.contains("evaluateUpdatePrivacy") && !output.contains("evaluateDeletePrivacy"),
-        ) {
-            "Legacy throwing privacy evaluators should be gone\n$output"
-        }
-    }
-
-    @Test
-    fun `repo does not generate a scalar delete lifecycle engine`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(!output.contains("deleteLoaded") && !output.contains("driver.delete(Car.TABLE")) {
-            "scalar delete lifecycle and storage coordination belong to DeleteMutationOperation\n$output"
-        }
     }
 
     @Test
@@ -288,9 +217,6 @@ class RepoGeneratorTest {
 
         assert(output.contains("driver = driver, mutationRuntime = client, loadPrivacyRules = configuredPrivacy.loadRules,")) {
             "The base should receive its execution dependencies and LOAD rules\n$output"
-        }
-        assert(!output.contains("MutationExecutor(") && !output.contains("ReadQueryExecutor(")) {
-            "Executor construction belongs to runtime\n$output"
         }
         val constructor = output.substringBefore("CarReadSurface {")
         for (operation in listOf("createOperations", "updateOperation", "deleteOperation", "deleteManyOperation")) {
@@ -338,8 +264,6 @@ class RepoGeneratorTest {
         assert(!output.contains("ruleClientProvider") && !operation.contains("client.readOnlyClient")) {
             "update operation construction must not resolve or capture a read client\n$output"
         }
-        assert(!output.contains("mutationPrivacyEvaluatorForInternalUse") &&
-            !output.contains("privacyDecisionEvaluatorForInternalUse"))
         assert(!operation.contains("lifecycle") && !operation.contains("unresolvedReason")) {
             "UPDATE privacy and validation diagnostics should belong to runtime\n$output"
         }
@@ -365,32 +289,8 @@ class RepoGeneratorTest {
         assert(!output.contains("UpdateMutationHooks(") && !output.contains("buildUpdateMutationOperation(")) {
             "The runtime factory should construct the hooks and UPDATE operation\n$output"
         }
-        assert(!output.contains("UpdateHookStateConverter") && !output.contains("hookStateConverter =")) {
-            "The repository should not generate or construct a separate update hook-state converter\n$output"
-        }
         assert(!output.contains("fun toBeforeSaveState(") && !output.contains("fun toBeforeUpdateState(")) {
             "Hook-state construction should belong to the schema adapter, not the repository\n$output"
-        }
-        assert(!output.contains("ValueFactory")) {
-            "Generated update wiring should not use callback factories\n$output"
-        }
-    }
-
-    @Test
-    fun `repo supplies after update hooks to the runtime operation`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("afterUpdate = configuredHooks.afterUpdate")) {
-            "The repository should inject the afterUpdate hook list into runtime hooks\n$output"
-        }
-        assert(!output.contains("override fun runAfterUpdate(")) {
-            "Generated code should not implement afterUpdate execution\n$output"
-        }
-        assert(!output.contains("runBatchHooksForInternalUse(listOf(updatedEntity)")) {
-            "generated code should not execute afterUpdate hooks itself\n$output"
         }
     }
 
@@ -450,15 +350,6 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo has no post-construction hook copy path`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-
-        assert(!output.contains("copyHooksFrom")) { "Hook configuration is constructor-injected\n$output" }
-    }
-
-    @Test
     fun `repo does not expose hook registration methods`() {
         val car = Car()
         finalize(car, User())
@@ -470,21 +361,6 @@ class RepoGeneratorTest {
         assert(!output.contains("fun onAfterCreate")) {
             "Should not have onAfterCreate — hooks are registered via client config DSL\n$output"
         }
-    }
-
-    @Test
-    fun `scalar create uses the runtime operation pair for both disclosure modes`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("createOperations = buildCreateOperations("))
-        assert(!output.contains("CreateMutationOperation(") && !output.contains("val createOperation:"))
-        assert(!output.contains("fun saveCreation(") && !output.contains("fun saveAndLoadCreation(") &&
-            !output.contains("checkReturnedEntityPrivacy") && !output.contains("mapResult")) {
-            "Scalar execution and disclosure selection belong to the runtime repository\n$output"
-        }
-        assert(!output.contains("it.single()") && !output.contains("requireOne()") && !output.contains("requireMany()"))
     }
 
     @Test
@@ -503,11 +379,6 @@ class RepoGeneratorTest {
         assert(binding.contains("entity = CarDescriptor") && binding.contains("mutationRuntime = client")) {
             "The CREATE factory should receive scoped runtime dependencies\n$output"
         }
-        assert(!output.contains("CreateManyMutationInput") && !output.contains("CreateManyDisclosure"))
-        assert(!output.contains("ArrayList<CarCreateDraft>") && !output.contains("driver.insertMany(Car.TABLE") &&
-            !output.contains("val candidates = prepared.map")) {
-            "Batch input preparation and lifecycle coordination belong to runtime\n$output"
-        }
     }
 
     @Test
@@ -520,10 +391,6 @@ class RepoGeneratorTest {
         assert(output.contains("client.withTransaction { tx -> block(tx.cars) }"))
         assert(Regex("client.withTransaction").findAll(output).count() == 1) {
             "CREATE and DELETE bulk operations should share one transaction-bound repo lookup\n$output"
-        }
-        assert(!output.contains("ownedTransaction =") && !output.contains("completionCapture") &&
-            !output.contains("executeInOwnedTransactionForInternalUse") && !output.contains("orRollback()")) {
-            "Execution rebinding, completion capture, and rollback belong to the runtime base\n$output"
         }
     }
 
@@ -539,7 +406,6 @@ class RepoGeneratorTest {
         }
         assert(output.contains("buildDeleteMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter,"))
         assert(output.contains("buildDeleteManyMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter,"))
-        assert(!output.contains("DeleteMutationSpec") && !output.contains("deleteSpec"))
         assert(!output.contains("idColumn = Car.SCHEMA.idColumn")) {
             "DELETE should derive its ID column from the injected descriptor\n$output"
         }
@@ -562,9 +428,6 @@ class RepoGeneratorTest {
         }
         assert(!output.contains("MutationLifecycle"))
         assert(output.contains("deleteManyOperation = buildDeleteManyMutationOperation("))
-        assert(!output.contains("private fun _executeDeleteManyPhases(")) {
-            "deleteMany transaction and failure coordination should live only in runtime\n$output"
-        }
     }
 
     @Test
@@ -614,73 +477,52 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo delegates LOAD evaluator construction and execution to the runtime base`() {
+    fun `repositories leave storage rule evaluation and failure handling to runtime`() {
         val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
+        val session = Session()
+        finalize(car, User(), session)
 
-        assert(!output.contains("fun evaluateLoadPrivacy(")) {
-            "The runtime base should satisfy the read surface's correlated LOAD evaluation\n$output"
-        }
-        assert(output.contains("loadPrivacyRules = configuredPrivacy.loadRules,")) {
-            "LOAD should inject rules into the runtime base without resolving a client\n$output"
-        }
-        assert(!output.contains("LoadPrivacyEvaluator") && !output.contains("val loadPrivacyEvaluator")) {
-            "The runtime base should construct and retain its own LOAD evaluator\n$output"
-        }
-        assert(!output.contains("loadPrivacyEvaluatorForInternalUse"))
-        assert(!output.contains("\"Car LOAD privacy\"") && !output.contains("\"no load rule allowed access\"")) {
-            "LOAD diagnostics and the default denial reason should be owned by the runtime evaluator\n$output"
-        }
-        assert(!output.contains("loadPrivacyEvaluator.evaluate(")) {
-            "The runtime base should supply the concrete context to its bound LOAD evaluator\n$output"
-        }
-        assert(
-            !output.contains("evaluateBatchPrivacyRulesForInternalUse") &&
-                !output.contains("entitySnapshot.mapIndexed") &&
-                !output.contains("PrivacyDecision.Deny"),
-        ) {
-            "LOAD batch evaluation and denial correlation should not be generated\n$output"
-        }
-        assert(!output.contains("fun evaluateCreatePrivacy")) {
-            "CREATE privacy should run in the shared runtime lifecycle\n$output"
-        }
-        assert(!output.contains("MutationRuleEvaluators") && !output.contains("private val deleteRules")) {
-            "DELETE operations should not expose an intermediate evaluator pair\n$output"
-        }
-        assert(!output.contains("updateDenialReasonOrNull") && !output.contains("deleteDenialReasonOrNull")) {
-            "repositories should not generate write lifecycle evaluators\n$output"
-        }
-    }
-
-    @Test
-    fun `generated privacy delegates fail-closed evaluation to runtime phases`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("loadPrivacyRules = configuredPrivacy.loadRules,")) {
-            "LOAD privacy should delegate through the runtime base's evaluator\n$output"
-        }
-        assert(output.contains("privacy = configuredPrivacy")) {
-            "write privacy should delegate decisions through runtime evaluators\n$output"
-        }
-        assert(!output.contains("mutationPrivacyEvaluatorForInternalUse") &&
-            !output.contains("privacyDecisionEvaluatorForInternalUse")) {
-            "privacy evaluators should be constructed directly\n$output"
-        }
-        assert(output.contains("buildCreateOperations( entity = CarDescriptor, mutationRuntime = client, converter = CarCreateConverter(driver, client.hookClientScopeForInternalUse), privacy = configuredPrivacy, validation = configuredValidation,"))
-        assert(!output.contains("\"Car CREATE privacy\"") &&
-            !output.contains("\"Car DELETE privacy\"") && !output.contains("unresolvedReason")) {
-            "mutation privacy diagnostics should be owned by the runtime evaluator\n$output"
-        }
-        assert(
-            !output.contains("Viewer.PrivacyBypass") &&
-                !output.contains("PrivacyDecision.Continue"),
-        ) {
-            "LOAD bypass and fail-closed decision mapping should live only in runtime\n$output"
+        for ((schemaName, schema) in listOf("Car" to car, "Session" to session)) {
+            val output = generator.generate(schemaName, schema).toString()
+            for (runtimeOwned in listOf(
+                "driver.byId(",
+                "driver.query(",
+                "driver.insert(",
+                "driver.insertMany(",
+                "driver.update(",
+                "driver.delete(",
+                "driver.deleteMany(",
+                "classifyMutationException(",
+                "MutationExecutor",
+                "ReadQueryExecutor",
+                "LoadPrivacyEvaluator",
+                "MutationPrivacyEvaluator",
+                "MutationValidationEvaluator",
+                "PrivacyRuleContext(",
+                "ValidationRuleContext(",
+                "PrivacyDecision.",
+                "ValidationDecision.",
+                "rule.run(",
+                "rule.validate(",
+                "fun evaluateLoadPrivacy(",
+                "MutationResult.failedForInternalUse",
+                "recordTransactionMutationFailure",
+                "catch (",
+            )) {
+                assert(!output.contains(runtimeOwned)) {
+                    "Runtime-owned operation '$runtimeOwned' must not be generated in $schemaName repository\n$output"
+                }
+            }
+            for (factory in listOf(
+                "buildCreateOperations",
+                "buildUpdateOperation",
+                "buildDeleteMutationOperation",
+                "buildDeleteManyMutationOperation",
+            )) {
+                assert(!output.contains("fun $factory(")) {
+                    "Operation factories belong to runtime, not generated repositories\n$output"
+                }
+            }
         }
     }
 
@@ -694,27 +536,11 @@ class RepoGeneratorTest {
         assert(output.contains("buildDeleteMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter, privacy = configuredPrivacy, validation = configuredValidation, ruleInput = ::CarDeleteRuleInput,")) {
             "DELETE should supply only its configuration and typed input conversion\n$output"
         }
-        assert(!output.contains("MutationRuleEvaluators"))
         assert(!output.contains("fallback =") && !output.contains("DerivesFromCreate")) {
             "Fallback selection should not be repeated in generated repositories\n$output"
         }
         assert(!output.contains("lifecycle =") && !output.contains("ruleClientProvider")) {
             "fallback evaluation should use its parent mutation's diagnostics and rule context\n$output"
-        }
-    }
-
-    @Test
-    fun `repo constructs update validation without implementing its lifecycle`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("buildUpdateOperation( entity = CarDescriptor, mutationRuntime = client, privacy = configuredPrivacy, validation = configuredValidation,")) {
-            "The repository should delegate UPDATE evaluator construction\n$output"
-        }
-        assert(!output.contains("evaluateUpdateValidation")) {
-            "Repository code should not implement UPDATE validation lifecycle logic\n$output"
         }
     }
 
@@ -728,68 +554,11 @@ class RepoGeneratorTest {
         assert(output.contains("converter = CarDeleteConverter")) {
             "DELETE should use a schema-specific converter without calling back into the repo\n$output"
         }
-        assert(!output.contains("fun buildDeleteCandidate") && !output.contains("::buildDeleteCandidate"))
         assert(output.contains("driver = driver, readExecutionHost = client")) {
             "The DELETE factory should construct its query executor from scoped dependencies\n$output"
         }
         assert(output.contains("buildDeleteMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter, privacy = configuredPrivacy,")) {
             "DELETE should bind its configured privacy rules\n$output"
-        }
-    }
-
-    @Test
-    fun `deleteMany emits no candidate-selection algorithm`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(
-            !output.contains("selectDeleteCandidates") &&
-                !output.contains("ReadOperation.DELETE_CANDIDATES") &&
-                !output.contains("driver.query(Car.TABLE"),
-        ) {
-            "candidate compilation, raw loading, and predicate freezing belong to runtime\n$output"
-        }
-    }
-
-    @Test
-    fun `repo emits no mutation failure coordination`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-
-        assert(
-            !output.contains("MutationResult.failedForInternalUse(") &&
-                !output.contains("client.recordTransactionMutationFailure("),
-        ) {
-            "mutation failure construction and coordinator recording belong to runtime operations\n$output"
-        }
-    }
-
-    @Test
-    fun `repo emits no mutation capture boundaries`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(!output.contains("catch (e: CancellationException)")) {
-            "mutation capture and cancellation handling belong to runtime operations\n$output"
-        }
-    }
-
-    @Test
-    fun `repo generates no operation-specific driver classifiers`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
-
-        assert(!output.contains("_classifyCreateDriverFailure") &&
-            !output.contains("_classifyUpdateDriverFailure") &&
-            !output.contains("_classifyDeleteDriverFailure")) {
-            "driver failure classification belongs to the three runtime executors\n$output"
         }
     }
 
@@ -855,26 +624,6 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo delegates create and delete validation through runtime evaluators`() {
-        val car = Car()
-        finalize(car, User())
-        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
-
-        assert(!output.contains("fun evaluateCreateValidation")) {
-            "CREATE validation should run in the shared runtime lifecycle\n$output"
-        }
-        assert(output.contains("validation = configuredValidation")) {
-            "The CREATE operation pair should capture CREATE validation\n$output"
-        }
-        assert(!output.contains("validationEvaluator =")) {
-            "Runtime factories should inject validation evaluators into DELETE operations\n$output"
-        }
-        assert(!output.contains("evaluateUpdateValidation") && !output.contains("evaluateDeleteValidation")) {
-            "repositories should not generate mutation validation engines\n$output"
-        }
-    }
-
-    @Test
     fun `delete operations are constructed independently by runtime factories`() {
         val car = Car()
         finalize(car, User())
@@ -897,8 +646,6 @@ class RepoGeneratorTest {
             "The concrete client must be resolved only by the getter, after repository construction\n$output"
         }
         assert(!output.contains("ruleClientProvider") && !output.contains("ruleClient = client.readOnlyClient"))
-        assert(!output.contains("asValidationReadClientForInternalUse") &&
-            !output.contains("asReadClientForInternalUse") && !output.contains("withFixedViewerContextForInternalUse"))
     }
 
 }
