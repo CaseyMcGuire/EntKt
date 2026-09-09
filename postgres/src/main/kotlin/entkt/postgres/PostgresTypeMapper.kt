@@ -40,6 +40,7 @@ class PostgresTypeMapper : TypeMapper {
             FieldType.FLOAT -> "real"
             FieldType.DOUBLE -> "double precision"
             FieldType.INSTANT -> "timestamptz"
+            FieldType.DATE -> "date"
             FieldType.UUID -> "uuid"
             FieldType.BYTES -> "bytea"
             // Native type: render the column's declared SQL type verbatim,

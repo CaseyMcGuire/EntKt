@@ -123,6 +123,7 @@ class Ticket : EntSchema("tickets", clientName = "tickets") {
     val score by float("score")
     val preciseScore by double("precise_score")
     val createdAt by instant("created_at").immutable()
+    val dueOn by date("due_on").nullable()
     val externalId by uuid("external_id")
     val data by bytes("data")
     val priority by enum<Priority>("priority").default(Priority.LOW)
@@ -140,6 +141,7 @@ class Ticket : EntSchema("tickets", clientName = "tickets") {
 | `float()` | `FLOAT` | `Float` | `real` |
 | `double()` | `DOUBLE` | `Double` | `double precision` |
 | `instant()` | `INSTANT` | `Instant` | `timestamptz` |
+| `date()` | `DATE` | `java.time.LocalDate` | `date` |
 | `uuid()` | `UUID` | `UUID` | `uuid` |
 | `bytes()` | `BYTES` | `ByteArray` | `bytea` |
 | `enum<E>()` | `ENUM` | `E` | `text` |
@@ -166,12 +168,61 @@ These are available on all field types:
 | Modifier | Supported field types | Effect |
 |----------|-----------------------|--------|
 | `.unique()` | Scalar and enum fields; not JSON or pgvector | Adds a unique constraint |
-| `.default(value)` | String, boolean, numeric, and enum fields | Type-safe default value for creates |
+| `.default(value)` | String, boolean, numeric, date, and enum fields | Type-safe default value for creates |
 | `.defaultNow()` | Instant fields | Set to `Instant.now()` on create |
 | `.updateDefaultNow()` | Instant fields | Default for an unassigned timestamp during an update |
 
 JSON and pgvector fields do not expose `.unique()` or default modifiers,
 including after chained common modifiers. Unsupported calls fail at compile time.
+
+### Calendar Dates
+
+Use `date()` for calendar dates such as birthdays, holidays, or due dates.
+It generates `java.time.LocalDate`, with no time of day or timezone. Use
+`instant()` when the value represents a particular moment instead.
+
+```kotlin
+import java.time.LocalDate
+
+class CalendarEvent : EntSchema("calendar_events", clientName = "calendarEvents") {
+    override fun id() = EntId.long()
+
+    val startsOn by date("starts_on")
+    val endsOn by date("ends_on").nullable()
+    val dueOn by date("due_on").default(LocalDate.of(2026, 1, 1))
+
+    val byStartsOn = index("idx_calendar_events_starts_on", startsOn)
+}
+```
+
+Generated entity properties use `LocalDate` or `LocalDate?` according to
+nullability. Draft setters, hook states, rule candidates, and query predicates
+retain the date type; passing an `Instant` or a string where a date is expected
+is a compile-time error. Dates support equality, membership, range comparisons,
+ordering, `.unique()`, and indexed query helpers. They also work in `EntMixin`s.
+
+`.default(...)` takes a fixed `LocalDate`. Omitting the field on create uses
+that value; explicit null stays null on a nullable field and fails validation
+on a required field, even if it has a default. Updates do not reapply create
+defaults. Migrations emit the corresponding SQL default, while generated
+creates apply the value themselves. `autoDdl` does not install field defaults;
+see [Driver DDL](10-drivers.md#ddl).
+
+Date fields expose neither `.defaultNow()` nor `.updateDefaultNow()`.
+`.default(LocalDate.now())` would capture the date during schema construction,
+not compute it on each create. If an application needs "today", choose a
+timezone explicitly and assign it in the create block:
+
+```kotlin
+import java.time.LocalDate
+import java.time.ZoneId
+
+val event = client.calendarEvents.create {
+    startsOn = LocalDate.now(ZoneId.of("America/Los_Angeles"))
+}.saveAndLoad(viewerContext).getOrThrow()
+```
+
+See [Date values](10-drivers.md#date-values) for PostgreSQL storage limits.
 
 ### Validation Belongs in Client Policies
 

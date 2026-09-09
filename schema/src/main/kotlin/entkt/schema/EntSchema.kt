@@ -151,6 +151,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
     protected fun float(name: String): FloatFieldBuilder = registerField(FloatFieldBuilder(name))
     protected fun double(name: String): DoubleFieldBuilder = registerField(DoubleFieldBuilder(name))
     protected fun instant(name: String): InstantFieldBuilder = registerField(InstantFieldBuilder(name))
+    protected fun date(name: String): DateFieldBuilder = registerField(DateFieldBuilder(name))
     protected fun uuid(name: String): UuidFieldBuilder = registerField(UuidFieldBuilder(name))
     protected fun bytes(name: String): BytesFieldBuilder = registerField(BytesFieldBuilder(name))
 
@@ -323,6 +324,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
     @PublishedApi internal fun floatForMixin(name: String): FloatFieldBuilder = float(name)
     @PublishedApi internal fun doubleForMixin(name: String): DoubleFieldBuilder = double(name)
     @PublishedApi internal fun instantForMixin(name: String): InstantFieldBuilder = instant(name)
+    @PublishedApi internal fun dateForMixin(name: String): DateFieldBuilder = date(name)
     @PublishedApi internal fun uuidForMixin(name: String): UuidFieldBuilder = uuid(name)
     @PublishedApi internal fun bytesForMixin(name: String): BytesFieldBuilder = bytes(name)
     @PublishedApi internal inline fun <reified E : Enum<E>> enumForMixin(name: String): EnumFieldBuilder<E> =

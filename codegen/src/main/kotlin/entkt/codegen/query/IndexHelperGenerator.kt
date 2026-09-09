@@ -117,7 +117,7 @@ internal class IndexChild(val column: ResolvedIndexColumn, val node: IndexPrefix
 private fun isComparable(type: FieldType): Boolean = when (type) {
     FieldType.STRING,
     FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE,
-    FieldType.INSTANT -> true
+    FieldType.INSTANT, FieldType.DATE -> true
     else -> false
 }
 

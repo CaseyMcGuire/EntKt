@@ -528,6 +528,13 @@ internal class CreateGenerator(
         return when {
             field.type == FieldType.INSTANT && value == "now" ->
                 CodeBlock.of("%T.now()", ClassName("java.time", "Instant"))
+            field.type == FieldType.DATE -> {
+                val date = value as java.time.LocalDate
+                CodeBlock.of(
+                    "%T.of(%L, %L, %L)", ClassName("java.time", "LocalDate"),
+                    date.year, date.monthValue, date.dayOfMonth,
+                )
+            }
             field.type == FieldType.ENUM -> {
                 require(value is Enum<*>) {
                     "Typed enum field '${field.apiName}' must use an enum constant as its default, not a String"

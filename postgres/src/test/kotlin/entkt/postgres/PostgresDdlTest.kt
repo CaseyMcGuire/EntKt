@@ -8,6 +8,7 @@ import entkt.migrations.NormalizedSchema
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import entkt.schema.OnDelete
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -198,6 +199,7 @@ class PostgresDdlTest {
             val aFloat by float("a_float")
             val aDouble by double("a_double")
             val aTime by instant("a_time")
+            val aDate by date("a_date")
             val aUuid by uuid("a_uuid")
             val someBytes by bytes("some_bytes")
             val anEnum by enum<Priority>("an_enum")
@@ -216,6 +218,7 @@ class PostgresDdlTest {
                   "a_float" real NOT NULL,
                   "a_double" double precision NOT NULL,
                   "a_time" timestamptz NOT NULL,
+                  "a_date" date NOT NULL,
                   "a_uuid" uuid NOT NULL,
                   "some_bytes" bytea NOT NULL,
                   "an_enum" text NOT NULL
@@ -237,6 +240,8 @@ class PostgresDdlTest {
             val ratio by double("ratio").default(1.5)
             val priority by enum<Priority>("priority").default(Priority.MEDIUM)
             val createdAt by instant("created_at").defaultNow()
+            val startsOn by date("starts_on").default(LocalDate.of(2024, 2, 29))
+            val closedOn by date("closed_on").nullable()
             val note by string("note").default("n/a").nullable()
         }
 
@@ -253,6 +258,8 @@ class PostgresDdlTest {
                   "ratio" double precision DEFAULT 1.5 NOT NULL,
                   "priority" text DEFAULT 'MEDIUM' NOT NULL,
                   "created_at" timestamptz DEFAULT now() NOT NULL,
+                  "starts_on" date DEFAULT '2024-02-29' NOT NULL,
+                  "closed_on" date,
                   "note" text DEFAULT 'n/a'
                 )
                 """.trimIndent(),

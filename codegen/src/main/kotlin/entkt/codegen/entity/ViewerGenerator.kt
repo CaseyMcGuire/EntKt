@@ -141,6 +141,7 @@ internal class ViewerGenerator(private val packageName: String) {
         FieldType.FLOAT -> "Float"
         FieldType.DOUBLE -> "Double"
         FieldType.INSTANT -> "Instant"
+        FieldType.DATE -> "LocalDate"
         FieldType.UUID -> "UUID"
         FieldType.BYTES -> "ByteArray"
         FieldType.ENUM -> field?.enumClass?.simpleName ?: "enum"

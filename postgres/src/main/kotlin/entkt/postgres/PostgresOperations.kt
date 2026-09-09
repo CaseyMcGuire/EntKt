@@ -22,7 +22,7 @@ import java.sql.ResultSet
 private val NUMERIC_FIELD_TYPES =
     setOf(FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE)
 private val COMPARABLE_FIELD_TYPES =
-    NUMERIC_FIELD_TYPES + setOf(FieldType.STRING, FieldType.INSTANT)
+    NUMERIC_FIELD_TYPES + setOf(FieldType.STRING, FieldType.INSTANT, FieldType.DATE)
 // Group keys add the non-comparable scalars (bool/uuid/enum); bytes, pgvector,
 // and JSON are excluded (they have no group-key meaning).
 private val GROUPABLE_FIELD_TYPES =

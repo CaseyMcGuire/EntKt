@@ -29,6 +29,7 @@ internal fun dbDisplayType(schema: EntitySchema, column: ColumnMetadata): String
         FieldType.FLOAT -> "real"
         FieldType.DOUBLE -> "double precision"
         FieldType.INSTANT -> "timestamptz"
+        FieldType.DATE -> "date"
         FieldType.UUID -> "uuid"
         FieldType.BYTES -> "bytea"
         FieldType.JSON -> "jsonb"

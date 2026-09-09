@@ -108,7 +108,7 @@ client.posts.indexes
 ### Range blocks
 
 The next comparable indexed column after an equality prefix
-(string/text, numeric, or time) also gets a range-block overload. A range
+(string, numeric, instant, or date) also gets a range-block overload. A range
 block adds at least one bound and at most one lower (`gt`/`gte`) and one
 upper (`lt`/`lte`); a range stage ends the chain (it exposes only
 `query()`):
@@ -177,13 +177,25 @@ Ticket.priority eq Priority.HIGH
 Ticket.priority `in` listOf(Priority.LOW, Priority.MEDIUM)
 ```
 
-Available on comparable columns (`Int`, `Long`, `Float`, `Double`, `Instant`):
+Available on comparable columns (`String`, `Int`, `Long`, `Float`, `Double`,
+`Instant`, `LocalDate`):
 
 ```kotlin
 User.age gt 18              // greater than
 User.age gte 18             // greater than or equal
 User.age lt 65              // less than
 User.age lte 65             // less than or equal
+```
+
+Date predicates take `java.time.LocalDate` directly, without converting to a
+timestamp or choosing a timezone:
+
+```kotlin
+client.calendarEvents.query {
+    where(CalendarEvent.startsOn gte LocalDate.of(2026, 1, 1))
+    where(CalendarEvent.startsOn lt LocalDate.of(2027, 1, 1))
+    orderBy(CalendarEvent.startsOn.asc())
+}.all(viewerContext).getOrThrow()
 ```
 
 Available on string columns:

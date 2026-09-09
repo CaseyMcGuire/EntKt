@@ -10,6 +10,9 @@ import java.lang.reflect.Proxy
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.sql.PreparedStatement
+import java.sql.ResultSet
+import java.sql.Types
+import java.time.LocalDate
 import kotlin.reflect.typeOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -64,6 +67,36 @@ class PostgresValueCodecTest {
         assertEquals(1, copyCalls)
         assertEquals(listOf("original"), originalTags)
         assertEquals(listOf("original", "changed"), copied.tags)
+    }
+
+    @Test
+    fun `date binds use LocalDate directly and SQL DATE for null`() {
+        val date = LocalDate.of(2024, 2, 29)
+        assertEquals(Bound("setObject", 1, date), bind(FieldType.DATE, date))
+        assertEquals(Bound("setNull", 1, Types.DATE), bind(FieldType.DATE, null))
+        assertFailsWith<ClassCastException> { bind(FieldType.DATE, java.time.Instant.EPOCH) }
+    }
+
+    @Test
+    fun `date decode requests LocalDate and preserves SQL null`() {
+        for (date in listOf(LocalDate.of(2024, 2, 29), null)) {
+            var getObjectCalled = false
+            val resultSet = Proxy.newProxyInstance(
+                ResultSet::class.java.classLoader,
+                arrayOf(ResultSet::class.java),
+            ) { _, method, args ->
+                assertEquals("getObject", method.name)
+                assertEquals(listOf("starts_on", LocalDate::class.java), args.toList())
+                getObjectCalled = true
+                date
+            } as ResultSet
+
+            assertEquals(
+                date,
+                codec.decodeColumn(resultSet, "events", ColumnMetadata("starts_on", FieldType.DATE, nullable = true)),
+            )
+            assertTrue(getObjectCalled)
+        }
     }
 
     @Test
@@ -123,13 +156,13 @@ class PostgresValueCodecTest {
         )
     }
 
-    private fun bind(type: FieldType, value: Any): Bound {
+    private fun bind(type: FieldType, value: Any?): Bound {
         var bound: Bound? = null
         val statement = Proxy.newProxyInstance(
             PreparedStatement::class.java.classLoader,
             arrayOf(PreparedStatement::class.java),
         ) { _, method, args ->
-            if (method.name in setOf("setInt", "setLong", "setFloat", "setDouble")) {
+            if (method.name in setOf("setInt", "setLong", "setFloat", "setDouble", "setObject", "setNull")) {
                 bound = Bound(method.name, args[0] as Int, args[1])
             }
             null

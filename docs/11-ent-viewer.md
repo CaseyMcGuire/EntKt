@@ -156,11 +156,16 @@ Read-interceptor rejections (tenant guards and similar) render as
 controlled 400s naming the interceptor.
 
 Supported ops by type: comparison (`eq,neq,gt,gte,lt,lte`) for numeric,
-string, and time columns; `contains`/`prefix`/`suffix` for strings;
+string, instant, and date columns; `contains`/`prefix`/`suffix` for strings;
 `eq`/`neq` for bool, uuid, and enum (validated against constant names);
 `isnull`/`notnull` for nullable columns. JSON, pgvector, and bytes columns
 are display-only. Anything unsupported fails as a 400 with a message before
 any query executes.
+
+Date filter values use ISO calendar dates, for example
+`f=starts_on:gte:2026-01-01`. They are parsed as `LocalDate`; timestamps and
+invalid dates such as `2026-02-30` are rejected with a 400. Date columns display
+as `LocalDate` with database type `date` on schema pages.
 
 ## Edges
 

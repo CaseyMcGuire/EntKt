@@ -10,6 +10,7 @@ import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.Types
 import java.time.Instant
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
@@ -118,6 +119,7 @@ internal class PostgresValueCodec(
                 }
                 stmt.setObject(idx, instant.atOffset(ZoneOffset.UTC))
             }
+            FieldType.DATE -> stmt.setObject(idx, value as LocalDate)
             FieldType.UUID -> stmt.setObject(idx, value as UUID)
             FieldType.BYTES -> stmt.setBytes(idx, value as ByteArray)
             // pgvector: bind as a PGobject of type "vector" with the canonical
@@ -248,6 +250,7 @@ internal class PostgresValueCodec(
         FieldType.FLOAT -> Types.REAL
         FieldType.DOUBLE -> Types.DOUBLE
         FieldType.INSTANT -> Types.TIMESTAMP_WITH_TIMEZONE
+        FieldType.DATE -> Types.DATE
         FieldType.UUID -> Types.OTHER
         FieldType.BYTES -> Types.BINARY
         FieldType.PGVECTOR -> Types.OTHER
@@ -288,6 +291,7 @@ internal class PostgresValueCodec(
             }
             FieldType.INSTANT ->
                 rs.getObject(col.name, OffsetDateTime::class.java)?.toInstant()
+            FieldType.DATE -> rs.getObject(col.name, LocalDate::class.java)
             FieldType.UUID -> rs.getObject(col.name, UUID::class.java)
             FieldType.BYTES -> rs.getBytes(col.name)
             // pgvector decodes to its "[f0,f1,...]" text; parse back to PgVector.

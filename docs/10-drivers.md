@@ -262,6 +262,10 @@ When you explicitly opt in with `PostgresDriver(dataSource, autoDdl = true)`,
 - `UNIQUE` constraints on unique columns
 - `CREATE INDEX` / `CREATE UNIQUE INDEX` for composite indexes
 
+Schema field defaults are **not** installed by `autoDdl`. Generated creates
+apply their declared defaults before persistence; SQL defaults for raw SQL or
+raw driver inserts must be installed through the [migration path](09-migrations.md).
+
 Foreign keys are then added as separate
 `ALTER TABLE ... ADD CONSTRAINT fk_<table>_<column> FOREIGN KEY ...
 ON DELETE ...` statements (action from schema metadata, or inferred from
@@ -349,6 +353,7 @@ error rather than a silent no-op.
 | `FLOAT` | `real` |
 | `DOUBLE` | `double precision` |
 | `INSTANT` | `timestamptz` |
+| `DATE` | `date` |
 | `UUID` | `uuid` |
 | `BYTES` | `bytea` |
 | `PGVECTOR` | `vector(n)` (pgvector) |
@@ -372,6 +377,22 @@ kotlinx by default, Jackson via `io.entkt:jackson`); a driver that does not
 rejects a typed JSON schema at `register()`, and a codec whose id doesn't match
 the metadata's mapper is rejected there too. See
 [Schema -> Typed JSON Fields](02-schema.md#typed-json-fields-postgres-jsonb).
+
+#### Date values
+
+`DATE` binds and decodes as `java.time.LocalDate` using JDBC's date support.
+It does not pass through `Instant`, `java.sql.Date`, or a timezone conversion.
+SQL NULL decodes to null. Equality, membership, range predicates, ordering,
+and indexes use PostgreSQL's date semantics; driver-level `MIN`/`MAX` and
+date group keys also decode as `LocalDate`.
+
+Fixed date defaults render as SQL date literals, including PostgreSQL's `BC`
+notation for ISO year zero and negative years. For finite dates, stay within
+[PostgreSQL's supported `date` range](https://www.postgresql.org/docs/current/datatype-datetime.html)
+rather than assuming the entire `LocalDate` range is representable. With
+pgJDBC, `LocalDate.MIN` and `LocalDate.MAX` represent PostgreSQL `-infinity`
+and `infinity`; EntKt uses the same mapping for fixed defaults. They are not
+finite calendar dates in storage.
 
 ### Query Lowering
 

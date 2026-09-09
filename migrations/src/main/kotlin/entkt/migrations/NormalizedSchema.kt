@@ -4,6 +4,9 @@ import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
+import java.time.LocalDate
+import java.time.temporal.ChronoField
+import java.util.Locale
 
 /**
  * Canonical, driver-agnostic representation of a database schema.
@@ -656,6 +659,7 @@ fun formatSqlDefault(fieldType: FieldType, value: Any?): String? {
         // defaultNow() is the only INSTANT default the DSL exposes, stored
         // as the sentinel string "now".
         FieldType.INSTANT -> if (value == "now") "now()" else sqlStringLiteral(value.toString())
+        FieldType.DATE -> sqlDateLiteral(value as LocalDate)
         FieldType.ENUM -> sqlStringLiteral((value as? Enum<*>)?.name ?: value.toString())
         FieldType.STRING -> sqlStringLiteral(value.toString())
         FieldType.BOOL -> value.toString()
@@ -677,6 +681,22 @@ fun formatSqlDefault(fieldType: FieldType, value: Any?): String? {
 
 /** Single-quote a SQL string literal, doubling embedded single quotes. */
 private fun sqlStringLiteral(value: String): String = "'" + value.replace("'", "''") + "'"
+
+/** Use PostgreSQL's BC era notation and pgJDBC's infinity mapping for LocalDate.MIN/MAX. */
+private fun sqlDateLiteral(value: LocalDate): String {
+    val date = when (value) {
+        LocalDate.MIN -> "-infinity"
+        LocalDate.MAX -> "infinity"
+        else -> {
+            val calendarDate = String.format(
+                Locale.ROOT, "%04d-%02d-%02d",
+                value.get(ChronoField.YEAR_OF_ERA), value.monthValue, value.dayOfMonth,
+            )
+            if (value.year <= 0) "$calendarDate BC" else calendarDate
+        }
+    }
+    return sqlStringLiteral(date)
+}
 
 /**
  * SQL referential action as PostgreSQL's catalog reports it. Wider

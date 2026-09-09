@@ -4,6 +4,7 @@ import entkt.query.Op
 import entkt.query.Predicate
 import entkt.schema.FieldType
 import java.time.Instant
+import java.time.LocalDate
 import java.util.UUID
 
 /**
@@ -76,6 +77,11 @@ object EntViewerFilters {
             } catch (_: Exception) {
                 bad(column, raw, "an ISO-8601 instant")
             }
+            FieldType.DATE -> try {
+                LocalDate.parse(raw)
+            } catch (_: java.time.format.DateTimeParseException) {
+                bad(column, raw, "an ISO-8601 date")
+            }
             FieldType.UUID -> try {
                 UUID.fromString(raw)
             } catch (_: Exception) {
@@ -98,7 +104,8 @@ object EntViewerFilters {
     /** Ops the viewer supports per field type; display-only types support none. */
     fun supportedOps(type: FieldType): Set<EntViewerFilterOp> = when (type) {
         FieldType.STRING -> STRING_OPS
-        FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE, FieldType.INSTANT -> COMPARISON_OPS
+        FieldType.INT, FieldType.LONG, FieldType.FLOAT, FieldType.DOUBLE,
+        FieldType.INSTANT, FieldType.DATE -> COMPARISON_OPS
         FieldType.BOOL, FieldType.UUID, FieldType.ENUM -> EQUALITY_OPS
         FieldType.BYTES, FieldType.JSON, FieldType.PGVECTOR -> emptySet()
     }

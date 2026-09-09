@@ -532,7 +532,8 @@ internal fun columnClassFor(type: FieldType, nullable: Boolean, entityClass: Cla
             else ClassName("entkt.query", "FloatingColumn")
             cls.parameterizedBy(entityClass, type.toTypeName())
         }
-        FieldType.INSTANT -> {
+        FieldType.INSTANT,
+        FieldType.DATE -> {
             val cls = if (nullable) ClassName("entkt.query", "NullableComparableColumn")
             else ClassName("entkt.query", "ComparableColumn")
             cls.parameterizedBy(entityClass, type.toTypeName())

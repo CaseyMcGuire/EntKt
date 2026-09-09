@@ -5,19 +5,26 @@ Declarative schema DSL — `EntSchema`, field/edge/index builders, `FieldType`.
 ## Field types
 
 `STRING`, `BOOL`, `INT`, `LONG`, `FLOAT`, `DOUBLE`,
-`INSTANT` (`Instant`), `UUID`, `BYTES`, `ENUM` (Kotlin enum classes via
-`enum<E>()`).
+`INSTANT` (`Instant`), `DATE` (`java.time.LocalDate`), `UUID`, `BYTES`,
+`ENUM` (Kotlin enum classes via `enum<E>()`).
 
 **Enums:** `enum<MyStatus>("status")` binds the field to a Kotlin enum
 class — entity properties, builders, query predicates, and defaults are all
 fully typed. Defaults must be constants from the correct enum class.
 Stored as strings in the database.
 
+**Calendar dates:** `date("birth_date")` represents a date without a time of
+day or timezone, stored as PostgreSQL `date`. Use `instant()` for a particular
+moment instead. Date fields support comparisons, ordering, indexes, nullability,
+and mixins, with `.default(LocalDate.of(2026, 1, 1))` for a fixed default.
+There is no automatic "today" default. See
+[Calendar Dates](../docs/02-schema.md#calendar-dates) for examples and default semantics.
+
 ## Field modifiers
 
 All fields expose `.nullable()`, `.immutable()`, `.sensitive()`, and `.comment(...)`.
 Scalar and enum fields also expose `.unique()`; JSON and pgvector fields do not.
-String, boolean, numeric, and enum fields support typed `.default(value)`.
+String, boolean, numeric, date, and enum fields support typed `.default(value)`.
 Instant fields also support `.defaultNow()` and `.updateDefaultNow()` (emit `Instant.now()`).
 
 Field invariants are runtime validation rules, not schema modifiers. Register

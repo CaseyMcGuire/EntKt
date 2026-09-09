@@ -6,6 +6,7 @@ import entkt.runtime.driver.ForeignKeyRef
 import entkt.runtime.driver.IdStrategy
 import entkt.runtime.driver.IndexMetadata
 import entkt.schema.FieldType
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -40,6 +41,7 @@ class NormalizedSchemaTest {
                 FieldType.FLOAT -> "real"
                 FieldType.DOUBLE -> "double precision"
                 FieldType.INSTANT -> "timestamptz"
+                FieldType.DATE -> "date"
                 FieldType.UUID -> "uuid"
                 FieldType.BYTES -> "bytea"
                 FieldType.PGVECTOR -> "vector" // test fake; real mapping uses storage.sqlType (Phase 4)
@@ -129,6 +131,7 @@ class NormalizedSchemaTest {
                 ColumnMetadata("active", FieldType.BOOL, nullable = false, default = true),
                 ColumnMetadata("color", FieldType.ENUM, nullable = false, default = Color.GREEN),
                 ColumnMetadata("created_at", FieldType.INSTANT, nullable = false, default = "now"),
+                ColumnMetadata("starts_on", FieldType.DATE, nullable = false, default = LocalDate.of(2024, 2, 29)),
                 ColumnMetadata("bio", FieldType.STRING, nullable = true),
             ),
             edges = emptyMap(),
@@ -141,6 +144,8 @@ class NormalizedSchemaTest {
         assertEquals("true", byName["active"]!!.default)
         assertEquals("'GREEN'", byName["color"]!!.default)
         assertEquals("now()", byName["created_at"]!!.default)
+        assertEquals("date", byName["starts_on"]!!.sqlType)
+        assertEquals("'2024-02-29'", byName["starts_on"]!!.default)
         assertNull(byName["id"]!!.default)
         assertNull(byName["bio"]!!.default)
     }
@@ -157,6 +162,24 @@ class NormalizedSchemaTest {
         assertEquals("now()", formatSqlDefault(FieldType.INSTANT, "now"))
         assertEquals("2.5", formatSqlDefault(FieldType.FLOAT, 2.5f))
         assertNull(formatSqlDefault(FieldType.INT, null))
+    }
+
+    @Test
+    fun `date defaults use PostgreSQL calendar literals without timezone conversions`() {
+        val defaults = mapOf(
+            LocalDate.of(2024, 2, 29) to "'2024-02-29'",
+            LocalDate.of(1, 1, 1) to "'0001-01-01'",
+            LocalDate.of(0, 1, 1) to "'0001-01-01 BC'",
+            LocalDate.of(-1, 12, 31) to "'0002-12-31 BC'",
+            LocalDate.of(10000, 1, 1) to "'10000-01-01'",
+            LocalDate.MIN to "'-infinity'",
+            LocalDate.MAX to "'infinity'",
+        )
+        for ((date, literal) in defaults) {
+            assertEquals(literal, formatSqlDefault(FieldType.DATE, date))
+            assertEquals(normalizeDefault(literal), normalizeDefault("$literal::date"))
+        }
+        assertNull(formatSqlDefault(FieldType.DATE, null))
     }
 
     @Test

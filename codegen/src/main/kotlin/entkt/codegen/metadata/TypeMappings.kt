@@ -20,6 +20,7 @@ fun FieldType.toTypeName(): TypeName = when (this) {
     FieldType.FLOAT -> Float::class.asTypeName()
     FieldType.DOUBLE -> Double::class.asTypeName()
     FieldType.INSTANT -> ClassName("java.time", "Instant")
+    FieldType.DATE -> ClassName("java.time", "LocalDate")
     FieldType.UUID -> ClassName("java.util", "UUID")
     FieldType.BYTES -> ByteArray::class.asTypeName()
     FieldType.ENUM -> String::class.asTypeName()

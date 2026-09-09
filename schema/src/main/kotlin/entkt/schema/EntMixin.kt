@@ -23,6 +23,7 @@ abstract class EntMixin protected constructor(
     protected fun float(name: String) = schema.float(name)
     protected fun double(name: String) = schema.double(name)
     protected fun instant(name: String) = schema.instant(name)
+    protected fun date(name: String) = schema.date(name)
     protected fun uuid(name: String) = schema.uuid(name)
     protected fun bytes(name: String) = schema.bytes(name)
 
@@ -44,6 +45,7 @@ abstract class EntMixin protected constructor(
         fun float(name: String) = host.floatForMixin(name)
         fun double(name: String) = host.doubleForMixin(name)
         fun instant(name: String) = host.instantForMixin(name)
+        fun date(name: String) = host.dateForMixin(name)
         fun uuid(name: String) = host.uuidForMixin(name)
         fun bytes(name: String) = host.bytesForMixin(name)
 

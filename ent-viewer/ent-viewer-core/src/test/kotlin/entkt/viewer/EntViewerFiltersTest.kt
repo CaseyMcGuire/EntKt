@@ -35,6 +35,35 @@ class EntViewerFiltersTest {
     }
 
     @Test
+    fun `dates support comparisons and reject invalid dates or timestamps`() {
+        val date = java.time.LocalDate.of(2024, 2, 29)
+        for ((filterOp, op) in listOf(
+            EntViewerFilterOp.EQ to Op.EQ, EntViewerFilterOp.NEQ to Op.NEQ,
+            EntViewerFilterOp.GT to Op.GT, EntViewerFilterOp.GTE to Op.GTE,
+            EntViewerFilterOp.LT to Op.LT, EntViewerFilterOp.LTE to Op.LTE,
+        )) {
+            assertEquals(Predicate.Leaf<Any>("c", op, date), leaf(FieldType.DATE, filterOp, "2024-02-29"))
+        }
+
+        for (invalid in listOf("2023-02-29", "2024-02-30", "2024-02-29T00:00:00Z", "today", "02/29/2024")) {
+            val error = assertFailsWith<EntViewerBadRequestException> {
+                leaf(FieldType.DATE, EntViewerFilterOp.EQ, invalid)
+            }
+            assertTrue("ISO-8601 date" in error.message.orEmpty(), error.message)
+        }
+        assertFailsWith<EntViewerBadRequestException> {
+            leaf(FieldType.DATE, EntViewerFilterOp.CONTAINS, "2024")
+        }
+        assertEquals(
+            Predicate.Leaf<Any>("c", Op.IS_NULL, null),
+            EntViewerFilters.predicate<Any>(
+                column(FieldType.DATE, nullable = true),
+                EntViewerFilter("c", EntViewerFilterOp.IS_NULL, null),
+            ),
+        )
+    }
+
+    @Test
     fun `unparseable values fail before any query with the column named`() {
         for ((type, bad) in listOf(
             FieldType.INT to "nope",

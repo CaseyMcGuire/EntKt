@@ -10,11 +10,15 @@ with `PostgresDriver(dataSource, autoDdl = true)`, it issues
 `CREATE TABLE IF NOT EXISTS` from `EntitySchema.columns`. Type mapping:
 `STRING`/`ENUM` -> `text`,
 `BOOL` -> `boolean`, `INT` -> `integer`, `LONG` -> `bigint`, `FLOAT` -> `real`,
-`DOUBLE` -> `double precision`, `INSTANT` -> `timestamptz`, `UUID` -> `uuid`,
-`BYTES` -> `bytea`. Primary keys for `AUTO_INT`/`AUTO_LONG` become
+`DOUBLE` -> `double precision`, `INSTANT` -> `timestamptz`, `DATE` -> `date`,
+`UUID` -> `uuid`, `BYTES` -> `bytea`. Primary keys for `AUTO_INT`/`AUTO_LONG` become
 `serial`/`bigserial`. Unique fields and composite indexes emit `UNIQUE`
 constraints and `CREATE INDEX` / `CREATE UNIQUE INDEX` statements.
 Partial indexes append `WHERE predicate` when declared via `.where()`.
+
+Schema field defaults are emitted by the migration path, not by `autoDdl`.
+Generated creates apply declared defaults themselves. Raw SQL and raw driver
+inserts rely on defaults installed in the database by migrations.
 
 Edge FK columns emit a separate
 `ALTER TABLE ... ADD CONSTRAINT fk_<table>_<column> FOREIGN KEY ...
@@ -35,6 +39,11 @@ foreign key target is neither registered nor already in the database.
 
 `INSERT ... RETURNING *` and `UPDATE ... RETURNING *` with fully
 parameterized bindings. Never rewrites the id through `update`.
+
+`DATE` values bind and decode as `java.time.LocalDate` without a timestamp or
+timezone conversion; SQL NULL stays null. Fixed date defaults use the same
+calendar values in generated creates and migration SQL. See
+[Date values](../docs/10-drivers.md#date-values) for PostgreSQL range and infinity behavior.
 
 ## Query
 

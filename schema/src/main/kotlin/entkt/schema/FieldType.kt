@@ -8,6 +8,7 @@ enum class FieldType {
     FLOAT,
     DOUBLE,
     INSTANT,
+    DATE,
     UUID,
     BYTES,
     ENUM,
