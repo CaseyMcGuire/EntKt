@@ -89,6 +89,7 @@ internal data class ResolvedIndex(
     val name: String,
     val columns: List<ResolvedIndexColumn>,
     val unique: Boolean,
+    val declarationName: String? = null,
 )
 
 /**
@@ -199,18 +200,26 @@ internal fun eligibleResolvedIndexes(
     val seen = mutableSetOf<Pair<List<String>, Boolean>>()
 
     for (idx in schema.indexes()) {
-        // Skip partial (raw-SQL where) and native / non-btree (pgvector
-        // hnsw/ivfflat) indexes — equality/range helpers would be
-        // misleading there.
-        if (idx.where != null || idx.using != null || idx.opclasses != null || idx.with != null) continue
         val resolved = idx.fields.map { cols[it] }
-        if (resolved.any { it == null }) continue
+        val ineligibleReason = when {
+            idx.where != null -> "partial indexes do not support equality helpers"
+            idx.using != null || idx.opclasses != null || idx.with != null ->
+                "native indexes do not support equality helpers"
+            resolved.any { it == null } -> "one or more indexed columns could not be resolved"
+            resolved.any { it?.equalityEligible == false } ->
+                "one or more indexed column types do not support equality helpers"
+            else -> null
+        }
+        if (ineligibleReason != null) {
+            check(idx.declarationName == null) {
+                "Index '${idx.name}' declared as '${idx.declarationName}' cannot generate a named accessor: " +
+                    "$ineligibleReason. Use `=` instead of `by` to declare the storage index without a named accessor."
+            }
+            continue
+        }
         val rc = resolved.filterNotNull()
-        // Every column must be btree-helper compatible, else the whole
-        // index is ineligible (can't seed an equality predicate for it).
-        if (rc.any { !it.equalityEligible }) continue
         val key = rc.map { it.columnName } to idx.unique
-        if (seen.add(key)) result.add(ResolvedIndex(idx.name, rc, idx.unique))
+        if (seen.add(key)) result.add(ResolvedIndex(idx.name, rc, idx.unique, idx.declarationName))
     }
 
     val table = schema.tableName
@@ -242,7 +251,30 @@ internal fun indexHelperTree(
     if (indexes.isEmpty()) return null
     val root = buildIndexNode(emptyList(), indexes)
     checkStageNameCollisions(root)
+    checkNamedAccessorCollisions(root, indexes)
     return root
+}
+
+private fun checkNamedAccessorCollisions(root: IndexPrefixNode, indexes: List<ResolvedIndex>) {
+    val names = mutableMapOf<String, String>()
+    for (name in listOf("driver", "client", "equals", "hashCode", "toString", "getClass", "wait", "notify", "notifyAll")) {
+        names[name] = "existing member '$name'"
+    }
+    for (child in root.children) {
+        names[child.column.propertyName] = "column helper '${child.column.propertyName}'"
+    }
+    for (index in indexes) {
+        val name = index.declarationName ?: continue
+        val previous = names.put(name, "index '${index.name}'")
+        check(previous == null) {
+            "Named index accessor '$name' for index '${index.name}' collides with $previous in the indexes namespace. " +
+                "Rename the index declaration."
+        }
+        check(index.columns.map { it.propertyName }.distinct().size == index.columns.size) {
+            "Named index accessor '$name' for index '${index.name}' would have duplicate parameters. " +
+                "A named accessor requires distinct indexed columns."
+        }
+    }
 }
 
 /** `PascalCase` join of a prefix's property names, e.g. [authorId, createdAt] → "AuthorIdCreatedAt". */
@@ -367,12 +399,17 @@ private fun buildIndexNode(
  * indexes.authorId(authorId).createdAt(createdAt).query()
  * ```
  */
-private fun helperPathsForIndex(index: ResolvedIndex): List<String> =
-    (1..index.columns.size).map { k ->
+private fun helperPathsForIndex(index: ResolvedIndex): List<String> = buildList {
+    for (k in 1..index.columns.size) {
         val chain = index.columns.take(k)
             .joinToString(".") { "${it.propertyName}(${indexHelperValueParamName(it)})" }
-        "indexes.$chain.query()"
+        add("indexes.$chain.query()")
     }
+    if (index.declarationName != null) {
+        val args = index.columns.joinToString(", ") { "${it.propertyName} = ${it.propertyName}" }
+        add("indexes.${index.declarationName}($args).query()")
+    }
+}
 
 /**
  * Index name → generated helper paths for every eligible index on
@@ -413,6 +450,7 @@ internal class IndexHelperGenerator(
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec? {
         val root = indexHelperTree(schema, schemaNames) ?: return null
+        val namedIndexes = eligibleResolvedIndexes(schema, schemaNames).filter { it.declarationName != null }
 
         val entityClass = ClassName(packageName, schemaName)
         val queryClass = surface.queryClass(packageName, schemaName)
@@ -438,6 +476,7 @@ internal class IndexHelperGenerator(
             // Root (empty-prefix) first-stage methods live directly on the
             // namespace class; the root has no query()/terminals.
             addFunctions(emitter.stageMethods(root))
+            for (index in namedIndexes) addFunction(emitter.namedAccessor(index))
 
             // Every deeper stage class + range terminal is nested flat under
             // the namespace class.
@@ -508,6 +547,19 @@ internal class IndexHelperGenerator(
             }
             return funs
         }
+
+        /** Full-key shortcuts reuse the existing equality chain and its terminal surface. */
+        fun namedAccessor(index: ResolvedIndex): FunSpec =
+            function(requireNotNull(index.declarationName), returnType = stageClass(index.columns)) {
+                val chain = CodeBlock.builder().add("this")
+                for (col in index.columns) {
+                    // The qualified receiver avoids shadowing, so parameter names can match
+                    // the entity properties verbatim even for names like `driver` or `value`.
+                    parameter(col.propertyName, col.paramType)
+                    chain.add(".%N(%N)", col.propertyName, col.propertyName)
+                }
+                statement("return %L", chain.build())
+            }
 
         private fun equalityMethod(node: IndexPrefixNode, child: IndexChild): FunSpec {
             val col = child.column

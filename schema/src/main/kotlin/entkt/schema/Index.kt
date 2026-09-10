@@ -11,4 +11,6 @@ data class Index(
     val opclasses: List<String>? = null,
     /** Index storage params rendered `WITH (k = v, …)`, e.g. IVFFlat `{"lists":"100"}`. */
     val with: Map<String, String>? = null,
+    /** Optional Kotlin `by` declaration naming a full-key accessor in the repository's `indexes`. */
+    val declarationName: String? = null,
 )

@@ -4,9 +4,9 @@ import kotlin.reflect.KProperty
 import kotlin.reflect.KVisibility
 
 /**
- * Shared `provideDelegate` binding logic for field and edge builders.
+ * Shared `provideDelegate` binding logic for field, edge, and index builders.
  *
- * Field builders ([FieldBuilder]) and edge builders ([EdgeBuilderBase])
+ * Field builders ([FieldBuilder]), edge builders ([EdgeBuilderBase]), and [IndexBuilder]
  * are separate hierarchies with no common supertype, but they bind a
  * declaration name identically, so the rules live here once rather than
  * being restated in five places.

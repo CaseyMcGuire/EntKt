@@ -390,7 +390,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
                 }
             }
         }
-        return IndexBuilder(name, fields.toList()).also { _indexes.add(it) }
+        return IndexBuilder(name, fields.toList()).also { it.declarationOwner = this; _indexes.add(it) }
     }
 
     /**
@@ -425,7 +425,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
             "postgresVectorIndex('$name') on '${field.fieldName}': pgvector HNSW/IVFFlat indexes " +
                 "support at most 2000 dimensions, but the column is ${native.dimensions}-dimensional"
         }
-        return IndexBuilder(name, listOf(field), isVectorIndex = true).also { _indexes.add(it) }
+        return IndexBuilder(name, listOf(field), isVectorIndex = true).also { it.declarationOwner = this; _indexes.add(it) }
     }
 
     @PublishedApi internal fun indexForMixin(name: String, vararg fields: IndexableColumn): IndexBuilder =
@@ -486,7 +486,10 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
 
         // A declaration that bound through this mixin but is declared on
         // a superclass of it — V1 binds only direct declarations.
-        for (name in boundHere) {
+        val namedIndexes = _indexes
+            .filter { it.declarationMixinClass == mixinClass }
+            .mapNotNull { it.declarationName }
+        for (name in boundHere + namedIndexes) {
             if (name in declaredHere) continue
             error(
                 "Mixin '$mixinName': declaration '$name' is not declared on '$mixinName' " +
@@ -513,6 +516,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
             edge.resolve(registry, this::class)
         }
         validateDeclarationBindings()
+        validateIndexDeclarationBindings()
         // Freeze all builders so mutations after finalization are rejected
         for (field in _fields) { field.frozen = true }
         for (edge in _edges) { edge.frozen = true }
@@ -690,6 +694,27 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
                     "concrete schema class or an included mixin — move the declaration onto " +
                     "'$schemaName', or contribute it through a mixin.",
             )
+        }
+    }
+
+    /** Named indexes have their own namespace; ordinary `=` indexes need no declaration binding. */
+    private fun validateIndexDeclarationBindings() {
+        val schemaName = this::class.simpleName ?: "<anonymous>"
+        val declaredHere = this::class.declaredMemberProperties
+            .filter { it.visibility == KVisibility.PUBLIC }
+            .map { it.name }
+            .toSet()
+        val seen = mutableSetOf<String>()
+        for (index in _indexes) {
+            val name = index.declarationName ?: continue
+            check(seen.add(name)) {
+                "Schema '$schemaName': index declaration name '$name' is claimed by multiple indexes. " +
+                    "Generated indexes accessors would collide — rename one declaration."
+            }
+            check(index.declarationMixinClass != null || name in declaredHere) {
+                "Schema '$schemaName': index declaration '$name' is not declared on '$schemaName' itself. " +
+                    "Declare it on the concrete schema class or contribute it through an included mixin."
+            }
         }
     }
 

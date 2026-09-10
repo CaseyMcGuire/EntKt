@@ -1,5 +1,8 @@
 package entkt.schema
 
+import kotlin.reflect.KClass
+import kotlin.reflect.KProperty
+
 class IndexBuilder internal constructor(
     private val name: String,
     private val columns: List<IndexableColumn>,
@@ -7,6 +10,30 @@ class IndexBuilder internal constructor(
     private val isVectorIndex: Boolean = false,
 ) {
     internal var frozen: Boolean = false
+    internal var declarationOwner: EntSchema? = null
+    internal var declarationName: String? = null
+    internal var declarationMixinClass: KClass<*>? = null
+
+    /**
+     * Opt into a named full-key index accessor using the Kotlin property's name.
+     * Ordinary `=` declarations retain the column-based helpers only.
+     */
+    operator fun provideDelegate(thisRef: Any?, property: KProperty<*>): IndexBuilder {
+        checkNotFrozen()
+        declarationName = bindDeclarationName(
+            property = property,
+            kind = "Index",
+            storageName = name,
+            owner = declarationOwner,
+            existing = declarationName,
+            thisRef = thisRef,
+            mixinAllowed = true,
+            onMixinBinding = { declarationMixinClass = it },
+        )
+        return this
+    }
+
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): IndexBuilder = this
 
     private fun checkNotFrozen() {
         check(!frozen) { "Index cannot be modified after schema finalization" }
@@ -62,6 +89,7 @@ class IndexBuilder internal constructor(
             using = using,
             opclasses = opclasses,
             with = with,
+            declarationName = declarationName,
         )
     }
 }
