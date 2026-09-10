@@ -213,8 +213,12 @@ class EntktPluginTest {
                 "Repo should supply its schema-specific query",
             )
             assertTrue(
+                repoFlat.contains("fun query(block: PetQueryScope.() -> Unit = {}): PetQuery"),
+                "Repo should expose its schema-specific query configuration scope",
+            )
+            assertTrue(
                 !repoContent.contains("fun create(") && !repoContent.contains("fun update(") &&
-                    !repoContent.contains("fun query("),
+                    !repoContent.contains("fun query()"),
                 "Repo should not duplicate runtime-owned entry points",
             )
 
