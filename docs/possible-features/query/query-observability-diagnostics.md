@@ -60,9 +60,7 @@ query execution strategy.
 ## Implemented Baseline
 
 Read interceptors and `ReadQueryCompiler` produce the effective storage query
-used by runtime reads. The historical
-[Read-Path Interceptors](../../implemented-features/query/read-path-interceptors.md)
-RFC also records an explain family that is no longer generated. A future
+used by runtime reads. A future
 inspection API should consume current immutable query descriptions and reuse
 compilation semantics rather than restore removed terminal aliases.
 
@@ -262,7 +260,7 @@ interceptors:
   TenantReadInterceptor<Post>: added tenant_id = ?
 ```
 
-See [Read-Path Interceptors](../../implemented-features/query/read-path-interceptors.md).
+See [Read-Path Interceptors](../../04-queries.md#read-path-interceptors).
 
 ## Privacy Diagnostics
 

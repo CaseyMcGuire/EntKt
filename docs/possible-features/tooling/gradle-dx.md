@@ -40,8 +40,8 @@ Potential tasks:
 ```
 
 Build on the existing tasks described in
-[Schema Validation And Explain](../../implemented-features/schema/schema-validation-explain.md)
-and [Flyway Shadow Migration Workflow](../../implemented-features/tooling/flyway-shadow-migration-workflow.md).
+[Schema Validation And Explain](../../01-getting-started.md#schema-inspection)
+and [Flyway Shadow Migration Workflow](../../09-migrations.md#flyway-shadow-migration-workflow).
 Do not add another schema-printing task for the same functionality. An optional
 output-file setting could complement the current stdout rendering; additional
 dialects belong with driver capability support.

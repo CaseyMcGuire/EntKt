@@ -40,9 +40,9 @@ names follow the schema declaration-name contract.
 
 Detailed notes:
 
-- [Generated Edge Loading API](../implemented-features/query/generated-edge-loading-api.md)
+- [Generated Edge Loading API](../04-queries.md#edge-loading)
 - [Set-Based Eager Graph Loader](query/set-based-eager-graph-loader.md)
-- [Schema Declaration Names As Generated API](../implemented-features/schema/schema-declaration-api-names.md)
+- [Schema Declaration Names As Generated API](../02-schema.md#names)
 
 ### 2. Query-Time Visibility Predicates
 

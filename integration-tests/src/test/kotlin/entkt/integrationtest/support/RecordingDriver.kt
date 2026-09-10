@@ -9,9 +9,7 @@ import entkt.runtime.query.AggregateResultRow
 
 /**
  * Delegating [DatabaseDriver] wrapper that records every data-path call while
- * forwarding to a real driver — the sanctioned "narrow fake DatabaseDriver
- * local to the test" pattern (see
- * docs/implemented-features/tooling/remove-in-memory-driver.md). Used
+ * forwarding to a real driver. Used
  * to prove no-I/O contracts (projections perform zero driver calls;
  * assignment-free updates never write) without weakening the Postgres
  * backing of the rest of the suite.

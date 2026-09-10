@@ -25,7 +25,7 @@ This is implemented by
 [DeleteManyMutationOperation](../../../runtime/src/main/kotlin/entkt/runtime/mutation/execution/DeleteManyMutationOperation.kt)
 and covered by
 [DeleteManyIntegrationTest](../../../integration-tests/src/test/kotlin/entkt/integrationtest/DeleteManyIntegrationTest.kt).
-See [Batch-Aware Lifecycle Evaluation](../../implemented-features/privacy-validation/batch-aware-lifecycle-evaluation.md)
+See [Batch-Aware Lifecycle Evaluation](../../operation-lifecycle.md#bulk-operations)
 for the delivered bulk contract. Predicate reassertion is no longer planned
 work in this RFC.
 
@@ -96,7 +96,7 @@ transaction alone does not make separate read-committed statements share one
 snapshot. Driver-specific returning or locking strategies need an explicit
 contract.
 
-Use the current [operation result algebra](../../implemented-features/api/operation-result-algebra.md):
+Use the current [operation result algebra](../../06-privacy.md#error-handling):
 a conflict is `MutationResult.Failed` carrying an `EntConflictException` and
 its write state, not a new top-level `Conflict` variant or silent `false`.
 Normal absence retains the current delete acknowledgement behavior. This RFC

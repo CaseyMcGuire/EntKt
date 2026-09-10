@@ -29,7 +29,7 @@ import kotlin.reflect.typeOf
  * Kotlin API identifier. Neither is derived from the other, and neither
  * is derived from the schema class name. Renaming one does not rename
  * the other. See
- * `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * `docs/02-schema.md#names`.
  *
  * @param tableName the physical SQL table name (lowercase snake_case)
  * @param clientName the exact generated client/configuration property
@@ -553,7 +553,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
      * `include(...)` returns, so by finalize time a `by lazy` inside a
      * mixin would have left nothing to notice.
      *
-     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+     * See `docs/02-schema.md#names`.
      */
     /**
      * True when a property's declared type can only have come from a

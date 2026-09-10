@@ -56,7 +56,7 @@ abstract class EdgeBuilderBase {
      * constructed. Null for a builder registered but never bound
      * (`val x = belongsTo<T>(...)`), which schema finalization rejects.
      *
-     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+     * See `docs/02-schema.md#names`.
      */
     internal var declarationName: String? = null
 

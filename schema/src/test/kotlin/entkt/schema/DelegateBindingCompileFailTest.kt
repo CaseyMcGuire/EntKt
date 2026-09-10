@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
  * `setValue`), and forward-referencing a delegated property must not
  * compile. Both are guarantees a runtime test cannot express.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 class DelegateBindingCompileFailTest {
 

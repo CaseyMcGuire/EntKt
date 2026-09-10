@@ -87,5 +87,5 @@ alone must not silently change mutation semantics.
 ## Related Features
 
 - [Eager Loading: Native M2M Windows And Chunking](set-based-eager-graph-loader.md)
-- [Read-Path Interceptors](../../implemented-features/query/read-path-interceptors.md)
-- [Soft Delete](../../implemented-features/schema/soft-delete.md)
+- [Read-Path Interceptors](../../04-queries.md#read-path-interceptors)
+- Soft Delete

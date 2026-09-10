@@ -21,7 +21,7 @@ import entkt.schema.Field
 // metadata: they drive DDL, joins, edge lookup, migration identity, and
 // driver row keys, and never name a Kotlin member.
 //
-// See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+// See `docs/02-schema.md#names`.
 // ------------------------------------------------------------------
 
 /** The database column name for this field. */

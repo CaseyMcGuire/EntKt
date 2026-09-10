@@ -23,7 +23,7 @@ import entkt.schema.EntSchema
  * from the table. [Note] covers the field-backed FK form; this schema
  * covers the client name, a plain scalar, and an implicit FK.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 class Directory : EntSchema("legacy_people_tbl", clientName = "people") {
     override fun id() = EntId.long()

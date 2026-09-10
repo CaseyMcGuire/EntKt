@@ -21,7 +21,7 @@ data class Field(
      * rejects any registered builder that never bound, so codegen never
      * sees a null here.
      *
-     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+     * See `docs/02-schema.md#names`.
      */
     val declarationName: String? = null,
     /**

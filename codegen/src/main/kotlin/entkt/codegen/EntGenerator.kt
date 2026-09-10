@@ -47,7 +47,7 @@ import kotlin.reflect.KClass
  * storage identity from `tableName` — three independent names, none
  * derived from the others.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 data class SchemaInput(
     val schema: EntSchema,

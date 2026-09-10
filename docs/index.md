@@ -23,11 +23,10 @@ that talk to a pluggable `DatabaseDriver`.
 ## Design Records and Change History
 
 - [Possible Features Index](possible-features/index.md) -- technical proposals and design notes for future work
-- [Implemented Features Index](implemented-features/index.md) -- historical implementation records for shipped work
 - [Breaking Changes](breaking-changes/index.md) -- running log of breaking changes to the public surface
 
-The numbered guides above are the API documentation. The feature indexes are
-design records for contributors and may discuss code generation, runtime
+The numbered guides above are the API documentation. The possible-feature notes
+are design records for contributors and may discuss code generation, runtime
 plumbing, SQL lowering, and other implementation details.
 
 ## Maintainer Guides

@@ -23,8 +23,7 @@ newest at the top, using this shape:
 ```
 
 Keep it caller-focused: what breaks and what to do about it, not the
-internal rationale (link an [implemented-features](../implemented-features/index.md)
-note for the full design). When cutting a release, rename `## Unreleased`
+internal rationale. When cutting a release, rename `## Unreleased`
 to the version (e.g. `## 0.2.0`) and start a fresh empty `## Unreleased`
 above it.
 
@@ -485,8 +484,7 @@ above it.
   the query's selected graph — root and nested target queries alike — so a
   captured query cannot change an in-flight operation.
   Execution, `EdgeState`, and eager LOAD privacy
-  semantics are unchanged. See the
-  [generated edge loading API note](../implemented-features/query/generated-edge-loading-api.md).
+  semantics are unchanged.
   _Migration:_ rename `with{Name}` calls to `load{Name}` (nested blocks
   included) and `EagerLoad` type references to `EdgeLoad`; merge duplicate
   `load{Name}` calls for one edge into a single block; move `load{Name}`
@@ -542,9 +540,7 @@ above it.
   privacy, validation, and `beforeDelete` before one logical ID-returning
   delete, reasserting the frozen caller-plus-interceptor predicates; only rows
   actually removed reach `afterDelete`. PostgreSQL statement counts and shapes
-  therefore change. See the
-  [batch-aware lifecycle design](../implemented-features/privacy-validation/batch-aware-lifecycle-evaluation.md)
-  for the full ordering and transaction contract.
+  therefore change.
   Custom drivers are source-broken: `Driver.registeredIdColumn(table)` is a new
   abstract method. `Driver.deleteManyByIds(...)` has a correct default that
   calls `deleteMany()` once per distinct ID; drivers may override it for a
@@ -623,8 +619,7 @@ above it.
   generated terminal families, `EntResult`, the universal `EntError`
   hierarchy, and `EntException.error`) is replaced by one canonical
   result-bearing terminal per operation family plus runtime projections.
-  See the [operation-result-algebra design](../implemented-features/api/operation-result-algebra.md)
-  for the full contract. In caller terms:
+  In caller terms:
   - *Reads.* `byIdOrNull` / `byIdOrThrow` / `byIdOrError` /
     `visibleByIdOrNull` collapse to `findById(id): ReadResult<Entity?>`;
     `allOrThrow` / `allOrError` to `all(): ReadResult<List<Entity>>`;
@@ -778,8 +773,7 @@ above it.
   (a to-one edge was requested but no target was returned), and
   `Loaded(emptyList())` (a to-many edge was requested and no rows
   matched). Previously one `null` covered both "not loaded" and, for
-  to-one edges, "loaded with no row". See the
-  [loaded edge state note](../implemented-features/query/loaded-edge-state.md).
+  to-one edges, "loaded with no row".
   _Migration:_ replace nullable edge access with the `EdgeState`
   helpers: `user.edges.posts!!` / `user.edges.posts.orEmpty()` →
   `user.edges.posts.requireLoaded()` (throws `EdgeNotLoadedException`
@@ -824,8 +818,7 @@ above it.
   `ctx.client.<repo>` call shape is unchanged. The internal
   `asReadClientForInternalUse(context)` adapter is replaced by
   `asValidationReadClientForInternalUse()` /
-  `asPrivacyReadClientForInternalUse(privacy)`. See the
-  [posture-specific read clients note](../implemented-features/privacy-validation/posture-specific-read-clients.md).
+  `asPrivacyReadClientForInternalUse(privacy)`.
   _Migration:_ posture-agnostic helper parameters may remain
   `EntReadClient` (such helpers must not use raw terminals); helpers that
   rely on privacy-bypassing or raw reads should retype to
@@ -857,8 +850,7 @@ above it.
   new sealed `Predicate` subclasses `HasEdgeFromShape` / `HasM2MEdgeFromShape`
   (carrying `entkt.query.TraversalSourceShape`), lowered as a source-id
   subquery, and interceptor limit operations now apply to
-  `ReadOperation.EDGE_TRAVERSAL` instead of silently no-oping (see the
-  [shape-preserving traversal note](../implemented-features/query/edge-traversal-source-shape.md)).
+  `ReadOperation.EDGE_TRAVERSAL` instead of silently no-oping.
   _Migration:_ traversal results can narrow — drop source bounds that the old
   lowering silently ignored if the broad row set was actually intended; add
   branches for the two new subclasses to any exhaustive `when` over
@@ -881,8 +873,7 @@ above it.
   including the `*OrError` variants) throw `IllegalStateException` at
   runtime — while validator readers are **privacy-bypass-scoped** —
   validation reads see all rows and raw terminals keep working. Hook
-  contexts keep the full `EntClient`. See the
-  [read-only privacy client note](../implemented-features/privacy-validation/read-only-privacy-client.md).
+  contexts keep the full `EntClient`.
   _Migration:_ retype rule/validator helper signatures from `EntClient` to
   `EntReadClient`; in privacy rules, replace privacy-bypassing loads with
   LOAD-checked reads (`byIdOrNull` throws on a denied row) or the
@@ -912,8 +903,7 @@ above it.
   codegen time with `entkt { jsonMapper }`). `JsonColumnMetadata(klass,
   serializer, typeName)` became `JsonColumnMetadata(klass, kType, typeName,
   mapper, kotlinxSerializer?)`, and `PostgresDriver`'s `json:
-  Json` constructor parameter is now `jsonCodec: JsonColumnCodec`. See
-  [Pluggable JSON Mappers](../implemented-features/schema/pluggable-json-mappers.md).
+  Json` constructor parameter is now `jsonCodec: JsonColumnCodec`.
   _Migration:_ regenerate code (the `SCHEMA` literal shape changed); replace
   `PostgresDriver(ds, json = Json {...})` with
   `PostgresDriver(ds, jsonCodec = KotlinxJsonCodec(Json {...}))`; hand-built

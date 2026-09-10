@@ -11,7 +11,7 @@ import kotlin.test.assertSame
  * Delegate binding: `val x by string("col")` names the generated API,
  * independently of the storage string.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 class DelegateBindingTest {
 

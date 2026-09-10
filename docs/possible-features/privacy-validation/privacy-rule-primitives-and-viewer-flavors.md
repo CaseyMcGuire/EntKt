@@ -342,10 +342,10 @@ possible future [Privacy / Validation Explain Mode](privacy-validation-explain-m
 
 ## Relationship To Existing Features
 
-- [Read-Path Interceptors](../../implemented-features/query/read-path-interceptors.md) remain the
+- [Read-Path Interceptors](../../04-queries.md#read-path-interceptors) remain the
   right home for query-shape filters. These helpers do not replace
   interceptors.
-- [Soft Delete](../../implemented-features/schema/soft-delete.md) should
+- Soft Delete should
   continue to be a mixin plus interceptor, not a privacy-rule primitive.
 - [Edge-Derived LOAD Privacy](edge-derived-load-privacy.md) remains a
   separate feature for allowing reads based on eager-load source context.

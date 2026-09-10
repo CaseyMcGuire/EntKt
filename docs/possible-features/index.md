@@ -3,9 +3,6 @@
 This directory tracks feature ideas that may be worth implementing later.
 These pages are design notes, not committed API contracts.
 
-Implemented RFCs have moved to the
-[Implemented Features Index](../implemented-features/index.md).
-
 For the cross-cutting repository audit and links to its focused design notes,
 see [EntKt ORM Design Improvements](orm-design-improvements.md).
 

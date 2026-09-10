@@ -20,7 +20,7 @@ import kotlin.test.assertNull
  * declaration names; raw JDBC confirms the rows land under the storage
  * names.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 class DeclarationNameContractIntegrationTest : PostgresTestBase() {
 

@@ -6,8 +6,7 @@ import entkt.query.Predicate
 /**
  * Reusable read-path interceptor that hides rows whose timestamp
  * column is non-null. The runtime half of the soft-delete
- * convention (see
- * `docs/implemented-features/schema/soft-delete.md`).
+ * convention.
  *
  * Register per-entity through the generated client interceptor DSL:
  *

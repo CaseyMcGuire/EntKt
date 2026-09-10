@@ -16,7 +16,7 @@ data class Edge(
      * construction. Nullable only for a builder that was registered but
      * never bound, which schema finalization rejects.
      *
-     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+     * See `docs/02-schema.md#names`.
      */
     val declarationName: String? = null,
 )

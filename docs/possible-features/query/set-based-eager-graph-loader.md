@@ -22,8 +22,8 @@ owns graph traversal, grouping, privacy, and storage coordination. See
 [Queries](../../04-queries.md), the
 [graph loader](../../../runtime/src/main/kotlin/entkt/runtime/query/execution/EntityGraphLoader.kt),
 and the [relationship driver contract](../../../runtime/src/main/kotlin/entkt/runtime/driver/DatabaseDriver.kt).
-The [Generated Edge Loading API](../../implemented-features/query/generated-edge-loading-api.md)
-owns the public `load{Name}` selection surface.
+The [edge loading guide](../../04-queries.md#edge-loading)
+describes the public `load{Name}` selection surface.
 
 The earlier phase-1 and phase-2A implementation plans are complete. They are
 summarized here only as constraints on the remaining optimizations.
@@ -169,7 +169,7 @@ coverage when implementing the remaining strategies:
 
 ## Related Features
 
-- [Generated Edge Loading API](../../implemented-features/query/generated-edge-loading-api.md)
+- [Generated Edge Loading API](../../04-queries.md#edge-loading)
 - [Request-Scoped Entity Loading](request-scoped-entity-loading.md)
 - [Driver Capability Matrix](../tooling/driver-capability-matrix.md)
 - [Projection / Select API](projection-select-api.md)

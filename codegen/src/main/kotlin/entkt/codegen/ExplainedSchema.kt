@@ -14,7 +14,7 @@ data class ExplainedSchemaGraph(
  * entries follow the same split — `apiName` is the Kotlin declaration,
  * `name` stays the storage identifier the relational view is about.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 data class ExplainedSchema(
     val schemaName: String,

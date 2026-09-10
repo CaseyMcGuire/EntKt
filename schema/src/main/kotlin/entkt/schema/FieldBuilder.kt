@@ -24,7 +24,7 @@ abstract class FieldBuilder<Self : FieldBuilder<Self, V>, V> internal constructo
      *
      * Propagated into [Field.declarationName] by [build].
      *
-     * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+     * See `docs/02-schema.md#names`.
      */
     internal var declarationName: String? = null
 

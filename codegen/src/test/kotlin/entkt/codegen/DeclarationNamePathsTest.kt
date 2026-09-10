@@ -34,7 +34,7 @@ private class PathDirectory : EntSchema("path_dirs", clientName = "pathDirs") {
  * either in the other's place produces code that still compiles — it
  * just reports the wrong name, or silently fails an edge lookup.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 class DeclarationNamePathsTest {
 

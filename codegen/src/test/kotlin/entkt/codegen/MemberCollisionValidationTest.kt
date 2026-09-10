@@ -280,7 +280,7 @@ class MemberCollisionValidationTest {
     // manifest still carries these members so a *future generated*
     // member colliding with them is caught.
     //
-    // See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+    // See `docs/02-schema.md#names`.
     // ──────────────────────────────────────────────────────────────
 
     @Test

@@ -46,7 +46,7 @@ private class Hygiene : EntSchema("hygiene", clientName = "hygienes") {
  * a fixed local. A field named `candidate` previously emitted a second
  * `val candidate` in the same body and produced uncompilable source.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 class GeneratedLocalHygieneCompileTest {
 

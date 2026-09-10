@@ -17,7 +17,7 @@ import kotlin.reflect.KVisibility
  * without a repeated API-name string, and without an annotation
  * processor or compiler plugin.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 internal fun bindDeclarationName(
     property: KProperty<*>,

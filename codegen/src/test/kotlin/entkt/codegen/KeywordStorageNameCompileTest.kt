@@ -42,7 +42,7 @@ private class KeywordStorage : EntSchema("object", clientName = "keywordStorages
  * leaking into a raw identifier position would produce `val class = …`
  * and fail here.
  *
- * See `docs/implemented-features/schema/schema-declaration-api-names.md`.
+ * See `docs/02-schema.md#names`.
  */
 class KeywordStorageNameCompileTest {
 
