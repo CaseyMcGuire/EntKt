@@ -565,7 +565,7 @@ internal class ClientGenerator(
             statement("tx.transactionExecutionToken = executionToken")
             statement("%T(tx)", transactionClientClass)
             endControlFlow()
-            add(", block)\n")
+            add(", isolation = isolation, block = block)\n")
             nextControlFlow("finally")
             statement("transactionExecutionGuard.exitTransaction(executionToken)")
             endControlFlow()
@@ -573,6 +573,9 @@ internal class ClientGenerator(
 
         return function("withTransaction", transactionResult.parameterizedBy(t)) {
             addTypeVariable(t)
+            parameter("isolation", ClassName("entkt.runtime.driver", "IsolationLevel").copy(nullable = true)) {
+                defaultValue("null")
+            }
             parameter(
                 "block",
                 LambdaTypeName.get(

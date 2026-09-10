@@ -144,9 +144,12 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             return probe.transformReturnedIds(ordered)
         }
 
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> {
             probe.withTransactionCalls++
-            return delegate.withTransaction { transactionDriver ->
+            return delegate.withTransaction(isolation = isolation) { transactionDriver ->
                 block(DeleteProbeDriver(transactionDriver, probe))
             }
         }
@@ -196,8 +199,11 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
                 delegate.classifyMutationException(exception, entity, operation)
             }
 
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
-            delegate.withTransaction { transactionDriver ->
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> =
+            delegate.withTransaction(isolation = isolation) { transactionDriver ->
                 block(FallbackThenFailDriver(transactionDriver, failure, deleteManyCalls))
             }
     }

@@ -136,9 +136,12 @@ class RecordingDriver private constructor(
         return delegate.readRowForUpdate(table, id)
     }
 
-    override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
+    override fun <T> withTransaction(
+        isolation: entkt.runtime.driver.IsolationLevel?,
+        block: (DatabaseDriver) -> T,
+    ): DriverTransactionResult<T> {
         calls += "withTransaction"
-        return delegate.withTransaction { txDriver ->
+        return delegate.withTransaction(isolation = isolation) { txDriver ->
             block(RecordingDriver(txDriver, calls))
         }
     }

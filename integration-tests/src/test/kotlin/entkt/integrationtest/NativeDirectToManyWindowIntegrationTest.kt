@@ -65,8 +65,11 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
                     "fall back to DatabaseDriver.query",
             )
 
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
-            real.withTransaction { tx -> block(EmulatedWindowsDriver(tx)) }
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> =
+            real.withTransaction(isolation = isolation) { tx -> block(EmulatedWindowsDriver(tx)) }
     }
 
     /** Counts rows crossing each read path, native and emulated. */
@@ -99,8 +102,11 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
                 if (table == Article.TABLE) emulatedRowCounts.add(it.size)
             }
 
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
-            real.withTransaction { tx ->
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> =
+            real.withTransaction(isolation = isolation) { tx ->
                 block(RowObservingDriver(tx, nativeQueries, nativeRowCounts, emulatedRowCounts, emulated))
             }
     }

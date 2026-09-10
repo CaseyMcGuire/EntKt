@@ -70,8 +70,11 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             values: List<Map<String, Any?>>,
         ): List<Map<String, Any?>> = delegate.insertMany(table, values).dropLast(1)
 
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
-            delegate.withTransaction { transactionDriver ->
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> =
+            delegate.withTransaction(isolation = isolation) { transactionDriver ->
                 block(WrongCardinalityDriver(transactionDriver))
             }
     }
@@ -117,8 +120,11 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 delegate.classifyMutationException(exception, entity, operation)
             }
 
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
-            delegate.withTransaction { transactionDriver ->
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> =
+            delegate.withTransaction(isolation = isolation) { transactionDriver ->
                 block(ChunkThenFailDriver(transactionDriver, failure, classifyAsConstraint))
             }
     }

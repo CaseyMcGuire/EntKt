@@ -5,6 +5,7 @@ package entkt.runtime.result
 import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
+import entkt.runtime.driver.IsolationLevel
 
 /**
  * The canonical exhaustive result of the client transaction boundary.
@@ -251,6 +252,10 @@ class TransactionCoordinator @EntktInternal constructor() {
  * [makeTxClient] builds the transaction-scoped client over the
  * transaction driver and wires the [TransactionCoordinator] into it so
  * mutation terminals can record failures.
+ * [isolation] is forwarded unchanged to the driver; null preserves the
+ * driver's configured default. Unsupported isolation is a pre-begin failure
+ * reported as [TransactionFailureState.NotCommitted], before either
+ * [makeTxClient] or [block] runs.
  *
  * Outcome rules (RFC failure precedence):
  * - block value returned and scope not rollback-only → driver commit;
@@ -271,6 +276,7 @@ class TransactionCoordinator @EntktInternal constructor() {
 fun <C, T> runEntTransaction(
     driver: DatabaseDriver,
     makeTxClient: (DatabaseDriver, TransactionCoordinator) -> C,
+    isolation: IsolationLevel? = null,
     block: TransactionScope.(C) -> T,
 ): TransactionResult<T> {
     // The result boundary begins with this call, so even the
@@ -294,7 +300,7 @@ fun <C, T> runEntTransaction(
     val scope = TransactionScope(coordinator)
 
     val driverResult: DriverTransactionResult<T> = try {
-        driver.withTransaction { txDriver ->
+        driver.withTransaction(isolation = isolation) { txDriver ->
             val txClient = makeTxClient(txDriver, coordinator)
             val value = scope.block(txClient)
             if (coordinator.rollbackOnly) {

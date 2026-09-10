@@ -47,6 +47,7 @@ class TransactionClientCompileTest {
 
                 import com.example.ent.EntClient
                 import com.example.ent.EntTransactionClient
+                import entkt.runtime.driver.IsolationLevel
                 import entkt.runtime.privacy.ViewerContext
                 import entkt.runtime.privacy.Viewer
 
@@ -56,6 +57,15 @@ class TransactionClientCompileTest {
                         val typed: EntTransactionClient = tx
                         typed.cars.query { }.all(viewerContext)
                         typed.users.query { }.all(viewerContext)
+                    }
+                    for (isolation in IsolationLevel.entries) {
+                        client.withTransaction(isolation = isolation) { tx ->
+                            val typed: EntTransactionClient = tx
+                            typed.cars.query().forUpdate().all(viewerContext)
+                        }
+                    }
+                    client.withTransaction(isolation = null) { tx ->
+                        tx.users.query().all(viewerContext)
                     }
                 }
                 """.trimIndent(),
@@ -151,6 +161,7 @@ class TransactionClientCompileTest {
                 fun nestedTransaction(client: EntClient) {
                     client.withTransaction { tx ->
                         tx.withTransaction { }
+                        tx.withTransaction(isolation = entkt.runtime.driver.IsolationLevel.ReadCommitted) { }
                     }
                 }
                 """.trimIndent(),

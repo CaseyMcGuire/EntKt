@@ -409,7 +409,10 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
 
     private fun withoutQueryLocking(driver: DatabaseDriver): DatabaseDriver = object : DatabaseDriver by driver {
         override val supportsQueryForUpdate = false
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
-            driver.withTransaction { tx -> block(withoutQueryLocking(tx)) }
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> =
+            driver.withTransaction(isolation = isolation) { tx -> block(withoutQueryLocking(tx)) }
     }
 }

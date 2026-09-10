@@ -470,7 +470,19 @@ interface DatabaseDriver {
     /**
      * Run [block] inside a transaction and report the outcome
      * structurally. The block receives a transaction-scoped [DatabaseDriver]
-     * that shares a single underlying connection / snapshot.
+     * that uses a single underlying connection for the transaction.
+     *
+     * A null [isolation] preserves the connection's configured isolation level;
+     * it does not select a framework default. An explicit level must be applied
+     * before entering [block] or executing application queries. Unsupported
+     * levels throw [UnsupportedDriverCapabilityException] before the block or
+     * any transaction I/O; drivers must never silently ignore or substitute a
+     * requested level. Decorators must forward [isolation] unchanged.
+     *
+     * Any connection setting changed for the transaction must be restored
+     * before that connection is returned for reuse. A connection whose state
+     * cannot be restored must not be reused with those settings. Isolation
+     * does not enable nested transactions, savepoints, or automatic retries.
      *
      * Write-certainty contract:
      * - [DriverTransactionResult.Success] is returned only after
@@ -500,7 +512,10 @@ interface DatabaseDriver {
      * The driver passed to [block] is only valid for the duration of
      * the block — using it after the block returns will throw.
      */
-    fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T>
+    fun <T> withTransaction(
+        isolation: IsolationLevel? = null,
+        block: (DatabaseDriver) -> T,
+    ): DriverTransactionResult<T>
 
     /**
      * True when this [DatabaseDriver] is the transaction-scoped driver passed

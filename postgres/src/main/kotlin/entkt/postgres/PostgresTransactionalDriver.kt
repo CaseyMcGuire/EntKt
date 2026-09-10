@@ -13,6 +13,7 @@ import entkt.runtime.query.QueryLockMode
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IsolationLevel
 import entkt.runtime.result.NestedTransactionUnsupportedException
 import java.sql.Connection
 
@@ -154,7 +155,10 @@ internal class PostgresTransactionalDriver(
         checkOpen(); return ops.deleteManyByIds(conn, table, idColumn, ids, predicates)
     }
 
-    override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
+    override fun <T> withTransaction(
+        isolation: IsolationLevel?,
+        block: (DatabaseDriver) -> T,
+    ): DriverTransactionResult<T> {
         // Nested transactions are unsupported: the guard throws before
         // the nested block runs, before any savepoint is created, and
         // before any transaction I/O — the outer transaction is

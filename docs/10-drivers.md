@@ -48,7 +48,10 @@ interface DatabaseDriver {
         predicates: List<Predicate<*>>,
     ): List<Any>
 
-    fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T>
+    fun <T> withTransaction(
+        isolation: IsolationLevel? = null,
+        block: (DatabaseDriver) -> T,
+    ): DriverTransactionResult<T>
     val inTransaction: Boolean
 
     fun classifyMutationException(
@@ -188,6 +191,17 @@ discipline.
   decorator cannot silently downgrade a native driver or forward the
   capability without the operation. The plan and envelope types are
   `@EntktInternal` cross-module SPI.
+- `withTransaction(isolation, block)` accepts the shared runtime
+  `IsolationLevel`: `ReadCommitted`, `RepeatableRead`, or `Serializable`.
+  Omitting it (or passing null) preserves the connection's configured level.
+  Drivers must apply a requested level before application queries or reject it
+  with `UnsupportedDriverCapabilityException` before transaction I/O and the
+  block. Decorators forward the level unchanged. Changed connection settings
+  must be restored before reuse; a connection that cannot be restored must not
+  return to circulation with those settings. Database-specific snapshot and
+  locking behavior remains native; no automatic retry is implied.
+  Generated clients expose the same optional parameter. PostgreSQL supports all
+  three levels; see [Transaction isolation](#transaction-isolation).
 - `withTransaction()` runs a block in a transaction and reports the
   outcome structurally as `DriverTransactionResult<T>`. The block
   receives a transaction-scoped driver. `Success(value)` is returned
@@ -536,6 +550,54 @@ directly in `ReadResult.Failed`. A root mutation stores an
 
 Calling `withTransaction` on the transaction-scoped driver also throws
 `NestedTransactionUnsupportedException` before the nested block runs.
+
+#### Transaction isolation
+
+Choose the level for one transaction with a direct parameter:
+
+```kotlin
+import entkt.runtime.driver.IsolationLevel
+
+client.withTransaction(isolation = IsolationLevel.ReadCommitted) { tx ->
+    val user = tx.users.query {
+        where(User.id.eq(userId))
+    }.forUpdate().firstOrNull(viewerContext).orRollback()
+    // Further reads and writes through tx use this transaction's isolation.
+    user
+}.getOrThrow()
+```
+
+Omitting `isolation` (or passing null) preserves the connection's configured
+default. EntKt does not force `ReadCommitted` or issue an isolation command in
+that case. The enum lives in the shared runtime, not the PostgreSQL module.
+Its names describe SQL-standard levels; exact snapshot and locking behavior
+depends on the database.
+
+PostgreSQL implements these levels as follows:
+
+| Level | Behavior |
+|---|---|
+| `ReadCommitted` | Each statement sees a new snapshot of committed data, so later reads can see another transaction's commit. |
+| `RepeatableRead` | Reads share the snapshot established by the first non-transaction-control statement, plus the transaction's own changes. Concurrent updates can cause serialization failures. |
+| `Serializable` | Adds conflict detection so successfully committed serializable transactions behave as if run one at a time. Conflicting transactions may fail. |
+
+The driver applies `SET TRANSACTION ISOLATION LEVEL ...` on the pinned connection
+before constructing the transaction client or running application queries. This
+is transaction-local: commit or rollback clears it without altering the session
+default, including when the connection is reused from a pool. See PostgreSQL's
+[transaction settings](https://www.postgresql.org/docs/current/sql-set-transaction.html).
+
+Isolation does not replace explicit `forUpdate()` locking or change its lock
+lifetime: those locks remain until commit or rollback. At `RepeatableRead` or
+`Serializable`, locking a row changed since the transaction's snapshot can fail
+instead of returning the latest version. No hidden rereads or retries occur.
+
+Unsupported levels are rejected before the block or transaction I/O with
+`UnsupportedDriverCapabilityException`, reported by the client boundary as
+`TransactionResult.Failed` with `NotCommitted`. Setup errors roll back before
+application code runs. Existing commit/rollback certainty rules still apply;
+isolation does not turn an uncertain commit into a safe-to-retry failure.
+Savepoints, nested transactions, and automatic retries are not enabled.
 
 ### Locking (RFC #4)
 

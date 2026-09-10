@@ -8,6 +8,8 @@ import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IsolationLevel
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntPrivacyDeniedException
@@ -244,11 +246,69 @@ class ResultAlgebraTest {
 
     @Test
     fun `success path commits and returns the block value`() {
-        val result = runEntTransaction(FakeDriver(), { _, _ -> "client" }) { client ->
+        val driver = FakeDriver()
+        val result = runEntTransaction(driver, { _, _ -> "client" }) { client ->
             assertEquals("client", client)
             41 + 1
         }
         assertEquals(TransactionResult.Success(42), result)
+        assertNull(driver.requestedIsolation)
+        assertEquals(1, driver.transactionsStarted)
+    }
+
+    @Test
+    fun `explicit isolation reaches the driver before the transaction client is constructed`() {
+        for (isolation in IsolationLevel.entries) {
+            val driver = FakeDriver(supportedIsolationLevels = setOf(isolation))
+            val result = runEntTransaction(
+                driver = driver,
+                makeTxClient = { txDriver, _ ->
+                    assertEquals(isolation, driver.requestedIsolation)
+                    assertEquals(1, driver.transactionsStarted)
+                    assertTrue(txDriver.inTransaction)
+                    "client"
+                },
+                isolation = isolation,
+            ) { client ->
+                assertEquals("client", client)
+                42
+            }
+
+            assertEquals(TransactionResult.Success(42), result)
+        }
+    }
+
+    @Test
+    fun `unsupported isolation is NotCommitted without constructing a client or running the block`() {
+        val driver = FakeDriver(supportedIsolationLevels = setOf(IsolationLevel.ReadCommitted))
+        val result = runEntTransaction(
+            driver = driver,
+            makeTxClient = { _, _ -> error("transaction client must not be constructed") },
+            isolation = IsolationLevel.Serializable,
+        ) {
+            error("transaction block must not run")
+        }
+
+        val failed = assertIs<TransactionResult.Failed>(result)
+        val exception = assertIs<UnsupportedDriverCapabilityException>(failed.exception)
+        assertTrue(exception.message.orEmpty().contains("Serializable"))
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertEquals(0, driver.transactionsStarted)
+    }
+
+    @Test
+    fun `explicit isolation cannot enable a nested transaction`() {
+        val driver = FakeDriver(inTransactionValue = true)
+        assertFailsWith<NestedTransactionUnsupportedException> {
+            runEntTransaction(
+                driver = driver,
+                makeTxClient = { _, _ -> error("transaction client must not be constructed") },
+                isolation = IsolationLevel.Serializable,
+            ) {
+                error("transaction block must not run")
+            }
+        }
+        assertEquals(0, driver.transactionsStarted)
     }
 
     @Test
@@ -353,15 +413,24 @@ class ResultAlgebraTest {
     private class FakeDriver(
         private val inTransactionValue: Boolean = false,
         private val inTransactionError: Exception? = null,
+        private val supportedIsolationLevels: Set<IsolationLevel> = emptySet(),
     ) : DatabaseDriver {
         var transactionsStarted = 0
+        var requestedIsolation: IsolationLevel? = null
 
         override fun requireBindCapacity(minimumParameters: Long, table: String) {}
 
         override val inTransaction: Boolean
             get() = inTransactionError?.let { throw it } ?: inTransactionValue
 
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
+        override fun <T> withTransaction(
+            isolation: IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> {
+            requestedIsolation = isolation
+            if (isolation != null && isolation !in supportedIsolationLevels) {
+                throw UnsupportedDriverCapabilityException("FakeDriver does not support $isolation")
+            }
             transactionsStarted++
             return try {
                 DriverTransactionResult.Success(block(FakeDriver(inTransactionValue = true)))

@@ -16,6 +16,7 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EdgeMetadata
 import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IsolationLevel
 import entkt.runtime.driver.JsonColumnCodec
 import entkt.runtime.driver.KotlinxJsonCodec
 import entkt.runtime.result.TransactionFailureState
@@ -954,16 +955,22 @@ class PostgresDriver(
      * are released independently so a failed restore can't leak the
      * pooled connection.
      */
-    override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
+    override fun <T> withTransaction(
+        isolation: IsolationLevel?,
+        block: (DatabaseDriver) -> T,
+    ): DriverTransactionResult<T> {
         val executionToken = transactionExecutionGuard.enterTransaction()
         return try {
-            runTransaction(block)
+            runTransaction(isolation, block)
         } finally {
             transactionExecutionGuard.exitTransaction(executionToken)
         }
     }
 
-    private fun <T> runTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> {
+    private fun <T> runTransaction(
+        isolation: IsolationLevel?,
+        block: (DatabaseDriver) -> T,
+    ): DriverTransactionResult<T> {
         val conn = dataSource.connection
         // The exception the caller will observe — thrown (cancellation
         // / JVM errors / setup failures) or stored in Failed. Cleanup
@@ -977,6 +984,7 @@ class PostgresDriver(
             conn.autoCommit = false
             val txDriver = PostgresTransactionalDriver(conn, this, ops)
             val result: T = try {
+                applyTransactionIsolation(conn, isolation)
                 block(txDriver)
             } catch (e: Throwable) {
                 attachTo = e
@@ -1062,6 +1070,24 @@ class PostgresDriver(
             throw e
         } finally {
             releaseConnection(conn, attachTo, resolved)
+        }
+    }
+
+    /**
+     * Apply before the transaction client or any application query is created.
+     * SET TRANSACTION is transaction-local: commit/rollback clears it without
+     * changing the pooled session's default or JDBC isolation setting.
+     * Null deliberately issues no SQL and preserves the configured default.
+     */
+    private fun applyTransactionIsolation(conn: java.sql.Connection, isolation: IsolationLevel?) {
+        if (isolation == null) return
+        val sqlLevel = when (isolation) {
+            IsolationLevel.ReadCommitted -> "READ COMMITTED"
+            IsolationLevel.RepeatableRead -> "REPEATABLE READ"
+            IsolationLevel.Serializable -> "SERIALIZABLE"
+        }
+        conn.createStatement().useQuietClose { statement ->
+            statement.execute("SET TRANSACTION ISOLATION LEVEL $sqlLevel")
         }
     }
 

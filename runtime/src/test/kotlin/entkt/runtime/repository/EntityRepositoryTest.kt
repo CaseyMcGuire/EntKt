@@ -610,7 +610,11 @@ class EntityRepositoryTest {
             registeredSchemas += schema
         }
 
-        override fun <Result> withTransaction(block: (DatabaseDriver) -> Result): DriverTransactionResult<Result> {
+        override fun <Result> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> Result,
+        ): DriverTransactionResult<Result> {
+            check(isolation == null) { "This test driver does not model explicit isolation" }
             transactions++
             return try {
                 val result = block(checkNotNull(transactionDriver))

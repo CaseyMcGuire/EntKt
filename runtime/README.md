@@ -9,7 +9,7 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 
 | Subpackage | Holds |
 |---|---|
-| `entkt.runtime.driver` | `DatabaseDriver` SPI, `NoopDriver`, `DriverTransactionResult`, and the schema metadata it consumes (`EntitySchema`, `ColumnMetadata`, `JsonColumnMetadata`, `ForeignKeyRef`, `IndexMetadata`, `EdgeMetadata`, `IdStrategy`) |
+| `entkt.runtime.driver` | `DatabaseDriver` SPI, `NoopDriver`, `DriverTransactionResult`, `IsolationLevel`, and the schema metadata it consumes (`EntitySchema`, `ColumnMetadata`, `JsonColumnMetadata`, `ForeignKeyRef`, `IndexMetadata`, `EdgeMetadata`, `IdStrategy`) |
 | `entkt.runtime.privacy` | `Viewer`, `ViewerContext`, shared `PrivacyRuleContext`, scalar/batch privacy rules and evaluators, `allowAll`, `EntityPolicy` |
 | `entkt.runtime.validation` | Shared `ValidationRuleContext` plus scalar/batch validation rules and evaluators |
 | `entkt.runtime.hook` | Scalar/batch lifecycle hook contracts and factories |
@@ -50,7 +50,10 @@ interface DatabaseDriver {
         ids: List<Any>,
         predicates: List<Predicate<*>>,
     ): List<Any>
-    fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T>
+    fun <T> withTransaction(
+        isolation: IsolationLevel? = null,
+        block: (DatabaseDriver) -> T,
+    ): DriverTransactionResult<T>
 }
 ```
 
@@ -68,6 +71,19 @@ Sealed `Predicate` hierarchy —
 `IS_NOT_NULL`, `CONTAINS`, `HAS_PREFIX`, `HAS_SUFFIX`.
 
 ## Transactions
+
+Generated clients, `runEntTransaction`, and the driver SPI accept an optional
+`isolation` using the shared `IsolationLevel` enum: `ReadCommitted`,
+`RepeatableRead`, or `Serializable`.
+Null preserves the connection's configured level. Drivers must apply explicit
+levels before application code runs or reject them with
+`UnsupportedDriverCapabilityException`; decorators forward the value unchanged.
+The names express SQL-standard guarantees, not identical snapshot or locking
+behavior across databases. This does not enable retries or nested transactions.
+PostgreSQL supports all three with transaction-local settings that expire on
+commit or rollback, without changing the pooled connection's default. See
+[Transaction isolation](../docs/10-drivers.md#transaction-isolation) for client
+examples and database-specific semantics.
 
 `driver.withTransaction { txDriver -> ... }` runs a block inside a
 transaction and reports the outcome structurally as

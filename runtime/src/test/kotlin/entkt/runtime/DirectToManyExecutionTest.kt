@@ -108,7 +108,10 @@ class DirectToManyExecutionTest {
             predicates: List<Predicate<*>>,
         ): Int = error("unused")
         override fun deleteMany(table: String, predicates: List<Predicate<*>>): Int = error("unused")
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> = error("unused")
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> = error("unused")
     }
 
     // ---------- executeDirectToMany ----------

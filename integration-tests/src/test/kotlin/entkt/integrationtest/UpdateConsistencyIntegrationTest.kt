@@ -220,8 +220,11 @@ class UpdateConsistencyIntegrationTest : PostgresTestBase() {
 private class NoLockSupportDriver(private val real: DatabaseDriver) : DatabaseDriver by real {
     override val supportsReadRowForUpdate: Boolean get() = false
 
-    override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
-        real.withTransaction { txReal ->
+    override fun <T> withTransaction(
+        isolation: entkt.runtime.driver.IsolationLevel?,
+        block: (DatabaseDriver) -> T,
+    ): DriverTransactionResult<T> =
+        real.withTransaction(isolation = isolation) { txReal ->
             // Wrap the tx driver too, so the in-tx Pessimistic preflight
             // sees the same false capability flag.
             block(NoLockSupportTxDriver(txReal))

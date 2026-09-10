@@ -238,7 +238,8 @@ class ClientGeneratorTest {
         // transaction-scoped client.
         assert(
             output.contains(
-                "public fun <T> withTransaction(block: TransactionScope.(EntTransactionClient) -> T): " +
+                "public fun <T> withTransaction(isolation: IsolationLevel? = null, " +
+                    "block: TransactionScope.(EntTransactionClient) -> T): " +
                     "TransactionResult<T> {"
             )
         ) {
@@ -249,6 +250,9 @@ class ClientGeneratorTest {
         }
         assert(output.contains("runEntTransaction(driver, { txDriver, coordinator ->")) {
             "withTransaction should delegate to runEntTransaction\n$output"
+        }
+        assert(output.contains(", isolation = isolation, block = block)")) {
+            "withTransaction should forward isolation unchanged to the runtime\n$output"
         }
         assert(output.contains("val tx = EntClient(txDriver, configuration)")) {
             "makeTxClient should build the transactional client with the resolved configuration\n$output"

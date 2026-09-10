@@ -75,8 +75,11 @@ class RelationshipLockingPostgresIntegrationTest {
             inner.serializeRelationship(key)
         }
 
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
-            inner.withTransaction { tx -> block(RecordingDriver(tx, keys)) }
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> =
+            inner.withTransaction(isolation = isolation) { tx -> block(RecordingDriver(tx, keys)) }
     }
 
     /**
@@ -95,8 +98,11 @@ class RelationshipLockingPostgresIntegrationTest {
         override val supportsRelationshipSerialization: Boolean
             get() = relationshipSerialization ?: inner.supportsRelationshipSerialization
 
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): DriverTransactionResult<T> =
-            inner.withTransaction { tx -> block(CapabilityOverrideDriver(tx, insertIgnore, relationshipSerialization)) }
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): DriverTransactionResult<T> =
+            inner.withTransaction(isolation = isolation) { tx -> block(CapabilityOverrideDriver(tx, insertIgnore, relationshipSerialization)) }
     }
 
     private fun setupDb() {

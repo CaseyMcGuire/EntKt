@@ -2,7 +2,16 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+The isolation-only slice is implemented in the shared runtime, PostgreSQL driver,
+and generated clients:
+`client.withTransaction(isolation = IsolationLevel.ReadCommitted) { tx -> ... }`.
+It preserves the configured default when omitted, rejects unsupported levels,
+and leaves pooled connection defaults unchanged. See
+[Transaction isolation](../../10-drivers.md#transaction-isolation).
+
+This uses a direct method parameter, not the broader `TransactionOptions`
+wrapper proposed below. The remaining options, nested transactions, savepoints,
+and retries in this RFC are proposals only, not available APIs.
 
 ## Summary
 
@@ -27,8 +36,8 @@ mental model. Users need clear answers to:
 - is retry behavior owned by entkt or by the application?
 - what happens if the driver cannot support the requested behavior?
 
-Today all of that is implicit or unavailable. A small options object can make
-transaction behavior explicit without complicating the common path.
+Isolation is now explicit; the remaining controls are unavailable. A small
+options object could group them without complicating the common path.
 
 ## Non-Goals
 

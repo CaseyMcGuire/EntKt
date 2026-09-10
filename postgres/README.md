@@ -68,6 +68,21 @@ offset semantics apply. Generated full-client queries expose this through
 All identifiers wrapped in `"..."`. Values are never string-concatenated
 into SQL.
 
+## Transactions
+
+`withTransaction(isolation = IsolationLevel.ReadCommitted) { ... }` selects
+isolation for one transaction. The shared runtime enum also offers
+`RepeatableRead` and `Serializable`; all three use native PostgreSQL semantics.
+Omitting the parameter or passing null preserves the configured default and
+issues no isolation command.
+
+The driver applies `SET TRANSACTION ISOLATION LEVEL ...` before application code
+runs. Commit or rollback clears this transaction-local setting without changing
+the pooled session's default. Setup failures use the same rollback and outcome
+certainty handling as failures in the block. No automatic retries or savepoints
+are added. See [Transaction isolation](../docs/10-drivers.md#transaction-isolation)
+for examples, locking behavior, and failure handling.
+
 ## Tests
 
 `PostgresDriverTest` runs the full driver contract against

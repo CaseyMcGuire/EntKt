@@ -153,7 +153,12 @@ class RelationshipLockingTest {
             predicates: List<entkt.query.Predicate<*>>,
         ): Int = 0
         override fun deleteMany(table: String, predicates: List<entkt.query.Predicate<*>>): Int = 0
-        override fun <T> withTransaction(block: (DatabaseDriver) -> T): entkt.runtime.driver.DriverTransactionResult<T> =
-            entkt.runtime.driver.DriverTransactionResult.Success(block(this))
+        override fun <T> withTransaction(
+            isolation: entkt.runtime.driver.IsolationLevel?,
+            block: (DatabaseDriver) -> T,
+        ): entkt.runtime.driver.DriverTransactionResult<T> {
+            check(isolation == null) { "This test driver does not model explicit isolation" }
+            return entkt.runtime.driver.DriverTransactionResult.Success(block(this))
+        }
     }
 }
