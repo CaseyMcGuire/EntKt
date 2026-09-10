@@ -2,12 +2,16 @@ package entkt.codegen.query
 
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.UNIT
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
-import entkt.codegen.kotlinpoet.getter
+import entkt.codegen.kotlinpoet.constructor
+import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
@@ -15,89 +19,71 @@ import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.schema.EntSchema
 
-private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTITY_QUERY_BUILDER = ClassName("entkt.runtime.query", "EntityQueryBuilder")
+private val ENTITY_QUERY = ClassName("entkt.runtime.query", "EntityQuery")
 
-// Generated queries retain the read-runtime contract only to construct
-// sibling queries for eager loads and traversals. EntityQueryBuilder owns
-// terminal execution, interceptor lookup, and LOAD-privacy delegation.
-private val ENT_READ_RUNTIME_NAME = "EntReadRuntime"
-
-internal class QueryGenerator(
-    private val packageName: String,
-) {
+/** Wires typed immutable queries into the shared runtime configuration and execution paths. */
+internal class QueryGenerator(private val packageName: String) {
     fun generate(
         schemaName: String,
         schema: EntSchema,
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
-        // Edge metadata (target names, joins, inverses, member names)
-        // resolves once here; every member builder below reads it
-        // instead of re-deriving its own copy from the raw schema.
         val resolved = resolveQuerySchema(packageName, schemaName, schema, schemaNames)
-        val className = "${schemaName}Query"
         val queryClass = resolved.queryClass
-        val entityClass = resolved.entityClass
-        // The generated client property for this schema, declared on the
-        // schema and emitted verbatim — never derived from schemaName.
-        val traversalMethods = resolved.edges.mapNotNull { re ->
-            if (re.isManyToMany) {
-                buildM2MTraversal(re, resolved, packageName)
-            } else {
-                buildTraversal(re, resolved, packageName)
-            }
-        }
-
-        // Edge loading: load{Edge}() methods and properties
-        val eagerEdgeSpecs = resolved.edges
-            .filter { it.join != null }
-            .map { buildEagerEdgeSpec(it, resolved, packageName) }
-
-        val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
-
-        val typeSpec = classType(className) {
-            addAnnotation(annotation(ENTKT_DSL))
-            superclass(ENTITY_QUERY_BUILDER.parameterizedBy(entityClass, queryClass))
+        val scopeClass = ClassName(packageName, "${schemaName}QueryScope")
+        val clientClass = ClassName(packageName, "EntReadRuntime").copy(nullable = true)
+        val descriptionType = ENTITY_QUERY.parameterizedBy(resolved.entityClass)
+        val type = classType(queryClass) {
+            addAnnotation(ClassName("entkt.schema", "EntktDsl"))
+            superclass(ENTITY_QUERY_BUILDER.parameterizedBy(resolved.entityClass, queryClass))
             primaryConstructor {
+                addModifiers(KModifier.INTERNAL)
                 parameter("driver", DRIVER)
-                parameter("client", clientClass.copy(nullable = true)) {
-                    defaultValue("null")
-                }
+                parameter("client", clientClass)
+                parameter("query", descriptionType)
             }
             addSuperclassConstructorParameter("driver = driver")
             addSuperclassConstructorParameter("executionHost = client")
-            addSuperclassConstructorParameter("entityName = %S", schemaName)
-            property("client", clientClass.copy(nullable = true)) {
+            addSuperclassConstructorParameter("entityQuery = query")
+            addFunction(constructor {
+                parameter("driver", DRIVER)
+                parameter("client", clientClass) { defaultValue("null") }
+                callThisConstructor(
+                    CodeBlock.of("driver"),
+                    CodeBlock.of("client"),
+                    CodeBlock.of("%T(%T)", ENTITY_QUERY, resolved.entityDescriptorClass),
+                )
+            })
+            property("client", clientClass) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("client")
             }
-            property("self", queryClass) {
+            function("newQuery", queryClass) {
                 addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
-                getter {
-                    statement("return this")
-                }
+                parameter("query", descriptionType)
+                statement("return %T(driver, client, query)", queryClass)
             }
-            addProperty(buildEntityQuerySourceProperty(entityClass))
-            addProperties(eagerEdgeSpecs.map { it.property })
-            addProperties(eagerEdgeSpecs.map { it.filterVisibleProperty })
-            addFunctions(eagerEdgeSpecs.map { it.loadMethod })
-            addFunction(buildSetEntityQuerySource(entityClass))
-            addFunction(buildCaptureEntityQuery(resolved))
-            addFunctions(traversalMethods)
+            function("configure", queryClass) {
+                parameter("block", LambdaTypeName.get(receiver = scopeClass, returnType = UNIT))
+                statement("return configureQuery(%T(driver, client, entityQuery), block)", scopeClass)
+            }
+            for (edge in resolved.edges) {
+                val traversal = if (edge.isManyToMany) {
+                    buildM2MTraversal(edge, resolved, packageName)
+                } else {
+                    buildTraversal(edge, resolved, packageName)
+                }
+                if (traversal != null) addFunction(traversal)
+            }
         }
-
-        // Generated mappings and recursive query capture use framework-internal
-        // runtime contracts; the generated file owns that opt-in.
-        return kotlinFile(packageName, className) {
-            addAnnotation(
-                annotation(ClassName("kotlin", "OptIn")) {
-                    useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
-                    addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
-                },
-            )
-            addType(typeSpec)
+        return kotlinFile(packageName, queryClass.simpleName) {
+            addAnnotation(annotation(ClassName("kotlin", "OptIn")) {
+                useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)
+                addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
+            })
+            addType(type)
         }
     }
-
 }

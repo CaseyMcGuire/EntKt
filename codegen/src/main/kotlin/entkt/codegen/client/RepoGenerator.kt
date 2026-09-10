@@ -137,6 +137,7 @@ internal class RepoGenerator(
                 addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
                 statement("return %T(driver, client)", queryClass)
             }
+            addFunction(buildQueryEntry(queryClass, clientRef = "client"))
             function("newUpdateDraft", updateDraftClass) {
                 addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)
                 statement("return %T()", updateDraftClass)

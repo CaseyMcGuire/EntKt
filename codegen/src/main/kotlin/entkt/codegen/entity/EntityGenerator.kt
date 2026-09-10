@@ -441,20 +441,18 @@ internal class EntityGenerator(
     ): PropertySpec? {
         val targetName = schemaNames[edge.target] ?: return null
         val targetEntity = ClassName(packageName, targetName)
-        val targetQuery = ClassName(packageName, "${targetName}Query")
+        val targetScope = ClassName(packageName, "${targetName}QueryScope")
         // EdgeRef now carries three type args: Source, Target, Q.
-        val edgeRefType = EDGE_REF.parameterizedBy(sourceEntity, targetEntity, targetQuery)
+        val edgeRefType = EDGE_REF.parameterizedBy(sourceEntity, targetEntity, targetScope)
         val propertyName = edge.apiName
-        // EdgeRef.has { block } only accumulates predicates off the
-        // query — it never calls the driver — so we hand it NoopDriver
-        // and bail loudly if something tries to run a terminal op
-        // inside `has { }`.
+        // Edge predicates accumulate in a configuration-only scope. No query
+        // execution methods are present, and construction needs no real driver.
         //
         // The EdgeRef constructor is `@EntktInternal`; the surrounding
         // FileSpec carries `@file:OptIn(EntktInternal::class)` so the
         // call site compiles without a per-call opt-in.
         return property(propertyName, edgeRefType) {
-            initializer("%T(%S) { %T(%T) }", EDGE_REF, edge.name, targetQuery, NOOP_DRIVER)
+            initializer("%T(%S) { %T(%T) }", EDGE_REF, edge.name, targetScope, NOOP_DRIVER)
         }
     }
 }

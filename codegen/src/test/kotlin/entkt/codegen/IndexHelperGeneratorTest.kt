@@ -241,7 +241,7 @@ class IndexHelperGeneratorTest {
         // Delegates through PostQuery, seeding the prefix via where(); never
         // touches the driver directly.
         assertTrue("val q = PostQuery(driver, client)" in out, out)
-        assertTrue("for (p in predicates) q.where(p)" in out, out)
+        assertTrue(".whereAllForInternalUse(predicates)" in out, out)
         assertTrue("driver.query" !in out, out)
         assertTrue("driver.count" !in out, out)
     }
@@ -498,7 +498,7 @@ class IndexHelperGeneratorTest {
     fun `query and query block delegate the seeded prefix to the query builder`() {
         val out = postOutput()
         val authorId = classBody(out, "AuthorId")
-        assertTrue("fun query(block: PostQuery.() -> Unit" in authorId, authorId)
+        assertTrue("fun query(block: PostQueryScope.() -> Unit" in authorId, authorId)
         assertTrue(".apply(block)" in authorId, authorId)
     }
 

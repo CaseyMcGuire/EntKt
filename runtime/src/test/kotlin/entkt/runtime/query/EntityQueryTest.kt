@@ -2,10 +2,12 @@
 
 package entkt.runtime.query
 
+import entkt.query.DistanceOrder
 import entkt.query.Op
 import entkt.query.OrderDirection
 import entkt.query.OrderField
 import entkt.query.Predicate
+import entkt.query.VectorDistanceOperator
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import kotlin.reflect.KClass
@@ -124,6 +126,175 @@ class EntityQueryTest {
 
         val predicate = assertIs<Predicate.Leaf<Parent>>(captured.predicates.single())
         assertContentEquals(longArrayOf(1L, 2L), predicate.value as LongArray)
+    }
+
+    @Test
+    fun `capture detaches structural predicate inputs`() {
+        val ids = mutableListOf(1L, 2L)
+        val structuralPredicates = mutableListOf<Predicate<Parent>>(
+            Predicate.Leaf("id", Op.IN, ids),
+        )
+        val captured = EntityQuery(
+            entity = ParentMapping,
+            source = QuerySource.Root(),
+            predicates = emptyList(),
+            orderBy = emptyList(),
+            limit = null,
+            offset = null,
+            edges = emptyList(),
+            structuralPredicates = structuralPredicates,
+        )
+
+        ids.clear()
+        structuralPredicates.clear()
+
+        val predicate = assertIs<Predicate.Leaf<Parent>>(captured.structuralPredicates.single())
+        assertEquals(listOf(1L, 2L), predicate.value)
+        assertEquals(emptyList(), captured.predicates)
+    }
+
+    @Test
+    fun `capture detaches mutable ordering operands`() {
+        val vector = floatArrayOf(1.0f, 2.0f)
+        val captured = EntityQuery(
+            entity = ParentMapping,
+            source = QuerySource.Root(),
+            predicates = emptyList(),
+            orderBy = listOf(
+                OrderField(
+                    "embedding",
+                    OrderDirection.ASC,
+                    DistanceOrder(VectorDistanceOperator.L2, vector),
+                ),
+            ),
+            limit = null,
+            offset = null,
+            edges = emptyList(),
+        )
+
+        vector[0] = 99.0f
+
+        val distance = captured.orderBy.single().distance!!
+        assertEquals(VectorDistanceOperator.L2, distance.operator)
+        assertContentEquals(floatArrayOf(1.0f, 2.0f), distance.operand as FloatArray)
+    }
+
+    @Test
+    fun `later construction changes cannot alter a captured edge or its target`() {
+        val childIds = mutableListOf(7L)
+        val childPredicates = mutableListOf<Predicate<Child>>(
+            Predicate.Leaf("id", Op.IN, childIds),
+        )
+        val selectedTarget = EntityQuery(
+            entity = ChildMapping,
+            source = QuerySource.Root(),
+            predicates = childPredicates,
+            orderBy = emptyList(),
+            limit = 3,
+            offset = null,
+            edges = emptyList(),
+        )
+        val selections = mutableListOf<EdgeSelection<Parent, *>>(
+            EdgeSelection(ChildrenEdge, selectedTarget, EdgeVisibility.REQUIRE_VISIBLE),
+        )
+        fun capture(): EntityQuery<Parent> = EntityQuery(
+            entity = ParentMapping,
+            source = QuerySource.Root(),
+            predicates = emptyList(),
+            orderBy = emptyList(),
+            limit = null,
+            offset = null,
+            edges = selections,
+        )
+
+        val original = capture()
+        childIds += 8L
+        childPredicates.clear()
+        selections[0] = EdgeSelection(
+            ChildrenEdge,
+            childQuery(),
+            EdgeVisibility.FILTER_INVISIBLE,
+        )
+        val later = capture()
+
+        val originalSelection = original.edges.single()
+        assertEquals(EdgeVisibility.REQUIRE_VISIBLE, originalSelection.visibility)
+        assertSame(selectedTarget, originalSelection.target)
+        assertEquals(3, originalSelection.target.limit)
+        val predicate = assertIs<Predicate.Leaf<Child>>(selectedTarget.predicates.single())
+        assertEquals(listOf(7L), predicate.value)
+
+        val laterSelection = later.edges.single()
+        assertEquals(EdgeVisibility.FILTER_INVISIBLE, laterSelection.visibility)
+        assertEquals(null, laterSelection.target.limit)
+        assertEquals(emptyList(), laterSelection.target.predicates)
+    }
+
+    @Test
+    fun `traversal source remains detached from its construction inputs`() {
+        val parentIds = mutableListOf(3L)
+        val sourcePredicates = mutableListOf<Predicate<Parent>>(
+            Predicate.Leaf("id", Op.IN, parentIds),
+        )
+        val source = EntityQuery(
+            entity = ParentMapping,
+            source = QuerySource.Root(),
+            predicates = sourcePredicates,
+            orderBy = listOf(OrderField("id", OrderDirection.ASC)),
+            limit = 5,
+            offset = 2,
+            edges = emptyList(),
+        )
+        val traversal = QuerySource.Traversal(source, ChildrenEdge)
+        val target = EntityQuery(
+            entity = ChildMapping,
+            source = traversal,
+            predicates = emptyList(),
+            orderBy = emptyList(),
+            limit = null,
+            offset = null,
+            edges = emptyList(),
+        )
+
+        parentIds.clear()
+        sourcePredicates.clear()
+
+        assertSame(traversal, target.source)
+        val capturedSource = traversal.source
+        val predicate = assertIs<Predicate.Leaf<Parent>>(capturedSource.predicates.single())
+        assertEquals(listOf(3L), predicate.value)
+        assertEquals(listOf(OrderField("id", OrderDirection.ASC)), capturedSource.orderBy)
+        assertEquals(5, capturedSource.limit)
+        assertEquals(2, capturedSource.offset)
+    }
+
+    @Test
+    fun `captured configuration lists cannot be modified through mutable casts`() {
+        val captured = EntityQuery(
+            entity = ParentMapping,
+            source = QuerySource.Root(),
+            predicates = listOf(Predicate.Leaf("id", Op.GT, 1L)),
+            orderBy = listOf(OrderField("id", OrderDirection.ASC)),
+            limit = null,
+            offset = null,
+            edges = listOf(
+                EdgeSelection(ChildrenEdge, childQuery(), EdgeVisibility.REQUIRE_VISIBLE),
+            ),
+            structuralPredicates = listOf(Predicate.Leaf("id", Op.LT, 10L)),
+        )
+
+        assertFailsWith<UnsupportedOperationException> {
+            (captured.predicates as MutableList).clear()
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            (captured.orderBy as MutableList).clear()
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            (captured.edges as MutableList).clear()
+        }
+        assertFailsWith<UnsupportedOperationException> {
+            (captured.structuralPredicates as MutableList).clear()
+        }
     }
 
     @Test

@@ -350,12 +350,12 @@ class EntityGeneratorTest {
         val car = Car()
         finalize(user, car)
         val schemaNames = mapOf<EntSchema, String>(user to "User", car to "Car")
-        val output = generator.generate("User", user, schemaNames).toString()
+        val output = generator.generate("User", user, schemaNames).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("import entkt.query.EdgeRef")) {
             "Should import EdgeRef\n$output"
         }
-        assert(output.contains("val cars: EdgeRef<User, Car, CarQuery> = EdgeRef(\"cars\") { CarQuery(NoopDriver) }")) {
+        assert(output.contains("val cars: EdgeRef<User, Car, CarQueryScope> = EdgeRef(\"cars\") { CarQueryScope(NoopDriver) }")) {
             "Should emit a typed EdgeRef<Source, Target, Q> for the cars edge wired to NoopDriver\n$output"
         }
     }

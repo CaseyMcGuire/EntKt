@@ -3,27 +3,23 @@ package entkt.query
 /**
  * Narrow receiver type for [EdgeRef.has] blocks.
  *
- * The generated query class for an entity (`PostQuery`, `UserQuery`,
- * etc.) carries the full DSL — `where`, `orderBy`, `limit`, `offset`,
- * traversal `queryX()`, edge-load `load{Edge}`, and terminal
- * operations like `all()`. Most of those are meaningless inside a
- * `Edge.has { ... }` block: the runtime lowers `has` into an `EXISTS`
- * subquery that takes only an inner predicate, so `orderBy` / `limit`
- * / `offset` were silently dropped, and terminal calls would hit
- * `NoopDriver` and throw.
+ * Generated configuration scopes (`PostQueryScope`, `UserQueryScope`,
+ * etc.) also offer ordering, bounds, and edge selections. Those have
+ * no meaning inside `Edge.has { ... }`: the runtime lowers `has` into
+ * an `EXISTS` subquery that takes only an inner predicate.
  *
  * `EdgePredicateScope<E>` exposes only the operations that have
  * meaning inside an edge-predicate block: `where(Predicate<E>)`.
- * Generated query classes implement this interface alongside
+ * Generated configuration scopes implement this interface alongside
  * [EdgeQuery]; `EdgeRef.has` declares its lambda with
  * `EdgePredicateScope<Target>` as the receiver, so wider DSL members
- * on the concrete query are not in scope inside the block and
+ * on the concrete scope are not in scope inside the block and
  * misuse (`has { orderBy(...) }`, `has { allOrThrow() }`) becomes a
  * compile error.
  *
  * Returns `EdgePredicateScope<E>` so callers who want to chain
  * `where(...).where(...)` can do so without leaking the concrete
- * query type out of the block; the block itself returns Unit, so
+ * configuration type out of the block; the block itself returns Unit, so
  * the return value is usually unused.
  */
 interface EdgePredicateScope<E : Any> {

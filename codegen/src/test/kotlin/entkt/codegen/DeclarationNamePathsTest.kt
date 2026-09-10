@@ -72,7 +72,7 @@ class DeclarationNamePathsTest {
     @Test
     fun `caller-facing traversal paths carry the edge declaration name`() {
         val (user, dir) = fixture()
-        val query = generatedQueryAndDescriptors(user, dir)
+        val query = generatedQueryAndDescriptors(user, dir).replace("\\s+".toRegex(), " ")
 
         // Runtime paths derive their caller-facing EdgeStep from the
         // typed mapping's declaration name.
@@ -81,7 +81,7 @@ class DeclarationNamePathsTest {
             "the captured edge mapping must use the declaration name\n$query",
         )
         assertTrue(
-            "target.setEntityQuerySource(QuerySource.Traversal(source, PathDirectoryCuratorEdgeDescriptor))" in query,
+            "traversalQuery(PathDirectoryCuratorEdgeDescriptor, \"queryCurator()\")" in query,
             "traversal must retain the declaration-derived typed mapping\n$query",
         )
         assertFalse(
@@ -95,13 +95,13 @@ class DeclarationNamePathsTest {
         val (user, dir) = fixture()
         val entity = EntityGenerator("com.example.ent")
             .generate("PathDirectory", dir, names(user, dir))
-            .toString()
+            .toString().replace("\\s+".toRegex(), " ")
 
         // The companion EdgeRef is the driver's edge-lookup key, so it
         // must remain the storage identifier even though the Kotlin
         // property it hangs off is named `curator`.
         assertTrue(
-            """EdgeRef<PathDirectory, PathUser, PathUserQuery> = EdgeRef("legacy_owner")""" in entity,
+            """EdgeRef<PathDirectory, PathUser, PathUserQueryScope> = EdgeRef("legacy_owner")""" in entity,
             "companion EdgeRef must keep the storage edge name\n$entity",
         )
         assertTrue(

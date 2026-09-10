@@ -1,21 +1,34 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
-import entkt.integrationtest.ent.ArticleQuery
+import entkt.integrationtest.ent.ArticleLoadPrivacyRule
+import entkt.integrationtest.ent.ArticlePolicyScope
+import entkt.integrationtest.ent.ArticleQueryScope
 import entkt.integrationtest.ent.EntClient
-import entkt.integrationtest.ent.UserQuery
+import entkt.integrationtest.ent.User
+import entkt.integrationtest.ent.UserPolicyScope
+import entkt.integrationtest.ent.UserQueryScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
+import entkt.runtime.privacy.EntityPolicy
+import entkt.runtime.privacy.PrivacyDecision
+import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.ViewerContext
+import entkt.runtime.privacy.allowAll
 import entkt.runtime.query.EdgeLoad
 import entkt.runtime.query.EdgeState
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.isLoaded
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntQueryConfigurationException
+import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.ReadResult
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -47,7 +60,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         }
         assertEquals("User", ex.entityType)
         assertContains(ex.reason, "User.articles")
-        assertContains(ex.reason, "loadArticles()")
+        assertContains(ex.reason, "single load block")
         // Thrown while configuring — before any terminal, interceptor,
         // or driver work.
         assertEquals(0, recording.callCount())
@@ -100,22 +113,18 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     @Test
     fun `a re-entrant load call inside the configuration block is rejected, not last-write-wins`() {
         val (client, _) = recordingClient()
-        val query = client.users.query()
-
-        // The slot is reserved before the block runs, so the inner
-        // call hits the duplicate guard instead of installing a
-        // selection the outer assignment would silently overwrite.
-        val ex = assertFailsWith<EntQueryConfigurationException> {
-            query.loadArticles {
-                query.loadArticles { where(Article.title eq "inner") }
+        val query = client.users.query outer@{
+            // Reserve the slot before running the block. The failed outer
+            // selection then releases it, allowing a retry in this scope.
+            val ex = assertFailsWith<EntQueryConfigurationException> {
+                loadArticles {
+                    this@outer.loadArticles { where(Article.title eq "inner") }
+                }
             }
+            assertContains(ex.reason, "User.articles")
+            loadArticles { where(Article.title eq "outer") }
         }
-        assertContains(ex.reason, "User.articles")
-
-        // The failed outer selection rolled back, so a clean retry
-        // selects the edge normally.
         client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
-        query.loadArticles { where(Article.title eq "outer") }
         val user = query.all(testViewerContext).getOrThrow().single()
         assertEquals(emptyList(), user.edges.articles.requireLoaded())
     }
@@ -123,20 +132,19 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     @Test
     fun `a failing configuration block rolls the selection back`() {
         val (client, _) = recordingClient()
-        val query = client.users.query()
-
-        assertFailsWith<IllegalStateException> { query.loadArticles { error("boom") } }
-
-        // Nothing was installed, so the edge can still be selected cleanly.
+        val query = client.users.query {
+            assertFailsWith<IllegalStateException> { loadArticles { error("boom") } }
+            // Nothing was installed, so the edge can still be selected cleanly.
+            loadArticles()
+        }
         client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
-        query.loadArticles()
         assertTrue(query.all(testViewerContext).getOrThrow().single().edges.articles.isLoaded)
     }
 
     @Test
-    fun `an interceptor mutation applies only to later captured queries`() {
+    fun `an interceptor mutating a retained scope cannot change any execution`() {
         val recording = RecordingDriver(resetAndDriver())
-        var target: UserQuery? = null
+        var target: UserQueryScope? = null
         val client = EntClient(recording) {
 
             interceptors {
@@ -147,24 +155,22 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
             }
         }
         client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
-        val query = client.users.query { }
+        val query = client.users.query { target = this }
 
-        target = query
         val first = query.all(testViewerContext).getOrThrow().single()
         assertEquals(EdgeState.Unloaded, first.edges.articles)
 
-        // Terminal entry captured the original graph before the
-        // interceptor mutated the reusable builder. A later terminal
-        // captures and executes the newly selected edge.
+        // The published query owns its graph. The escaped scope's changes
+        // cannot affect it on this or any later execution.
         target = null
         val user = query.all(testViewerContext).getOrThrow().single()
-        assertTrue(user.edges.articles.isLoaded)
+        assertEquals(EdgeState.Unloaded, user.edges.articles)
     }
 
     @Test
-    fun `an interceptor nested mutation applies only to later captured graphs`() {
+    fun `an interceptor mutating a retained nested scope cannot change the graph`() {
         val recording = RecordingDriver(resetAndDriver())
-        var target: ArticleQuery? = null
+        var target: ArticleQueryScope? = null
         val client = EntClient(recording) {
 
             interceptors {
@@ -177,30 +183,38 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         client.articles.create { title = "T"; authorId = author.id }.save(testViewerContext).getOrThrow()
 
-        // Retain the nested builder so the root interceptor can mutate it
-        // after terminal entry has captured the complete recursive graph.
-        val query = client.users.query { }
-        var captured: ArticleQuery? = null
-        query.loadArticles { captured = this }
+        var captured: ArticleQueryScope? = null
+        val query = client.users.query { loadArticles { captured = this } }
 
         target = captured
         val first = query.all(testViewerContext).getOrThrow().single()
         val firstArticle = first.edges.articles.requireLoaded().single()
         assertEquals(EdgeState.Unloaded, firstArticle.edges.author)
 
-        // The builder mutation appears in the next recursive capture.
+        // Nested configuration was frozen when the query was built too.
         target = null
         val user = query.all(testViewerContext).getOrThrow().single()
         val article = user.edges.articles.requireLoaded().single()
-        assertTrue(article.edges.author.isLoaded)
+        assertEquals(EdgeState.Unloaded, article.edges.author)
     }
 
     @Test
-    fun `a retained handle changes only later captured privacy posture`() {
+    fun `a retained handle cannot change the built query's privacy posture`() {
         val recording = RecordingDriver(resetAndDriver())
-        var retained: EdgeLoad<UserQuery>? = null
+        var retained: EdgeLoad<UserQueryScope>? = null
         val client = EntClient(recording) {
-
+            policies {
+                users(object : EntityPolicy<User, UserPolicyScope> {
+                    override fun configure(scope: UserPolicyScope) = scope.run {
+                        privacy { load(allowAll) }
+                    }
+                })
+                articles(object : EntityPolicy<Article, ArticlePolicyScope> {
+                    override fun configure(scope: ArticlePolicyScope) = scope.run {
+                        privacy { load(ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("hidden") }) }
+                    }
+                })
+            }
             interceptors {
                 users(
                     QueryInterceptor { _, _ -> retained?.filterVisible() },
@@ -208,18 +222,24 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
                 )
             }
         }
-        client.users.create { name = "A"; email = "a@example.com" }.save(testViewerContext).getOrThrow()
-        val query = client.users.query { }
-        val handle = query.loadArticles()
+        val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
+        client.articles.create { title = "hidden"; authorId = author.id }.save(testViewerContext).getOrThrow()
+        val viewer = ViewerContext(Viewer.User(author.id))
+        var handle: EdgeLoad<UserQueryScope>? = null
+        val base = client.users.query()
+        val query = base.configure { handle = loadArticles() }
 
-        retained = handle
-        assertTrue(query.all(testViewerContext).getOrThrow().single().edges.articles.isLoaded)
+        retained = assertNotNull(handle)
+        val first = assertIs<ReadResult.Failed>(query.all(viewer))
+        assertIs<EntPrivacyDeniedException>(first.exception)
 
-        // The interceptor changed the reusable builder after the first
-        // capture. The same handle remains idempotent for later captures.
         retained = null
-        handle.filterVisible()
-        assertTrue(query.all(testViewerContext).getOrThrow().single().edges.articles.isLoaded)
+        assertNotNull(handle).filterVisible()
+        val second = assertIs<ReadResult.Failed>(query.all(viewer))
+        assertIs<EntPrivacyDeniedException>(second.exception)
+
+        val filtered = base.configure { loadArticles().filterVisible() }
+        assertEquals(emptyList(), filtered.all(viewer).getOrThrow().single().edges.articles.requireLoaded())
     }
 
     @Test
@@ -250,23 +270,21 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `mutating the query after a terminal affects only later executions`() {
+    fun `configuring a new branch after a terminal leaves the original graph unchanged`() {
         val (client, _) = recordingClient()
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         client.articles.create { title = "T"; authorId = author.id }.save(testViewerContext).getOrThrow()
         val query = client.users.query { loadArticles() }
 
         val first = query.all(testViewerContext).getOrThrow().single()
-        // Selecting a *different* edge after a completed terminal is not
-        // a duplicate selection; it extends the graph for later
-        // executions only.
-        query.loadGroups()
-        val second = query.all(testViewerContext).getOrThrow().single()
+        val withGroups = query.configure { loadGroups() }
+        val second = withGroups.all(testViewerContext).getOrThrow().single()
 
         assertEquals(EdgeState.Unloaded, first.edges.groups)
         assertTrue(first.edges.articles.isLoaded)
         assertTrue(second.edges.groups.isLoaded)
         assertTrue(second.edges.articles.isLoaded)
+        assertEquals(EdgeState.Unloaded, query.all(testViewerContext).getOrThrow().single().edges.groups)
     }
 
     @Test

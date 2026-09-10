@@ -24,6 +24,7 @@ class RepositoryCompileTest {
                 import entkt.runtime.mutation.CreateMutationDraft
                 import entkt.runtime.mutation.UpdateMutationDraft
                 import entkt.runtime.query.EntityQueryBuilder
+                import entkt.runtime.query.EntityQuery
                 import entkt.runtime.repository.GeneratedIdRepository
                 import entkt.runtime.repository.ExplicitIdRepository
                 import entkt.runtime.rule.EntRuleClient
@@ -34,8 +35,8 @@ class RepositoryCompileTest {
                 class UpdateDraft(var name: String = "") : UpdateMutationDraft<Widget>
                 class OtherCreateDraft : CreateMutationDraft<Other>
                 class OtherUpdateDraft : UpdateMutationDraft<Other>
-                abstract class WidgetQuery : EntityQueryBuilder<Widget, WidgetQuery>(NoopDriver, null, "Widget")
-                abstract class OtherQuery : EntityQueryBuilder<Other, OtherQuery>(NoopDriver, null, "Other")
+                abstract class WidgetQuery(query: EntityQuery<Widget>) : EntityQueryBuilder<Widget, WidgetQuery>(NoopDriver, null, query)
+                abstract class OtherQuery(query: EntityQuery<Other>) : EntityQueryBuilder<Other, OtherQuery>(NoopDriver, null, query)
 
                 typealias GeneratedRepo = GeneratedIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, EntRuleClient>
                 typealias ExplicitRepo = ExplicitIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, EntRuleClient>
@@ -70,7 +71,7 @@ class RepositoryCompileTest {
         val result = compile(
             """
             fun generated(repo: GeneratedRepo, viewer: ViewerContext, widget: Widget, predicate: Predicate<Widget>) {
-                val query: WidgetQuery = repo.query { where(predicate) }
+                val query: WidgetQuery = repo.query().where(predicate)
                 val create: PendingCreateMutation<CreateDraft, Widget> = repo.create { name = "new" }
                 val update: PendingUpdateMutation<UpdateDraft, Widget> = repo.update(1L) { name = "changed" }
                 val found: ReadResult<Widget?> = repo.findById(viewer, 1L)

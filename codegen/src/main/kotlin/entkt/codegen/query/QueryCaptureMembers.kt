@@ -4,9 +4,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
@@ -28,101 +26,12 @@ private val DATABASE_ROW = Map::class.asClassName().parameterizedBy(
     String::class.asClassName(),
     Any::class.asClassName().copy(nullable = true),
 )
-private val ENTITY_QUERY = ClassName("entkt.runtime.query", "EntityQuery")
-private val QUERY_SOURCE = ClassName("entkt.runtime.query", "QuerySource")
-private val EDGE_SELECTION = ClassName("entkt.runtime.query", "EdgeSelection")
-private val EDGE_VISIBILITY = ClassName("entkt.runtime.query", "EdgeVisibility")
 private val EDGE_MAPPING = ClassName("entkt.runtime.query", "EdgeMapping")
 private val EDGE_TRAVERSAL = ClassName("entkt.runtime.query", "EdgeTraversal")
 private val TO_ONE_EDGE_MAPPING = ClassName("entkt.runtime.query", "ToOneEdgeMapping")
 private val TO_MANY_EDGE_MAPPING = ClassName("entkt.runtime.query", "ToManyEdgeMapping")
 private val EDGE_STORAGE = ClassName("entkt.runtime.query", "EdgeStorage")
 private val EDGE_STATE = ClassName("entkt.runtime.query", "EdgeState")
-private val MINIMUM_BIND_PARAMETERS =
-    MemberName("entkt.runtime.driver", "minimumBindParameters")
-
-/** Mutable relational origin retained until the query is captured for execution. */
-internal fun buildEntityQuerySourceProperty(entityClass: ClassName): PropertySpec =
-    property(
-        "entityQuerySource",
-        QUERY_SOURCE.parameterizedBy(entityClass),
-    ) {
-        addModifiers(KModifier.PRIVATE)
-        mutable(true)
-        initializer("%T.Root<%T>()", QUERY_SOURCE, entityClass)
-    }
-
-/** Replace the root origin when a generated `query{Name}` traversal creates this query. */
-internal fun buildSetEntityQuerySource(entityClass: ClassName): FunSpec =
-    function("setEntityQuerySource") {
-        addAnnotation(ENTKT_INTERNAL)
-        addModifiers(KModifier.INTERNAL)
-        parameter("source", QUERY_SOURCE.parameterizedBy(entityClass))
-        statement("this.entityQuerySource = source")
-    }
-
-/** Capture caller query state and selected edges as one immutable recursive value. */
-internal fun buildCaptureEntityQuery(resolved: ResolvedQuerySchema): FunSpec {
-    val entityClass = resolved.entityClass
-    val predicateType = ClassName("entkt.query", "Predicate").parameterizedBy(entityClass)
-    val selectedEdgeType = EDGE_SELECTION.parameterizedBy(entityClass, STAR)
-    val body = codeBlock {
-        add(
-            "val minimumRequiredBindParameters = %M(predicates) +\n" +
-                "  %M(structuralPredicates)\n",
-            MINIMUM_BIND_PARAMETERS,
-            MINIMUM_BIND_PARAMETERS,
-        )
-        add(
-            "driver.requireBindCapacity(minimumRequiredBindParameters, %T.TABLE)\n",
-            entityClass,
-        )
-        add("val selectedEdges = buildList<%T> {\n", selectedEdgeType)
-
-        for (edge in resolved.edges) {
-            if (edge.join == null) continue
-            add("  %L?.let { selectedQuery ->\n", edge.eagerPropName)
-            add("    add(\n")
-            add("      %T(\n", EDGE_SELECTION)
-            add("        edge = %T,\n", edge.edgeDescriptorClass)
-            add("        target = selectedQuery.captureEntityQuery(),\n")
-            add(
-                "        visibility = if (%LFilterVisible) %T.FILTER_INVISIBLE else %T.REQUIRE_VISIBLE,\n",
-                edge.eagerPropName,
-                EDGE_VISIBILITY,
-                EDGE_VISIBILITY,
-            )
-            add("      ),\n")
-            add("    )\n")
-            add("  }\n")
-        }
-
-        add("}\n")
-        add("return %T(\n", ENTITY_QUERY)
-        add("  entity = %T,\n", resolved.entityDescriptorClass)
-        add("  source = entityQuerySource,\n")
-        add("  predicates = predicates,\n")
-        add("  orderBy = orderFields,\n")
-        add("  limit = queryLimit,\n")
-        add("  offset = queryOffset,\n")
-        add("  edges = selectedEdges,\n")
-        add("  structuralPredicates = structuralPredicates,\n")
-        add(")\n")
-    }
-
-    return function(
-        "captureEntityQuery",
-        returnType = ENTITY_QUERY.parameterizedBy(entityClass),
-    ) {
-        addAnnotation(ENTKT_INTERNAL)
-        addModifiers(KModifier.OVERRIDE)
-        parameter(
-            "structuralPredicates",
-            List::class.asClassName().parameterizedBy(predicateType),
-        )
-        addCode(body)
-    }
-}
 
 /** Generate the canonical entity descriptor shared by every runtime subsystem. */
 internal fun buildEntityDescriptor(resolved: ResolvedQuerySchema): TypeSpec {

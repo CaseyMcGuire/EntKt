@@ -100,7 +100,7 @@ abstract class EntityRepository<
         block: TransactionScope.(Self) -> Result,
     ): TransactionResult<Result>
 
-    fun query(block: Query.() -> Unit = {}): Query = newQuery().apply(block)
+    fun query(): Query = newQuery()
 
     fun findById(viewerContext: ViewerContext, id: ID): ReadResult<Entity?> {
         val result = newQuery().readRootQuery(

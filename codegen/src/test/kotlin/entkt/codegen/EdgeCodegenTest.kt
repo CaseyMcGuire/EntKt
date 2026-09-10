@@ -9,6 +9,7 @@ import entkt.codegen.mutation.CreateGenerator
 import entkt.codegen.mutation.MutationGenerator
 import entkt.codegen.mutation.UpdateGenerator
 import entkt.codegen.query.QueryGenerator
+import entkt.codegen.query.QueryScopeGenerator
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
 import entkt.schema.EntId
@@ -1361,13 +1362,13 @@ class EdgeCodegenTest {
     fun `entity emits EdgeRef on the companion for to-many edges`() {
         val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString()
+            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("import entkt.query.EdgeRef")) {
             "Should import EdgeRef\n$output"
         }
-        assert(output.contains("val pets: EdgeRef<Owner, Pet, PetQuery> = EdgeRef(\"pets\") { PetQuery(NoopDriver) }")) {
-            "Should emit EdgeRef<Owner, Pet, PetQuery> for the pets edge\n$output"
+        assert(output.contains("val pets: EdgeRef<Owner, Pet, PetQueryScope> = EdgeRef(\"pets\") { PetQueryScope(NoopDriver) }")) {
+            "Should emit EdgeRef<Owner, Pet, PetQueryScope> for the pets edge\n$output"
         }
     }
 
@@ -1375,10 +1376,10 @@ class EdgeCodegenTest {
     fun `entity emits EdgeRef on the companion for from-side unique edges`() {
         val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Pet", byName["Pet"]!!, names).toString()
+            .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("val owner: EdgeRef<Pet, Owner, OwnerQuery> = EdgeRef(\"owner\") { OwnerQuery(NoopDriver) }")) {
-            "Should emit EdgeRef<Pet, Owner, OwnerQuery> for the owner edge\n$output"
+        assert(output.contains("val owner: EdgeRef<Pet, Owner, OwnerQueryScope> = EdgeRef(\"owner\") { OwnerQueryScope(NoopDriver) }")) {
+            "Should emit EdgeRef<Pet, Owner, OwnerQueryScope> for the owner edge\n$output"
         }
         // The FK column ref still lives next to it
         assert(output.contains("val ownerId: NullableIntegralColumn<Pet, Long>")) {
@@ -1396,15 +1397,15 @@ class EdgeCodegenTest {
 
         // Traversal methods take the same defaulted receiver block as
         // repository / index `query { ... }` helpers.
-        assert(output.contains("fun queryPets(block: PetQuery.() -> Unit = {}): PetQuery")) {
-            "Should generate traversal queryPets(block: PetQuery.() -> Unit = {})\n$output"
+        assert(output.contains("fun queryPets(block: PetQueryScope.() -> Unit = {}): PetQuery")) {
+            "Should generate traversal queryPets(block: PetQueryScope.() -> Unit = {})\n$output"
         }
-        assert(output.contains("val source = captureEntityQuery()")) {
+        assert(output.contains("traversalQuery(OwnerPetsEdgeDescriptor,")) {
             "Traversal should capture the complete immutable source query\n$output"
         }
         assert(
             output.contains(
-                "target.setEntityQuerySource(QuerySource.Traversal(source, OwnerPetsEdgeDescriptor))",
+                "traversalQuery(OwnerPetsEdgeDescriptor, \"queryPets()\")",
             ),
         ) {
             "Traversal should pass its typed edge and source tree to runtime\n$output"
@@ -1420,12 +1421,12 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString()
 
-        assert(output.contains("fun queryOwner(block: OwnerQuery.() -> Unit = {}): OwnerQuery")) {
-            "Should generate traversal queryOwner(block: OwnerQuery.() -> Unit = {})\n$output"
+        assert(output.contains("fun queryOwner(block: OwnerQueryScope.() -> Unit = {}): OwnerQuery")) {
+            "Should generate traversal queryOwner(block: OwnerQueryScope.() -> Unit = {})\n$output"
         }
         assert(
             output.contains(
-                "target.setEntityQuerySource(QuerySource.Traversal(source, PetOwnerEdgeDescriptor))",
+                "traversalQuery(PetOwnerEdgeDescriptor, \"queryOwner()\")",
             ),
         ) {
             "from-side traversal should pass its typed recursive source to runtime\n$output"
@@ -1468,10 +1469,10 @@ class EdgeCodegenTest {
     fun `entity emits EdgeRef for M2M edge`() {
         val (_, names, byName) = createAllSchemas()
         val output = EntityGenerator("com.example.ent")
-            .generate("Team", byName["Team"]!!, names).toString()
+            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("val members: EdgeRef<Team, Pet, PetQuery> = EdgeRef(\"members\") { PetQuery(NoopDriver) }")) {
-            "Should emit EdgeRef<Team, Pet, PetQuery> for M2M members edge\n$output"
+        assert(output.contains("val members: EdgeRef<Team, Pet, PetQueryScope> = EdgeRef(\"members\") { PetQueryScope(NoopDriver) }")) {
+            "Should emit EdgeRef<Team, Pet, PetQueryScope> for M2M members edge\n$output"
         }
     }
 
@@ -1525,12 +1526,12 @@ class EdgeCodegenTest {
         val output = QueryGenerator("com.example.ent")
             .generate("Team", byName["Team"]!!, names).toString()
 
-        assert(output.contains("fun queryMembers(block: PetQuery.() -> Unit = {}): PetQuery")) {
-            "Should generate M2M traversal queryMembers(block: PetQuery.() -> Unit = {})\n$output"
+        assert(output.contains("fun queryMembers(block: PetQueryScope.() -> Unit = {}): PetQuery")) {
+            "Should generate M2M traversal queryMembers(block: PetQueryScope.() -> Unit = {})\n$output"
         }
         assert(
             output.contains(
-                "target.setEntityQuerySource(QuerySource.Traversal(source, TeamMembersEdgeDescriptor))",
+                "traversalQuery(TeamMembersEdgeDescriptor, \"queryMembers()\")",
             ),
         ) {
             "M2M traversal should preserve its typed source relationship for runtime lowering\n$output"
@@ -1591,100 +1592,41 @@ class EdgeCodegenTest {
         }
     }
 
-    // ---------- Edge loading: load{Edge} methods ----------
+
+    // ---------- Configuration-only edge selection ----------
 
     @Test
-    fun `query generates loadPets returning the EdgeLoad handle for to-many edge`() {
+    fun `scopes generate typed edge handles for every relationship cardinality`() {
         val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        // load{Edge} returns an EdgeLoad<ParentQuery> handle whose
-        // filterVisible() flips the per-edge filter flag and hands the
-        // parent query back for chaining. Selecting an edge twice is
-        // rejected up front, so the handle always governs the edge's
-        // only configuration — no stale-handle state exists. The slot
-        // is reserved before the block runs (re-entrant calls hit the
-        // duplicate guard, never last-write-wins) and rolled back if
-        // the block fails. Executions consume an immutable capture, so
-        // later builder changes naturally affect only later calls.
-        assert(
-            output.contains(
-                "public fun loadPets(block: PetQuery.() -> Unit = {}): EdgeLoad<OwnerQuery> " +
-                    "{ if (eagerPets != null) { throw EntQueryConfigurationException( \"Owner\", " +
-                    "\"Owner.pets is already selected on this OwnerQuery: loadPets() may be called " +
-                    "at most once per query; compose all configuration for the edge in a single " +
-                    "loadPets block\", ) } " +
-                    "val configured = PetQuery(driver, client) " +
-                    "eagerPets = configured " +
-                    "try { configured.apply(block) } catch (e: Throwable) { eagerPets = null throw e } " +
-                    "return object : EdgeLoad<OwnerQuery> { override fun filterVisible(): OwnerQuery " +
-                    "{ eagerPetsFilterVisible = true return this@OwnerQuery } } }",
-            ),
-        ) {
-            "loadPets should reject duplicate selection with rollback and return an EdgeLoad<OwnerQuery> handle\n$output"
-        }
-        // Java callers get a real zero-arg overload rather than
-        // Kotlin's default-argument marker.
-        assert(output.contains("@JvmOverloads public fun loadPets(")) {
-            "loadPets should carry @JvmOverloads for the zero-block Java overload\n$output"
+        for ((schema, target, edge) in listOf(
+            Triple("Owner", "Pet", "Pets"),
+            Triple("Pet", "Owner", "Owner"),
+            Triple("Team", "Pet", "Members"),
+        )) {
+            val output = QueryScopeGenerator("com.example.ent")
+                .generate(schema, byName[schema]!!, names).toString().replace("\\s+".toRegex(), " ")
+            assert(output.contains(
+                "load$edge(block: ${target}QueryScope.() -> Unit = {}): EdgeLoad<${schema}QueryScope>",
+            )) { output }
+            assert(output.contains(
+                "loadEdge(${schema}${edge}EdgeDescriptor, ${target}QueryScope(driver, client), block)",
+            )) { output }
+            assert(output.contains("@JvmOverloads public fun load$edge(")) { output }
+            for (algorithm in listOf("eager", "if (", "try {", "return object", "fun all(", "fun firstOrNull(")) {
+                assert(!output.contains(algorithm)) { output }
+            }
         }
     }
 
     @Test
-    fun `query generates loadOwner for to-one edge`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("fun loadOwner(block: OwnerQuery.() -> Unit = {}): EdgeLoad<PetQuery>")) {
-            "loadOwner should accept an OwnerQuery DSL block and return EdgeLoad<PetQuery>\n$output"
-        }
-    }
-
-    @Test
-    fun `query generates loadMembers for M2M edge`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Team", byName["Team"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("fun loadMembers(block: PetQuery.() -> Unit = {}): EdgeLoad<TeamQuery>")) {
-            "loadMembers should return the EdgeLoad<TeamQuery> handle\n$output"
-        }
-    }
-
-    @Test
-    fun `generated query emits no public with-prefixed edge methods`() {
+    fun `completed queries have no mutable selected-edge fields or load methods`() {
         val (_, names, byName) = createAllSchemas()
         for (schemaName in listOf("Owner", "Pet", "Team")) {
             val output = QueryGenerator("com.example.ent")
                 .generate(schemaName, byName[schemaName]!!, names).toString()
-            // The atomic cutover leaves no with{Name} spelling behind:
-            // the declaration-derived family is load{Name} only.
-            assert(!Regex("fun with[A-Z]").containsMatchIn(output)) {
-                "$schemaName query should not emit any with{Name} method\n$output"
-            }
-            assert(!output.contains("EagerLoad")) {
-                "$schemaName query should reference EdgeLoad, not EagerLoad\n$output"
-            }
-        }
-    }
-
-    @Test
-    fun `load-edge builder configuration stays a private nullable query field`() {
-        val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
-            .generate("Owner", byName["Owner"]!!, names).toString().replace("\\s+".toRegex(), " ")
-
-        // EdgeState wraps returned entity edges only — the builder's
-        // load{Edge} bookkeeping keeps its private nullable field.
-        assert(output.contains("private var eagerPets: PetQuery? = null")) {
-            "load{Edge} config should stay a private nullable builder field\n$output"
-        }
-        // The EdgeLoad handle's filterVisible() state is a private
-        // per-edge flag alongside it.
-        assert(output.contains("private var eagerPetsFilterVisible: Boolean = false")) {
-            "load{Edge} filterVisible state should be a private per-edge flag\n$output"
+            assert(!Regex("fun (with|load)[A-Z]").containsMatchIn(output)) { output }
+            assert(!output.contains("eager")) { output }
+            assert(!output.contains("private var")) { output }
         }
     }
 

@@ -230,7 +230,7 @@ class EntityRepositoryTest {
     @Test
     fun `query returns a fresh concrete builder and findById preserves read execution semantics`() {
         val fixture = Fixture()
-        val configured = fixture.generated.query { where(Predicate.Leaf("name", Op.EQ, "one")) }
+        val configured = fixture.generated.query().where(Predicate.Leaf("name", Op.EQ, "one"))
         val fresh: WidgetQuery = fixture.generated.query()
         assertNotSame(configured, fresh)
         assertTrue(fresh.captureEntityQuery().predicates.isEmpty())
@@ -261,9 +261,9 @@ class EntityRepositoryTest {
                 assertTrue(fixture.readOperations.isEmpty())
                 assertEquals(0, fixture.clientResolutions)
                 val predicates = listOf(Predicate.Leaf<Widget>("name", Op.EQ, "one"))
-                query.where(predicates.single())
+                val filtered = query.where(predicates.single())
 
-                val compiled = query.compileEntityQuery(viewerContext, ReadOperation.DELETE_CANDIDATES)
+                val compiled = filtered.compileEntityQuery(viewerContext, ReadOperation.DELETE_CANDIDATES)
 
                 assertEquals(predicates, compiled.predicates)
                 assertEquals(listOf(ReadOperation.DELETE_CANDIDATES), fixture.readOperations)
@@ -586,13 +586,13 @@ class EntityRepositoryTest {
         )
     }
 
-    private class WidgetQuery(fixture: Fixture) : EntityQueryBuilder<Widget, WidgetQuery>(
-        fixture.driver, fixture, "Widget",
+    private class WidgetQuery(
+        private val fixture: Fixture,
+        query: EntityQuery<Widget> = EntityQuery(Descriptor),
+    ) : EntityQueryBuilder<Widget, WidgetQuery>(
+        fixture.driver, fixture, query,
     ) {
-        override val self: WidgetQuery get() = this
-        override fun captureEntityQuery(structuralPredicates: List<Predicate<Widget>>): EntityQuery<Widget> = EntityQuery(
-            Descriptor, QuerySource.Root(), predicates, orderFields, queryLimit, queryOffset, emptyList(), structuralPredicates,
-        )
+        override fun newQuery(query: EntityQuery<Widget>): WidgetQuery = WidgetQuery(fixture, query)
     }
 
     private class RecordingDriver(override val inTransaction: Boolean) : DatabaseDriver by NoopDriver {

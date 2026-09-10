@@ -21,9 +21,10 @@ package entkt.runtime.query
  * rejection and ordinary privacy, driver, or materialization
  * exceptions remain terminal failures.
  *
- * [filterVisible] returns the parent query so a fluent chain may
- * continue.
+ * [filterVisible] returns the parent configuration scope so a fluent chain may
+ * continue within the block. Changing a retained handle after construction
+ * cannot change an already-built query.
  */
-interface EdgeLoad<out ParentQuery> {
-    fun filterVisible(): ParentQuery
+interface EdgeLoad<out ParentScope> {
+    fun filterVisible(): ParentScope
 }

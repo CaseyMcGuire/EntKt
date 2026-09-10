@@ -4,11 +4,11 @@ The generated `{Entity}Query` builder provides a type-safe API for
 filtering, ordering, paginating, traversing edges, and eager loading
 related entities.
 
-Generated query builders are mutable and **not thread-safe**. Configure and
-execute a query instance from one thread at a time; do not mutate or execute
-the same instance concurrently. Create a separate query builder for each
-concurrent operation. A fully configured query may be executed repeatedly when
-those executions are sequential.
+Returned queries are immutable descriptions. Fluent configuration returns a new
+query; statement-style blocks use temporary mutable `{Entity}QueryScope`
+receivers. Each terminal executes a fresh read without consuming the query or
+changing its configuration. Immutable configuration does not make a bound
+transaction client safe for concurrent execution or extend its lifetime.
 
 ## Basic Usage
 
@@ -51,6 +51,47 @@ its supplied subset in order.
 evaluator with a singleton when a row exists, and do not invoke LOAD rules on
 absence. The exact terminal-supplied `ViewerContext` instance is shared by the
 terminal's interceptors, root LOAD phase, and all traversal and eager work.
+
+## Building And Reusing Queries
+
+`where`, `orderBy`, `limit`, and `offset` return new queries when called on a
+completed query. Keep their return values:
+
+```kotlin
+val base = client.users.query {
+    where(User.active eq true)
+    orderBy(User.id.asc())
+}
+val firstPage = base.limit(10)
+val secondPage = firstPage.offset(10)
+// base still has no limit or offset; firstPage still has no offset.
+```
+
+Use `configure { ... }` for block-style refinement, including eager loading:
+
+```kotlin
+val withPosts = base.configure {
+    limit(10)
+    loadPosts { orderBy(Post.createdAt.desc()) }
+}
+// base has no selected edges.
+```
+
+`query { ... }`, `configure { ... }`, traversal blocks, and index-query blocks
+accumulate configuration within their scopes. Scopes expose no terminals or
+traversal methods. `load{Edge}` methods exist on these scopes, not on completed
+queries. Retaining a scope or an edge-load handle cannot change a built query,
+including its nested selections or traversal source.
+
+Do not use Kotlin's `apply { ... }` to refine a completed query: it discards the
+new values returned by immutable fluent methods. Use `configure` or fluent
+chaining instead.
+
+Construction and derivation perform no database I/O. New mutable predicate and
+ordering operands are detached when a fluent method returns or a configuration
+block finishes. Invalid bounds and oversized predicate inputs throw during
+construction; execution-time interceptor and driver failures still produce
+`ReadResult.Failed`.
 
 ## Indexed Query Helpers
 
@@ -558,15 +599,15 @@ query object is discarded.
 
 The rejection also covers re-entrant selection (`load{Edge}` called
 again from inside its own configuration block) — a failed selection is
-rolled back, so a caught error leaves the query as if it never
-happened.
+removed from the temporary scope, so a caught error allows that selection to
+be retried.
 
-A terminal captures an immutable snapshot of the complete selected graph
-before execution begins. If an interceptor or privacy rule retains and mutates
-the reusable query builder during execution, that mutation cannot change the
-in-flight read; it is visible only to a later terminal on the same builder.
-Query builders remain non-thread-safe, so this does not make concurrent
-mutation and execution safe.
+The complete selected graph is frozen during construction. Changing a retained
+scope or calling `filterVisible()` on an escaped handle cannot change either an
+in-flight read or any later execution of that query. To add another edge,
+derive a new query with `configure { ... }`; the original remains unchanged.
+An edge already selected on the original cannot be selected again in the new
+scope.
 
 ### Traversal Cannot Carry Selected Source Edges
 

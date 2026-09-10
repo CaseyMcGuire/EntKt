@@ -1,8 +1,3 @@
-// Fabricates a raw Predicate.Leaf to mutate a source query after the
-// traversal call, exercising the snapshot boundary (same opt-in story
-// as ReadInterceptorRound3FixesIntegrationTest).
-@file:OptIn(entkt.query.EntktInternal::class)
-
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
@@ -12,8 +7,6 @@ import entkt.integrationtest.ent.Tag
 import entkt.integrationtest.ent.User
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
-import entkt.query.Op
-import entkt.query.Predicate
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QueryInterceptor
@@ -24,7 +17,7 @@ import kotlin.test.assertNotNull
 
 /**
  * Edge traversal query blocks: `queryX { ... }` accepts the same
- * defaulted target-query receiver block as repository and index
+ * defaulted target-scope receiver block as repository and index
  * `query { ... }` helpers. The block configures the *target* query
  * only — traversal seeding, source snapshotting, and interceptor
  * context are byte-for-byte the chained-call behavior.
@@ -98,7 +91,7 @@ class TraversalQueryBlockIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `block form still snapshots source state at traversal-call time`() {
+    fun `block form retains its source query when another branch is refined`() {
         val driver = freshDriver()
         val client = bypassClient(driver)
         val alice = client.users.create { name = "alice"; email = "alice@x" }.saveAndLoad(testViewerContext).getOrThrow()
@@ -111,15 +104,13 @@ class TraversalQueryBlockIntegrationTest : PostgresTestBase() {
             orderBy(Article.title.asc())
         }
 
-        // Mutate the source AFTER the traversal call: the block must
-        // not change when the snapshot is taken, so this where stays
-        // invisible to the bridge predicate.
-        users.where(Predicate.Leaf("name", Op.EQ, "alice"))
+        val onlyAlice = users.where(User.name eq "alice")
+        assertEquals(listOf("alice"), onlyAlice.all(testViewerContext).getOrThrow().map { it.name })
 
         assertEquals(
             listOf("alice-article", "bob-article"),
             articles.all(testViewerContext).getOrThrow().map { it.title },
-            "queryX { ... } must snapshot source state at traversal-call time, same as queryX()",
+            "a traversal must retain the original source description, not a later branch",
         )
     }
 

@@ -20,7 +20,7 @@ import entkt.schema.EntSchema
  * Edge loading, edge-predicate interception, and
  * `queryX()` traversal all key off the same per-edge metadata: the
  * target schema's generated name, the join columns, the inverse edge,
- * and the derived member names (`eagerX` / `loadX` / edge property).
+ * and the derived member names (`queryX` / `loadX` / edge property).
  * Each of those emitters used to re-derive that metadata from the raw
  * schema at its own call site, which meant several copies of the same
  * resolution rules that could drift apart. Resolution happens here,
@@ -77,8 +77,6 @@ internal class ResolvedQueryEdge(
     val targetQueryClass: ClassName,
     /** Top-level generated descriptor for this relationship. */
     val edgeDescriptorClass: ClassName,
-    /** Backing property holding the selected edge-load sub-query: `eagerX`. */
-    val eagerPropName: String,
     /** Edge-load DSL entry point: `loadX`. */
     val loadMethodName: String,
     /** Edge-traversal entry point: `queryX`. */
@@ -177,7 +175,6 @@ internal fun resolveQuerySchema(
                 packageName,
                 "${schemaName}${edge.apiName.generatedStem()}EdgeDescriptor",
             ),
-            eagerPropName = "eager${edge.apiName.generatedStem()}",
             loadMethodName = "load${edge.apiName.generatedStem()}",
             queryMethodName = "query${edge.apiName.generatedStem()}",
             edgePropName = edge.apiName,

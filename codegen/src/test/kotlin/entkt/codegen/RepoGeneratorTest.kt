@@ -135,7 +135,7 @@ class RepoGeneratorTest {
         assert(output.contains("GeneratedIdRepository<Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, ReadOnlyEntClient>")) {
             "The base should retain concrete entity, ID, drafts, query, and rule client types\n$output"
         }
-        for (method in listOf("query", "create", "update", "findById", "delete", "deleteById", "createMany", "deleteMany")) {
+        for (method in listOf("create", "update", "findById", "delete", "deleteById", "createMany", "deleteMany")) {
             assert(!output.contains("fun $method(")) { "$method should be inherited, not generated\n$output" }
         }
         assert(!output.contains("CreateMutationRepository") && !output.contains("UpdateMutationRepository")) {

@@ -251,14 +251,11 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `mutating source query after queryX does not leak into target's terminal`() {
+    fun `refining a source query after queryX does not leak into target's terminal`() {
         val driver = freshDriver()
         val client = EntClient(driver)
-        // Two users, one article each. The post-queryX where on
-        // the source MUST NOT affect what rows queryArticles
-        // sees at terminal time — pre-snapshot the deferred
-        // lambda would re-read `users.predicates` at terminal
-        // time and include the late `name = "alice"` filter.
+        // Two users, one article each. A new source branch must not affect
+        // what the existing traversal sees at terminal time.
         val alice = client.users.create { name = "alice"; email = "alice@x" }.saveAndLoad(testViewerContext).getOrThrow()
         val bob = client.users.create { name = "bob"; email = "bob@x" }.saveAndLoad(testViewerContext).getOrThrow()
         client.articles.create { title = "alice-article"; authorId = alice.id }.saveAndLoad(testViewerContext).getOrThrow()
@@ -267,23 +264,19 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         val users = client.users.query()
         val articles = users.queryArticles()
 
-        // Mutate the source AFTER queryX. If the lambda captures
-        // `this` live, this where leaks into the bridge and
-        // articles.all(testViewerContext) returns only "alice-article".
-        // If the lambda captures a snapshot, this where is
-        // invisible to the bridge.
-        users.where(Predicate.Leaf("name", Op.EQ, "alice"))
+        val onlyAlice = users.where(User.name eq "alice")
+        assertEquals(listOf("alice"), onlyAlice.all(testViewerContext).getOrThrow().map { it.name })
 
         val result = articles.all(testViewerContext).getOrThrow()
         assertEquals(
             setOf("alice-article", "bob-article"),
             result.map { it.title }.toSet(),
-            "queryX should snapshot source state at construction; post-queryX mutations to source must not leak into the target's terminal call",
+            "refining the source must not change an existing traversal",
         )
     }
 
     @Test
-    fun `M2M traversal also snapshots source at queryX time`() {
+    fun `M2M traversal also retains its original source query`() {
         val driver = freshDriver()
         val client = EntClient(driver)
         // Seed: two posts, one tag each (linked via the junction
@@ -303,15 +296,14 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         val posts = client.posts.query { where(Post.id eq keeper.id) }
         val tags = posts.queryTags()
 
-        // Mutate AFTER queryX. Pre-snapshot fix this leaked into
-        // the bridge predicate; with the snapshot it does not.
-        posts.where(Predicate.Leaf("title", Op.EQ, "intruder"))
+        val contradictory = posts.where(Post.title eq "intruder")
+        assertEquals(emptyList(), contradictory.all(testViewerContext).getOrThrow())
 
         val result = tags.all(testViewerContext).getOrThrow()
         assertEquals(
             listOf("keeper-tag"),
             result.map { it.name },
-            "M2M queryX should snapshot source state at construction; post-queryX mutations must not leak into the bridge predicate",
+            "M2M traversal must not inherit another source branch's predicates",
         )
     }
 

@@ -137,7 +137,7 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
         val emulatedClient = bypassClient(EmulatedWindowsDriver(real))
         seed(nativeClient, perAuthor = 5)
 
-        val block: entkt.integrationtest.ent.UserQuery.() -> Unit = {
+        val block: entkt.integrationtest.ent.UserQueryScope.() -> Unit = {
             loadArticles {
                 orderBy(Article.title.desc())
                 offset(1)
@@ -166,7 +166,7 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
         val emulatedClient = bypassClient(EmulatedWindowsDriver(real))
         seed(nativeClient, perAuthor = 4)
 
-        val block: entkt.integrationtest.ent.UserQuery.() -> Unit = {
+        val block: entkt.integrationtest.ent.UserQueryScope.() -> Unit = {
             loadArticles { offset(2) }
         }
         val native = nativeClient.users.query(block).all(testViewerContext).getOrThrow()
@@ -189,7 +189,7 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
         nativeObserver.nativeRowCounts.clear()
         emulatedObserver.emulatedRowCounts.clear()
 
-        val block: entkt.integrationtest.ent.UserQuery.() -> Unit = {
+        val block: entkt.integrationtest.ent.UserQueryScope.() -> Unit = {
             loadArticles { limit(2) }
         }
         nativeClient.users.query(block).all(testViewerContext).getOrThrow()
@@ -265,7 +265,7 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
         val emulatedClient = bypassClient(EmulatedWindowsDriver(real))
         seed(nativeClient, perAuthor = 4)
 
-        val block: entkt.integrationtest.ent.UserQuery.() -> Unit = {
+        val block: entkt.integrationtest.ent.UserQueryScope.() -> Unit = {
             loadArticles {
                 limit(2)
                 loadAuthor()

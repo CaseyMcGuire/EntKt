@@ -12,10 +12,10 @@ import kotlin.test.assertEquals
 /**
  * Compile-time proof of the edge-load handle contract (RFC "Generated
  * Edge Loading API"): every generated `load<Edge> { }` returns an
- * edge-specific `EdgeLoad<ParentQuery>` handle. Ignoring the handle
+ * edge-specific `EdgeLoad<ParentScope>` handle. Ignoring the handle
  * compiles — strict privacy is the default, not something the caller
- * opts into — while `filterVisible()` returns the concrete parent query
- * for continued fluent composition. The runtime behavior (strict denial
+ * opts into — while `filterVisible()` returns the concrete parent scope
+ * for continued configuration. The runtime behavior (strict denial
  * versus filtered visibility) is pinned by the string-assertion and
  * integration suites; this test pins the shape the application
  * compiles against, including the `@JvmOverloads` zero-block overload
@@ -54,28 +54,28 @@ class EdgeLoadHandleCompileTest {
                 """
                 package com.example.app
 
-                import com.example.ent.CarQuery
+                import com.example.ent.CarQueryScope
                 import com.example.ent.UserQuery
                 import entkt.runtime.privacy.ViewerContext
                 import entkt.runtime.query.EdgeLoad
 
-                fun strictByDefault(q: CarQuery) {
+                fun strictByDefault(q: CarQueryScope) {
                     // Ignoring the returned handle compiles: strict edge-load
                     // privacy needs no acknowledgement from the caller.
                     q.loadUser()
                 }
 
-                fun typedHandle(q: CarQuery) {
+                fun typedHandle(q: CarQueryScope) {
                     // The handle is the runtime EdgeLoad interface,
-                    // parameterized on the concrete parent query type.
-                    val handle: EdgeLoad<CarQuery> = q.loadUser { }
-                    val parent: CarQuery = handle.filterVisible()
+                    // parameterized on the concrete parent configuration scope.
+                    val handle: EdgeLoad<CarQueryScope> = q.loadUser { }
+                    val parent: CarQueryScope = handle.filterVisible()
                     parent.limit(1)
                 }
 
                 fun fluentToMany(q: UserQuery, viewerContext: ViewerContext) {
                     // filterVisible() on a to-many edge chains the same way.
-                    val parent: UserQuery = q.loadCars { limit(3) }.filterVisible()
+                    val parent: UserQuery = q.configure { loadCars { limit(3) }.filterVisible() }
                     parent.firstOrNull(viewerContext)
                 }
                 """.trimIndent(),
@@ -96,19 +96,19 @@ class EdgeLoadHandleCompileTest {
                 """
                 package com.example.app;
 
-                import com.example.ent.CarQuery;
-                import com.example.ent.UserQuery;
+                import com.example.ent.CarQueryScope;
+                import com.example.ent.UserQueryScope;
                 import entkt.runtime.query.EdgeLoad;
 
                 public class EdgeLoadJavaSnippet {
                     // The @JvmOverloads zero-arg overload: no Function1 and no
                     // Kotlin default-argument marker required from Java.
-                    public static CarQuery strict(CarQuery q) {
-                        EdgeLoad<CarQuery> handle = q.loadUser();
+                    public static CarQueryScope strict(CarQueryScope q) {
+                        EdgeLoad<CarQueryScope> handle = q.loadUser();
                         return handle.filterVisible();
                     }
 
-                    public static void ignoredHandle(UserQuery q) {
+                    public static void ignoredHandle(UserQueryScope q) {
                         q.loadCars();
                     }
                 }

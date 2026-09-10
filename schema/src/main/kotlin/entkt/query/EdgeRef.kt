@@ -13,7 +13,8 @@ package entkt.query
  * data class User(...) {
  *     companion object {
  *         val active: Column<User, Boolean> = ...
- *         val posts: EdgeRef<User, Post, PostQuery> = EdgeRef("posts") { PostQuery() }
+ *         val posts: EdgeRef<User, Post, PostQueryScope> =
+ *             EdgeRef("posts") { PostQueryScope(NoopDriver) }
  *     }
  * }
  * ```
@@ -38,7 +39,7 @@ package entkt.query
  *    `Predicate.HasEdgeWith<Source, Target>` so the generated walker can
  *    recover the target type from the edge name via an edge-name-
  *    validated unchecked cast.
- *  - [Q]: the target's generated query type. Constrained to both
+ *  - [Q]: the target's generated configuration scope. Constrained to both
  *    `EdgeQuery<Target>` (so [has] can fold the block's wheres into
  *    a `Predicate<Target>` via `combinedPredicate()`) AND
  *    `EdgePredicateScope<Target>` (the narrow lambda receiver type
@@ -62,7 +63,7 @@ class EdgeRef<Source : Any, Target : Any, Q> @EntktInternal constructor(
      * [exists].
      *
      * The block receiver is the narrow [EdgePredicateScope] rather
-     * than the concrete query type, so only `where(Predicate<Target>)`
+     * than the concrete configuration scope, so only `where(Predicate<Target>)`
      * is in scope. The target's wider DSL (`orderBy`, `limit`,
      * `offset`, traversal `queryX()`, eager loaders, terminal
      * operations) is unreachable inside the block — those don't

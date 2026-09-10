@@ -20,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 
 class EntityQueryBuilderTest {
@@ -89,50 +90,95 @@ class EntityQueryBuilderTest {
 
     private class ItemQuery(
         driver: DatabaseDriver,
-        executionHost: ReadQueryExecutionHost?,
+        private val executionHost: ReadQueryExecutionHost?,
+        query: EntityQuery<Item> = EntityQuery(ItemMapping),
     ) : EntityQueryBuilder<Item, ItemQuery>(
         driver = driver,
         executionHost = executionHost,
-        entityName = ItemMapping.entityName,
+        entityQuery = query,
     ) {
-        override val self: ItemQuery
-            get() = this
+        override fun newQuery(query: EntityQuery<Item>): ItemQuery = ItemQuery(driver, executionHost, query)
 
-        override fun captureEntityQuery(
-            structuralPredicates: List<Predicate<Item>>,
-        ): EntityQuery<Item> = EntityQuery(
-            entity = ItemMapping,
-            source = QuerySource.Root(),
-            predicates = predicates,
-            orderBy = orderFields,
-            limit = queryLimit,
-            offset = queryOffset,
-            edges = emptyList(),
-            structuralPredicates = structuralPredicates,
-        )
+        fun configure(block: ItemQueryScope.() -> Unit): ItemQuery =
+            configureQuery(ItemQueryScope(driver, entityQuery), block)
+    }
+
+    private class ItemQueryScope(driver: DatabaseDriver, query: EntityQuery<Item>) :
+        EntityQueryScope<Item, ItemQueryScope>(driver, query, emptyList()) {
+        override val self: ItemQueryScope get() = this
     }
 
     private val vc = ViewerContext(Viewer.User(7L))
 
     @Test
-    fun `fluent configuration stays typed and capture sees accumulated state`() {
+    fun `fluent configuration creates independent typed queries`() {
         val first = Predicate.Leaf<Item>("active", Op.EQ, true)
         val second = Predicate.Leaf<Item>("score", Op.GTE, 10)
         val order = OrderField<Item>("score", OrderDirection.DESC)
         val query = ItemQuery(NoopDriver, executionHost = null)
 
-        assertSame(query, query.where(first))
-        assertSame(query, query.where(second))
-        assertSame(query, query.orderBy(order))
-        assertSame(query, query.limit(25))
-        assertSame(query, query.offset(5))
+        val filtered = query.where(first).where(second)
+        val ordered = filtered.orderBy(order)
+        val limited = ordered.limit(25)
+        val offset = limited.offset(5)
 
-        val captured = query.captureEntityQuery()
+        assertNotSame(query, filtered)
+        assertEquals(emptyList(), query.captureEntityQuery().predicates)
+        assertEquals(emptyList(), filtered.captureEntityQuery().orderBy)
+        assertEquals(null, ordered.queryLimit)
+        assertEquals(null, limited.queryOffset)
+        val captured = offset.captureEntityQuery()
         assertEquals(listOf(first, second), captured.predicates)
         assertEquals(listOf(order), captured.orderBy)
         assertEquals(25, captured.limit)
         assertEquals(5, captured.offset)
-        assertEquals(Predicate.And(first, second), query.combinedPredicate())
+    }
+
+    @Test
+    fun `configuration blocks accumulate without changing their source or performing IO`() {
+        val driver = RecordingDriver()
+        val base = ItemQuery(driver, RecordingHost()).limit(10)
+        lateinit var escaped: ItemQueryScope
+        val configured = base.configure {
+            escaped = this
+            where(Predicate.Leaf("active", Op.EQ, true))
+            where(Predicate.Leaf("score", Op.GTE, 10))
+            limit(3)
+            offset(2)
+        }
+        escaped.limit(99).where(Predicate.Leaf("id", Op.EQ, 99L))
+
+        assertEquals(10, base.queryLimit)
+        assertEquals(emptyList(), base.captureEntityQuery().predicates)
+        assertEquals(3, configured.queryLimit)
+        assertEquals(2, configured.queryOffset)
+        assertEquals(2, configured.captureEntityQuery().predicates.size)
+        assertEquals(0, driver.queryCalls)
+    }
+
+    @Test
+    fun `changing bounds shares already detached operands`() {
+        val ids = mutableListOf(1L, 2L)
+        val base = ItemQuery(NoopDriver, null).where(Predicate.Leaf("id", Op.IN, ids))
+        val bounded = base.limit(5).offset(1)
+        ids.clear()
+
+        val original = base.captureEntityQuery()
+        val derived = bounded.captureEntityQuery()
+        assertSame(original.predicates, derived.predicates)
+        assertEquals(listOf(1L, 2L), assertIs<Predicate.Leaf<Item>>(derived.predicates.single()).value)
+        assertSame(original, base.captureEntityQuery())
+    }
+
+    @Test
+    fun `repeated terminals do not consume or change a query`() {
+        val driver = RecordingDriver()
+        val query = ItemQuery(driver, RecordingHost())
+
+        assertEquals(Item(1L), query.firstOrNull(vc).getOrThrow())
+        assertEquals(listOf(Item(1L), Item(2L)), query.all(vc).getOrThrow())
+        assertEquals(null, query.queryLimit)
+        assertEquals(2, driver.queryCalls)
     }
 
     @Test

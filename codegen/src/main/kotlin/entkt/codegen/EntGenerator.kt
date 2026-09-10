@@ -25,6 +25,7 @@ import entkt.codegen.mutation.ValidationGenerator
 import entkt.codegen.query.EntityDescriptorGenerator
 import entkt.codegen.query.IndexHelperGenerator
 import entkt.codegen.query.QueryGenerator
+import entkt.codegen.query.QueryScopeGenerator
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.ManyToManyThrough
@@ -759,6 +760,7 @@ class EntGenerator(
     private val updateGenerator = UpdateGenerator(packageName)
     private val entityDescriptorGenerator = EntityDescriptorGenerator(packageName)
     private val queryGenerator = QueryGenerator(packageName)
+    private val queryScopeGenerator = QueryScopeGenerator(packageName)
     private val repoGenerator = RepoGenerator(packageName)
     private val indexHelperGenerator = IndexHelperGenerator(packageName)
     private val privacyGenerator = PrivacyGenerator(packageName)
@@ -836,6 +838,7 @@ class EntGenerator(
                 add(updateGenerator.generate(name, schema, schemaNames))
                 addAll(entityDescriptorGenerator.generate(name, schema, schemaNames))
                 add(queryGenerator.generate(name, schema, schemaNames))
+                add(queryScopeGenerator.generate(name, schema, schemaNames))
                 add(repoGenerator.generate(name, schema, schemaNames))
                 // Index helpers: only emitted when the schema has at least
                 // one eligible index, so schemas without helpers don't get

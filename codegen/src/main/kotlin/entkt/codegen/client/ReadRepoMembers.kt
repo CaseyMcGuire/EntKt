@@ -76,12 +76,13 @@ internal fun buildFindById(
 
 /** `query(block)` entry point: a fresh `${Entity}Query` bound to [clientRef]. */
 internal fun buildQueryEntry(queryClass: ClassName, clientRef: String): FunSpec {
-    val queryLambda = LambdaTypeName.get(receiver = queryClass, returnType = UNIT)
+    val scopeClass = ClassName(queryClass.packageName, "${queryClass.simpleName}Scope")
+    val queryLambda = LambdaTypeName.get(receiver = scopeClass, returnType = UNIT)
     return function("query", returnType = queryClass) {
         parameter("block", queryLambda) {
             defaultValue("{}")
         }
-        statement("return %T(driver, %L).apply(block)", queryClass, clientRef)
+        statement("return %T(driver, %L).configure(block)", queryClass, clientRef)
     }
 }
 

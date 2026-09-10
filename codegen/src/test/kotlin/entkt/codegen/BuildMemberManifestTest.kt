@@ -66,27 +66,33 @@ class BuildMemberManifestTest {
             mapOf(
                 "client" to GeneratedMemberKind.PROPERTY,
                 "driver" to GeneratedMemberKind.PROPERTY,
-                "entityQuerySource" to GeneratedMemberKind.PROPERTY,
-                "orderFields" to GeneratedMemberKind.PROPERTY,
-                "predicates" to GeneratedMemberKind.PROPERTY,
+                "entityQuery" to GeneratedMemberKind.PROPERTY,
                 "queryLimit" to GeneratedMemberKind.PROPERTY,
                 "queryOffset" to GeneratedMemberKind.PROPERTY,
-                "self" to GeneratedMemberKind.PROPERTY,
                 "all" to GeneratedMemberKind.FUNCTION,
                 "captureEntityQuery" to GeneratedMemberKind.FUNCTION,
-                "combinedPredicate" to GeneratedMemberKind.FUNCTION,
                 "compileEntityQuery" to GeneratedMemberKind.FUNCTION,
+                "configure" to GeneratedMemberKind.FUNCTION,
+                "configureQuery" to GeneratedMemberKind.FUNCTION,
                 "firstOrNull" to GeneratedMemberKind.FUNCTION,
                 "limit" to GeneratedMemberKind.FUNCTION,
                 "offset" to GeneratedMemberKind.FUNCTION,
                 "orderBy" to GeneratedMemberKind.FUNCTION,
                 "readRootQuery" to GeneratedMemberKind.FUNCTION,
-                "setEntityQuerySource" to GeneratedMemberKind.FUNCTION,
+                "newQuery" to GeneratedMemberKind.FUNCTION,
+                "traversalQuery" to GeneratedMemberKind.FUNCTION,
+                "whereAllForInternalUse" to GeneratedMemberKind.FUNCTION,
                 "where" to GeneratedMemberKind.FUNCTION,
             ),
             entries
                 .filter { it.artifact == "NotebookQuery" }
                 .associate { it.name to it.kind },
+        )
+
+        assertEquals(
+            setOf("client", "driver", "self", "where", "orderBy", "limit", "offset",
+                "combinedPredicate", "loadEdge", "buildForInternalUse"),
+            byArtifact["NotebookQueryScope"],
         )
 
         // Companion — fixed (fromRow/TABLE/SCHEMA) plus column refs

@@ -2,7 +2,7 @@ package entkt.integrationtest
 
 import entkt.integrationtest.ent.Article
 import entkt.integrationtest.ent.ArticlePolicyScope
-import entkt.integrationtest.ent.ArticleQuery
+import entkt.integrationtest.ent.ArticleQueryScope
 import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.ReadOnlyEntClient
 import entkt.integrationtest.ent.Group
@@ -748,8 +748,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `a captured eager child query executed independently behaves as a root read`() {
-        var captured: ArticleQuery? = null
+    fun `an independent root read does not inherit an earlier eager read's context`() {
         val contexts = mutableListOf<entkt.runtime.query.QueryContext>()
         val client = EntClient(resetAndDriver()) {
 
@@ -762,18 +761,14 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         }
         val a = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         client.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
-        val query = client.users.query()
-        query.loadArticles { captured = this }
+        val query = client.users.query { loadArticles() }
 
-        // Run the parent's terminal, which seeds the child's traversal
-        // context for its eager step.
         query.all(testViewerContext).getOrThrow()
         contexts.clear()
 
-        // Executed on its own, the captured child is what it was
-        // constructed as: a root ArticleQuery — no stale eager
-        // attribution from the parent's earlier runs.
-        assertNotNull(captured).all(testViewerContext).getOrThrow()
+        // Eager configuration scopes cannot execute independently. A root
+        // query has its own context, without stale eager attribution.
+        client.articles.query().all(testViewerContext).getOrThrow()
         val ctx = contexts.single()
         assertEquals(ReadOperation.ALL, ctx.operation)
         assertEquals(emptyList(), ctx.path)
@@ -785,9 +780,9 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     // ---- an eager step's window is frozen with its spec ----
 
     @Test
-    fun `mid-flight bounds mutation of a captured eager query affects only later executions`() {
+    fun `mid-flight bounds mutation of an escaped eager scope never changes the query`() {
         val recording = RecordingDriver(resetAndDriver())
-        var captured: ArticleQuery? = null
+        var captured: ArticleQueryScope? = null
         val client = EntClient(recording) {
 
             interceptors {
@@ -803,22 +798,19 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         client.articles.create { title = "a1"; authorId = a.id }.save(testViewerContext).getOrThrow()
         client.articles.create { title = "a2"; authorId = a.id }.save(testViewerContext).getOrThrow()
         client.articles.create { title = "a3"; authorId = a.id }.save(testViewerContext).getOrThrow()
-        val query = client.users.query()
-        var target: ArticleQuery? = null
-        query.loadArticles { target = this }
+        var target: ArticleQueryScope? = null
+        val query = client.users.query { loadArticles { target = this } }
         captured = target
 
-        // The step's window comes from the spec frozen before the
-        // interceptor chain ran, so the mid-flight limit(1) cannot
-        // shift what this execution loads.
+        // The step's window was frozen during construction, so changing
+        // the escaped scope cannot shift what this execution loads.
         val first = query.all(testViewerContext).getOrThrow().single()
         assertEquals(3, first.edges.articles.requireLoaded().size)
 
-        // The mutation persisted on the captured query, so — like any
-        // other post-terminal mutation — it governs later executions.
+        // Later executions use the same immutable graph.
         captured = null
         val second = query.all(testViewerContext).getOrThrow().single()
-        assertEquals(1, second.edges.articles.requireLoaded().size)
+        assertEquals(3, second.edges.articles.requireLoaded().size)
     }
 
     // ---- nested privacy: one union batch per logical edge step ----

@@ -2,6 +2,7 @@ package entkt.codegen
 
 import entkt.codegen.query.EntityDescriptorGenerator
 import entkt.codegen.query.QueryGenerator
+import entkt.codegen.query.QueryScopeGenerator
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
 import kotlin.test.Test
@@ -14,6 +15,7 @@ private fun finalize(vararg schemas: EntSchema) {
 class QueryGeneratorTest {
 
     private val generator = QueryGenerator("com.example.ent")
+    private val scopeGenerator = QueryScopeGenerator("com.example.ent")
     private val descriptorGenerator = EntityDescriptorGenerator("com.example.ent")
 
     @Test
@@ -48,37 +50,20 @@ class QueryGeneratorTest {
         }
     }
 
+
     @Test
-    fun `query inherits reusable state and terminals from runtime base`() {
+    fun `query inherits immutable state and terminals from runtime base`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-            .replace("\\s+".toRegex(), " ")
+        val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains(") : EntityQueryBuilder<Car, CarQuery>(")) {
-            "generated queries should wire schema-specific values into EntityQueryBuilder\n$output"
-        }
-        assert(
-            output.contains(
-                "driver = driver, executionHost = client, entityName = \"Car\"",
-            ),
-        ) {
-            "the base should receive the query's driver, contextless host, and entity name\n$output"
-        }
-        assert(output.contains("protected override val self: CarQuery get() = this")) {
-            "the generated self type should preserve concrete fluent return types\n$output"
-        }
-        assert(
-            output.contains(
-                "override fun captureEntityQuery(structuralPredicates: List<Predicate<Car>>): " +
-                    "EntityQuery<Car>",
-            ),
-        ) {
-            "generated capture should implement the base's schema-specific adapter\n$output"
-        }
-        assert(!output.contains("private val _readQueryExecutor")) {
-            "query execution belongs to the runtime base\n$output"
-        }
+        assert(output.contains("EntityQueryBuilder<Car, CarQuery>"))
+        assert(output.contains("driver = driver, executionHost = client, entityQuery = query")) { output }
+        assert(output.contains("protected override fun newQuery(query: EntityQuery<Car>): CarQuery")) { output }
+        assert(output.contains("CarQuery(driver, client, query)")) { output }
+        assert(output.contains("EntityQuery(CarDescriptor)")) { output }
+        assert(!output.contains("override fun captureEntityQuery(")) { output }
+        assert(!output.contains("private val _readQueryExecutor")) { output }
     }
 
     @Test
@@ -155,41 +140,20 @@ class QueryGeneratorTest {
         assert(!output.contains("whereModelContains")) { "Should not have whereModelContains\n$output" }
     }
 
+
     @Test
-    fun `captures root query state and selected edges as a recursive entity query`() {
+    fun `configuration scopes delegate capture and edge selection to runtime`() {
         val car = Car()
         val user = User()
         finalize(car, user)
         val names = mapOf<EntSchema, String>(car to "Car", user to "User")
-        val output = generator.generate("User", user, names).toString()
-            .replace("\\s+".toRegex(), " ")
+        val output = scopeGenerator.generate("User", user, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(
-            output.contains(
-                "val selectedEdges = buildList<EdgeSelection<User, *>> {",
-            ),
-        ) {
-            "query capture should include a typed selected-edge list\n$output"
-        }
-        assert(
-            output.contains(
-                "edge = UserCarsEdgeDescriptor, " +
-                    "target = selectedQuery.captureEntityQuery(), " +
-                    "visibility = if (eagerCarsFilterVisible) " +
-                    "EdgeVisibility.FILTER_INVISIBLE else EdgeVisibility.REQUIRE_VISIBLE",
-            ),
-        ) {
-            "selected edges should capture their nested query and privacy posture\n$output"
-        }
-        assert(
-            output.contains(
-                "return EntityQuery( entity = UserDescriptor, " +
-                    "source = entityQuerySource, predicates = predicates, " +
-                    "orderBy = orderFields, limit = queryLimit, offset = queryOffset, " +
-                    "edges = selectedEdges, structuralPredicates = structuralPredicates, )",
-            ),
-        ) {
-            "query capture should contain only caller query state and generated descriptors\n$output"
+        assert(output.contains("EntityQueryScope<User, UserQueryScope>")) { output }
+        assert(output.contains("initialQuery = query, edgeOrder = UserDescriptor.edgesByStorageName.values")) { output }
+        assert(output.contains("loadEdge(UserCarsEdgeDescriptor, CarQueryScope(driver, client), block)")) { output }
+        for (algorithm in listOf("buildList", "EdgeSelection(", "override fun captureEntityQuery", "if (", "try {")) {
+            assert(!output.contains(algorithm)) { output }
         }
     }
 
@@ -234,45 +198,33 @@ class QueryGeneratorTest {
         }
     }
 
+
     @Test
-    fun `traversal captures its recursive source query`() {
+    fun `traversal delegates source preservation and target configuration to runtime`() {
         val car = Car()
         val user = User()
         finalize(car, user)
         val names = mapOf<EntSchema, String>(car to "Car", user to "User")
-        val output = generator.generate("User", user, names).toString()
-            .replace("\\s+".toRegex(), " ")
+        val output = generator.generate("User", user, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(
-            output.contains(
-                "target.setEntityQuerySource(QuerySource.Traversal(source, UserCarsEdgeDescriptor))",
-            ),
-        ) {
-            "queryCars should retain the immutable source query and typed relationship\n$output"
-        }
-        assert(output.contains("val source = captureEntityQuery()")) {
-            "traversal should freeze its recursively nested source before target configuration\n$output"
-        }
-        assert(!output.contains("snapshotForTraversal")) {
-            "the immutable recursive source should replace generated query cloning\n$output"
-        }
+        assert(output.contains("queryCars(block: CarQueryScope.() -> Unit")) { output }
+        assert(output.contains("traversalQuery(UserCarsEdgeDescriptor, \"queryCars()\")")) { output }
+        assert(output.contains(".configure(block)")) { output }
+        assert(!output.contains("setEntityQuerySource")) { output }
+        assert(!output.contains("snapshotForTraversal")) { output }
     }
 
+
     @Test
-    fun `query capture checks the bind lower bound before snapshotting operands`() {
+    fun `snapshot and bind capacity algorithms are not generated`() {
         val car = Car()
         finalize(car, User())
-        val output = generator.generate("Car", car).toString()
-
-        assert(!output.contains("// This is a conservative lower bound")) {
-            "generated query implementation should not emit framework comments\n$output"
-        }
-        val capacityCheck = output.indexOf(
-            "driver.requireBindCapacity(minimumRequiredBindParameters, Car.TABLE)",
-        )
-        val entityCapture = output.indexOf("return EntityQuery(")
-        assert(capacityCheck >= 0 && capacityCheck < entityCapture) {
-            "bind capacity must be checked before EntityQuery snapshots operands\n$output"
+        val query = generator.generate("Car", car).toString()
+        val scope = scopeGenerator.generate("Car", car).toString()
+        assert(query.contains("configureQuery(CarQueryScope(driver, client, entityQuery), block)")) { query }
+        for (output in listOf(query, scope)) {
+            assert(!output.contains("requireBindCapacity")) { output }
+            assert(!output.contains("minimumBindParameters")) { output }
         }
     }
 
@@ -351,30 +303,17 @@ class QueryGeneratorTest {
         }
     }
 
+
     @Test
-    fun `selected-edge guard protects traversal`() {
+    fun `traversal passes its operation name to the runtime selected-edge guard`() {
         val car = Car()
         val user = User()
         finalize(car, user)
-        val names = mapOf<EntSchema, String>(car to "Car", user to "User")
-        val output = generator.generate("Car", car, names).toString().replace("\\s+".toRegex(), " ")
+        val output = generator.generate("Car", car, mapOf(car to "Car", user to "User"))
+            .toString().replace("\\s+".toRegex(), " ")
 
-        assert(!output.contains("private fun requireNoSelectedEdges")) {
-            "selected-edge validation should live in runtime, not each generated query\n$output"
-        }
-        // Traversal captures the source once, validates that captured graph,
-        // and then gives the immutable source to the target query.
-        assert(
-            output.contains(
-                "val source = captureEntityQuery() source.requireNoSelectedEdges(\"queryUser()\", " +
-                    "\"traversal changes the result root and " +
-                    "cannot carry the source query's selected graph; traverse first and select edge " +
-                    "loads on the target query, or materialize the source graph with an entity " +
-                    "terminal\") val target = UserQuery(driver, client)",
-            ),
-        ) {
-            "queryUser should reject a source query with selected edge loads\n$output"
-        }
+        assert(output.contains("traversalQuery(CarUserEdgeDescriptor, \"queryUser()\")")) { output }
+        assert(!output.contains("requireNoSelectedEdges")) { output }
     }
 
     @Test
@@ -485,24 +424,22 @@ class QueryGeneratorTest {
         }
     }
 
+
     @Test
-    fun `captured queries include eager edge subqueries`() {
+    fun `edge configuration is absent from completed queries and typed on scopes`() {
         val car = Car()
         val user = User()
         finalize(car, user)
-        val output = generator.generate("User", user, mapOf(user to "User", car to "Car")).toString()
+        val names = mapOf<EntSchema, String>(car to "Car", user to "User")
+        val query = generator.generate("User", user, names).toString()
+        val scope = scopeGenerator.generate("User", user, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("eagerCars?.let { selectedQuery ->")) {
-            "captureEntityQuery should recursively capture selected edges\n$output"
-        }
-        assert(output.contains("target = selectedQuery.captureEntityQuery()")) {
-            "selected edge targets should be recursively immutable\n$output"
-        }
-        assert(!output.contains("buildQueryPlan")) {
-            "generated queries should not emit obsolete planning algorithms\n$output"
-        }
-        assert(!output.contains("runReadInterceptors(ReadOperation.EAGER_LOAD")) {
-            "generated queries should not emit eager interceptor execution\n$output"
+        assert(!query.contains("fun loadCars")) { query }
+        assert(query.contains("configure(block: UserQueryScope.() -> Unit)")) { query }
+        assert(scope.contains("loadCars(block: CarQueryScope.() -> Unit = {}): EdgeLoad<UserQueryScope>")) { scope }
+        for (algorithm in listOf("buildQueryPlan", "runReadInterceptors", "eagerCars", "fun all(", "fun queryCars")) {
+            assert(!scope.contains(algorithm)) { scope }
         }
     }
+
 }

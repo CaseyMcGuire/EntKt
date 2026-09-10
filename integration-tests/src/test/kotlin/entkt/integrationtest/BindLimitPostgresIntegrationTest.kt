@@ -113,17 +113,13 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         val client = EntClient(resetAndDriver())
         val virtual = VirtualIds()
 
-        // The terminal-entry capacity check consults the driver's
-        // declared budget from the lists' O(1) sizes BEFORE the spec
-        // builder takes its defensive operand snapshots — the
-        // ordinary client path must not deep-copy an enormous operand
-        // several times on the way to the render-time rejection.
-        val result = client.users.query {
-            where(Predicate.Leaf<User>("id", Op.IN, virtual))
-        }.all(testViewerContext)
-
-        val failed = assertIs<ReadResult.Failed>(result)
-        val ex = assertIs<PostgresBindLimitException>(failed.exception)
+        // Construction checks O(1) sizes against the driver's budget before
+        // detaching operands for the immutable query value.
+        val ex = assertFailsWith<PostgresBindLimitException> {
+            client.users.query {
+                where(Predicate.Leaf<User>("id", Op.IN, virtual))
+            }
+        }
         assertContains(ex.message!!, "10,000,000")
         assertContains(ex.message!!, "\"users\"")
         assertEquals(0, virtual.reads, "no layer may materialize the operand before the capacity check")
@@ -166,16 +162,13 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         val virtual = VirtualIds()
         recording.reset()
 
-        // `column in values` no longer copies at construction —
-        // operands snapshot at terminal entry, after the capacity
-        // check — so the idiomatic typed path is as lazy as raw
-        // Predicate.Leaf construction.
-        val result = client.users.query {
-            where(User.id `in` virtual)
-        }.all(testViewerContext)
-
-        val failed = assertIs<ReadResult.Failed>(result)
-        assertIs<PostgresBindLimitException>(failed.exception)
+        // `column in values` does not copy the operand. Query construction
+        // checks capacity before taking ownership of its contents.
+        assertFailsWith<PostgresBindLimitException> {
+            client.users.query {
+                where(User.id `in` virtual)
+            }
+        }
         assertEquals(0, virtual.reads, "the DSL must not copy the collection eagerly")
         assertEquals(emptyList(), recording.calls, "no SQL may be submitted")
     }
@@ -198,12 +191,11 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         }
         recording.reset()
 
-        val result = client.orders.query {
-            where(entkt.integrationtest.ent.Order.status `in` virtual)
-        }.all(testViewerContext)
-
-        val failed = assertIs<ReadResult.Failed>(result)
-        assertIs<PostgresBindLimitException>(failed.exception)
+        assertFailsWith<PostgresBindLimitException> {
+            client.orders.query {
+                where(entkt.integrationtest.ent.Order.status `in` virtual)
+            }
+        }
         assertEquals(0, reads, "the enum mapping must be lazy — no element may be read or mapped")
         assertEquals(emptyList(), recording.calls, "no SQL may be submitted")
     }
@@ -214,11 +206,11 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         val virtual = VirtualIds()
 
         val outcome = client.withTransaction { tx ->
-            val result = tx.users.query {
-                where(Predicate.Leaf<User>("id", Op.IN, virtual))
-            }.all(testViewerContext)
-            val failed = assertIs<ReadResult.Failed>(result)
-            assertIs<PostgresBindLimitException>(failed.exception)
+            assertFailsWith<PostgresBindLimitException> {
+                tx.users.query {
+                    where(Predicate.Leaf<User>("id", Op.IN, virtual))
+                }
+            }
             "checked"
         }.getOrThrow()
 
@@ -248,12 +240,19 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `the rejection surfaces as a Failed read result through a terminal`() {
-        val client = EntClient(resetAndDriver())
+    fun `an execution-time rejection surfaces as a Failed read result through a terminal`() {
+        val client = EntClient(resetAndDriver()) {
+            interceptors {
+                users(
+                    QueryInterceptor { scope, _ ->
+                        scope.addPredicate(Predicate.Leaf<User>("id", Op.IN, idsOfSize(limit + 1)))
+                    },
+                    name = "oversized-acl",
+                )
+            }
+        }
 
-        val result = client.users.query {
-            where(Predicate.Leaf<User>("id", Op.IN, idsOfSize(limit + 1)))
-        }.all(testViewerContext)
+        val result = client.users.query().all(testViewerContext)
 
         val failed = assertIs<ReadResult.Failed>(result)
         val ex = assertIs<PostgresBindLimitException>(failed.exception)

@@ -335,7 +335,7 @@ private fun buildIndexNode(
     // A comparable column named `query` on a non-root stage would generate a
     // range-block overload `query(block: IndexRangeBuilder<…>.() -> Unit)` that
     // is an ambiguous single-lambda signature against the stage's own
-    // `query(block: …Query.() -> Unit = {})` entrypoint — `stage.query { }`
+    // `query(block: …QueryScope.() -> Unit = {})` entrypoint — `stage.query { }`
     // would not resolve. Fail with a clear error instead of emitting it.
     if (prefix.isNotEmpty()) {
         val queryClash = nextOrder.values.firstOrNull { it.comparable && it.propertyName == "query" }
@@ -490,13 +490,10 @@ internal class IndexHelperGenerator(
 
         /**
          * Statements that build `q`, a fresh query seeded with the bound
-         * prefix predicates. Emitted as discrete statements (rather than a
-         * single `.apply { … }` chain) so KotlinPoet line-wrapping can't
-         * split a trailing lambda across a newline.
+         * prefix predicates through the runtime's immutable-query helper.
          */
         private fun seedStatements(builder: FunSpec.Builder) {
-            builder.addStatement("val q = %T(driver, client)", queryClass)
-            builder.addStatement("for (p in predicates) q.where(p)")
+            builder.addStatement("val q = %T(driver, client).whereAllForInternalUse(predicates)", queryClass)
         }
 
         /** The equality + range stage methods for [node] (used on the root class and on every stage class). */
@@ -545,11 +542,12 @@ internal class IndexHelperGenerator(
         }
 
         private fun queryMethod(): FunSpec {
-            val queryLambda = LambdaTypeName.get(receiver = queryClass, returnType = UNIT)
+            val scopeClass = ClassName(packageName, "${entityClass.simpleName}QueryScope")
+            val queryLambda = LambdaTypeName.get(receiver = scopeClass, returnType = UNIT)
             return function("query", returnType = queryClass) {
                 parameter("block", queryLambda) { defaultValue("{}") }
                 seedStatements(this)
-                statement("return q.apply(block)")
+                statement("return q.configure(block)")
             }
         }
 

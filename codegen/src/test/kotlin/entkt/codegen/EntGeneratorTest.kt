@@ -104,24 +104,24 @@ class EntGeneratorTest {
         val files = generator.generate(schemas)
 
         // Per schema: entity, descriptor, one descriptor per edge, three
-        // hook-state files, create draft, create/delete converters, update, query, repo, privacy, validation,
+        // hook-state files, create draft, create/delete converters, update, query, query scope, repo, privacy, validation,
         // and same-named compound rule-input files for UPDATE and DELETE.
         // The schema-set-level files are EntReadRuntime, ReadOnlyEntClient, the
         // public client DSL/facades, and three immutable resolved-config types.
         // User additionally gets an index-helper file; Car has no eligible
         // indexes and therefore has no corresponding file.
-        assertEquals(14 * schemas.size + 13 + 1 + 4, files.size)
+        assertEquals(15 * schemas.size + 13 + 1 + 4, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
                 "Car", "CarDescriptor", "CarUserEdgeDescriptor",
                 "CarBeforeSaveState", "CarBeforeCreateState", "CarBeforeUpdateState",
-                "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarRepo", "CarPrivacy", "CarValidation",
+                "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarQueryScope", "CarRepo", "CarPrivacy", "CarValidation",
                 "CarCreateConverter", "CarDeleteConverter",
                 "CarUpdateRuleInput", "CarDeleteRuleInput",
                 "User", "UserDescriptor", "UserCarsEdgeDescriptor",
                 "UserBeforeSaveState", "UserBeforeCreateState", "UserBeforeUpdateState",
-                "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserRepo", "UserPrivacy", "UserValidation",
+                "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserQueryScope", "UserRepo", "UserPrivacy", "UserValidation",
                 "UserCreateConverter", "UserDeleteConverter",
                 "UserUpdateRuleInput", "UserDeleteRuleInput",
                 "UserIndexes",

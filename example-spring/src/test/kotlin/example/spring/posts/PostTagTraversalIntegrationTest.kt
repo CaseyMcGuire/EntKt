@@ -24,7 +24,7 @@ import java.util.UUID
  * introduced when forward-edge M2M lowering replaced synthesized
  * reverse-edge metadata.
  *
- * `PostController.tags(id)` lowers to `PostQuery.loadTags { }` (M2M
+ * `PostController.tags(id)` lowers to `PostQueryScope.loadTags { }` (M2M
  * eager-load helper); `TagController.posts(id)` lowers to
  * `TagQuery.queryPosts()` → `Predicate.HasM2MEdgeFromShape("posts",
  * <shaped tag source>)` → a junction walk fed by a shaped source

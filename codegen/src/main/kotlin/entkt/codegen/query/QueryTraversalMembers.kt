@@ -3,20 +3,10 @@ package entkt.codegen.query
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.LambdaTypeName
-import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.UNIT
 import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.statement
-
-private val QUERY_SOURCE = ClassName("entkt.runtime.query", "QuerySource")
-private val REQUIRE_NO_SELECTED_EDGES =
-    MemberName("entkt.runtime.query", "requireNoSelectedEdges")
-
-private const val TRAVERSAL_EDGE_REASON =
-    "traversal changes the result root and cannot carry the source query's selected " +
-        "graph; traverse first and select edge loads on the target query, or " +
-        "materialize the source graph with an entity terminal"
 
 /**
  * Generate a many-to-many traversal by capturing the immutable source query and
@@ -49,26 +39,18 @@ private fun buildTraversalMethod(
     resolved: ResolvedQuerySchema,
 ): FunSpec {
     val block = LambdaTypeName.get(
-        receiver = edge.targetQueryClass,
+        receiver = ClassName(edge.targetClass.packageName, "${edge.targetName}QueryScope"),
         returnType = UNIT,
     )
     return function(edge.queryMethodName, returnType = edge.targetQueryClass) {
         parameter("block", block) {
             defaultValue("{}")
         }
-        statement("val source = captureEntityQuery()")
         statement(
-            "source.%M(%S, %S)",
-            REQUIRE_NO_SELECTED_EDGES,
-            "${edge.queryMethodName}()",
-            TRAVERSAL_EDGE_REASON,
-        )
-        statement("val target = %T(driver, client)", edge.targetQueryClass)
-        statement(
-            "target.setEntityQuerySource(%T.Traversal(source, %T))",
-            QUERY_SOURCE,
+            "return %T(driver, client, traversalQuery(%T, %S)).configure(block)",
+            edge.targetQueryClass,
             edge.edgeDescriptorClass,
+            "${edge.queryMethodName}()",
         )
-        statement("return target.apply(block)")
     }
 }

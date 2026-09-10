@@ -28,7 +28,8 @@ import entkt.schema.EntSchema
  *   per FK (`fk.propertyName`), and one edge ref per edge
  *   (`edge.apiName`).
  * - **query class** (`${name}Query`) — the fixed query surface plus
- *   `query{Stem}` / `load{Stem}` / `eager{Stem}` per declared edge.
+ *   `query{Stem}` per declared edge; the separate `${name}QueryScope`
+ *   exposes configuration and `load{Stem}` members.
  * - **entity Edges class** (`${name}.Edges`) — one property per
  *   declared edge (`edge.apiName`) plus the data-class synthesized
  *   members. Only present when the schema declares edges.
@@ -226,78 +227,54 @@ private fun addEdgesClassMembers(
 private val FIXED_QUERY_PROPERTIES: List<String> = listOf(
     "client",
     "driver",
-    "entityQuerySource",
-    "orderFields",
-    "predicates",
+    "entityQuery",
     "queryLimit",
     "queryOffset",
-    "self",
 )
 
 private val FIXED_QUERY_FUNCTIONS: List<String> = listOf(
     "all",
     "captureEntityQuery",
-    "combinedPredicate",
     "compileEntityQuery",
+    "configure",
+    "configureQuery",
     "firstOrNull",
     "limit",
     "offset",
     "orderBy",
     "readRootQuery",
-    "setEntityQuerySource",
+    "newQuery",
+    "traversalQuery",
+    "whereAllForInternalUse",
     "where",
 )
 
-/**
- * `${name}Query` — the fixed query surface plus, per edge, the
- * declaration-derived members: `query{Stem}` traversal, `load{Stem}`
- * edge-load entry point, and the private `eager{Stem}` backing
- * property (with its `FilterVisible` companion).
- *
- * Source phrases name the delegated declaration and the storage edge
- * name distinctly: the storage string does not name this API, so its
- * uniqueness proves nothing about the generated members, but the
- * diagnostic must let the schema author find the declaration by
- * either identity.
- */
+
+/** Reserve names on the immutable query and its separate mutable configuration scope. */
 private fun addQueryClassMembers(
     manifest: GeneratedMemberManifest,
     schemaName: String,
     allEdges: List<entkt.schema.Edge>,
 ) {
-    val artifact = queryArtifact(schemaName)
+    val query = queryArtifact(schemaName)
+    val scope = "${schemaName}QueryScope"
     for (fixed in FIXED_QUERY_PROPERTIES) {
-        manifest.add(artifact, fixed, GeneratedMemberKind.PROPERTY, "fixed query member")
+        manifest.add(query, fixed, GeneratedMemberKind.PROPERTY, "fixed query member")
     }
     for (fixed in FIXED_QUERY_FUNCTIONS) {
-        manifest.add(artifact, fixed, GeneratedMemberKind.FUNCTION, "fixed query member")
+        manifest.add(query, fixed, GeneratedMemberKind.FUNCTION, "fixed query member")
+    }
+    for (fixed in listOf("client", "driver", "self")) {
+        manifest.add(scope, fixed, GeneratedMemberKind.PROPERTY, "fixed query-scope member")
+    }
+    for (fixed in listOf("where", "orderBy", "limit", "offset", "combinedPredicate", "loadEdge", "buildForInternalUse")) {
+        manifest.add(scope, fixed, GeneratedMemberKind.FUNCTION, "fixed query-scope member")
     }
     for (edge in allEdges) {
         val stem = edge.apiName.generatedStem()
         val identity = "edge declared '${edge.apiName}' (storage '${edge.name}')"
-        manifest.add(
-            artifact, "query$stem", GeneratedMemberKind.FUNCTION,
-            "traversal for $identity",
-        )
-        manifest.add(
-            artifact, "load$stem", GeneratedMemberKind.FUNCTION,
-            "edge load for $identity",
-        )
-        manifest.add(
-            artifact, "eager$stem", GeneratedMemberKind.PROPERTY,
-            "eager backing property for $identity",
-        )
-        // The filterVisible opt-in is a second per-edge property, so
-        // edges declared `posts` and `postsFilterVisible` both reach
-        // `eagerPostsFilterVisible`.
-        manifest.add(
-            artifact, "eager${stem}FilterVisible", GeneratedMemberKind.PROPERTY,
-            "eager filterVisible opt-in for $identity",
-        )
-        manifest.add(
-            artifact, "Generated${stem}EdgeMapping", GeneratedMemberKind.NESTED_TYPE,
-            "typed relationship mapping for $identity",
-        )
+        manifest.add(query, "query$stem", GeneratedMemberKind.FUNCTION, "traversal for $identity")
+        manifest.add(scope, "load$stem", GeneratedMemberKind.FUNCTION, "edge load for $identity")
     }
 }
 

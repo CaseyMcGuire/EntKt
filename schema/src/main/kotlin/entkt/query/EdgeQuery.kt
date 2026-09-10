@@ -1,14 +1,12 @@
 package entkt.query
 
 /**
- * Contract every generated `XQuery` class implements so that
- * [EdgeRef.has] can fold a query's accumulated wheres into a single
+ * Contract implemented by generated query configuration scopes so that
+ * [EdgeRef.has] can fold a scope's accumulated wheres into a single
  * predicate without depending on the generated class itself.
  *
- * The [E] type parameter is the query's target entity scope. The codegen
- * wires `combinedPredicate()` to AND the query's `predicates` list
- * together (or return null if the list is empty), returning the result
- * typed as `Predicate<E>?`.
+ * The [E] type parameter is the target entity scope. The runtime folds
+ * its predicates with AND, or returns null when none were configured.
  */
 interface EdgeQuery<E : Any> {
     fun combinedPredicate(): Predicate<E>?
