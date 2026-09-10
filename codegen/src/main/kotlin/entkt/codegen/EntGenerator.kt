@@ -607,9 +607,18 @@ private fun validateThroughLinkJunctions(
                 )
             }
 
-            // Rule 3: no write-time modifiers on FK backing fields.
+            // Rule 3: no write-time modifiers on FK edges or their backing fields.
             val fieldsByName = junction.fields().associateBy { it.name }
-            for ((label, fkCol) in listOf("source" to sourceFkCol, "target" to targetFkCol)) {
+            for ((label, junctionEdge) in listOf("source" to sourceJunctionEdge, "target" to targetJunctionEdge)) {
+                val belongsTo = junctionEdge.kind as EdgeKind.BelongsTo
+                if (belongsTo.immutable) {
+                    error(
+                        "$ctx: $label FK edge '${junctionEdge.apiName}' (storage '${junctionEdge.name}') is `.immutable()`; " +
+                            "throughLink helpers never update junction rows, so the marker adds " +
+                            "no enforcement on this path. Drop it or use throughEntity.",
+                    )
+                }
+                val fkCol = belongsTo.field ?: "${junctionEdge.name}_id"
                 val backing = fieldsByName[fkCol] ?: continue // synthesized FK has no backing Field, nothing to check
                 if (backing.sensitive) {
                     error(

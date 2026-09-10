@@ -129,6 +129,7 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
 
     private var required: Boolean = true
     private var unique: Boolean = false
+    private var immutable: Boolean = false
     @PublishedApi internal var explicitFieldHandle: FieldHandle<*>? = null
     private var onDelete: OnDelete? = null
     private var inverseRef: KProperty1<Target, *>? = null
@@ -140,6 +141,15 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
 
     fun nullable(): BelongsToBuilder<Target> = apply { checkNotFrozen(); required = false }
     fun unique(): BelongsToBuilder<Target> = apply { checkNotFrozen(); unique = true }
+
+    /**
+     * Allow assigning this relationship's FK only during creation. Generated update drafts,
+     * patches, and update hook setters omit it, just as for an immutable scalar field.
+     * With [field], either this modifier or an immutable backing field makes the FK immutable.
+     * This does not add a database constraint or change the [onDelete] action.
+     */
+    fun immutable(): BelongsToBuilder<Target> = apply { checkNotFrozen(); immutable = true }
+
     fun field(handle: FieldHandle<*>): BelongsToBuilder<Target> = apply {
         checkNotFrozen()
         val fieldOwner = (handle as? FieldBuilder<*, *>)?.declarationOwner
@@ -234,6 +244,7 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
                 unique = unique,
                 field = explicitFieldHandle?.fieldName,
                 onDelete = onDelete,
+                immutable = immutable,
             ),
             ref = resolvedRef,
             comment = comment,

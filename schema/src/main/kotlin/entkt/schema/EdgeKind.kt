@@ -6,6 +6,7 @@ sealed interface EdgeKind {
         val unique: Boolean = false,
         val field: String? = null,
         val onDelete: OnDelete? = null,
+        val immutable: Boolean = false,
     ) : EdgeKind
 
     data object HasMany : EdgeKind
