@@ -386,8 +386,8 @@ internal fun indexHelperPathsByName(
     eligibleResolvedIndexes(schema, schemaNames).associate { it.name to helperPathsForIndex(it) }
 
 /**
- * Emits the `${schemaName}Indexes` namespace class: the staged,
- * left-prefix index-helper builder reached via `client.<repo>.indexes`.
+ * Emits the full or read-only indexes namespace: the staged, left-prefix
+ * index-helper builder reached via `client.<repo>.indexes`.
  *
  * The root class is the empty-prefix node and exposes one method per
  * valid first indexed column. Every deeper stage and every range-block
@@ -395,7 +395,7 @@ internal fun indexHelperPathsByName(
  * entities can't collide on a stage symbol in the flat generated
  * package — the same nesting precedent as the link-table edge mutators).
  *
- * Every stage delegates to the generated `${schemaName}Query`: it seeds
+ * Every stage delegates to its corresponding generated query family: it seeds
  * the bound prefix predicates with `where(...)` before the caller's own
  * `query { }` block (or before a `first*` terminal), so LOAD privacy,
  * eager-load privacy, and read interceptors all run exactly as they do
@@ -405,6 +405,7 @@ internal fun indexHelperPathsByName(
  */
 internal class IndexHelperGenerator(
     private val packageName: String,
+    private val surface: QuerySurface = QuerySurface.Full,
 ) {
     fun generate(
         schemaName: String,
@@ -414,8 +415,8 @@ internal class IndexHelperGenerator(
         val root = indexHelperTree(schema, schemaNames) ?: return null
 
         val entityClass = ClassName(packageName, schemaName)
-        val queryClass = ClassName(packageName, "${schemaName}Query")
-        val indexesClass = ClassName(packageName, "${schemaName}Indexes")
+        val queryClass = surface.queryClass(packageName, schemaName)
+        val indexesClass = surface.indexesClass(packageName, schemaName)
         val clientClass = ClassName(packageName, ENT_READ_RUNTIME_NAME)
         val emitter = Emitter(entityClass, queryClass, indexesClass, clientClass)
 
@@ -450,7 +451,7 @@ internal class IndexHelperGenerator(
         // EntReadRuntime; the file-level OptIn consumes the requirement at
         // the declaration sites (query files already carry the same header
         // for their own marked-type usages).
-        return kotlinFile(packageName, "${schemaName}Indexes") {
+        return kotlinFile(packageName, indexesClass.simpleName) {
             addAnnotation(
                 annotation(ClassName("kotlin", "OptIn")) {
                     useSiteTarget(AnnotationSpec.UseSiteTarget.FILE)

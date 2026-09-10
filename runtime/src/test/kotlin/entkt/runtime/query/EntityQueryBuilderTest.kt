@@ -52,6 +52,7 @@ class EntityQueryBuilderTest {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             queryCalls++
             lastLimit = limit

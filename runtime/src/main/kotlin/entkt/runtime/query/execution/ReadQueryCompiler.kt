@@ -21,6 +21,7 @@ import entkt.runtime.query.AbortQueryRejected
 import entkt.runtime.query.GlobalInterceptScopeImpl
 import entkt.runtime.query.InterceptScopeImpl
 import entkt.runtime.query.QueryContext
+import entkt.runtime.query.QueryLockMode
 import entkt.runtime.query.QuerySource
 import entkt.runtime.query.QuerySpecBuilder
 import entkt.runtime.query.ReadOperation
@@ -58,8 +59,9 @@ class ReadQueryCompiler(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         viewerContext: ViewerContext,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): StorageQuerySpec<Entity> {
-        val compiledNode = compileQueryNode(query, operation, viewerContext)
+        val compiledNode = compileQueryNode(query, operation, viewerContext, lockMode)
         return compiledNode.query
     }
 
@@ -158,11 +160,12 @@ class ReadQueryCompiler(
         )
     }
 
-    /** Resolve traversal context, then compile the current entity-query node. */
+    /** Resolve traversal context, then compile this node. Source compilation never inherits [lockMode]. */
     private fun <Entity : EntEntity<*>> compileQueryNode(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         viewerContext: ViewerContext,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): CompiledQueryNode<Entity> {
         val traversal = resolveTraversal(query, viewerContext)
         val context = QueryContext(
@@ -174,6 +177,7 @@ class ReadQueryCompiler(
             edgeName = traversal?.edgeName,
             path = traversal?.path ?: emptyList(),
             flags = emptySet(),
+            lockMode = lockMode,
         )
         val queryForStorage = compileStorageQuery(
             entity = query.entity,
@@ -274,6 +278,7 @@ class ReadQueryCompiler(
             callerOrderBy = callerOrderBy,
             requireBindCapacity = { driver.requireBindCapacity(it, entity.table) },
             structuralSingleBindTransport = structuralSingleBindTransport,
+            lockMode = context.lockMode,
         )
 
         runInterceptors(

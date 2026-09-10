@@ -67,6 +67,7 @@ class BuildMemberManifestTest {
                 "client" to GeneratedMemberKind.PROPERTY,
                 "driver" to GeneratedMemberKind.PROPERTY,
                 "entityQuery" to GeneratedMemberKind.PROPERTY,
+                "readQueryExecutor" to GeneratedMemberKind.PROPERTY,
                 "queryLimit" to GeneratedMemberKind.PROPERTY,
                 "queryOffset" to GeneratedMemberKind.PROPERTY,
                 "all" to GeneratedMemberKind.FUNCTION,
@@ -75,6 +76,7 @@ class BuildMemberManifestTest {
                 "configure" to GeneratedMemberKind.FUNCTION,
                 "configureQuery" to GeneratedMemberKind.FUNCTION,
                 "firstOrNull" to GeneratedMemberKind.FUNCTION,
+                "forUpdate" to GeneratedMemberKind.FUNCTION,
                 "limit" to GeneratedMemberKind.FUNCTION,
                 "offset" to GeneratedMemberKind.FUNCTION,
                 "orderBy" to GeneratedMemberKind.FUNCTION,
@@ -94,6 +96,8 @@ class BuildMemberManifestTest {
                 "combinedPredicate", "loadEdge", "buildForInternalUse"),
             byArtifact["NotebookQueryScope"],
         )
+
+        assertEquals(byArtifact.getValue("NotebookQuery") - "forUpdate", byArtifact["NotebookReadQuery"])
 
         // Companion — fixed (fromRow/TABLE/SCHEMA) plus column refs
         // for id + every scalar field.

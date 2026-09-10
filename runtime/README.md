@@ -14,7 +14,7 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 | `entkt.runtime.validation` | Shared `ValidationRuleContext` plus scalar/batch validation rules and evaluators |
 | `entkt.runtime.hook` | Scalar/batch lifecycle hook contracts and factories |
 | `entkt.runtime.rule` | Immutable `RuleBatch` inputs and read-only, same-batch `RuleDecisions` outputs for privacy and validation |
-| `entkt.runtime.query` | interceptors (`QueryInterceptor`, `InterceptScope`, `ReadOperation`, …), aggregate types, `ExcludeDeleted` |
+| `entkt.runtime.query` | immutable query descriptions, `ForUpdateQuery`, `QueryLockMode`, interceptors (`QueryInterceptor`, `InterceptScope`, `ReadOperation`, …), aggregate types, `ExcludeDeleted` |
 | `entkt.runtime.mutation` | `FieldPatch`, edge ops (`PendingEdgeOps`, `EdgeChanges`), `UpdateConsistency`/`RelationshipLocking`, `TransactionRequirement` |
 | `entkt.runtime.result` | `ReadResult`/`MutationResult`/`TransactionResult` (+ `getOrThrow`/`visibleOrNull` projections), `TransactionScope`/`TransactionCoordinator`/`runEntTransaction`, `MutationWriteState`/`TransactionFailureState`, the denial payload types (`EntityKey`, `PrivacyDenial`, `LoadDenialOrigin`), and the `EntException`/`EntMutationException` typed-exception family |
 
@@ -35,7 +35,9 @@ interface DatabaseDriver {
         orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): List<Map<String, Any?>>
+    val supportsQueryForUpdate: Boolean
     fun count(table: String, predicates: List<Predicate<*>>): Long
     fun exists(table: String, predicates: List<Predicate<*>>): Boolean
     fun delete(table: String, id: Any): Boolean

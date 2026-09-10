@@ -37,7 +37,7 @@ abstract class EntityQueryBuilder<
     /** Caller-authored row offset, or `null` when absent. */
     val queryOffset: Int? get() = entityQuery.offset
 
-    private val readQueryExecutor: ReadQueryExecutor<Entity>? by lazy(LazyThreadSafetyMode.NONE) {
+    protected val readQueryExecutor: ReadQueryExecutor<Entity>? by lazy(LazyThreadSafetyMode.NONE) {
         executionHost?.let { host ->
             ReadQueryExecutor(
                 driver = driver,

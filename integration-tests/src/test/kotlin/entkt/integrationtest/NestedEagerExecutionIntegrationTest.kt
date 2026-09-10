@@ -637,9 +637,10 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 orderBy: List<OrderField<*>>,
                 limit: Int?,
                 offset: Int?,
+                lockMode: entkt.runtime.query.QueryLockMode,
             ): List<Map<String, Any?>> =
                 if (table == "memberships") throw boom
-                else real.query(table, predicates, orderBy, limit, offset)
+                else real.query(table, predicates, orderBy, limit, offset, lockMode)
         }
         var userInterceptorFires = 0
         val client = EntClient(failingJunction) {

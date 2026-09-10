@@ -521,6 +521,10 @@ passing `context.readViewerContext`.
 exposes `ReadOnlyEntClient`, whose per-entity repos carry
 `findById`, the full `query { }` DSL with `all` / `firstOrNull`, and the
 generated index helpers — and nothing else.
+These return the same read-only query family as privacy rules:
+`{Entity}ReadQuery` and `{Entity}ReadIndexes`, including after refinement and
+traversal. See [Query Types](04-queries.md#full-client-and-rule-client-query-types).
+`forUpdate()` is also unavailable: validation reads cannot request row locks.
 `create`, `update`, `save`, the `delete*` family, edge mutators, and
 `withTransaction` do not exist on it, so a validator that tries to
 mutate fails to compile. Validators answer "is this state valid?", not

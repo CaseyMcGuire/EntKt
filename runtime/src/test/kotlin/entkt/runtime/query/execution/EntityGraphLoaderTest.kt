@@ -73,6 +73,7 @@ class EntityGraphLoaderTest {
             operation: ReadOperation,
             maximumRows: Int?,
             viewerContext: ViewerContext,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Entity> {
             events += "load:root"
             return rootEntities as List<Entity>

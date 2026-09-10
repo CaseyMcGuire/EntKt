@@ -95,8 +95,9 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
-            val rows = delegate.query(table, predicates, orderBy, limit, offset)
+            val rows = delegate.query(table, predicates, orderBy, limit, offset, lockMode)
             if (table != User.TABLE) return rows
 
             probe.candidateQueryCalls++

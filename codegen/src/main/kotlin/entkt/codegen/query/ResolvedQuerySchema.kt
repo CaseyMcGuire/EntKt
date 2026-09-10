@@ -135,6 +135,7 @@ internal fun resolveQuerySchema(
     schemaName: String,
     schema: EntSchema,
     schemaNames: Map<EntSchema, String>,
+    surface: QuerySurface = QuerySurface.Full,
 ): ResolvedQuerySchema {
     val sourceName = schemaNames[schema]
     val edges = schema.edges().mapNotNull { edge ->
@@ -170,7 +171,7 @@ internal fun resolveQuerySchema(
             targetClientName = edge.target.clientName,
             targetClass = ClassName(packageName, targetName),
             targetDescriptorClass = ClassName(packageName, "${targetName}Descriptor"),
-            targetQueryClass = ClassName(packageName, "${targetName}Query"),
+            targetQueryClass = surface.queryClass(packageName, targetName),
             edgeDescriptorClass = ClassName(
                 packageName,
                 "${schemaName}${edge.apiName.generatedStem()}EdgeDescriptor",
@@ -193,7 +194,7 @@ internal fun resolveQuerySchema(
         sourceName = sourceName,
         entityClass = ClassName(packageName, schemaName),
         entityDescriptorClass = ClassName(packageName, "${schemaName}Descriptor"),
-        queryClass = ClassName(packageName, "${schemaName}Query"),
+        queryClass = surface.queryClass(packageName, schemaName),
         edges = edges,
         edgeFks = computeEdgeFks(schema, schemaNames),
     )

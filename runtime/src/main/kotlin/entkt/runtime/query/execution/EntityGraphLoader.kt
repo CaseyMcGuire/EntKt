@@ -11,6 +11,7 @@ import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EdgeVisibility
 import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.QuerySource
+import entkt.runtime.query.QueryLockMode
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntityKey
@@ -48,12 +49,14 @@ internal class EntityGraphLoader(
         operation: ReadOperation,
         maximumRows: Int?,
         viewerContext: ViewerContext,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): List<Entity> {
         val rootEntities = storage.loadRoot(
             query = query,
             operation = operation,
             maximumRows = maximumRows,
             viewerContext = viewerContext,
+            lockMode = lockMode,
         )
         return evaluateEntityBatch(
             query = query,

@@ -93,8 +93,9 @@ class NativeDirectToManyWindowIntegrationTest : PostgresTestBase() {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> =
-            real.query(table, predicates, orderBy, limit, offset).also {
+            real.query(table, predicates, orderBy, limit, offset, lockMode).also {
                 if (table == Article.TABLE) emulatedRowCounts.add(it.size)
             }
 

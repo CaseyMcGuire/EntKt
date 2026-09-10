@@ -43,12 +43,11 @@ private val ENT_QUERY_REJECTED_EXCEPTION = ClassName("entkt.runtime.result", "En
  * signature states that absence is a successful null payload.
  */
 internal fun buildFindById(
-    schemaName: String,
     entityClass: ClassName,
+    queryClass: ClassName,
     idType: TypeName,
     clientRef: String,
 ): FunSpec {
-    val queryClass = ClassName(entityClass.packageName, "${schemaName}Query")
     val resultType = READ_RESULT.parameterizedBy(entityClass.copy(nullable = true))
     return function("findById", returnType = resultType) {
         parameter("viewerContext", VIEWER_CONTEXT)
@@ -74,9 +73,9 @@ internal fun buildFindById(
     }
 }
 
-/** `query(block)` entry point: a fresh `${Entity}Query` bound to [clientRef]. */
-internal fun buildQueryEntry(queryClass: ClassName, clientRef: String): FunSpec {
-    val scopeClass = ClassName(queryClass.packageName, "${queryClass.simpleName}Scope")
+/** `query(block)` entry point using the caller's query family and the entity's shared scope. */
+internal fun buildQueryEntry(entityClass: ClassName, queryClass: ClassName, clientRef: String): FunSpec {
+    val scopeClass = ClassName(entityClass.packageName, "${entityClass.simpleName}QueryScope")
     val queryLambda = LambdaTypeName.get(receiver = scopeClass, returnType = UNIT)
     return function("query", returnType = queryClass) {
         parameter("block", queryLambda) {

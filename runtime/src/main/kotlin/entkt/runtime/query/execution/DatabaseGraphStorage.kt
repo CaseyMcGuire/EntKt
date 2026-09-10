@@ -14,6 +14,7 @@ import entkt.runtime.query.EdgeSelection
 import entkt.runtime.query.EdgeStorage
 import entkt.runtime.query.EagerWindowStrategy
 import entkt.runtime.query.EntityQuery
+import entkt.runtime.query.QueryLockMode
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.ToManyEdgeMapping
@@ -61,8 +62,9 @@ internal class DatabaseGraphStorage(
         operation: ReadOperation,
         maximumRows: Int?,
         viewerContext: ViewerContext,
+        lockMode: QueryLockMode,
     ): List<Entity> {
-        val queryForStorage = queryCompiler.compile(query, operation, viewerContext)
+        val queryForStorage = queryCompiler.compile(query, operation, viewerContext, lockMode)
         val storageLimit = maximumRows?.let { maximum ->
             minOf(maximum, queryForStorage.limit ?: maximum)
         } ?: queryForStorage.limit
@@ -310,6 +312,7 @@ internal class DatabaseGraphStorage(
             query.orderBy,
             limit,
             offset,
+            query.lockMode,
         )
         val boundedRows = maximumEntities?.let(rows::take) ?: rows
         return boundedRows.map(entity::decode)

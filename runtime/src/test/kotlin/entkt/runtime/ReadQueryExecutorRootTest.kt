@@ -61,6 +61,7 @@ class ReadQueryExecutorRootTest {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             events += "driver"
             failure?.let { throw it }

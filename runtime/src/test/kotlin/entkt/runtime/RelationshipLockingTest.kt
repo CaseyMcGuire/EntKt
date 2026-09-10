@@ -134,6 +134,7 @@ class RelationshipLockingTest {
             orderBy: List<entkt.query.OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> = emptyList()
         override fun directToManyWindowCapability(): entkt.runtime.driver.DirectToManyWindowCapability =
             entkt.runtime.driver.DirectToManyWindowCapability.EMULATED

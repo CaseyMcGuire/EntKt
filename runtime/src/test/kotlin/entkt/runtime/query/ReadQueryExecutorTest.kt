@@ -43,6 +43,7 @@ class ReadQueryExecutorTest {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             queryCalls++
             return listOf(mapOf("id" to 1L))

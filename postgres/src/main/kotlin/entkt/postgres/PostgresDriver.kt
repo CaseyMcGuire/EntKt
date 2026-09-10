@@ -11,6 +11,7 @@ import entkt.query.OrderField
 import entkt.query.Predicate
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
+import entkt.runtime.query.QueryLockMode
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EdgeMetadata
@@ -860,8 +861,14 @@ class PostgresDriver(
         orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
-    ): List<Map<String, Any?>> =
-        withConnection { ops.query(it, table, predicates, orderBy, limit, offset) }
+        lockMode: QueryLockMode,
+    ): List<Map<String, Any?>> {
+        if (lockMode == QueryLockMode.ForUpdate) requireTransactionForLocking("query(forUpdate)")
+        return withConnection { ops.query(it, table, predicates, orderBy, limit, offset, lockMode) }
+    }
+
+    override val supportsQueryForUpdate: Boolean
+        get() = true
 
     override fun requireBindCapacity(minimumParameters: Long, table: String) =
         requirePostgresBindCapacity(minimumParameters, table)

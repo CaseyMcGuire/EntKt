@@ -316,9 +316,10 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             queriedTables += table
-            return real.query(table, predicates, orderBy, limit, offset)
+            return real.query(table, predicates, orderBy, limit, offset, lockMode)
         }
     }
 

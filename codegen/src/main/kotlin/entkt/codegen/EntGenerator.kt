@@ -26,6 +26,7 @@ import entkt.codegen.query.EntityDescriptorGenerator
 import entkt.codegen.query.IndexHelperGenerator
 import entkt.codegen.query.QueryGenerator
 import entkt.codegen.query.QueryScopeGenerator
+import entkt.codegen.query.QuerySurface
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.ManyToManyThrough
@@ -760,9 +761,11 @@ class EntGenerator(
     private val updateGenerator = UpdateGenerator(packageName)
     private val entityDescriptorGenerator = EntityDescriptorGenerator(packageName)
     private val queryGenerator = QueryGenerator(packageName)
+    private val readQueryGenerator = QueryGenerator(packageName, QuerySurface.ReadOnly)
     private val queryScopeGenerator = QueryScopeGenerator(packageName)
     private val repoGenerator = RepoGenerator(packageName)
     private val indexHelperGenerator = IndexHelperGenerator(packageName)
+    private val readIndexHelperGenerator = IndexHelperGenerator(packageName, QuerySurface.ReadOnly)
     private val privacyGenerator = PrivacyGenerator(packageName)
     private val validationGenerator = ValidationGenerator(packageName)
     private val lifecycleRuleInputGenerator = LifecycleRuleInputGenerator(packageName)
@@ -838,12 +841,14 @@ class EntGenerator(
                 add(updateGenerator.generate(name, schema, schemaNames))
                 addAll(entityDescriptorGenerator.generate(name, schema, schemaNames))
                 add(queryGenerator.generate(name, schema, schemaNames))
+                add(readQueryGenerator.generate(name, schema, schemaNames))
                 add(queryScopeGenerator.generate(name, schema, schemaNames))
                 add(repoGenerator.generate(name, schema, schemaNames))
                 // Index helpers: only emitted when the schema has at least
                 // one eligible index, so schemas without helpers don't get
                 // an empty `${name}Indexes` file.
                 indexHelperGenerator.generate(name, schema, schemaNames)?.let { add(it) }
+                readIndexHelperGenerator.generate(name, schema, schemaNames)?.let { add(it) }
                 add(privacyGenerator.generate(name, schema, schemaNames))
                 add(validationGenerator.generate(name, schema, schemaNames))
                 addAll(lifecycleRuleInputGenerator.generate(name))
@@ -870,9 +875,9 @@ class EntGenerator(
                     fileCollisions.keys.joinToString("\n") { (_, name) ->
                         "  - more than one artifact generates '$name.kt' — a schema name " +
                             "collides with a derived artifact name (<Schema>Descriptor/" +
-                            "<Schema><Edge>EdgeDescriptor/CreateDraft/CreateConverter/DeleteConverter/UpdateDraft/Query/Repo/" +
+                            "<Schema><Edge>EdgeDescriptor/CreateDraft/CreateConverter/DeleteConverter/UpdateDraft/Query/ReadQuery/QueryScope/Repo/" +
                             "Privacy/Validation/UpdateRuleInput/" +
-                            "DeleteRuleInput/Indexes/Hooks) or a " +
+                            "DeleteRuleInput/Indexes/ReadIndexes/Hooks) or a " +
                             "generated client-support file"
                     },
             )

@@ -9,6 +9,7 @@ import entkt.runtime.driver.DirectToManyWindowCapability
 import entkt.runtime.driver.RelatedRows
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
+import entkt.runtime.query.QueryLockMode
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
@@ -95,8 +96,9 @@ internal class PostgresTransactionalDriver(
         orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
+        lockMode: QueryLockMode,
     ): List<Map<String, Any?>> {
-        checkOpen(); return ops.query(conn, table, predicates, orderBy, limit, offset)
+        checkOpen(); return ops.query(conn, table, predicates, orderBy, limit, offset, lockMode)
     }
 
     override fun directToManyWindowCapability(): DirectToManyWindowCapability {
@@ -177,6 +179,9 @@ internal class PostgresTransactionalDriver(
 
     override val supportsReadRowForUpdate: Boolean
         get() = root.supportsReadRowForUpdate
+
+    override val supportsQueryForUpdate: Boolean
+        get() = root.supportsQueryForUpdate
 
     override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
         checkOpen(); return ops.readRowForUpdate(conn, table, id)

@@ -5,8 +5,11 @@ package entkt.runtime.query.execution
 import entkt.query.EntktInternal
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.mutation.TransactionRequiredException
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EntityQuery
+import entkt.runtime.query.QueryLockMode
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.result.ReadResult
@@ -40,6 +43,7 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
         captureQuery: () -> EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): ReadResult<List<Entity>> {
         require(maximumRows == null || maximumRows >= 0) {
             "Root query maximum rows must be non-negative"
@@ -47,11 +51,34 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
         return captureFailure {
             val query = captureQuery()
             executionHost.checkReadExecution()
+            checkLockRequirements(query, operation, lockMode)
             entityGraphLoader.load(
                 query = query,
                 operation = operation,
                 maximumRows = maximumRows,
                 viewerContext = viewerContext,
+                lockMode = lockMode,
+            )
+        }
+    }
+
+    private fun checkLockRequirements(
+        query: EntityQuery<Entity>,
+        operation: ReadOperation,
+        lockMode: QueryLockMode,
+    ) {
+        if (lockMode == QueryLockMode.None) return
+        require(operation == ReadOperation.ALL || operation == ReadOperation.FIRST) {
+            "Query locking supports only all and firstOrNull"
+        }
+        if (!driver.inTransaction) {
+            throw TransactionRequiredException(
+                "${query.entity.entityName} forUpdate requires a transaction-scoped client",
+            )
+        }
+        if (!driver.supportsQueryForUpdate) {
+            throw UnsupportedDriverCapabilityException(
+                "${query.entity.entityName} forUpdate requires a driver with supportsQueryForUpdate = true",
             )
         }
     }

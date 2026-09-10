@@ -130,6 +130,7 @@ class DeleteMutationOperationTest {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             events += "query"
             receivedQueryPredicates = predicates

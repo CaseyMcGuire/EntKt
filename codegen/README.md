@@ -18,10 +18,12 @@ example; `{Entity}` is replaced by each schema class name.
 | `UserCreateDraft.kt` / `UserCreateDraft` | Mutable, potentially incomplete create input. It tracks which fields were assigned. Application code receives it as the `create { ... }` or `PendingCreateMutation.configure { ... }` DSL receiver rather than constructing it directly. |
 | `UserUpdateDraft.kt` / `UserUpdateDraft` | Mutable update patch. It records assignments, unsets, and relationship changes without executing them. Application code receives it through `update(id) { ... }` or `PendingUpdateMutation.configure { ... }`. |
 | `UserMutation.kt` / `UserMutation` | Mutable field interface received by `beforeSave`. `UserCreateMutationView` and `UserUpdateMutationView` are the operation-specific mutation views exposed by hook contexts. These are hook contracts, not executable mutation objects. |
-| `UserQuery.kt` / `UserQuery` | Immutable query value. Fluent predicates, ordering, pagination, and `configure { ... }` return new queries. Traversal returns a target query; `all(viewerContext)` and `firstOrNull(viewerContext)` execute reads. |
-| `UserQueryScope.kt` / `UserQueryScope` | Temporary mutable receiver for query configuration blocks. Adds typed eager-edge methods and delegates state management to the runtime; exposes no terminals or traversal methods. |
+| `UserQuery.kt` / `UserQuery` | Immutable query value returned by full-client repositories. Fluent predicates, ordering, pagination, and `configure { ... }` return new queries. Traversal returns a target query; `all(viewerContext)` and `firstOrNull(viewerContext)` execute reads. `forUpdate()` constructs the runtime's terminal-only locking wrapper. |
+| `UserReadQuery.kt` / `UserReadQuery` | Read-only query type returned by rule-client repositories, without `forUpdate()`. Shares runtime execution with `UserQuery`; refinement and traversal retain the read-only query family. |
+| `UserQueryScope.kt` / `UserQueryScope` | Temporary mutable receiver shared by both query families for configuration blocks. Adds typed eager-edge methods and delegates state management to the runtime; exposes no terminals or traversal methods. |
 | `UserRepo.kt` / `UserRepo` | Entity entry points exposed as `client.users`: `create`, `update`, `query`, `findById`, deletes, and supported bulk operations. `create` and `update` return runtime mutation operations; delete methods execute immediately. |
 | `UserIndexes.kt` / `UserIndexes` | Generated only when the schema has an eligible index. Exact indexes expose `find(viewerContext)` and `query { ... }`; range-capable indexes also expose a range DSL. Access them through `client.users.indexes`. |
+| `UserReadIndexes.kt` / `UserReadIndexes` | Corresponding index helpers on read-only repositories. All stages return `UserReadQuery` from `query { ... }`. Generated under the same eligibility rules as `UserIndexes`. |
 | `UserPrivacy.kt` | Typed privacy aliases, operation items, `UserWriteCandidate`, `UserUpdatePatch`, edge-change views, hook contexts, and the privacy/policy configuration scopes. See [Privacy](../docs/06-privacy.md) and [Hooks](../docs/05-hooks.md). |
 | `UserValidation.kt` | Typed validation aliases, operation items, and validation configuration scopes. Validation reuses `UserWriteCandidate` from the privacy/lifecycle model. See [Validation](../docs/07-validation.md). |
 
@@ -81,7 +83,7 @@ are framework integration details. See [Ent Viewer](../docs/11-ent-viewer.md).
 
 The generated surface also refers to ordinary runtime types including
 `PendingMutation`, `PendingCreateMutation`, `PendingUpdateMutation`,
-`MutationDraft`, `ReadResult`, `MutationResult`, `ViewerContext`, `EntityHooks`,
+`MutationDraft`, `ReadResult`, `MutationResult`, `ForUpdateQuery`, `QueryLockMode`, `ViewerContext`, `EntityHooks`,
 and the privacy/validation rule interfaces. They are shared implementations
 and are therefore not regenerated per schema.
 

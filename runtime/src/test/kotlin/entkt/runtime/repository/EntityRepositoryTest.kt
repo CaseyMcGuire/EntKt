@@ -624,6 +624,7 @@ class EntityRepositoryTest {
 
         override fun query(
             table: String, predicates: List<Predicate<*>>, orderBy: List<OrderField<*>>, limit: Int?, offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             queryPredicates = predicates
             queryLimit = limit

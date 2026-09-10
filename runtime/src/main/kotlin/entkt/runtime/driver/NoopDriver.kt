@@ -1,5 +1,6 @@
 package entkt.runtime.driver
 import entkt.runtime.mutation.RelationshipLockKey
+import entkt.runtime.query.QueryLockMode
 
 import entkt.query.OrderField
 import entkt.query.Predicate
@@ -70,6 +71,7 @@ object NoopDriver : DatabaseDriver {
         orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
+        lockMode: QueryLockMode,
     ): List<Map<String, Any?>> =
         error("NoopDriver cannot query — was a terminal op called inside EdgeRef.has { }?")
 

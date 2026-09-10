@@ -236,6 +236,8 @@ data class QueryContext(
     val edgeName: String?,
     val path: List<EdgeStep>,
     val flags: Set<QueryFlag>,
+    /** Lock intent for [currentEntity] at this step. Read-only; source and eager steps report [QueryLockMode.None]. */
+    val lockMode: QueryLockMode = QueryLockMode.None,
 ) {
     val isEagerSubquery: Boolean
         get() = operation == ReadOperation.EAGER_LOAD || operation == ReadOperation.EAGER_JUNCTION

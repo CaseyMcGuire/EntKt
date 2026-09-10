@@ -61,9 +61,10 @@ class RecordingDriver private constructor(
         orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
+        lockMode: entkt.runtime.query.QueryLockMode,
     ): List<Map<String, Any?>> {
         calls += "query:$table"
-        return delegate.query(table, predicates, orderBy, limit, offset)
+        return delegate.query(table, predicates, orderBy, limit, offset, lockMode)
     }
 
     // Capability probes are pure and unrecorded; the read itself is

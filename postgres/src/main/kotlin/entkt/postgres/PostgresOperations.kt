@@ -7,6 +7,7 @@ import entkt.query.Predicate
 import entkt.runtime.query.AggregateFunction
 import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.query.EagerWindowStrategy
+import entkt.runtime.query.QueryLockMode
 import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.DirectToManyQuery
 import entkt.runtime.driver.EntitySchema
@@ -219,6 +220,7 @@ internal class PostgresOperations(
         orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): PreparedSql {
         val schema = schemaFor(table)
         val builder = PredicateSqlBuilder(registry)
@@ -244,6 +246,10 @@ internal class PostgresOperations(
 
         if (limit != null) sql.append(" LIMIT ").append(limit)
         if (offset != null) sql.append(" OFFSET ").append(offset)
+        when (lockMode) {
+            QueryLockMode.None -> Unit
+            QueryLockMode.ForUpdate -> sql.append(" FOR UPDATE OF ").append(baseAlias)
+        }
 
         return PreparedSql(sql.toString(), builder.params.toList())
     }
@@ -255,9 +261,13 @@ internal class PostgresOperations(
         orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): List<Map<String, Any?>> {
+        if (lockMode == QueryLockMode.ForUpdate) {
+            check(!conn.autoCommit) { "Query FOR UPDATE requires a transaction connection" }
+        }
         val schema = schemaFor(table)
-        val prepared = buildSelectSql(table, predicates, orderBy, limit, offset)
+        val prepared = buildSelectSql(table, predicates, orderBy, limit, offset, lockMode)
         checkBindLimit(prepared.params.size, "query", table)
 
         return conn.prepareStatement(prepared.sql).useQuietClose { stmt ->

@@ -67,6 +67,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
      * windows, whose parent keys use one structural bind transport.
      */
     structuralSingleBindTransport: Boolean = false,
+    private val lockMode: QueryLockMode = QueryLockMode.None,
 ) {
     // Typed in E: every layer above the
     // driver call stays typed. Predicates enter the builder from
@@ -244,6 +245,7 @@ public class QuerySpecBuilder<E : Any> public constructor(
             annotations = annotationsMap.toMap(),
             callerPredicateCount = caller,
             structuralPredicateCount = structural,
+            lockMode = lockMode,
         )
     }
 
@@ -288,6 +290,8 @@ public data class StorageQuerySpec<E : Any> public constructor(
     val callerPredicateCount: Int = predicates.size,
     /** Count of framework structural predicates after the caller slice. */
     val structuralPredicateCount: Int = 0,
+    /** Lock only the root table of this storage read. */
+    val lockMode: QueryLockMode = QueryLockMode.None,
 ) {
     init {
         require(callerPredicateCount >= 0 && structuralPredicateCount >= 0) {

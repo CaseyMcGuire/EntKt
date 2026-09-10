@@ -285,6 +285,7 @@ class BatchLifecycleCodegenCompileTest {
                         orderBy: List<OrderField<*>>,
                         limit: Int?,
                         offset: Int?,
+                        lockMode: entkt.runtime.query.QueryLockMode,
                     ): List<Map<String, Any?>> = ids.map { mapOf("id" to it) }
                 }
 

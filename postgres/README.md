@@ -55,6 +55,14 @@ registered `EdgeMetadata` (including junction-table joins for M2M edges).
 (empty IN short-circuits to `FALSE`, empty NOT IN to `TRUE`). String ops
 use `LIKE` with safely built patterns.
 
+`query(..., lockMode = QueryLockMode.ForUpdate)` appends `FOR UPDATE OF t0`
+after ordering and pagination, locking the root alias only. It runs on the
+transaction's pinned connection; root-driver calls are rejected before a
+connection is borrowed. Traversal-source and edge-predicate subqueries receive
+no locking clause, and eager loads remain ordinary reads. Native PostgreSQL
+offset semantics apply. Generated full-client queries expose this through
+`forUpdate()`; see [Locking Reads](../docs/04-queries.md#locking-reads).
+
 ## Identifier quoting
 
 All identifiers wrapped in `"..."`. Values are never string-concatenated

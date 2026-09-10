@@ -93,6 +93,22 @@ block finishes. Invalid bounds and oversized predicate inputs throw during
 construction; execution-time interceptor and driver failures still produce
 `ReadResult.Failed`.
 
+### Full-Client And Rule-Client Query Types
+
+Full-client repositories return `{Entity}Query`. Privacy and validation rules
+receive `ReadOnlyEntClient`, whose repositories return `{Entity}ReadQuery`
+and expose `{Entity}ReadIndexes` instead of `{Entity}Indexes`.
+
+Both query families use the same `{Entity}QueryScope` configuration DSL and
+shared runtime read pipeline. Refinement, index helpers, and traversal preserve
+the originating family: traversing from `UserReadQuery` to posts returns
+`PostReadQuery`, not `PostQuery`. Transaction scope and privacy bypass do not
+change that distinction. The `all` and `firstOrNull` result types are identical
+for both families.
+
+Only the full-client family exposes [`forUpdate()`](#locking-reads). It is
+absent from rule-client queries, even inside a transaction or under privacy bypass.
+
 ## Indexed Query Helpers
 
 When an entity declares indexes, the generated repo exposes an `indexes`
@@ -786,6 +802,9 @@ read. The `context` carries:
   for root reads
 - `context.isEagerSubquery` — true iff the operation is
   `EAGER_LOAD` or `EAGER_JUNCTION`
+- `context.lockMode` — read-only `QueryLockMode.None` or `ForUpdate` for this
+  step's `currentEntity`. Locking terminals still use `ALL` / `FIRST`;
+  traversal-source, eager, and edge-predicate steps report `None`.
 
 The `scope` exposes only operations that *narrow* the query:
 
@@ -801,7 +820,7 @@ The `scope` exposes only operations that *narrow* the query:
 - `reject(reason, code)` — short-circuit the chain
 
 Interceptors cannot remove caller predicates, raise caller-set
-limits, change ordering, or swap the table. That property —
+limits, change ordering, swap the table, or change lock intent. That property —
 "reduce or reject, never broaden" — is part of the interceptor API.
 
 ### Rejection mapping
@@ -865,6 +884,65 @@ contributes every relationship to eager loading. The M2M `queryX()`
 traversal and `has {}` lowerings do not yet run junction-entity
 interceptors either (see the junction read-interceptors RFC for the
 open phases).
+
+## Locking Reads
+
+Call `forUpdate()` on a completed full-client query to lock its root rows
+without updating them or running mutation privacy, validation, or hooks:
+
+```kotlin
+val user = client.withTransaction { tx ->
+    val locked = requireNotNull(tx.users.query {
+        where(User.id eq userId)
+    }.forUpdate().firstOrNull(viewerContext).orRollback())
+
+    // Read related state and make changes using tx while the user row stays locked.
+    locked
+}.getOrThrow()
+```
+
+`forUpdate()` returns `ForUpdateQuery<Entity>`, which exposes only
+`all(viewerContext): ReadResult<List<Entity>>` and
+`firstOrNull(viewerContext): ReadResult<Entity?>`. Finish filtering, ordering,
+pagination, traversal, and eager selection before calling it. Construction
+performs no I/O; each terminal runs a fresh read on the original client binding.
+Later query branches cannot change that captured description.
+
+The terminal requires an active transaction and a supporting driver. Otherwise
+it returns `ReadResult.Failed` with `TransactionRequiredException` or
+`UnsupportedDriverCapabilityException`, before interceptors or SQL. A root-client
+query is not automatically rebound to an active transaction; use the `tx`
+repositories. An escaped transaction-bound locking query cannot execute after
+the transaction ends.
+
+Read interceptors and LOAD privacy run normally. PostgreSQL acquires locks
+before LOAD evaluation, and keeps them until commit or rollback—even if LOAD
+denies the result or `visibleOrNull()` projects that denial to null. Read failures
+do not automatically mark the transaction rollback-only; use `orRollback()` when
+failure should stop the transaction. A database statement failure can still
+abort it. Singular absence remains a successful null, not a locked target.
+
+Only the final root rows are locked. For example,
+`tx.users.query().queryPosts().forUpdate()` locks posts, not the source users.
+Eager-loaded entities and junction rows remain ordinary reads. Locking a parent
+does not automatically lock descendants or prevent inserts; cooperating writers
+must follow the same locking protocol.
+
+`limit` and `offset` retain native database behavior, with no hidden ID
+preselection or page refilling. PostgreSQL also locks rows skipped by `OFFSET`,
+and concurrent predicate rechecks can leave locks on rows not returned.
+An explicit cursor predicate can avoid stepping past rows with an offset.
+
+The following are deliberately unavailable at compile time:
+
+```kotlin
+tx.users.query { forUpdate() }                // source configuration
+tx.posts.query { loadAuthor { forUpdate() } } // eager configuration
+tx.users.query().forUpdate().queryPosts()     // traversal after locking
+context.client.users.query().forUpdate()      // privacy/validation rule client
+```
+
+V1 has no `FOR SHARE`, `NOWAIT`, `SKIP LOCKED`, automatic transactions, or retries.
 
 ## Transactions
 

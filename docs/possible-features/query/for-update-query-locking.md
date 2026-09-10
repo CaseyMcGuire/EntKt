@@ -2,9 +2,10 @@
 
 ## Status
 
-Design in progress. This is not implemented. The prerequisite
-[immutable query values](immutable-query-values.md) refactor is implemented;
-the remaining decisions below must be settled before starting locking support.
+Implemented, including the prerequisite [immutable query values](immutable-query-values.md)
+refactor, full-client/read-only query type split, runtime/Postgres execution,
+generated entry points, compile-time restrictions, and lock-lifetime tests.
+See [Locking Reads](../../04-queries.md#locking-reads) for application usage.
 
 ## Summary
 
@@ -84,9 +85,10 @@ The API should make lock-only reads explicit.
 - Do not add database-specific locking clauses beyond `FOR UPDATE` in V1.
 - Do not add automatic transactions, retries, isolation options, or savepoints.
 
-## Proposed API
+## API
 
-Completed query values get a fluent method returning a shared runtime wrapper:
+Completed full-client query values get a fluent method returning a shared
+runtime wrapper:
 
 ```kotlin
 fun forUpdate(): ForUpdateQuery<AssetPageLayout>
@@ -264,7 +266,7 @@ id-specific and cannot express arbitrary query predicates, ordering, limits, or
 read-interceptor predicates. Query-level locking needs a new query lock mode in
 the normal query path.
 
-Possible runtime shape:
+Runtime shape (other existing storage fields omitted):
 
 ```kotlin
 enum class QueryLockMode {
@@ -288,10 +290,10 @@ Driver capability:
 val supportsQueryForUpdate: Boolean
 ```
 
-Driver query execution should receive the lock mode explicitly. The exact
-signature can be decided during implementation, but the lock must be part of
-the normal query path so read interceptors and structural predicates are
-included in the locking SQL.
+`DatabaseDriver.query` receives a final
+`lockMode: QueryLockMode = QueryLockMode.None` parameter. The normal query path
+includes read interceptors and structural predicates in the locking SQL;
+custom driver overrides and decorators must forward the lock mode.
 
 Postgres rendering should append `FOR UPDATE OF <root alias>` to the root select when
 `lockMode == QueryLockMode.ForUpdate`.
@@ -308,12 +310,12 @@ entClient.withTransaction { tx ->
 }
 ```
 
-Calling a `forUpdate()` terminal outside a transaction should fail before the
-driver query runs. The existing `TransactionRequiredException` shape is the
-likely fit.
+Calling a `forUpdate()` terminal outside a transaction returns
+`ReadResult.Failed(TransactionRequiredException)` before the driver query runs.
 
-Check client lifetime, rule-client permission, active transaction, and driver
-capability at terminal entry, before interceptors or SQL. Creating a locking
+Rule-client locking is excluded by the generated types. Check client lifetime,
+active transaction, and driver capability at terminal entry, before interceptors
+or SQL. Creating a locking
 query does not establish or prolong a transaction. No root-client query is
 implicitly rebound to whichever transaction happens to be active.
 
@@ -327,33 +329,50 @@ ordinary eager subplans unlocked. The previous generated `explain*` terminal
 family is no longer exposed; this RFC does not depend on restoring it. See
 [Query Observability Diagnostics](query-observability-diagnostics.md).
 
-## Remaining Decisions
+## Approved Interceptor And Rule-Client Contracts
 
-These are recommendations, not yet approved contracts:
+- **Interceptor metadata.** Expose read-only lock intent in `QueryContext`,
+  while keeping `ReadOperation.ALL` / `FIRST`. Interceptors can inspect it but
+  cannot add, remove, or retarget the lock. Traversal-source, edge-predicate,
+  and eager-step contexts describe their own ordinary, unlocked reads.
+- **Rule-client enforcement.** Locking through privacy and validation clients
+  must not compile; a runtime-only rejection is insufficient. Those clients
+  return separate `{Entity}ReadQuery` and `{Entity}ReadIndexes` types rather than
+  the full-client `{Entity}Query` and `{Entity}Indexes`. Preserve this restriction
+  through fluent refinement, index helpers, and traversal, including inside a
+  transaction or under privacy bypass. Both families share `{Entity}QueryScope`
+  and runtime execution. Add `forUpdate()` only to the full-client generated
+  query, not the shared runtime query base.
 
-1. **Failure and transaction behavior.** Preserve ordinary read semantics:
-   terminal preflight and operational failures return `ReadResult.Failed`;
-   cancellation and fatal errors propagate. A LOAD denial does not by itself
-   mark the transaction rollback-only. The caller can use the existing
-   `orRollback()` projection for a required read. If a denial is handled and
-   execution continues, acquired locks remain until transaction end. An actual
-   database statement failure can abort the transaction regardless of how its
-   result is handled; retain the existing transaction-completion checks.
-2. **Interceptor metadata.** Expose read-only lock intent in `QueryContext`,
-   while keeping `ReadOperation.ALL` / `FIRST`. Interceptors can inspect it but
-   cannot add, remove, or retarget the lock. Traversal-source, edge-predicate,
-   and eager-step contexts describe their own ordinary, unlocked reads.
-3. **Rule-client enforcement.** Locking through privacy and validation clients
-   is disallowed, but the enforcement mechanism remains open. Those clients
-   currently return the same concrete query type as full clients. A runtime
-   permission check avoids a second query surface; compile-time exclusion
-   requires a distinct read-only query surface or capability-typed API. If
-   runtime enforcement is chosen, it must reject before any interceptor or SQL
-   runs, including inside a transaction or under privacy bypass.
+## Approved Failure And Transaction Behavior
+
+Preserve ordinary read semantics. Terminal
+preflight and operational failures return `ReadResult.Failed`; cancellation and
+fatal errors propagate. A LOAD denial does not by itself mark the transaction
+rollback-only. The caller can use the existing `orRollback()` projection for a
+required read. If a denial is handled and execution continues, acquired locks
+remain until transaction end. An actual database statement failure can abort the
+transaction regardless of how its result is handled; retain the existing
+transaction-completion checks.
+
+## Implementation Progress
+
+1. **Implemented:** separate full-client and read-only query/index types, with
+   shared scopes and runtime execution. Compile tests cover refinement, direct
+   and many-to-many traversal, index stages, and privacy/validation rule reads.
+2. **Implemented:** runtime locking wrapper, transaction/capability checks,
+   read-only interceptor metadata, and Postgres root-row locking. Tests cover
+   root/source/eager intent, preflight and read failures, SQL rendering, pinned
+   transaction execution, and failed SQL preventing commit.
+3. **Implemented:** thin generated `forUpdate()` entry points, negative compile
+   tests for unsupported locking, concurrency/lock-lifetime tests, and usage
+   documentation. PostgreSQL tests observe blocked writers resuming after both
+   commit and rollback, root-only locking across direct/M2M traversal and eager
+   loading, native offset behavior, and lock retention after LOAD denial.
 
 ## Test Requirements
 
-Before implementation, add tests for:
+Locking implementation must cover:
 
 - completed queries expose a terminal-only `forUpdate()` wrapper
 - configuration scopes cannot request source/eager locks, and locking wrappers
@@ -371,5 +390,6 @@ Before implementation, add tests for:
 - absence can be distinguished from a successfully locked row
 - offsets retain native locking semantics without an extra page-selection query
 - later immutable query branches cannot alter an existing locking wrapper
-- rule-client locking is rejected through the chosen enforcement mechanism
+- rule-client locking does not compile, including after refinement, index
+  helpers, and traversal
 - denial, interceptor metadata, and transaction behavior match the decisions above

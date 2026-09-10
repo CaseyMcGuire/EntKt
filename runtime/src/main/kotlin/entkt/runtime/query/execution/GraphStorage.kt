@@ -8,6 +8,7 @@ import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EdgeSelection
 import entkt.runtime.query.EdgeStep
 import entkt.runtime.query.EntityQuery
+import entkt.runtime.query.QueryLockMode
 import entkt.runtime.query.ReadOperation
 import kotlin.reflect.KClass
 
@@ -19,6 +20,7 @@ internal interface GraphStorage {
         operation: ReadOperation,
         maximumRows: Int?,
         viewerContext: ViewerContext,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): List<Entity>
 
     /** Load one selected relationship and retain how its targets correlate to the sources. */

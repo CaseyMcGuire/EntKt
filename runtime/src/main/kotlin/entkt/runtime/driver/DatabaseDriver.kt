@@ -5,6 +5,7 @@ import entkt.runtime.mutation.RelationshipLockKey
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.runtime.query.AggregateResultRow
 import entkt.runtime.query.AggregateFunction
+import entkt.runtime.query.QueryLockMode
 
 import entkt.query.OrderField
 import entkt.query.Op
@@ -252,6 +253,12 @@ interface DatabaseDriver {
      * Run a query. Predicates are AND-ed together (the generated query
      * accumulates them as a list and the driver folds them). The
      * driver applies `orderBy` then `offset`/`limit` after filtering.
+     *
+     * [lockMode] applies only to the root table. [QueryLockMode.ForUpdate]
+     * requires [supportsQueryForUpdate] and an active transaction, and holds locks until that
+     * transaction ends. Drivers must reject unsupported locking or non-transactional locking
+     * before executing SQL; they must never silently run an unlocked read. Native pagination
+     * semantics apply (for example, PostgreSQL also locks rows skipped by OFFSET).
      */
     fun query(
         table: String,
@@ -259,7 +266,12 @@ interface DatabaseDriver {
         orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): List<Map<String, Any?>>
+
+    /** Query-level root-row locking support, distinct from the by-id mutation lock primitive. */
+    val supportsQueryForUpdate: Boolean
+        get() = false
 
     /**
      * Whether this driver can push a direct to-many eager edge's
@@ -687,7 +699,7 @@ interface DatabaseDriver {
         )
 
     /**
-     * Helper for [readRowForUpdate] / [serializeOwnerEdgeAndRead]
+     * Helper for locking [query] / [readRowForUpdate] / [serializeOwnerEdgeAndRead]
      * implementations that want a uniform error shape when the driver
      * is asked to lock outside a transaction. Throws
      * [IllegalStateException] when [inTransaction] is false; otherwise

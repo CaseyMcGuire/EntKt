@@ -22,15 +22,19 @@ import entkt.schema.EntSchema
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTITY_QUERY_BUILDER = ClassName("entkt.runtime.query", "EntityQueryBuilder")
 private val ENTITY_QUERY = ClassName("entkt.runtime.query", "EntityQuery")
+private val FOR_UPDATE_QUERY = ClassName("entkt.runtime.query", "ForUpdateQuery")
 
 /** Wires typed immutable queries into the shared runtime configuration and execution paths. */
-internal class QueryGenerator(private val packageName: String) {
+internal class QueryGenerator(
+    private val packageName: String,
+    private val surface: QuerySurface = QuerySurface.Full,
+) {
     fun generate(
         schemaName: String,
         schema: EntSchema,
         schemaNames: Map<EntSchema, String> = emptyMap(),
     ): FileSpec {
-        val resolved = resolveQuerySchema(packageName, schemaName, schema, schemaNames)
+        val resolved = resolveQuerySchema(packageName, schemaName, schema, schemaNames, surface)
         val queryClass = resolved.queryClass
         val scopeClass = ClassName(packageName, "${schemaName}QueryScope")
         val clientClass = ClassName(packageName, "EntReadRuntime").copy(nullable = true)
@@ -68,6 +72,11 @@ internal class QueryGenerator(private val packageName: String) {
             function("configure", queryClass) {
                 parameter("block", LambdaTypeName.get(receiver = scopeClass, returnType = UNIT))
                 statement("return configureQuery(%T(driver, client, entityQuery), block)", scopeClass)
+            }
+            if (surface == QuerySurface.Full) {
+                function("forUpdate", FOR_UPDATE_QUERY.parameterizedBy(resolved.entityClass)) {
+                    statement("return %T(entityQuery, readQueryExecutor)", FOR_UPDATE_QUERY)
+                }
             }
             for (edge in resolved.edges) {
                 val traversal = if (edge.isManyToMany) {

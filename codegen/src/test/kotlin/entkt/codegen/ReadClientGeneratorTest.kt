@@ -2,6 +2,8 @@ package entkt.codegen
 
 import entkt.schema.EntSchema
 import kotlin.test.Test
+import kotlin.test.assertContains
+import kotlin.test.assertFalse
 
 /**
  * Pins the generated shape of the read-client file: `ReadOnlyEntClient` is
@@ -43,6 +45,30 @@ class ReadClientGeneratorTest {
         val end = source.indexOf(closingBrace, start)
         check(end >= 0) { "findById tail not found in\n$source" }
         return source.substring(start, end + closingBrace.length)
+    }
+
+    @Test
+    fun `rule repositories and index stages return their own query types`() {
+        val files = generateFiles().associate { it.name to it.toString() }
+        val repo = files.getValue("ReadOnlyEntClient")
+        assertContains(repo, "fun query(block: UserQueryScope.() -> Unit = {}): UserReadQuery")
+        assertContains(repo, "val indexes: UserReadIndexes")
+        assertContains(repo, "val query = UserReadQuery(driver, runtime)")
+
+        val query = files.getValue("UserReadQuery")
+        assertContains(query, "EntityQueryBuilder<User, UserReadQuery>")
+        assertContains(query, "configureQuery(UserQueryScope(driver, client, entityQuery), block)")
+        assertContains(query, "fun queryCars(block: CarQueryScope.() -> Unit = {}): CarReadQuery")
+        assertFalse(Regex("\\b(UserQuery|CarQuery)\\b").containsMatchIn(query), query)
+        assertFalse("forUpdate" in query)
+        assertContains(files.getValue("UserQuery"), "fun forUpdate(): ForUpdateQuery<User>")
+        assertContains(files.getValue("UserQuery"), "ForUpdateQuery(entityQuery, readQueryExecutor)")
+
+        val indexes = files.getValue("UserReadIndexes")
+        assertContains(indexes, "fun query(block: UserQueryScope.() -> Unit = {}): UserReadQuery")
+        assertContains(indexes, "UserReadQuery(driver, client).whereAllForInternalUse(predicates)")
+        assertFalse(Regex("\\bUserQuery\\b").containsMatchIn(indexes), indexes)
+        assertFalse("CarIndexes" in files || "CarReadIndexes" in files)
     }
 
     @Test

@@ -27,7 +27,9 @@ interface DatabaseDriver {
         orderBy: List<OrderField<*>>,
         limit: Int?,
         offset: Int?,
+        lockMode: QueryLockMode = QueryLockMode.None,
     ): List<Map<String, Any?>>
+    val supportsQueryForUpdate: Boolean
     fun count(table: String, predicates: List<Predicate<*>>): Long
     fun exists(table: String, predicates: List<Predicate<*>>): Boolean
 
@@ -84,6 +86,14 @@ interface DatabaseDriver {
 - `insert()` returns the persisted row including any server-assigned values
   (auto-increment IDs, defaults).
 - `update()` returns the updated row, or `null` if the row was not found.
+- `query(..., lockMode)` preserves ordinary behavior with `QueryLockMode.None`.
+  `ForUpdate` locks only the selected root table and requires an active
+  transaction plus `supportsQueryForUpdate = true` (default: false). Drivers
+  must reject unsupported or non-transactional locking before SQL, never silently
+  run an unlocked query. Custom overrides and decorators must accept and forward
+  the lock mode. This capability is independent of `supportsReadRowForUpdate`.
+  Native pagination semantics apply; PostgreSQL also locks rows skipped by
+  `OFFSET`. No hidden preselection or pagination rewrite is performed.
 - Postgres raw row maps may use any `Number` subtype for numeric columns.
   `INT`/`LONG` values must be finite whole numbers inside the target range;
   fractional and overflowing values fail before SQL rather than truncating or

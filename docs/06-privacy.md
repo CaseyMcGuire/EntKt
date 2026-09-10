@@ -411,6 +411,13 @@ val author = context.client.users
     .getOrThrow()
 ```
 
+Rule repositories return `{Entity}ReadQuery` and `{Entity}ReadIndexes`.
+Refinement, index helpers, and traversal keep that read-only type family, while
+sharing configuration scopes and runtime execution with full-client queries.
+`forUpdate()` is unavailable on rule queries, including under privacy bypass
+or inside a transaction.
+See [Query Types](04-queries.md#full-client-and-rule-client-query-types).
+
 Rule reads made with `context.viewerContext` evaluate LOAD privacy like any
 other read: a rule loading a
 row its viewer cannot see gets the denial

@@ -22,6 +22,7 @@ import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.query.indexHelperTree
+import entkt.codegen.query.QuerySurface
 import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
@@ -47,8 +48,10 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  * that convention because callers may explicitly choose another context.
  *
  * Each read repo exposes the read surface only — the byId family, the
- * full `query { }` DSL (all terminals come with the query class), and
- * the generated index helpers. The write
+ * `query { }` DSL returning `${Entity}ReadQuery`, and the read-only
+ * index helpers. Refinement and traversal preserve this separate query
+ * family; it is not a narrowed reference to a full-client query object.
+ * The write
  * surface (create / update / save / delete* / edge mutators /
  * `withTransaction` / config setters) simply does not
  * exist on these types, so rule code calling it is a compile error —
@@ -108,8 +111,8 @@ internal class ReadClientGenerator(
     ): TypeSpec {
         val schemaName = input.name
         val entityClass = ClassName(packageName, schemaName)
-        val queryClass = ClassName(packageName, "${schemaName}Query")
-        val indexesClass = ClassName(packageName, "${schemaName}Indexes")
+        val queryClass = QuerySurface.ReadOnly.queryClass(packageName, schemaName)
+        val indexesClass = QuerySurface.ReadOnly.indexesClass(packageName, schemaName)
         val readSurfaceClass = ClassName(packageName, "${schemaName}ReadSurface")
         val idType = input.schema.id().type.toTypeName()
 
@@ -160,14 +163,13 @@ internal class ReadClientGenerator(
                 parameter("entities", LIST.parameterizedBy(entityClass))
                 statement("return host.evaluateLoadPrivacy(viewerContext, entities)")
             }
-            addFunction(buildQueryEntry(queryClass, clientRef = "runtime"))
-            // Index-helper namespace: the same `${schemaName}Indexes`
-            // stages the full repo exposes, constructed with the read
-            // runtime. Emitted under the same eligibility condition.
+            addFunction(buildQueryEntry(entityClass, queryClass, clientRef = "runtime"))
+            // Read-only index stages must return read-only queries too, not
+            // recover the full-client query surface through an index helper.
             if (indexHelperTree(input.schema, schemaNames) != null) {
                 addProperty(buildIndexesProperty(indexesClass, clientRef = "runtime"))
             }
-            addFunction(buildFindById(schemaName, entityClass, idType, clientRef = "runtime"))
+            addFunction(buildFindById(entityClass, queryClass, idType, clientRef = "runtime"))
         }
     }
 

@@ -296,6 +296,7 @@ class MutationRuleInputTest {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             check(predicates.isEmpty() && orderBy.isEmpty() && limit == null && offset == null)
             return rows.values.toList()

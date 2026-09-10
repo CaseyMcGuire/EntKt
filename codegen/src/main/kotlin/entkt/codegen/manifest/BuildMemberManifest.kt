@@ -27,7 +27,7 @@ import entkt.schema.EntSchema
  *   per scalar field (`field.apiName`), one column ref
  *   per FK (`fk.propertyName`), and one edge ref per edge
  *   (`edge.apiName`).
- * - **query class** (`${name}Query`) — the fixed query surface plus
+ * - **query classes** (`${name}Query` / `${name}ReadQuery`) — the fixed query surface plus
  *   `query{Stem}` per declared edge; the separate `${name}QueryScope`
  *   exposes configuration and `load{Stem}` members.
  * - **entity Edges class** (`${name}.Edges`) — one property per
@@ -228,6 +228,7 @@ private val FIXED_QUERY_PROPERTIES: List<String> = listOf(
     "client",
     "driver",
     "entityQuery",
+    "readQueryExecutor",
     "queryLimit",
     "queryOffset",
 )
@@ -250,19 +251,22 @@ private val FIXED_QUERY_FUNCTIONS: List<String> = listOf(
 )
 
 
-/** Reserve names on the immutable query and its separate mutable configuration scope. */
+/** Reserve names on both immutable query families and their shared mutable configuration scope. */
 private fun addQueryClassMembers(
     manifest: GeneratedMemberManifest,
     schemaName: String,
     allEdges: List<entkt.schema.Edge>,
 ) {
-    val query = queryArtifact(schemaName)
+    val queries = listOf(queryArtifact(schemaName), "${schemaName}ReadQuery")
     val scope = "${schemaName}QueryScope"
-    for (fixed in FIXED_QUERY_PROPERTIES) {
-        manifest.add(query, fixed, GeneratedMemberKind.PROPERTY, "fixed query member")
-    }
-    for (fixed in FIXED_QUERY_FUNCTIONS) {
-        manifest.add(query, fixed, GeneratedMemberKind.FUNCTION, "fixed query member")
+    manifest.add(queryArtifact(schemaName), "forUpdate", GeneratedMemberKind.FUNCTION, "full-client locking read")
+    for (query in queries) {
+        for (fixed in FIXED_QUERY_PROPERTIES) {
+            manifest.add(query, fixed, GeneratedMemberKind.PROPERTY, "fixed query member")
+        }
+        for (fixed in FIXED_QUERY_FUNCTIONS) {
+            manifest.add(query, fixed, GeneratedMemberKind.FUNCTION, "fixed query member")
+        }
     }
     for (fixed in listOf("client", "driver", "self")) {
         manifest.add(scope, fixed, GeneratedMemberKind.PROPERTY, "fixed query-scope member")
@@ -273,7 +277,9 @@ private fun addQueryClassMembers(
     for (edge in allEdges) {
         val stem = edge.apiName.generatedStem()
         val identity = "edge declared '${edge.apiName}' (storage '${edge.name}')"
-        manifest.add(query, "query$stem", GeneratedMemberKind.FUNCTION, "traversal for $identity")
+        for (query in queries) {
+            manifest.add(query, "query$stem", GeneratedMemberKind.FUNCTION, "traversal for $identity")
+        }
         manifest.add(scope, "load$stem", GeneratedMemberKind.FUNCTION, "edge load for $identity")
     }
 }

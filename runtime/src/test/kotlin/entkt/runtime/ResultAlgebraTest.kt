@@ -386,6 +386,7 @@ class ResultAlgebraTest {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> = error("unused")
         override fun directToManyWindowCapability(): entkt.runtime.driver.DirectToManyWindowCapability =
             error("unused")

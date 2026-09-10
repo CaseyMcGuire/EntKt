@@ -53,9 +53,10 @@ class ReadQueryExecutorIntegrationTest : PostgresTestBase() {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             rootQueries += RootQuery(table, limit, offset)
-            return delegate.query(table, predicates, orderBy, limit, offset)
+            return delegate.query(table, predicates, orderBy, limit, offset, lockMode)
         }
 
         override fun queryDirectToMany(query: DirectToManyQuery): RelatedRows {

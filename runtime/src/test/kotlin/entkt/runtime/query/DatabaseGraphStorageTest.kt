@@ -184,6 +184,7 @@ class DatabaseGraphStorageTest {
             orderBy: List<OrderField<*>>,
             limit: Int?,
             offset: Int?,
+            lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             calls += Call(table, predicates, limit, offset)
             return rows.getValue(table)

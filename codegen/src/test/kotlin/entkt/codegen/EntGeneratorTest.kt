@@ -44,7 +44,7 @@ private class M2mMembershipSchema : EntSchema("memberships", clientName = "m2mMe
 // and `Post` + `PostLoadBatchPrivacyRule` collide on a generated top-level alias.
 private class Account : EntSchema("artifact_bases", clientName = "accounts") {
     override fun id() = EntId.int()
-    val name by string("name")
+    val name by string("name").unique()
 }
 
 private class AccountCreateDraft : EntSchema("artifact_suffixed", clientName = "accountCreateDrafts") {
@@ -55,6 +55,14 @@ private class AccountCreateDraft : EntSchema("artifact_suffixed", clientName = "
 private class AccountDescriptor : EntSchema("artifact_descriptors", clientName = "accountDescriptors") {
     override fun id() = EntId.int()
     val note by string("note")
+}
+
+private class AccountReadQuery : EntSchema("artifact_read_queries", clientName = "accountReadQueries") {
+    override fun id() = EntId.int()
+}
+
+private class AccountReadIndexes : EntSchema("artifact_read_indexes", clientName = "accountReadIndexes") {
+    override fun id() = EntId.int()
 }
 
 private class Post : EntSchema("collide_posts", clientName = "collidePosts") {
@@ -104,27 +112,27 @@ class EntGeneratorTest {
         val files = generator.generate(schemas)
 
         // Per schema: entity, descriptor, one descriptor per edge, three
-        // hook-state files, create draft, create/delete converters, update, query, query scope, repo, privacy, validation,
+        // hook-state files, create draft, create/delete converters, update, full/read queries, query scope, repo, privacy, validation,
         // and same-named compound rule-input files for UPDATE and DELETE.
         // The schema-set-level files are EntReadRuntime, ReadOnlyEntClient, the
         // public client DSL/facades, and three immutable resolved-config types.
-        // User additionally gets an index-helper file; Car has no eligible
+        // User additionally gets full/read index-helper files; Car has no eligible
         // indexes and therefore has no corresponding file.
-        assertEquals(15 * schemas.size + 13 + 1 + 4, files.size)
+        assertEquals(16 * schemas.size + 13 + 2 + 4, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
                 "Car", "CarDescriptor", "CarUserEdgeDescriptor",
                 "CarBeforeSaveState", "CarBeforeCreateState", "CarBeforeUpdateState",
-                "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarQueryScope", "CarRepo", "CarPrivacy", "CarValidation",
+                "CarCreateDraft", "CarUpdateDraft", "CarQuery", "CarReadQuery", "CarQueryScope", "CarRepo", "CarPrivacy", "CarValidation",
                 "CarCreateConverter", "CarDeleteConverter",
                 "CarUpdateRuleInput", "CarDeleteRuleInput",
                 "User", "UserDescriptor", "UserCarsEdgeDescriptor",
                 "UserBeforeSaveState", "UserBeforeCreateState", "UserBeforeUpdateState",
-                "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserQueryScope", "UserRepo", "UserPrivacy", "UserValidation",
+                "UserCreateDraft", "UserUpdateDraft", "UserQuery", "UserReadQuery", "UserQueryScope", "UserRepo", "UserPrivacy", "UserValidation",
                 "UserCreateConverter", "UserDeleteConverter",
                 "UserUpdateRuleInput", "UserDeleteRuleInput",
-                "UserIndexes",
+                "UserIndexes", "UserReadIndexes",
                 "EntReadRuntime",
                 "ReadOnlyEntClient",
                 "EntClientHooks",
@@ -196,6 +204,20 @@ class EntGeneratorTest {
         }
 
         assertContains(error.message!!, "AccountDescriptor.kt")
+    }
+
+    @Test
+    fun `schema names colliding with read-only query artifacts are rejected`() {
+        for (suffixed in listOf(AccountReadQuery(), AccountReadIndexes())) {
+            val base = Account()
+            finalize(base, suffixed)
+
+            val error = assertFailsWith<IllegalStateException> {
+                generator.generate(listOf(SchemaInput(base), SchemaInput(suffixed)))
+            }
+
+            assertContains(error.message!!, "${suffixed::class.simpleName}.kt")
+        }
     }
 
     @Test

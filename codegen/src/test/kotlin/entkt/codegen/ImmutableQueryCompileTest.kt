@@ -55,9 +55,9 @@ class ImmutableQueryCompileTest {
                 val base: UserQuery = client.users.query { where(User.active.eq(true)); limit(10) }
                 val refined: UserQuery = base.configure { offset(5); loadCars { limit(2) }.filterVisible() }
                 val page: UserQuery = base.limit(3).offset(1)
-                val readOnly: UserQuery = rules.users.query { loadCars { where(Car.year.gte(2020)) } }
+                val readOnly: UserReadQuery = rules.users.query { loadCars { where(Car.year.gte(2020)) } }
                 val indexed: UserQuery = client.users.indexes.email("a@example.com").query { loadCars() }
-                val ruleIndexed: UserQuery = rules.users.indexes.email("a@example.com").query { limit(1) }
+                val ruleIndexed: UserReadQuery = rules.users.indexes.email("a@example.com").query { limit(1) }
                 val traversed: CarQuery = base.queryCars { where(Car.year.gte(2020)); loadUser() }
                 val predicate: Predicate<User> = User.cars.has { where(Car.year.gte(2020)); where(Car.year.lte(2026)) }
                 val rows: ReadResult<List<User>> = refined.all(context)
@@ -98,6 +98,7 @@ class ImmutableQueryCompileTest {
                     override fun query(
                         table: String, predicates: List<Predicate<*>>, orderBy: List<OrderField<*>>,
                         limit: Int?, offset: Int?,
+                        lockMode: entkt.runtime.query.QueryLockMode,
                     ): List<Map<String, Any?>> { calls++; error("Construction must not query") }
                 }
                 val ids = mutableListOf(UUID(0, 1))
