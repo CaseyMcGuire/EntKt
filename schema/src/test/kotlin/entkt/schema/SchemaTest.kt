@@ -56,8 +56,8 @@ class UserGroup : EntSchema("user_groups", clientName = "userGroups") {
     val userId by int("user_id")
     val groupId by int("group_id")
 
-    val user by belongsTo<User>("user").field(userId)
-    val group by belongsTo<Group>("group").field(groupId)
+    val user by belongsTo<User>("user_id").field(userId)
+    val group by belongsTo<Group>("group_id").field(groupId)
 }
 
 class Task : EntSchema("tasks", clientName = "tasks") {
@@ -119,7 +119,7 @@ private class ComputedGetterTarget : EntSchema("targets", clientName = "computed
 
 private class ComputedGetterSource : EntSchema("sources", clientName = "computedGetterSources") {
     override fun id() = EntId.int()
-    val target by belongsTo<ComputedGetterTarget>("target").inverse(ComputedGetterTarget::items)
+    val target by belongsTo<ComputedGetterTarget>("target_id").inverse(ComputedGetterTarget::items)
 }
 
 private class M2mSide : EntSchema("sides", clientName = "m2mSides") {
@@ -128,8 +128,8 @@ private class M2mSide : EntSchema("sides", clientName = "m2mSides") {
 
 private class ComputedGetterJunction : EntSchema("junctions", clientName = "computedGetterJunctions") {
     override fun id() = EntId.int()
-    val left get() = belongsTo<M2mSide>("left")
-    val right by belongsTo<M2mSide>("right")
+    val left get() = belongsTo<M2mSide>("left_id")
+    val right by belongsTo<M2mSide>("right_id")
 }
 
 private class ComputedGetterOwner : EntSchema("owners", clientName = "computedGetterOwners") {
@@ -151,8 +151,8 @@ private class M2mTargetB : EntSchema("b", clientName = "m2mTargetBs") {
 // the "not the declaring schema" check.
 private class BadSourceJunction : EntSchema("bad_source_junction", clientName = "badSourceJunctions") {
     override fun id() = EntId.int()
-    val first by belongsTo<M2mTargetA>("first")
-    val second by belongsTo<M2mTargetA>("second")
+    val first by belongsTo<M2mTargetA>("first_id")
+    val second by belongsTo<M2mTargetA>("second_id")
 }
 private class WrongSourceTargetOwner : EntSchema("wst_owner", clientName = "wrongSourceTargetOwners") {
     override fun id() = EntId.int()
@@ -171,13 +171,13 @@ private class WrongTargetTargetOwner : EntSchema("wtt_owner", clientName = "wron
 }
 private class BadTargetJunction : EntSchema("bad_target_junction", clientName = "badTargetJunctions") {
     override fun id() = EntId.int()
-    val owner by belongsTo<WrongTargetTargetOwner>("owner")
-    val wrongTarget by belongsTo<M2mTargetA>("wrong_target")
+    val owner by belongsTo<WrongTargetTargetOwner>("owner_id")
+    val wrongTarget by belongsTo<M2mTargetA>("wrong_target_id")
 }
 
 private class SamePropJunction : EntSchema("same_prop_junction", clientName = "samePropJunctions") {
     override fun id() = EntId.int()
-    val only by belongsTo<M2mTargetA>("only")
+    val only by belongsTo<M2mTargetA>("only_id")
 }
 private class SamePropOwner : EntSchema("same_prop_owner", clientName = "samePropOwners") {
     override fun id() = EntId.int()
@@ -362,13 +362,13 @@ class SchemaTest {
         assertEquals(2, edges.size)
 
         val userEdge = edges[0]
-        assertEquals("user", userEdge.name)
+        assertEquals("user_id", userEdge.name)
         val userKind = userEdge.kind as EdgeKind.BelongsTo
         assertEquals("user_id", userKind.field)
         assertTrue(userKind.required)
 
         val groupEdge = edges[1]
-        assertEquals("group", groupEdge.name)
+        assertEquals("group_id", groupEdge.name)
         val groupKind = groupEdge.kind as EdgeKind.BelongsTo
         assertEquals("group_id", groupKind.field)
     }
@@ -407,7 +407,7 @@ class SchemaTest {
         class Owner : EntSchema("owners", clientName = "owners") { override fun id() = EntId.int() }
         class Pet : EntSchema("pets", clientName = "pets") {
             override fun id() = EntId.int()
-            val owner by belongsTo<Owner>("owner").onDelete(OnDelete.CASCADE)
+            val owner by belongsTo<Owner>("owner_id").onDelete(OnDelete.CASCADE)
         }
         val ownerSchema = Owner()
         val petSchema = Pet()
@@ -423,7 +423,7 @@ class SchemaTest {
         class Owner : EntSchema("owners", clientName = "owners") { override fun id() = EntId.int() }
         class Pet : EntSchema("pets", clientName = "pets") {
             override fun id() = EntId.int()
-            val owner by belongsTo<Owner>("owner")
+            val owner by belongsTo<Owner>("owner_id")
                 .onDelete(OnDelete.SET_NULL)
         }
         val ownerSchema = Owner()
@@ -440,7 +440,7 @@ class SchemaTest {
         class Owner : EntSchema("owners", clientName = "owners") { override fun id() = EntId.int() }
         class Pet : EntSchema("pets", clientName = "pets") {
             override fun id() = EntId.int()
-            val owner by belongsTo<Owner>("owner").nullable().onDelete(OnDelete.SET_NULL)
+            val owner by belongsTo<Owner>("owner_id").nullable().onDelete(OnDelete.SET_NULL)
         }
         val ownerSchema = Owner()
         val petSchema = Pet()

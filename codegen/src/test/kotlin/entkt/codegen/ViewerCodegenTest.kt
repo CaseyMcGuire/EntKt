@@ -31,7 +31,7 @@ private class ConversationAsset : EntSchema("conversation_assets", clientName = 
 private class ViewerPost : EntSchema("viewer_posts", clientName = "viewerPosts") {
     override fun id() = EntId.long()
     val title by string("title")
-    val author by belongsTo<ViewerUser>("author").inverse(ViewerUser::posts)
+    val author by belongsTo<ViewerUser>("author_id").inverse(ViewerUser::posts)
 }
 
 class ViewerCodegenTest {

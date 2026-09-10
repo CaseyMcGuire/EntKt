@@ -1478,8 +1478,8 @@ private class UuidJunctionTag : EntSchema("uuid_junction_tags", clientName = "uu
 private class UuidJunctionPostTag : EntSchema("uuid_junction_post_tags", clientName = "uuidJunctionPostTags") {
     // CLIENT_UUID junction id: caller (or codegen) mints UUID client-side.
     override fun id() = EntId.uuid()
-    val post by belongsTo<UuidJunctionPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag by belongsTo<UuidJunctionTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val post by belongsTo<UuidJunctionPost>("post_id").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<UuidJunctionTag>("tag_id").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_uuid_junction_post_tags_pair", post.fk, tag.fk).unique()
 }
 private data class ClientUuidJunctionSchemas(
@@ -1518,8 +1518,8 @@ private class M2MTag : EntSchema("m2m_tags", clientName = "m2MTags") {
 }
 private class M2MPostTag : EntSchema("m2m_post_tags", clientName = "m2MPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<M2MPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag by belongsTo<M2MTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val post by belongsTo<M2MPost>("post_id").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<M2MTag>("tag_id").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_m2m_post_tags_pair", post.fk, tag.fk).unique()
 }
 
@@ -1552,8 +1552,8 @@ private class M2MMember : EntSchema("m2m_members", clientName = "m2MMembers") {
 private class M2MTeamMembership : EntSchema("m2m_memberships", clientName = "m2MTeamMemberships") {
     override fun id() = EntId.long()
     val joinedAt by instant("joined_at")
-    val team by belongsTo<M2MTeam>("team")
-    val member by belongsTo<M2MMember>("member")
+    val team by belongsTo<M2MTeam>("team_id")
+    val member by belongsTo<M2MMember>("member_id")
 }
 private data class EntitySchemas(
     val team: M2MTeam,
@@ -1587,14 +1587,14 @@ private class M2MLabel : EntSchema("m2m_labels", clientName = "m2MLabels") {
 }
 private class M2MDocTag : EntSchema("m2m_doc_tags", clientName = "m2MDocTags") {
     override fun id() = EntId.long()
-    val doc by belongsTo<M2MDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag by belongsTo<M2MLabel>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val doc by belongsTo<M2MDoc>("doc_id").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<M2MLabel>("tag_id").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_m2m_doc_tags_pair", doc.fk, tag.fk).unique()
 }
 private class M2MDocLabel : EntSchema("m2m_doc_labels", clientName = "m2MDocLabels") {
     override fun id() = EntId.long()
-    val doc by belongsTo<M2MDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
-    val label by belongsTo<M2MLabel>("label").onDelete(entkt.schema.OnDelete.CASCADE)
+    val doc by belongsTo<M2MDoc>("doc_id").onDelete(entkt.schema.OnDelete.CASCADE)
+    val label by belongsTo<M2MLabel>("label_id").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_m2m_doc_labels_pair", doc.fk, label.fk).unique()
 }
 private data class MultiEdgeSchemas(
@@ -1638,8 +1638,8 @@ private class DupJunctionTag : EntSchema("dup_junction_tags", clientName = "dupJ
 }
 private class DupJunctionDocTag : EntSchema("dup_junction_doc_tags", clientName = "dupJunctionDocTags") {
     override fun id() = EntId.long()
-    val doc by belongsTo<DupJunctionDoc>("doc").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag by belongsTo<DupJunctionTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val doc by belongsTo<DupJunctionDoc>("doc_id").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<DupJunctionTag>("tag_id").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_dup_junction_doc_tags_pair", doc.fk, tag.fk).unique()
 }
 private data class DupJunctionSchemas(

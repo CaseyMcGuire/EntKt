@@ -21,7 +21,7 @@ class Car : EntSchema("cars", clientName = "cars") {
     val year by int("year")
     val price by float("price").nullable()
 
-    val user by belongsTo<User>("user").inverse(User::cars)
+    val user by belongsTo<User>("user_id").inverse(User::cars)
 }
 
 class Ticket : EntSchema("tickets", clientName = "tickets") {
@@ -59,7 +59,7 @@ private class IdxParentSchema : EntSchema("parents", clientName = "idxParentSche
 private class IdxChildSchema : EntSchema("children", clientName = "idxChildSchemas") {
     override fun id() = EntId.int()
     val title by string("title")
-    val author by belongsTo<IdxParentSchema>("author")
+    val author by belongsTo<IdxParentSchema>("author_id")
     val byAuthor = index("idx_author", author.fk)
 }
 
@@ -71,7 +71,7 @@ private class CollisionParentSchema : EntSchema("parents", clientName = "collisi
 private class CollisionChildSchema : EntSchema("children", clientName = "collisionChildSchemas") {
     override fun id() = EntId.int()
     val ownerId by int("owner_id")
-    val owner by belongsTo<CollisionParentSchema>("owner")
+    val owner by belongsTo<CollisionParentSchema>("owner_id")
 }
 
 private class EdgeCommentTargetSchema : EntSchema("authors", clientName = "edgeCommentTargetSchemas") {
@@ -82,13 +82,13 @@ private class EdgeCommentTargetSchema : EntSchema("authors", clientName = "edgeC
 private class EdgeCommentSourceSchema : EntSchema("posts", clientName = "edgeCommentSourceSchemas") {
     override fun id() = EntId.int()
     val name by string("name")
-    val author by belongsTo<EdgeCommentTargetSchema>("author").comment("The author of this post")
+    val author by belongsTo<EdgeCommentTargetSchema>("author_id").comment("The author of this post")
 }
 
 private class CommentPostSchema : EntSchema("posts", clientName = "commentPostSchemas") {
     override fun id() = EntId.int()
     val title by string("title")
-    val author by belongsTo<CommentAuthorSchema>("author").inverse(CommentAuthorSchema::posts)
+    val author by belongsTo<CommentAuthorSchema>("author_id").inverse(CommentAuthorSchema::posts)
 }
 
 private class CommentAuthorSchema : EntSchema("authors", clientName = "commentAuthorSchemas") {

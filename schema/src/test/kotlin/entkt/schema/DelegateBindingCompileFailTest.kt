@@ -103,7 +103,7 @@ class DelegateBindingCompileFailTest {
             }
             class Post : EntSchema("posts", clientName = "posts") {
                 override fun id() = EntId.long()
-                val tag by belongsTo<Tag>("tag").field(tagId)
+                val tag by belongsTo<Tag>("tag_id").field(tagId)
                 val tagId by long("tag_id")
             }
             """.trimIndent(),
@@ -125,7 +125,7 @@ class DelegateBindingCompileFailTest {
                 override fun id() = EntId.long()
                 val title: StringFieldBuilder by string("title").default("Untitled")
                 val tagId: LongFieldBuilder by long("tag_id")
-                val tag: BelongsToBuilder<Tag> by belongsTo<Tag>("tag").field(tagId)
+                val tag: BelongsToBuilder<Tag> by belongsTo<Tag>("tag_id").field(tagId)
             }
             """.trimIndent(),
         )

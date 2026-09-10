@@ -33,8 +33,8 @@ private class M2mMembershipSchema : EntSchema("memberships", clientName = "m2mMe
     override fun id() = EntId.int()
     val groupId by int("group_id")
     val personId by int("person_id")
-    val group by belongsTo<M2mGroupSchema>("group").field(groupId)
-    val person by belongsTo<M2mPersonSchema>("person").field(personId)
+    val group by belongsTo<M2mGroupSchema>("group_id").field(groupId)
+    val person by belongsTo<M2mPersonSchema>("person_id").field(personId)
 }
 
 // Derived-name collision fixtures. Entity names come from the class, so

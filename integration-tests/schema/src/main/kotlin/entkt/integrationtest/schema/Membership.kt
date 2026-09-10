@@ -19,8 +19,8 @@ import entkt.schema.EntSchema
 class Membership : EntSchema("memberships", clientName = "memberships") {
     override fun id() = EntId.long()
 
-    val group by belongsTo<Group>("group").nullable()
-    val user by belongsTo<User>("user").nullable()
+    val group by belongsTo<Group>("group_id").nullable()
+    val user by belongsTo<User>("user_id").nullable()
 
     /** Payload — proves the junction is a domain entity, not just a join row. */
     val role by string("role")

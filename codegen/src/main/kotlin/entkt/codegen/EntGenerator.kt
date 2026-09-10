@@ -563,9 +563,9 @@ private fun validateThroughLinkJunctions(
             }
 
             // Resolve FK column names — after `.field(handle)` if explicit,
-            // otherwise the synthesized `${edgeName}_id`.
-            val sourceFkCol = sourceBt.field ?: "${sourceJunctionEdge.name}_id"
-            val targetFkCol = targetBt.field ?: "${targetJunctionEdge.name}_id"
+            // otherwise the column declared directly by belongsTo.
+            val sourceFkCol = sourceBt.field ?: sourceJunctionEdge.name
+            val targetFkCol = targetBt.field ?: targetJunctionEdge.name
 
             // Rule 1a: no extra belongsTo edges beyond the two named in
             // throughLink. An extra junction belongsTo adds an FK column
@@ -580,7 +580,7 @@ private fun validateThroughLinkJunctions(
             if (extraBelongsTo.isNotEmpty()) {
                 val names = extraBelongsTo.joinToString(", ") {
                     val bt = it.kind as EdgeKind.BelongsTo
-                    val col = bt.field ?: "${it.name}_id"
+                    val col = bt.field ?: it.name
                     "'${it.apiName}' (storage '${it.name}', FK column '$col' → ${schemaNames[it.target] ?: it.target.tableName})"
                 }
                 error(
@@ -618,7 +618,7 @@ private fun validateThroughLinkJunctions(
                             "no enforcement on this path. Drop it or use throughEntity.",
                     )
                 }
-                val fkCol = belongsTo.field ?: "${junctionEdge.name}_id"
+                val fkCol = belongsTo.field ?: junctionEdge.name
                 val backing = fieldsByName[fkCol] ?: continue // synthesized FK has no backing Field, nothing to check
                 if (backing.sensitive) {
                     error(

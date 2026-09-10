@@ -26,8 +26,8 @@ private class HeTag : EntSchema("he_tags", clientName = "heTags") {
 
 private class HePostTag : EntSchema("he_post_tags", clientName = "hePostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<HePost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<HeTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<HePost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<HeTag>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_he_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
@@ -46,8 +46,8 @@ private class HeMember : EntSchema("he_members", clientName = "heMembers") {
 private class HeMembership : EntSchema("he_memberships", clientName = "heMemberships") {
     override fun id() = EntId.long()
     val joinedAt by instant("joined_at")
-    val team by belongsTo<HeTeam>("team")
-    val member by belongsTo<HeMember>("member")
+    val team by belongsTo<HeTeam>("team_id")
+    val member by belongsTo<HeMember>("member_id")
 }
 
 // ---------- Two helper-eligible throughLink edges on one source ----------
@@ -66,15 +66,15 @@ private class HeLabel : EntSchema("he_labels", clientName = "heLabels") {
 
 private class HeDocTag : EntSchema("he_doc_tags", clientName = "heDocTags") {
     override fun id() = EntId.long()
-    val doc by belongsTo<HeDoc>("doc").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<HeLabel>("tag").onDelete(OnDelete.CASCADE)
+    val doc by belongsTo<HeDoc>("doc_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<HeLabel>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_he_doc_tags_doc_tag", doc.fk, tag.fk).unique()
 }
 
 private class HeDocLabel : EntSchema("he_doc_labels", clientName = "heDocLabels") {
     override fun id() = EntId.long()
-    val doc by belongsTo<HeDoc>("doc").onDelete(OnDelete.CASCADE)
-    val label by belongsTo<HeLabel>("label").onDelete(OnDelete.CASCADE)
+    val doc by belongsTo<HeDoc>("doc_id").onDelete(OnDelete.CASCADE)
+    val label by belongsTo<HeLabel>("label_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_he_doc_labels_doc_label", doc.fk, label.fk).unique()
 }
 
@@ -199,7 +199,7 @@ private class SnakeLabel : EntSchema("snake_labels", clientName = "snakeLabels")
 }
 private class SnakePostLabel : EntSchema("snake_post_labels", clientName = "snakePostLabels") {
     override fun id() = EntId.long()
-    val post by belongsTo<SnakePost>("post").onDelete(OnDelete.CASCADE)
-    val label by belongsTo<SnakeLabel>("label").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<SnakePost>("post_id").onDelete(OnDelete.CASCADE)
+    val label by belongsTo<SnakeLabel>("label_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_snake_post_labels_pair", post.fk, label.fk).unique()
 }

@@ -19,5 +19,5 @@ class Reminder : EntSchema("reminders", clientName = "reminders") {
     override fun id() = EntId.long()
 
     val body by string("body")
-    val assignee by belongsTo<User>("assignee").nullable()
+    val assignee by belongsTo<User>("assignee_id").nullable()
 }

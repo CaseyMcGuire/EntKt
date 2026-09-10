@@ -21,8 +21,8 @@ class QuerySurfaceCompileTest {
 
     private class Membership : EntSchema("memberships", clientName = "memberships") {
         override fun id() = EntId.long()
-        val group by belongsTo<Group>("group")
-        val user by belongsTo<User>("user")
+        val group by belongsTo<Group>("group_id")
+        val user by belongsTo<User>("user_id")
     }
 
     private fun compile(vararg sources: SourceFile): JvmCompilationResult {

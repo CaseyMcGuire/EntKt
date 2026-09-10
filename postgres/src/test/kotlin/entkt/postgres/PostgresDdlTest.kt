@@ -10,7 +10,9 @@ import entkt.schema.EntSchema
 import entkt.schema.OnDelete
 import java.time.LocalDate
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 // ── Relationship pattern schemas (file-level for cross-class references) ──
@@ -23,7 +25,7 @@ private class O2oUser : EntSchema("o2o_users", clientName = "o2oUsers") {
 
 private class O2oProfile : EntSchema("o2o_profiles", clientName = "o2oProfiles") {
     override fun id() = EntId.uuid()
-    val user by belongsTo<O2oUser>("user")
+    val user by belongsTo<O2oUser>("user_id")
         .inverse(O2oUser::profile)
         .unique()
 }
@@ -36,7 +38,7 @@ private class O2mUser : EntSchema("o2m_users", clientName = "o2mUsers") {
 
 private class O2mPost : EntSchema("o2m_posts", clientName = "o2mPosts") {
     override fun id() = EntId.long()
-    val author by belongsTo<O2mUser>("author")
+    val author by belongsTo<O2mUser>("author_id")
         .inverse(O2mUser::posts)
 }
 
@@ -53,8 +55,8 @@ private class M2mGroup : EntSchema("m2m_groups", clientName = "m2mGroups") {
 
 private class M2mUserGroup : EntSchema("m2m_user_groups", clientName = "m2mUserGroups") {
     override fun id() = EntId.long()
-    val user by belongsTo<M2mUser>("user")
-    val group by belongsTo<M2mGroup>("group")
+    val user by belongsTo<M2mUser>("user_id")
+    val group by belongsTo<M2mGroup>("group_id")
     val byUserGroup = index("idx_m2m_user_groups_user_group", user.fk, group.fk).unique()
 }
 
@@ -67,8 +69,8 @@ private class M2mPerson : EntSchema("m2m_people", clientName = "m2mPersons") {
 
 private class M2mFriendship : EntSchema("m2m_friendships", clientName = "m2mFriendships") {
     override fun id() = EntId.long()
-    val user by belongsTo<M2mPerson>("user")
-    val friend by belongsTo<M2mPerson>("friend")
+    val user by belongsTo<M2mPerson>("user_id")
+    val friend by belongsTo<M2mPerson>("friend_id")
     val byFriendPair = index("idx_m2m_friendships_user_friend", user.fk, friend.fk).unique()
 }
 
@@ -87,8 +89,8 @@ private class M2mBiGroup : EntSchema("m2m_bi_groups", clientName = "m2mBiGroups"
 
 private class M2mBiMembership : EntSchema("m2m_bi_memberships", clientName = "m2mBiMemberships") {
     override fun id() = EntId.long()
-    val user by belongsTo<M2mBiUser>("user")
-    val group by belongsTo<M2mBiGroup>("group")
+    val user by belongsTo<M2mBiUser>("user_id")
+    val group by belongsTo<M2mBiGroup>("group_id")
 }
 
 /**
@@ -121,6 +123,28 @@ class PostgresDdlTest {
             }
             createTable + createIndexes + addFks
         }
+    }
+
+    @Test
+    fun `FK column constraint and index DDL use belongsTo names verbatim`() {
+        class Language : EntSchema("languages", clientName = "languages") {
+            override fun id() = EntId.long()
+        }
+        class Problem : EntSchema("problems", clientName = "problems") {
+            override fun id() = EntId.long()
+            val language by belongsTo<Language>(column = "problem_language_id")
+            val fallbackLanguage by belongsTo<Language>("fallback_ref").nullable().unique()
+            val byLanguage by index("idx_problem_language", language.fk)
+        }
+        val ddl = renderDdl(Language(), Problem()).joinToString("\n")
+        assertContains(ddl, "\"problem_language_id\" bigint NOT NULL")
+        assertContains(ddl, "\"fallback_ref\" bigint")
+        assertContains(ddl, "FOREIGN KEY (\"problem_language_id\") REFERENCES \"languages\" (\"id\")")
+        assertContains(ddl, "FOREIGN KEY (\"fallback_ref\") REFERENCES \"languages\" (\"id\")")
+        assertContains(ddl, "CREATE INDEX \"idx_problem_language\" ON \"problems\" (\"problem_language_id\")")
+        assertContains(ddl, "CREATE UNIQUE INDEX \"idx_problems_fallback_ref_unique\" ON \"problems\" (\"fallback_ref\")")
+        assertFalse("problem_language_id_id" in ddl, ddl)
+        assertFalse("fallback_ref_id" in ddl, ddl)
     }
 
     @Test
@@ -368,7 +392,7 @@ class PostgresDdlTest {
         class Posts : EntSchema("posts", clientName = "postses") {
             override fun id() = EntId.int()
             val title by string("title")
-            val author by belongsTo<Users>("author").nullable()
+            val author by belongsTo<Users>("author_id").nullable()
         }
 
         val ddl = renderDdl(Users(), Posts())
@@ -399,7 +423,7 @@ class PostgresDdlTest {
         }
         class Posts : EntSchema("posts", clientName = "postses") {
             override fun id() = EntId.int()
-            val author by belongsTo<Users>("author")
+            val author by belongsTo<Users>("author_id")
         }
 
         val ddl = renderDdl(Users(), Posts())
@@ -429,7 +453,7 @@ class PostgresDdlTest {
         }
         class Posts : EntSchema("posts", clientName = "postses") {
             override fun id() = EntId.int()
-            val author by belongsTo<Users>("author").onDelete(OnDelete.CASCADE)
+            val author by belongsTo<Users>("author_id").onDelete(OnDelete.CASCADE)
         }
 
         val ddl = renderDdl(Users(), Posts())
@@ -565,8 +589,8 @@ class PostgresDdlTest {
         }
         class UserGroups : EntSchema("user_groups", clientName = "userGroupses") {
             override fun id() = EntId.int()
-            val user by belongsTo<Users>("user").onDelete(OnDelete.CASCADE)
-            val group by belongsTo<Groups>("group").onDelete(OnDelete.CASCADE)
+            val user by belongsTo<Users>("user_id").onDelete(OnDelete.CASCADE)
+            val group by belongsTo<Groups>("group_id").onDelete(OnDelete.CASCADE)
             val byUserGroup = index("idx_user_groups_unique", user.fk, group.fk).unique()
         }
 
@@ -628,7 +652,7 @@ class PostgresDdlTest {
         class Employee : EntSchema("employees", clientName = "employees") {
             override fun id() = EntId.long()
             val mentee by hasOne<Employee>("mentee")
-            val mentor by belongsTo<Employee>("mentor")
+            val mentor by belongsTo<Employee>("mentor_id")
                 .inverse(Employee::mentee)
                 .unique()
                 .nullable()
@@ -677,7 +701,7 @@ class PostgresDdlTest {
         class Category : EntSchema("categories", clientName = "categories") {
             override fun id() = EntId.long()
             val children by hasMany<Category>("children")
-            val parent by belongsTo<Category>("parent")
+            val parent by belongsTo<Category>("parent_id")
                 .inverse(Category::children)
                 .nullable()
         }

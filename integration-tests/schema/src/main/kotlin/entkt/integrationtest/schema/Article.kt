@@ -34,7 +34,7 @@ class Article : EntSchema("articles", clientName = "articles") {
     // element serializer (no wrapper class).
     val rects by json<List<HighlightRect>>("rects").nullable()
 
-    val author by belongsTo<User>("author").inverse(User::articles)
+    val author by belongsTo<User>("author_id").inverse(User::articles)
 
     // Exercises indexed query helpers: a composite over the implicit FK
     // (author_id → authorId) plus a comparable text column (title → range

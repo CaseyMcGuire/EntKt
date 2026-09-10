@@ -24,13 +24,13 @@ class ImmutableBelongsToCompileTest {
     private class Record : EntSchema("records", clientName = "records") {
         override fun id() = EntId.string()
         val title by string("title")
-        val owner by belongsTo<Owner>("owner").immutable()
-        val reviewer by belongsTo<Owner>("reviewer").immutable().nullable()
+        val owner by belongsTo<Owner>("owner_id").immutable()
+        val reviewer by belongsTo<Owner>("reviewer_id").immutable().nullable()
         val writer by long("writer_id").default(42L)
-        val author by belongsTo<Owner>("author").field(writer).immutable()
+        val author by belongsTo<Owner>("writer_id").field(writer).immutable()
         val fixedId by long("fixed_id").immutable()
-        val fixed by belongsTo<Owner>("fixed").field(fixedId)
-        val editor by belongsTo<Owner>("editor").nullable()
+        val fixed by belongsTo<Owner>("fixed_id").field(fixedId)
+        val editor by belongsTo<Owner>("editor_id").nullable()
     }
 
     private val immutableProperties = listOf("ownerId", "reviewerId", "writer", "fixedId")
@@ -166,10 +166,10 @@ class ImmutableBelongsToCompileTest {
 
     private class Link(immutableSource: Boolean) : EntSchema("links", clientName = "links") {
         override fun id() = EntId.long()
-        val owner by belongsTo<LinkOwner>("owner").onDelete(OnDelete.CASCADE).apply {
+        val owner by belongsTo<LinkOwner>("owner_id").onDelete(OnDelete.CASCADE).apply {
             if (immutableSource) immutable()
         }
-        val target by belongsTo<LinkTarget>("target").onDelete(OnDelete.CASCADE).apply {
+        val target by belongsTo<LinkTarget>("target_id").onDelete(OnDelete.CASCADE).apply {
             if (!immutableSource) immutable()
         }
         val pair = index("uq_links_pair", owner.fk, target.fk).unique()

@@ -33,13 +33,13 @@ private class InspPost : EntSchema("posts", clientName = "inspPosts") {
     override fun id() = EntId.long()
     val title by string("title")
     val published by bool("published").default(false)
-    val author by belongsTo<InspAuthor>("author").inverse(InspAuthor::posts)
+    val author by belongsTo<InspAuthor>("author_id").inverse(InspAuthor::posts)
 }
 
 private class InspProfile : EntSchema("profiles", clientName = "inspProfiles") {
     override fun id() = EntId.uuid()
     val bio by string("bio").nullable()
-    val user by belongsTo<InspProfileUser>("user")
+    val user by belongsTo<InspProfileUser>("user_id")
         .inverse(InspProfileUser::profile).unique()
 }
 
@@ -65,8 +65,8 @@ private class InspArticleTag : EntSchema("article_tags", clientName = "inspArtic
     override fun id() = EntId.int()
     val articleId by int("article_id")
     val tagId by int("tag_id")
-    val article by belongsTo<InspArticle>("article").field(articleId)
-    val tag by belongsTo<InspTag>("tag").field(tagId)
+    val article by belongsTo<InspArticle>("article_id").field(articleId)
+    val tag by belongsTo<InspTag>("tag_id").field(tagId)
 }
 
 // Pair-swapped throughLink fixtures: both declared sides are writable.
@@ -82,8 +82,8 @@ private class InspLinkTag : EntSchema("link_tags", clientName = "inspLinkTags") 
 }
 private class InspLinkPostTag : EntSchema("link_post_tags", clientName = "inspLinkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<InspLinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<InspLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<InspLinkPost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<InspLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     val byPost = index("idx_link_post_tags_post_tag", post.fk, tag.fk).unique()
     val byTag = index("idx_link_post_tags_tag_post", tag.fk, post.fk)
 }
@@ -111,7 +111,7 @@ private class InspAccountHolder : EntSchema("account_holders", clientName = "ins
 private class InspAccount : EntSchema("accounts", clientName = "inspAccounts") {
     override fun id() = EntId.int()
     val holderId by int("holder_id") // field itself is NOT .unique()
-    val holder by belongsTo<InspAccountHolder>("holder")
+    val holder by belongsTo<InspAccountHolder>("holder_id")
         .inverse(InspAccountHolder::account).unique().field(holderId)
 }
 
@@ -122,7 +122,7 @@ private class InspCascadeParent : EntSchema("cascade_parents", clientName = "ins
 
 private class InspCascadeChild : EntSchema("cascade_children", clientName = "inspCascadeChilds") {
     override fun id() = EntId.int()
-    val parent by belongsTo<InspCascadeParent>("parent")
+    val parent by belongsTo<InspCascadeParent>("parent_id")
         .inverse(InspCascadeParent::children)
         .onDelete(OnDelete.CASCADE)
 }
@@ -327,7 +327,7 @@ class SchemaInspectorTest {
         assertEquals("id", fk.targetColumn)
         assertFalse(fk.nullable)
         assertEquals("RESTRICT", fk.onDelete)
-        assertEquals("author", fk.sourceEdge)
+        assertEquals("author_id", fk.sourceEdge)
     }
 
     @Test
@@ -338,7 +338,7 @@ class SchemaInspectorTest {
         val junction = graph.schemas.first { it.schemaName == "InspArticleTag" }
 
         assertEquals(2, junction.foreignKeys.size)
-        val articleFk = junction.foreignKeys.first { it.sourceEdge == "article" }
+        val articleFk = junction.foreignKeys.first { it.sourceEdge == "article_id" }
         assertEquals("article_id", articleFk.column)
         assertEquals("articles", articleFk.targetTable)
         assertFalse(articleFk.nullable)
@@ -357,7 +357,7 @@ class SchemaInspectorTest {
         class Target : EntSchema("targets", clientName = "targets") { override fun id() = EntId.int() }
         class Source : EntSchema("sources", clientName = "sources") {
             override fun id() = EntId.int()
-            val target by belongsTo<Target>("target").nullable()
+            val target by belongsTo<Target>("target_id").nullable()
         }
         val graph = SchemaInspector.explain(listOf(
             SchemaInput(Target()),
@@ -375,7 +375,7 @@ class SchemaInspectorTest {
     fun `explain captures belongsTo edge with FK and inverse`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
         val post = graph.schemas.first { it.schemaName == "InspPost" }
-        val authorEdge = post.edges.first { it.name == "author" }
+        val authorEdge = post.edges.first { it.name == "author_id" }
         assertEquals("belongsTo", authorEdge.kind)
         assertEquals("InspAuthor", authorEdge.targetSchema)
         assertEquals("author_id", authorEdge.fkColumn)
@@ -391,7 +391,7 @@ class SchemaInspectorTest {
         assertEquals("hasMany", postsEdge.kind)
         assertEquals("InspPost", postsEdge.targetSchema)
         assertNull(postsEdge.fkColumn)
-        assertEquals("author", postsEdge.inverse)
+        assertEquals("author_id", postsEdge.inverse)
     }
 
     @Test
@@ -415,8 +415,8 @@ class SchemaInspectorTest {
 
         val through = articlesEdge.through!!
         assertEquals("article_tags", through.junctionTable)
-        assertEquals("tag", through.sourceEdge)
-        assertEquals("article", through.targetEdge)
+        assertEquals("tag_id", through.sourceEdge)
+        assertEquals("article_id", through.targetEdge)
         // throughEntity has no link-table write helpers.
         assertNull(through.writeHelpers)
     }
@@ -636,8 +636,8 @@ class SchemaInspectorTest {
 
         assertContains(json, "\"kind\": \"manyToMany\"")
         assertContains(json, "\"junctionTable\": \"article_tags\"")
-        assertContains(json, "\"sourceEdge\": \"tag\"")
-        assertContains(json, "\"targetEdge\": \"article\"")
+        assertContains(json, "\"sourceEdge\": \"tag_id\"")
+        assertContains(json, "\"targetEdge\": \"article_id\"")
     }
 
     @Test
@@ -726,10 +726,10 @@ class SchemaInspectorTest {
         assertEquals("legacy_title_txt", title.name)
 
         val edge = doc.edges.first { it.apiName == "writer" }
-        assertEquals("legacy_author", edge.name)
+        assertEquals("legacy_author_id", edge.name)
 
         val fk = doc.foreignKeys.first { it.sourceEdgeApiName == "writer" }
-        assertEquals("legacy_author", fk.sourceEdge)
+        assertEquals("legacy_author_id", fk.sourceEdge)
         assertEquals("writerId", fk.propertyName)
         assertEquals("legacy_author_id", fk.column)
 
@@ -754,5 +754,5 @@ private class DivergentUser : EntSchema("legacy_user_tbl", clientName = "people"
 private class DivergentDoc : EntSchema("legacy_doc_tbl", clientName = "stories") {
     override fun id() = EntId.long()
     val publicTitle by string("legacy_title_txt")
-    val writer by belongsTo<DivergentUser>("legacy_author")
+    val writer by belongsTo<DivergentUser>("legacy_author_id")
 }

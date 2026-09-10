@@ -70,14 +70,14 @@ class DelegateBindingTest {
         )
         registry.values.forEach { it.finalize(registry) }
 
-        assertEquals("writer", edgeByStorage(article, "primary_author").declarationName)
+        assertEquals("writer", edgeByStorage(article, "primary_author_id").declarationName)
         assertEquals("relatedStories", edgeByStorage(article, "related_stories").declarationName)
         assertEquals("mainProfile", edgeByStorage(article, "main_profile").declarationName)
         assertEquals("labels", edgeByStorage(article, "person_links").declarationName)
 
         // Storage names survive unchanged for joins and migrations.
         assertEquals(
-            setOf("primary_author", "related_stories", "main_profile", "person_links"),
+            setOf("primary_author_id", "related_stories", "main_profile", "person_links"),
             article.edges().map { it.name }.toSet(),
         )
     }
@@ -106,7 +106,7 @@ class DelegateBindingTest {
             override fun id() = EntId.long()
             val title by string("title").default("Untitled")
             val authorId by long("author_id")
-            val writer by belongsTo<Target>("writer").field(authorId).nullable()
+            val writer by belongsTo<Target>("author_id").field(authorId).nullable()
             val byAuthor = index("idx_post_author", authorId)
             val byFk = index("idx_post_fk", writer.fk)
         }
@@ -118,7 +118,7 @@ class DelegateBindingTest {
         val writer: BelongsToBuilder<Target> = schema.writer
         assertEquals("title", title.fieldName)
         assertEquals("author_id", authorId.fieldName)
-        assertEquals("writer", writer.edgeName)
+        assertEquals("author_id", writer.edgeName)
         // Reading the property twice yields the same builder, not a copy.
         assertSame(schema.title, schema.title)
     }
@@ -313,7 +313,7 @@ class DelegateBindingTest {
         }
         class Post : EntSchema("fk_posts", clientName = "fkPosts") {
             override fun id() = EntId.long()
-            val writer by belongsTo<Target>("writer")
+            val writer by belongsTo<Target>("writer_id")
             val writerFk: IndexableColumn = writer.fk
             val byWriter = index("idx_fk_posts_writer", writerFk)
         }
@@ -324,7 +324,7 @@ class DelegateBindingTest {
             Post::class to post,
         )
         registry.values.forEach { it.finalize(registry) }
-        assertEquals("writer", edgeByStorage(post, "writer").declarationName)
+        assertEquals("writer", edgeByStorage(post, "writer_id").declarationName)
     }
 
     @Test
@@ -415,7 +415,7 @@ private class BindingTimestamps(scope: EntMixin.Scope) : EntMixin(scope) {
 
 private class Article2 : EntSchema("articles2", clientName = "articles2") {
     override fun id() = EntId.long()
-    val writer by belongsTo<Profile2>("primary_author")
+    val writer by belongsTo<Profile2>("primary_author_id")
     val relatedStories by hasMany<Article2>("related_stories")
     val mainProfile by hasOne<Profile2>("main_profile")
     val labels by manyToMany<Profile2>("person_links")
@@ -428,8 +428,8 @@ private class Profile2 : EntSchema("profiles2", clientName = "profiles2") {
 
 private class Junction2 : EntSchema("junction2", clientName = "junction2") {
     override fun id() = EntId.long()
-    val left by belongsTo<Article2>("left")
-    val right by belongsTo<Profile2>("right")
+    val left by belongsTo<Article2>("left_id")
+    val right by belongsTo<Profile2>("right_id")
 }
 
 private class LazyMixin(scope: EntMixin.Scope) : EntMixin(scope) {

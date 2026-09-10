@@ -49,7 +49,7 @@ private class IdxPost : EntSchema("posts", clientName = "idxPosts") {
     val createdAt by instant("created_at")
     val sequence by long("sequence")
     val status by string("status")
-    val author by belongsTo<IdxAuthor>("author")
+    val author by belongsTo<IdxAuthor>("author_id")
 
     val byAuthorCreated = index("idx_posts_author_created", author.fk, createdAt)
     val byAuthorCreatedSeq = index("idx_posts_author_created_seq", author.fk, createdAt, sequence)
@@ -138,7 +138,7 @@ private class IdxCollision : EntSchema("collide", clientName = "idxCollisions") 
     // generates the helper property `ownerId` on column `owner_id`. The
     // scalar below declares that same name on a different column, so two
     // distinct columns reach the same helper name at the same stage.
-    val owner by belongsTo<IdxCollisionTarget>("owner")
+    val owner by belongsTo<IdxCollisionTarget>("owner_id")
     val ownerId by long("owner_ref")
     val byFk = index("idx_collide_fk", owner.fk)
     val byScalar = index("idx_collide_scalar", ownerId)
@@ -152,7 +152,7 @@ private class IdxFbAuthor : EntSchema("fbauthors", clientName = "idxFbAuthors") 
 private class IdxFbPost : EntSchema("fbposts", clientName = "idxFbPosts") {
     override fun id() = EntId.long()
     val writer by long("author_id")
-    val author by belongsTo<IdxFbAuthor>("author").field(writer)
+    val author by belongsTo<IdxFbAuthor>("author_id").field(writer)
     val byWriter = index("idx_fbposts_writer", writer)
 }
 

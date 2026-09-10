@@ -247,7 +247,7 @@ class MemberCollisionValidationTest {
     // ──────────────────────────────────────────────────────────────
     // Collision case: companion edge ref name collides with
     // companion FK column ref name. The implicit FK for
-    // `belongsTo<X>("author")` produces a column ref named
+    // `belongsTo<X>("author_id")` produces a column ref named
     // `authorId` on the companion (toCamelCase("author_id"));
     // a `hasMany` edge declared with name "author_id"
     // (snake_case-valid) produces an edge ref also named
@@ -392,7 +392,7 @@ class MemberCollisionValidationTest {
             override fun id() = EntId.long()
             val title by string("title")
             val createdAt by instant("created_at").immutable()
-            val author by belongsTo<Author>("author")
+            val author by belongsTo<Author>("author_id")
         }
 
         val errors = validate("Author" to Author(), "Post" to Post())
@@ -413,13 +413,13 @@ private class CompanionAuthor : EntSchema("companion_authors", clientName = "com
 
 private class CompanionPost : EntSchema("companion_posts", clientName = "companionPosts") {
     override fun id() = EntId.long()
-    val author by belongsTo<CompanionAuthor>("author")
+    val author by belongsTo<CompanionAuthor>("author_id")
     val authorId by hasMany<CompanionReader>("post_readers")
 }
 
 private class CompanionReader : EntSchema("companion_readers", clientName = "companionReaders") {
     override fun id() = EntId.long()
-    val post by belongsTo<CompanionPost>("post_readers")
+    val post by belongsTo<CompanionPost>("post_readers_id")
 }
 
 // Edges-class collision fixtures. Edge members are the schema author's
@@ -427,7 +427,7 @@ private class CompanionReader : EntSchema("companion_readers", clientName = "com
 // member reaches `${Entity}Edges` and breaks generated source.
 private class EdgesCopyTarget : EntSchema("edges_copy_targets", clientName = "edgesCopyTargets") {
     override fun id() = EntId.long()
-    val owner by belongsTo<EdgesCopyOwner>("owner")
+    val owner by belongsTo<EdgesCopyOwner>("owner_id")
 }
 
 private class EdgesCopyOwner : EntSchema("edges_copy_owners", clientName = "edgesCopyOwners") {
@@ -440,7 +440,7 @@ private class EdgesCopyOwner : EntSchema("edges_copy_owners", clientName = "edge
 // the removed generated `loadEdges` helper.
 private class LoadClashTarget : EntSchema("load_clash_targets", clientName = "loadClashTargets") {
     override fun id() = EntId.long()
-    val owner by belongsTo<LoadClashOwner>("owner").inverse(LoadClashOwner::edges)
+    val owner by belongsTo<LoadClashOwner>("owner_id").inverse(LoadClashOwner::edges)
 }
 
 private class LoadClashOwner : EntSchema("load_clash_owners", clientName = "loadClashOwners") {
@@ -452,7 +452,7 @@ private class LoadClashOwner : EntSchema("load_clash_owners", clientName = "load
 // `queryLimit`, which collides with the runtime base's inherited bounds property.
 private class QueryClashTarget : EntSchema("query_clash_targets", clientName = "queryClashTargets") {
     override fun id() = EntId.long()
-    val owner by belongsTo<QueryClashOwner>("owner").inverse(QueryClashOwner::limit)
+    val owner by belongsTo<QueryClashOwner>("owner_id").inverse(QueryClashOwner::limit)
 }
 
 private class QueryClashOwner : EntSchema("query_clash_owners", clientName = "queryClashOwners") {

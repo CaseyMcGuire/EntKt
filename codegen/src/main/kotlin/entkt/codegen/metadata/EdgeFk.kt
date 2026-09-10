@@ -8,13 +8,11 @@ import entkt.schema.FieldType
 import entkt.schema.OnDelete
 
 /**
- * A foreign-key surface derived from a `belongsTo` edge. For implicit
- * edges the column and property are synthesized from the edge name
- * (`edge_name_id` / `edgeNameId`). For field-backed edges
- * (`belongsTo(...).field(handle)`) the column comes from the
- * user-declared field, and the property is the camelCased column name.
- * The generated FK API name (the Kotlin `val` name when the edge
- * diverges from the column name) is still deferred.
+ * A foreign-key surface derived from a `belongsTo` edge. The FK column
+ * is the exact storage name supplied to `belongsTo`. Without a backing
+ * field, the Kotlin property is `${edgeDeclaration}Id`. With `.field(handle)`,
+ * it is the backing field's Kotlin declaration name; the two declarations
+ * must agree on the storage column.
  */
 data class EdgeFk(
     /** Storage edge name — the driver's edge-lookup key. */
@@ -142,7 +140,7 @@ fun computeEdgeFks(
                     edgeName = edge.name,
                     edgeApiName = edge.apiName,
                     propertyName = "${edge.apiName}Id",
-                    columnName = "${edge.name}_id",
+                    columnName = edge.name,
                     targetName = targetName,
                     targetTable = edge.target.tableName,
                     idType = edge.target.id().type,

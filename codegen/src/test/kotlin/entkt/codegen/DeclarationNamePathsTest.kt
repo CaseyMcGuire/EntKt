@@ -21,7 +21,7 @@ private class PathUser : EntSchema("path_users", clientName = "pathUsers") {
  */
 private class PathDirectory : EntSchema("path_dirs", clientName = "pathDirs") {
     override fun id() = EntId.long()
-    val curator by belongsTo<PathUser>("legacy_owner").nullable().inverse(PathUser::directories)
+    val curator by belongsTo<PathUser>("legacy_owner_id").nullable().inverse(PathUser::directories)
 }
 
 /**
@@ -85,7 +85,7 @@ class DeclarationNamePathsTest {
             "traversal must retain the declaration-derived typed mapping\n$query",
         )
         assertFalse(
-            """override val name: String = "legacy_owner""" in query,
+            """override val name: String = "legacy_owner_id""" in query,
             "storage edge name must not become the caller-facing mapping name\n$query",
         )
     }
@@ -101,7 +101,7 @@ class DeclarationNamePathsTest {
         // must remain the storage identifier even though the Kotlin
         // property it hangs off is named `curator`.
         assertTrue(
-            """EdgeRef<PathDirectory, PathUser, PathUserQueryScope> = EdgeRef("legacy_owner")""" in entity,
+            """EdgeRef<PathDirectory, PathUser, PathUserQueryScope> = EdgeRef("legacy_owner_id")""" in entity,
             "companion EdgeRef must keep the storage edge name\n$entity",
         )
         assertTrue(
@@ -118,13 +118,13 @@ class DeclarationNamePathsTest {
         // The `when` key is the companion EdgeRef's value, so it must
         // stay storage-keyed or the branch never matches...
         assertTrue(
-            """"legacy_owner" to PathDirectoryCuratorEdgeDescriptor""" in query,
+            """"legacy_owner_id" to PathDirectoryCuratorEdgeDescriptor""" in query,
             "edge-predicate dispatch must key on the storage name\n$query",
         )
         // ...while the resolved mapping carries the declaration name
         // that runtime interceptor and denial paths expose.
         assertTrue(
-            """"legacy_owner" to PathDirectoryCuratorEdgeDescriptor""" in query,
+            """"legacy_owner_id" to PathDirectoryCuratorEdgeDescriptor""" in query,
             "storage dispatch should resolve the declaration-named typed mapping\n$query",
         )
         assertTrue(

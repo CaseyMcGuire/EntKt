@@ -35,7 +35,7 @@ private class Hygiene : EntSchema("hygiene", clientName = "hygienes") {
     val rules by string("rules_col")
     val payload by bytes("payload_col")
 
-    val owner by belongsTo<HygieneTarget>("owner")
+    val owner by belongsTo<HygieneTarget>("owner_id")
 }
 
 /**

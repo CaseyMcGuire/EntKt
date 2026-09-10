@@ -379,8 +379,8 @@ private class PrivM2MTag : EntSchema("m2m_priv_tags", clientName = "privM2MTags"
 }
 private class PrivM2MPostTagJunction : EntSchema("m2m_priv_post_tags", clientName = "privM2MPostTagJunctions") {
     override fun id() = EntId.long()
-    val post by belongsTo<PrivM2MPost>("post").onDelete(entkt.schema.OnDelete.CASCADE)
-    val tag by belongsTo<PrivM2MTag>("tag").onDelete(entkt.schema.OnDelete.CASCADE)
+    val post by belongsTo<PrivM2MPost>("post_id").onDelete(entkt.schema.OnDelete.CASCADE)
+    val tag by belongsTo<PrivM2MTag>("tag_id").onDelete(entkt.schema.OnDelete.CASCADE)
     val pair = index("idx_m2m_priv_post_tags_pair", post.fk, tag.fk).unique()
 }
 

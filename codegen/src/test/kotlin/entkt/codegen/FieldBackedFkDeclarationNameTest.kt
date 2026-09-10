@@ -43,14 +43,14 @@ class FieldBackedFkDeclarationNameTest {
             // Pre-contract-06 the FK property would have been `authorId`;
             // after declaration-name capture it's `writer`.
             val writer by long("author_id")
-            val author by belongsTo<Target>("author").field(writer)
+            val author by belongsTo<Target>("author_id").field(writer)
         }
         val target = Target()
         val post = Post()
         val schemaNames = finalize(target, post)
 
         val fks = computeEdgeFks(post, schemaNames)
-        val fk = fks.single { it.edgeName == "author" }
+        val fk = fks.single { it.edgeName == "author_id" }
         assertEquals("writer", fk.propertyName, "FK property name follows the Kotlin val")
         assertEquals("author_id", fk.columnName, "FK column name still tracks the storage column")
         assertTrue(fk.isFieldBacked)
@@ -60,13 +60,13 @@ class FieldBackedFkDeclarationNameTest {
     fun `implicit FK is unchanged — only field-backed FKs follow declaration names`() {
         class Post : EntSchema("posts", clientName = "posts") {
             override fun id() = EntId.long()
-            val author by belongsTo<Target>("author") // no .field(handle)
+            val author by belongsTo<Target>("author_id") // no .field(handle)
         }
         val target = Target()
         val post = Post()
         val schemaNames = finalize(target, post)
 
-        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author" }
+        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author_id" }
         // No declaration-name capture path applies — implicit FKs
         // keep their synthesized `${edgeName}Id` derivation.
         assertEquals("authorId", fk.propertyName)
@@ -82,13 +82,13 @@ class FieldBackedFkDeclarationNameTest {
         class Post : EntSchema("posts", clientName = "posts") {
             override fun id() = EntId.long()
             val authorId by long("author_id")
-            val author by belongsTo<Target>("author").field(authorId)
+            val author by belongsTo<Target>("author_id").field(authorId)
         }
         val target = Target()
         val post = Post()
         val schemaNames = finalize(target, post)
 
-        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author" }
+        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author_id" }
         assertEquals("authorId", fk.propertyName, "val authorId + column author_id keeps `authorId` as the FK API")
     }
 
@@ -100,13 +100,13 @@ class FieldBackedFkDeclarationNameTest {
         class Post : EntSchema("posts", clientName = "posts") {
             override fun id() = EntId.long()
             val maybeWriter by long("author_id").nullable()
-            val author by belongsTo<Target>("author").field(maybeWriter)
+            val author by belongsTo<Target>("author_id").field(maybeWriter)
         }
         val target = Target()
         val post = Post()
         val schemaNames = finalize(target, post)
 
-        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author" }
+        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author_id" }
         assertEquals("maybeWriter", fk.propertyName)
     }
 
@@ -124,7 +124,7 @@ class FieldBackedFkDeclarationNameTest {
             class Post : EntSchema("posts", clientName = "posts") {
                 override fun id() = EntId.long()
                 private val hidden = long("author_id")
-                val author by belongsTo<Target>("author").field(hidden)
+                val author by belongsTo<Target>("author_id").field(hidden)
                 init { @Suppress("UNUSED_EXPRESSION") hidden }
             }
             finalize(Target(), Post())
@@ -154,7 +154,7 @@ class FieldBackedFkDeclarationNameTest {
         class Post : EntSchema("posts", clientName = "posts") {
             override fun id() = EntId.long()
             val title by string("title")
-            val author by belongsTo<Target>("author")
+            val author by belongsTo<Target>("author_id")
         }
         val errors = validate("Target" to Target(), "Post" to Post())
         assertEquals(emptyList(), errors)
@@ -165,7 +165,7 @@ class FieldBackedFkDeclarationNameTest {
         class Post : EntSchema("posts", clientName = "posts") {
             override fun id() = EntId.long()
             val writer by long("author_id")
-            val author by belongsTo<Target>("author").field(writer)
+            val author by belongsTo<Target>("author_id").field(writer)
         }
         val errors = validate("Target" to Target(), "Post" to Post())
         assertEquals(emptyList(), errors)
@@ -222,7 +222,7 @@ class FieldBackedFkDeclarationNameTest {
             class Post : EntSchema("posts", clientName = "posts") {
                 override fun id() = EntId.long()
                 var mutableBacking: entkt.schema.LongFieldBuilder = long("author_id")
-                val author by belongsTo<Target>("author").field(mutableBacking)
+                val author by belongsTo<Target>("author_id").field(mutableBacking)
             }
             finalize(Target(), Post())
         }
@@ -243,7 +243,7 @@ class FieldBackedFkDeclarationNameTest {
             val inheritedBacking by long("author_id")
         }
         class Post : BaseSchema("posts", "posts") {
-            val author by belongsTo<Target>("author").field(inheritedBacking)
+            val author by belongsTo<Target>("author_id").field(inheritedBacking)
         }
         val ex = kotlin.test.assertFailsWith<IllegalStateException> {
             finalize(Target(), Post())
@@ -265,7 +265,7 @@ class FieldBackedFkDeclarationNameTest {
         class Post : EntSchema("posts", clientName = "posts") {
             override fun id() = EntId.long()
             private val hidden = long("author_id")
-            val author by belongsTo<Target>("author").field(hidden)
+            val author by belongsTo<Target>("author_id").field(hidden)
             init { @Suppress("UNUSED_EXPRESSION") hidden }
         }
 
@@ -289,7 +289,7 @@ class FieldBackedFkDeclarationNameTest {
             override fun id() = EntId.long()
             val writer by long("author_id")
             val title by string("legacy_title_txt")
-            val author by belongsTo<Target>("author").field(writer)
+            val author by belongsTo<Target>("author_id").field(writer)
         }
         val post = Post()
         finalize(Target(), post)

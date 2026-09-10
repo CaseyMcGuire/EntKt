@@ -108,7 +108,7 @@ internal class FkColumn(
     private val edgeBuilder: BelongsToBuilder<*>,
 ) : IndexableColumn {
     internal val declarationOwner: EntSchema? get() = edgeBuilder.declarationOwner
-    override val fieldName: String get() = edgeBuilder.explicitFieldHandle?.fieldName ?: "${edgeBuilder.edgeName}_id"
+    override val fieldName: String get() = edgeBuilder.edgeName
 }
 
 class BelongsToBuilder<Target : EntSchema> internal constructor(
@@ -121,8 +121,8 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
      * Use this to reference the FK in `index(...)` declarations:
      *
      * ```kotlin
-     * val author by belongsTo<User>("author")
-     * val byAuthor = index(author.fk)
+     * val author by belongsTo<User>("author_id")
+     * val byAuthor = index("idx_author", author.fk)
      * ```
      */
     val fk: IndexableColumn = FkColumn(this)
@@ -150,6 +150,7 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
      */
     fun immutable(): BelongsToBuilder<Target> = apply { checkNotFrozen(); immutable = true }
 
+    /** Reuse a scalar field whose storage name matches this relationship's declared FK column. */
     fun field(handle: FieldHandle<*>): BelongsToBuilder<Target> = apply {
         checkNotFrozen()
         val fieldOwner = (handle as? FieldBuilder<*, *>)?.declarationOwner
@@ -158,6 +159,10 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
                 "belongsTo('$edgeName').field() references '${handle.fieldName}' which belongs to schema " +
                     "'${fieldOwner::class.simpleName}', not '${declarationOwner!!::class.simpleName}'"
             )
+        }
+        require(handle.fieldName == edgeName) {
+            "belongsTo('$edgeName').field() references column '${handle.fieldName}', but the relationship " +
+                "declares FK column '$edgeName'. Use the backing field's exact column name in belongsTo()."
         }
         explicitFieldHandle = handle
     }

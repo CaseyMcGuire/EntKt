@@ -22,7 +22,7 @@ class NamedIndexHelperGeneratorTest {
 
     private class TestCase : EntSchema("test_cases", clientName = "testCases") {
         override fun id() = EntId.long()
-        val problem by belongsTo<Problem>("problem")
+        val problem by belongsTo<Problem>("problem_id")
         val position by int("sort_position")
         val label by string("label")
         val byProblemAndPosition by index("uq_problem_position", problem.fk, position).unique()
@@ -88,7 +88,7 @@ class NamedIndexHelperGeneratorTest {
         class Record : EntSchema("records", clientName = "records") {
             override fun id() = EntId.long()
             val writer by long("problem_ref")
-            val problem by belongsTo<Problem>("problem").field(writer)
+            val problem by belongsTo<Problem>("problem_ref").field(writer)
             val byWriter by index("idx_problem_ref", problem.fk)
         }
         val record = Record()
@@ -117,7 +117,7 @@ class NamedIndexHelperGeneratorTest {
     fun `named accessors cannot overload root column helpers`() {
         class Record : EntSchema("records", clientName = "records") {
             override fun id() = EntId.long()
-            val problem by belongsTo<Problem>("problem")
+            val problem by belongsTo<Problem>("problem_id")
             val position by int("position")
             val problemId by index("idx_problem_position", problem.fk, position)
         }

@@ -12,7 +12,7 @@ import entkt.schema.EntSchema
  * `author_id` column.
  *
  * Counterpart of [Article], which uses the implicit-FK form
- * (`belongsTo<User>("author")`) — comparing the two in the
+ * (`belongsTo<User>("author_id")`) — comparing the two in the
  * integration tests pins the rename behavior end-to-end.
  */
 class Note : EntSchema("notes", clientName = "notes") {
@@ -23,5 +23,5 @@ class Note : EntSchema("notes", clientName = "notes") {
     /** Backing column for the field-backed FK below. */
     val writer by long("author_id")
 
-    val author by belongsTo<User>("author").field(writer)
+    val author by belongsTo<User>("author_id").field(writer)
 }

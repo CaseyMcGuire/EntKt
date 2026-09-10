@@ -32,7 +32,7 @@ class Directory : EntSchema("legacy_people_tbl", clientName = "people") {
     val publicLabel by string("legacy_label_txt")
 
     /** Kotlin API `curator` (+ implicit FK `curatorId`); FK column `legacy_owner_id`. */
-    val curator by belongsTo<User>("legacy_owner").nullable().inverse(User::directories)
+    val curator by belongsTo<User>("legacy_owner_id").nullable().inverse(User::directories)
 
     /**
      * Kotlin API `topics`; storage edge name `legacy_topic_links`.

@@ -332,15 +332,16 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
 
     // ── Edge builder methods ───────────────────────────────────────
 
+    /** Declare a relationship stored in exactly [column]; no FK suffix is added. */
     protected inline fun <reified Target : EntSchema> belongsTo(
-        name: String,
-    ): BelongsToBuilder<Target> = belongsTo(name, Target::class)
+        column: String,
+    ): BelongsToBuilder<Target> = belongsTo(column, Target::class)
 
     @PublishedApi
     internal fun <Target : EntSchema> belongsTo(
-        name: String,
+        column: String,
         target: KClass<Target>,
-    ): BelongsToBuilder<Target> = BelongsToBuilder<Target>(name, target).also { validateName(name, "Edge"); checkNotFinalized(); it.declarationOwner = this; _edges.add(it) }
+    ): BelongsToBuilder<Target> = BelongsToBuilder<Target>(column, target).also { validateName(column, "FK column"); checkNotFinalized(); it.declarationOwner = this; _edges.add(it) }
 
     protected inline fun <reified Target : EntSchema> hasMany(
         name: String,
@@ -779,7 +780,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
                 val e = edge.build()
                 val bt = e.kind as EdgeKind.BelongsTo
                 if (bt.unique) {
-                    val fkCol = bt.field ?: "${e.name}_id"
+                    val fkCol = bt.field ?: e.name
                     seenShapes.add(shapeOf(listOf(fkCol), true, null, null, null, null))
                 }
             }

@@ -17,7 +17,7 @@ class NamedIndexHelperCompileTest {
 
     private class TestCase : EntSchema("test_cases", clientName = "testCases") {
         override fun id() = EntId.long()
-        val problem by belongsTo<Problem>("problem")
+        val problem by belongsTo<Problem>("problem_id")
         val position by int("sort_position")
         val status by string("status")
         val nickname by string("nickname").nullable()

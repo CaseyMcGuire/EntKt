@@ -298,8 +298,7 @@ object SchemaInspector {
 
     /**
      * Build FK entries from belongsTo edges. Each belongsTo edge owns
-     * exactly one FK column — either an explicit `.field(handle)` or
-     * the synthesized `${edgeName}_id`.
+     * exactly one explicitly named FK column, optionally backed by `.field(handle)`.
      */
     private fun buildForeignKeys(
         schema: EntSchema,
@@ -308,7 +307,7 @@ object SchemaInspector {
         return schema.edges().mapNotNull { edge ->
             val bt = edge.kind as? EdgeKind.BelongsTo ?: return@mapNotNull null
             val explicitField = bt.field
-            val fkColumn = explicitField ?: "${edge.name}_id"
+            val fkColumn = explicitField ?: edge.name
             val nullable = if (explicitField != null) {
                 schema.fields().find { it.name == explicitField }?.nullable ?: !bt.required
             } else {
@@ -339,7 +338,7 @@ object SchemaInspector {
             val targetName = schemaNames[edge.target] ?: edge.target::class.simpleName ?: "?"
             when (val kind = edge.kind) {
                 is EdgeKind.BelongsTo -> {
-                    val fkColumn = kind.field ?: "${edge.name}_id"
+                    val fkColumn = kind.field ?: edge.name
                     val inverse = tryFindInverseName(edge, schema)
                     ExplainedEdge(
                         name = edge.name,

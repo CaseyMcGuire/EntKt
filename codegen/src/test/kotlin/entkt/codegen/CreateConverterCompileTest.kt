@@ -22,9 +22,9 @@ class CreateConverterCompileTest {
         val published by bool("published").default(false)
         val createdAt by instant("created_at").defaultNow().immutable()
         val ownerId by long("owner_id").default(42L)
-        val owner by belongsTo<Owner>("owner").field(ownerId)
+        val owner by belongsTo<Owner>("owner_id").field(ownerId)
         val reviewerId by long("reviewer_id").nullable().default(43L)
-        val reviewer by belongsTo<Owner>("reviewer").field(reviewerId).nullable()
+        val reviewer by belongsTo<Owner>("reviewer_id").field(reviewerId).nullable()
     }
 
     @Test

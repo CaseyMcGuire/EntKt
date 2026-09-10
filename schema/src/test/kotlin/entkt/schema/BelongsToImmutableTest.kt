@@ -15,11 +15,11 @@ class BelongsToImmutableTest {
 
     private class Record : EntSchema("records", clientName = "records") {
         override fun id() = EntId.long()
-        val owner by belongsTo<Owner>("owner").immutable().inverse(Owner::records)
-        val reviewer by belongsTo<Owner>("reviewer").nullable().unique().immutable().onDelete(OnDelete.SET_NULL)
-        val editor by belongsTo<Owner>("editor")
+        val owner by belongsTo<Owner>("owner_id").immutable().inverse(Owner::records)
+        val reviewer by belongsTo<Owner>("reviewer_id").nullable().unique().immutable().onDelete(OnDelete.SET_NULL)
+        val editor by belongsTo<Owner>("editor_id")
         val writer by long("writer_id")
-        val author by belongsTo<Owner>("author").immutable().field(writer)
+        val author by belongsTo<Owner>("writer_id").immutable().field(writer)
         val byOwner = index("idx_records_owner", owner.fk)
         val byAuthor = index("idx_records_author", author.fk)
     }
@@ -35,7 +35,7 @@ class BelongsToImmutableTest {
     @Test
     fun `immutable composes with belongsTo modifiers and FK indexes`() {
         val record = record()
-        val edges = record.edges().associateBy { it.name }
+        val edges = record.edges().associateBy { it.declarationName }
         val owner = edges.getValue("owner")
         assertTrue((owner.kind as EdgeKind.BelongsTo).immutable)
         assertEquals("records", owner.ref)

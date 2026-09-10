@@ -326,8 +326,8 @@ private fun resolveExplicitField(fieldName: String, schema: EntSchema, edgeName:
 /**
  * Resolve [edge]'s join columns based on its [EdgeKind].
  *
- * - **BelongsTo**: the FK sits on this row. `.field(...)` overrides the
- *   default `${edgeName}_id` column name.
+ * - **BelongsTo**: the FK sits on this row, in the exact declared column.
+ *   `.field(...)` reuses a scalar field with that same storage name.
  * - **HasMany / HasOne**: the FK sits on the target row. Finds the
  *   inverse `BelongsTo` edge to learn its column name.
  * - **ManyToMany**: handled by [resolveM2MEdgeJoin]; returns null here.
@@ -345,7 +345,7 @@ internal fun resolveEdgeJoin(
             val fkColumn = if (fieldName != null) {
                 resolveExplicitField(fieldName, source, edge.name)
             } else {
-                "${edge.name}_id"
+                edge.name
             }
             return EdgeJoin(sourceColumn = fkColumn, targetColumn = "id")
         }
@@ -383,7 +383,7 @@ internal fun resolveEdgeJoin(
             val fkColumn = if (inverseFieldName != null) {
                 resolveExplicitField(inverseFieldName, edge.target, inverse.name)
             } else {
-                "${inverse.name}_id"
+                inverse.name
             }
             return EdgeJoin(sourceColumn = "id", targetColumn = fkColumn)
         }
@@ -422,7 +422,7 @@ internal fun resolveM2MEdgeJoin(
     val sourceFk = if (sourceFieldName != null) {
         resolveExplicitField(sourceFieldName, junctionSchema, sourceEdge.name)
     } else {
-        "${sourceEdge.name}_id"
+        sourceEdge.name
     }
 
     val targetEdge = junctionEdges.firstOrNull { it.name == through.targetEdge && it.kind is EdgeKind.BelongsTo && it.target === edge.target }
@@ -444,7 +444,7 @@ internal fun resolveM2MEdgeJoin(
     val targetFk = if (targetFieldName != null) {
         resolveExplicitField(targetFieldName, junctionSchema, targetEdge.name)
     } else {
-        "${targetEdge.name}_id"
+        targetEdge.name
     }
 
     return EdgeJoin(

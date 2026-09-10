@@ -17,8 +17,8 @@ class Topic : EntSchema("topics", clientName = "topics") {
 class DirectoryTopic : EntSchema("directory_topics", clientName = "directoryTopics") {
     override fun id() = EntId.long()
 
-    val directory by belongsTo<Directory>("directory").onDelete(OnDelete.CASCADE)
-    val topic by belongsTo<Topic>("topic").onDelete(OnDelete.CASCADE)
+    val directory by belongsTo<Directory>("directory_id").onDelete(OnDelete.CASCADE)
+    val topic by belongsTo<Topic>("topic_id").onDelete(OnDelete.CASCADE)
 
     val pair = index("idx_dir_topics_dir_topic", directory.fk, topic.fk).unique()
     val byTopic = index("idx_dir_topics_topic_dir", topic.fk, directory.fk)

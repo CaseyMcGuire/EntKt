@@ -75,7 +75,7 @@ class EntktPluginTest {
                     val age by int("age").nullable()
                     val meta by json<PetMeta>("meta").nullable()
 
-                    val owner by belongsTo<Owner>("owner").nullable()
+                    val owner by belongsTo<Owner>("owner_id").nullable()
                 }
                 """.trimIndent()
             )

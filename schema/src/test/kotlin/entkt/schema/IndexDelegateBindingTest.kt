@@ -55,7 +55,7 @@ class IndexDelegateBindingTest {
         }
         class Child : EntSchema("children", clientName = "children") {
             override fun id() = EntId.long()
-            val parent by belongsTo<Parent>("parent")
+            val parent by belongsTo<Parent>("parent_id")
             val position by int("position")
             val byParentAndPosition by index("uq_parent_position", parent.fk, position).unique()
         }

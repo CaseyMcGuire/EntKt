@@ -1,6 +1,7 @@
 package entkt.schema
 
 data class Edge(
+    /** Storage identifier; for belongsTo, this is the exact FK column name. */
     val name: String,
     val target: EntSchema,
     val kind: EdgeKind,

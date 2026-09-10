@@ -16,7 +16,7 @@ import entkt.schema.EntSchema
 class Profile : EntSchema("profiles", clientName = "profiles") {
     override fun id() = EntId.long()
 
-    val owner by belongsTo<User>("owner").unique().inverse(User::profile)
+    val owner by belongsTo<User>("owner_id").unique().inverse(User::profile)
 
     val bio by string("bio")
 }

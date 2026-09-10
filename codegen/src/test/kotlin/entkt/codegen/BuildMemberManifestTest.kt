@@ -29,7 +29,7 @@ class BuildMemberManifestTest {
         override fun id() = EntId.long()
         val createdAt by instant("created_at").immutable()
         val title by string("title")
-        val author by belongsTo<Author>("author")
+        val author by belongsTo<Author>("author_id")
     }
 
     private class Author : EntSchema("authors", clientName = "authors") {

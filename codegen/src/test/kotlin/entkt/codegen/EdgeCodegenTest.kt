@@ -36,14 +36,14 @@ class Pet : EntSchema("pets", clientName = "pets") {
     override fun id() = EntId.int()
     val name by string("name")
 
-    val owner by belongsTo<Owner>("owner").inverse(Owner::pets).nullable()
+    val owner by belongsTo<Owner>("owner_id").inverse(Owner::pets).nullable()
 }
 
 class RequiredPet : EntSchema("required_pets", clientName = "requiredPets") {
     override fun id() = EntId.int()
     val name by string("name")
 
-    val owner by belongsTo<Owner>("owner")
+    val owner by belongsTo<Owner>("owner_id")
 }
 
 // ---------- M2M test schemas ----------
@@ -61,8 +61,8 @@ class TeamMember : EntSchema("team_members", clientName = "teamMembers") {
     val teamId by int("team_id")
     val memberId by int("member_id")
 
-    val team by belongsTo<Team>("team").field(teamId)
-    val member by belongsTo<Pet>("member").field(memberId)
+    val team by belongsTo<Team>("team_id").field(teamId)
+    val member by belongsTo<Pet>("member_id").field(memberId)
 }
 
 // ---------- Self-referential M2M test schemas ----------
@@ -80,8 +80,8 @@ class Friendship : EntSchema("friendships", clientName = "friendships") {
     val personId by int("person_id")
     val friendId by int("friend_id")
 
-    val person by belongsTo<Person>("person").field(personId)
-    val friend by belongsTo<Person>("friend").field(friendId)
+    val person by belongsTo<Person>("person_id").field(personId)
+    val friend by belongsTo<Person>("friend_id").field(friendId)
 }
 
 // ---------- Ambiguous junction test schemas ----------
@@ -100,9 +100,9 @@ class ProjectAssignment : EntSchema("project_assignments", clientName = "project
     val assigneeId by int("assignee_id")
     val reviewerId by int("reviewer_id").nullable()
 
-    val project by belongsTo<Project>("project").field(projectId)
-    val assignee by belongsTo<Pet>("assignee").field(assigneeId)
-    val reviewer by belongsTo<Pet>("reviewer").field(reviewerId)
+    val project by belongsTo<Project>("project_id").field(projectId)
+    val assignee by belongsTo<Pet>("assignee_id").field(assigneeId)
+    val reviewer by belongsTo<Pet>("reviewer_id").field(reviewerId)
 }
 
 // ---------- Test schemas for "ambiguous ref" test ----------
@@ -110,8 +110,8 @@ class ProjectAssignment : EntSchema("project_assignments", clientName = "project
 private class AmbigPostSchema : EntSchema("posts", clientName = "ambigPostSchemas") {
     override fun id() = EntId.int()
     val title by string("title")
-    val author by belongsTo<AmbigUserSchema>("author").inverse(AmbigUserSchema::posts)
-    val editor by belongsTo<AmbigUserSchema>("editor").inverse(AmbigUserSchema::posts)
+    val author by belongsTo<AmbigUserSchema>("author_id").inverse(AmbigUserSchema::posts)
+    val editor by belongsTo<AmbigUserSchema>("editor_id").inverse(AmbigUserSchema::posts)
 }
 
 private class AmbigUserSchema : EntSchema("users", clientName = "ambigUserSchemas") {
@@ -126,8 +126,8 @@ private class SameEdgeJunctionSchema : EntSchema("friendships", clientName = "sa
     override fun id() = EntId.int()
     val personId by int("person_id")
     val friendId by int("friend_id")
-    val person by belongsTo<SameEdgePersonSchema>("person").field(personId)
-    val friend by belongsTo<SameEdgePersonSchema>("friend").field(friendId)
+    val person by belongsTo<SameEdgePersonSchema>("person_id").field(personId)
+    val friend by belongsTo<SameEdgePersonSchema>("friend_id").field(friendId)
 }
 
 private class SameEdgePersonSchema : EntSchema("persons", clientName = "sameEdgePersonSchemas") {
@@ -148,21 +148,21 @@ private class FkChildCascadeSchema : EntSchema("children", clientName = "fkChild
     override fun id() = EntId.int()
     val name by string("name")
     val ownerId by long("owner_id")
-    val owner by belongsTo<FkParentSchema>("owner").field(ownerId).onDelete(OnDelete.CASCADE)
+    val owner by belongsTo<FkParentSchema>("owner_id").field(ownerId).onDelete(OnDelete.CASCADE)
 }
 
 private class FkChildUniqueSchema : EntSchema("children", clientName = "fkChildUniqueSchemas") {
     override fun id() = EntId.int()
     val name by string("name")
     val ownerId by long("owner_id")
-    val owner by belongsTo<FkParentSchema>("owner").unique().field(ownerId)
+    val owner by belongsTo<FkParentSchema>("owner_id").unique().field(ownerId)
 }
 
 private class FkChildSetNullSchema : EntSchema("children", clientName = "fkChildSetNullSchemas") {
     override fun id() = EntId.int()
     val name by string("name")
     val ownerId by long("owner_id") // non-nullable
-    val owner by belongsTo<FkParentSchema>("owner").field(ownerId).onDelete(OnDelete.SET_NULL)
+    val owner by belongsTo<FkParentSchema>("owner_id").field(ownerId).onDelete(OnDelete.SET_NULL)
 }
 
 private class FkChildTypeMismatchParent : EntSchema("parents", clientName = "fkChildTypeMismatchParents") {
@@ -174,7 +174,7 @@ private class FkChildTypeMismatchSchema : EntSchema("children", clientName = "fk
     override fun id() = EntId.int()
     val name by string("name")
     val ownerId by long("owner_id") // Long field but target uses UUID id
-    val owner by belongsTo<FkChildTypeMismatchParent>("owner").field(ownerId)
+    val owner by belongsTo<FkChildTypeMismatchParent>("owner_id").field(ownerId)
 }
 
 // ---------- HasMany / HasOne cardinality test schemas ----------
@@ -182,7 +182,7 @@ private class FkChildTypeMismatchSchema : EntSchema("children", clientName = "fk
 private class HasManyChildSchema : EntSchema("children", clientName = "hasManyChildSchemas") {
     override fun id() = EntId.int()
     val name by string("name")
-    val parent by belongsTo<HasManyParentSchema>("parent").unique().inverse(HasManyParentSchema::children)
+    val parent by belongsTo<HasManyParentSchema>("parent_id").unique().inverse(HasManyParentSchema::children)
 }
 
 private class HasManyParentSchema : EntSchema("parents", clientName = "hasManyParentSchemas") {
@@ -194,7 +194,7 @@ private class HasManyParentSchema : EntSchema("parents", clientName = "hasManyPa
 private class HasOneChildNonUniqueSchema : EntSchema("children", clientName = "hasOneChildNonUniqueSchemas") {
     override fun id() = EntId.int()
     val name by string("name")
-    val parent by belongsTo<HasOneParentNonUniqueSchema>("parent").inverse(HasOneParentNonUniqueSchema::child) // missing .unique()
+    val parent by belongsTo<HasOneParentNonUniqueSchema>("parent_id").inverse(HasOneParentNonUniqueSchema::child) // missing .unique()
 }
 
 private class HasOneParentNonUniqueSchema : EntSchema("parents", clientName = "hasOneParentNonUniqueSchemas") {
@@ -206,7 +206,7 @@ private class HasOneParentNonUniqueSchema : EntSchema("parents", clientName = "h
 private class HasOneChildSchema : EntSchema("children", clientName = "hasOneChildSchemas") {
     override fun id() = EntId.int()
     val name by string("name")
-    val parent by belongsTo<HasOneParentSchema>("parent").unique().inverse(HasOneParentSchema::child)
+    val parent by belongsTo<HasOneParentSchema>("parent_id").unique().inverse(HasOneParentSchema::child)
 }
 
 private class HasOneParentSchema : EntSchema("parents", clientName = "hasOneParentSchemas") {
@@ -220,7 +220,7 @@ private class HasOneParentSchema : EntSchema("parents", clientName = "hasOnePare
 private class ProfileSchema2 : EntSchema("profiles", clientName = "profileSchema2s") {
     override fun id() = EntId.int()
     val bio by string("bio")
-    val owner by belongsTo<HasOneEdgesParentSchema>("owner").unique().inverse(HasOneEdgesParentSchema::profile)
+    val owner by belongsTo<HasOneEdgesParentSchema>("owner_id").unique().inverse(HasOneEdgesParentSchema::profile)
 }
 
 private class HasOneEdgesParentSchema : EntSchema("parents", clientName = "hasOneEdgesParentSchemas") {
@@ -244,7 +244,7 @@ private class RequiredFkWithDefaultChild : EntSchema("required_default_children"
     override fun id() = EntId.int()
     val name by string("name")
     val ownerId by long("owner_id").default(42L)
-    val owner by belongsTo<DefaultedFkParent>("owner").field(ownerId)
+    val owner by belongsTo<DefaultedFkParent>("owner_id").field(ownerId)
 }
 
 /**
@@ -256,7 +256,7 @@ private class NullableFkWithDefaultChild : EntSchema("nullable_default_children"
     override fun id() = EntId.int()
     val name by string("name")
     val ownerId by long("owner_id").nullable().default(42L)
-    val owner by belongsTo<DefaultedFkParent>("owner").field(ownerId).nullable()
+    val owner by belongsTo<DefaultedFkParent>("owner_id").field(ownerId).nullable()
 }
 
 // ---------- Schema for FK comment propagation ----------
@@ -273,7 +273,7 @@ private class CommentedFkParent : EntSchema("commented_parents", clientName = "c
 private class CommentedFkChild : EntSchema("commented_children", clientName = "commentedFkChilds") {
     override fun id() = EntId.int()
     val ownerId by long("owner_id").comment("FK to the owning user")
-    val owner by belongsTo<CommentedFkParent>("owner").field(ownerId)
+    val owner by belongsTo<CommentedFkParent>("owner_id").field(ownerId)
 }
 
 /**
@@ -282,7 +282,7 @@ private class CommentedFkChild : EntSchema("commented_children", clientName = "c
  */
 private class ImplicitCommentedFkChild : EntSchema("implicit_commented_children", clientName = "implicitCommentedFkChilds") {
     override fun id() = EntId.int()
-    val owner by belongsTo<CommentedFkParent>("owner").comment("Owner of this row")
+    val owner by belongsTo<CommentedFkParent>("owner_id").comment("Owner of this row")
 }
 
 // ---------- Schema for sensitive field-backed FK redaction ----------
@@ -299,7 +299,7 @@ private class SensitiveFkChild : EntSchema("sensitive_children", clientName = "s
     override fun id() = EntId.int()
     val name by string("name")
     val ownerId by long("owner_id").sensitive()
-    val owner by belongsTo<SensitiveFkParent>("owner").field(ownerId)
+    val owner by belongsTo<SensitiveFkParent>("owner_id").field(ownerId)
 }
 
 // ---------- Schema for immutable field-backed FK tests ----------
@@ -317,7 +317,7 @@ private class ImmutableFkChild : EntSchema("immutable_children", clientName = "i
     override fun id() = EntId.int()
     val name by string("name")
     val ownerId by long("owner_id").immutable()
-    val owner by belongsTo<ImmutableFkParent>("owner").field(ownerId)
+    val owner by belongsTo<ImmutableFkParent>("owner_id").field(ownerId)
 }
 
 // ---------- Schemas for field-backed nullability mismatch tests ----------
@@ -334,7 +334,7 @@ private class NullabilityMismatchParent : EntSchema("nullability_parents", clien
 private class RequiredEdgeNullableFieldChild : EntSchema("required_edge_nullable_field", clientName = "requiredEdgeNullableFieldChilds") {
     override fun id() = EntId.int()
     val ownerId by long("owner_id").nullable()
-    val owner by belongsTo<NullabilityMismatchParent>("owner").field(ownerId)
+    val owner by belongsTo<NullabilityMismatchParent>("owner_id").field(ownerId)
 }
 
 /**
@@ -345,7 +345,7 @@ private class RequiredEdgeNullableFieldChild : EntSchema("required_edge_nullable
 private class NullableEdgeNonNullFieldChild : EntSchema("nullable_edge_nonnull_field", clientName = "nullableEdgeNonNullFieldChilds") {
     override fun id() = EntId.int()
     val ownerId by long("owner_id")
-    val owner by belongsTo<NullabilityMismatchParent>("owner").field(ownerId).nullable()
+    val owner by belongsTo<NullabilityMismatchParent>("owner_id").field(ownerId).nullable()
 }
 
 private fun finalize(vararg schemas: EntSchema) {
@@ -363,8 +363,8 @@ private class M2MGroup : EntSchema("m2m_groups", clientName = "m2MGroups") {
 }
 private class M2MMembership : EntSchema("m2m_memberships", clientName = "m2MMemberships") {
     override fun id() = EntId.long()
-    val user by belongsTo<M2MUser>("user")
-    val group by belongsTo<M2MGroup>("group")
+    val user by belongsTo<M2MUser>("user_id")
+    val group by belongsTo<M2MGroup>("group_id")
 }
 
 // Same-orientation alias: two manyToMany declarations on the same
@@ -381,8 +381,8 @@ private class M2MAliasUser : EntSchema("alias_users", clientName = "m2MAliasUser
 }
 private class M2MAliasMembership : EntSchema("alias_memberships", clientName = "m2MAliasMemberships") {
     override fun id() = EntId.long()
-    val user by belongsTo<M2MAliasUser>("user")
-    val group by belongsTo<M2MAliasGroup>("group")
+    val user by belongsTo<M2MAliasUser>("user_id")
+    val group by belongsTo<M2MAliasGroup>("group_id")
 }
 
 // Cross-schema pair-swap with throughEntity is allowed (this is the
@@ -399,8 +399,8 @@ private class BiGroup : EntSchema("bi_groups", clientName = "biGroups") {
 }
 private class BiMembership : EntSchema("bi_memberships", clientName = "biMemberships") {
     override fun id() = EntId.long()
-    val user by belongsTo<BiUser>("user")
-    val group by belongsTo<BiGroup>("group")
+    val user by belongsTo<BiUser>("user_id")
+    val group by belongsTo<BiGroup>("group_id")
 }
 
 // Self-referential pair-swap on the same schema is allowed.
@@ -413,8 +413,8 @@ private class FollowUser : EntSchema("follow_users", clientName = "followUsers")
 }
 private class Follow : EntSchema("follows", clientName = "follows") {
     override fun id() = EntId.long()
-    val follower by belongsTo<FollowUser>("follower")
-    val followed by belongsTo<FollowUser>("followed")
+    val follower by belongsTo<FollowUser>("follower_id")
+    val followed by belongsTo<FollowUser>("followed_id")
 }
 
 // Cross-schema pair-swap with throughLink is accepted when the
@@ -432,8 +432,8 @@ private class LinkGroup : EntSchema("link_groups", clientName = "linkGroups") {
 }
 private class LinkMembership : EntSchema("link_memberships", clientName = "linkMemberships") {
     override fun id() = EntId.long()
-    val user by belongsTo<LinkUser>("user").onDelete(OnDelete.CASCADE)
-    val group by belongsTo<LinkGroup>("group").onDelete(OnDelete.CASCADE)
+    val user by belongsTo<LinkUser>("user_id").onDelete(OnDelete.CASCADE)
+    val group by belongsTo<LinkGroup>("group_id").onDelete(OnDelete.CASCADE)
     val byUserGroup = index("idx_link_memberships_user_group", user.fk, group.fk).unique()
     val byGroupUser = index("idx_link_memberships_group_user", group.fk, user.fk)
 }
@@ -445,8 +445,8 @@ private class SameOrientGroup : EntSchema("same_orient_groups", clientName = "sa
 }
 private class SameOrientMembership : EntSchema("same_orient_memberships", clientName = "sameOrientMemberships") {
     override fun id() = EntId.long()
-    val user by belongsTo<SameOrientUser>("user").onDelete(OnDelete.CASCADE)
-    val group by belongsTo<SameOrientGroup>("group").onDelete(OnDelete.CASCADE)
+    val user by belongsTo<SameOrientUser>("user_id").onDelete(OnDelete.CASCADE)
+    val group by belongsTo<SameOrientGroup>("group_id").onDelete(OnDelete.CASCADE)
     val byUserGroup = index("idx_same_orient_user_group", user.fk, group.fk).unique()
 }
 private class SameOrientUser : EntSchema("same_orient_users", clientName = "sameOrientUsers") {
@@ -473,8 +473,8 @@ private class NoLeadGroup : EntSchema("no_lead_groups", clientName = "noLeadGrou
 }
 private class NoLeadMembership : EntSchema("no_lead_memberships", clientName = "noLeadMemberships") {
     override fun id() = EntId.long()
-    val user by belongsTo<NoLeadUser>("user").onDelete(OnDelete.CASCADE)
-    val group by belongsTo<NoLeadGroup>("group").onDelete(OnDelete.CASCADE)
+    val user by belongsTo<NoLeadUser>("user_id").onDelete(OnDelete.CASCADE)
+    val group by belongsTo<NoLeadGroup>("group_id").onDelete(OnDelete.CASCADE)
     val byUserGroup = index("idx_no_lead_user_group", user.fk, group.fk).unique()
 }
 
@@ -492,8 +492,8 @@ private class MixedLinkGroup : EntSchema("mixed_groups", clientName = "mixedLink
 }
 private class MixedLinkMembership : EntSchema("mixed_memberships", clientName = "mixedLinkMemberships") {
     override fun id() = EntId.long()
-    val user by belongsTo<MixedLinkUser>("user")
-    val group by belongsTo<MixedLinkGroup>("group")
+    val user by belongsTo<MixedLinkUser>("user_id")
+    val group by belongsTo<MixedLinkGroup>("group_id")
 }
 
 // Multi-relationship junction (distinct canonical identities) is
@@ -510,9 +510,9 @@ private class MultiRelPet : EntSchema("multi_rel_pets", clientName = "multiRelPe
 }
 private class MultiRelAssignment : EntSchema("multi_rel_assignments", clientName = "multiRelAssignments") {
     override fun id() = EntId.long()
-    val project by belongsTo<MultiRelProject>("project")
-    val assignee by belongsTo<MultiRelPet>("assignee")
-    val reviewer by belongsTo<MultiRelPet>("reviewer")
+    val project by belongsTo<MultiRelProject>("project_id")
+    val assignee by belongsTo<MultiRelPet>("assignee_id")
+    val reviewer by belongsTo<MultiRelPet>("reviewer_id")
 }
 
 // ---------- Test schemas for throughLink junction-shape rules ----------
@@ -530,8 +530,8 @@ private class LinkTag : EntSchema("link_tags", clientName = "linkTags") {
 // for "all rules pass" tests.
 private class LinkPostTag : EntSchema("link_post_tags", clientName = "linkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<LinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<LinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<LinkPost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<LinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
@@ -547,8 +547,8 @@ private class PayloadLinkTag : EntSchema("payload_link_tags", clientName = "payl
 private class PayloadLinkPostTag : EntSchema("payload_link_post_tags", clientName = "payloadLinkPostTags") {
     override fun id() = EntId.long()
     val nickname by string("nickname")
-    val post by belongsTo<PayloadLinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<PayloadLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<PayloadLinkPost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<PayloadLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_payload_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
@@ -563,8 +563,8 @@ private class NullableLinkTag : EntSchema("nullable_link_tags", clientName = "nu
 }
 private class NullableLinkPostTag : EntSchema("nullable_link_post_tags", clientName = "nullableLinkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<NullableLinkPost>("post").onDelete(OnDelete.CASCADE).nullable()
-    val tag by belongsTo<NullableLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<NullableLinkPost>("post_id").onDelete(OnDelete.CASCADE).nullable()
+    val tag by belongsTo<NullableLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_nullable_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
@@ -579,8 +579,8 @@ private class NoCascadeLinkTag : EntSchema("no_cascade_link_tags", clientName = 
 }
 private class NoCascadeLinkPostTag : EntSchema("no_cascade_link_post_tags", clientName = "noCascadeLinkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<NoCascadeLinkPost>("post").onDelete(OnDelete.RESTRICT)
-    val tag by belongsTo<NoCascadeLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<NoCascadeLinkPost>("post_id").onDelete(OnDelete.RESTRICT)
+    val tag by belongsTo<NoCascadeLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_no_cascade_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
@@ -595,8 +595,8 @@ private class NoIndexLinkTag : EntSchema("no_index_link_tags", clientName = "noI
 }
 private class NoIndexLinkPostTag : EntSchema("no_index_link_post_tags", clientName = "noIndexLinkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<NoIndexLinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<NoIndexLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<NoIndexLinkPost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<NoIndexLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
 }
 
 // Junction with a partial unique index (violates rule 6).
@@ -610,8 +610,8 @@ private class PartialIdxLinkTag : EntSchema("partial_idx_link_tags", clientName 
 }
 private class PartialIdxLinkPostTag : EntSchema("partial_idx_link_post_tags", clientName = "partialIdxLinkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<PartialIdxLinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<PartialIdxLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<PartialIdxLinkPost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<PartialIdxLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_partial_link_post_tags_post_tag", post.fk, tag.fk).unique().where("post_id > 0")
 }
 
@@ -626,8 +626,8 @@ private class ReverseOrderIdxLinkTag : EntSchema("rev_idx_link_tags", clientName
 }
 private class ReverseOrderIdxLinkPostTag : EntSchema("rev_idx_link_post_tags", clientName = "reverseOrderIdxLinkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<ReverseOrderIdxLinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<ReverseOrderIdxLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<ReverseOrderIdxLinkPost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<ReverseOrderIdxLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     // (tag_id, post_id) instead of (post_id, tag_id).
     val pair = index("idx_rev_link_post_tags_tag_post", tag.fk, post.fk).unique()
 }
@@ -649,9 +649,9 @@ private class TenantedLinkTag : EntSchema("tenanted_link_tags", clientName = "te
 }
 private class TenantedLinkPostTag : EntSchema("tenanted_link_post_tags", clientName = "tenantedLinkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<TenantedLinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<TenantedLinkTag>("tag").onDelete(OnDelete.CASCADE)
-    val tenant by belongsTo<TenantLink>("tenant").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<TenantedLinkPost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<TenantedLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
+    val tenant by belongsTo<TenantLink>("tenant_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_tenanted_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
@@ -673,11 +673,11 @@ private class FieldBackedTenantedLinkPostTag : EntSchema("fb_tenanted_link_post_
     val postIdCol by long("post_id_col")
     val tagIdCol by long("tag_id_col")
     val tenantIdCol by long("tenant_id_col")
-    val post by belongsTo<FieldBackedTenantedLinkPost>("post")
+    val post by belongsTo<FieldBackedTenantedLinkPost>("post_id_col")
         .field(postIdCol).onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<FieldBackedTenantedLinkTag>("tag")
+    val tag by belongsTo<FieldBackedTenantedLinkTag>("tag_id_col")
         .field(tagIdCol).onDelete(OnDelete.CASCADE)
-    val tenant by belongsTo<TenantLink>("tenant")
+    val tenant by belongsTo<TenantLink>("tenant_id_col")
         .field(tenantIdCol).onDelete(OnDelete.CASCADE)
     val pair = index("idx_fb_tenanted_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
@@ -693,8 +693,8 @@ private class UniqueEdgeLinkTag : EntSchema("uniq_edge_link_tags", clientName = 
 }
 private class UniqueEdgeLinkPostTag : EntSchema("uniq_edge_link_post_tags", clientName = "uniqueEdgeLinkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<UniqueEdgeLinkPost>("post").unique().onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<UniqueEdgeLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<UniqueEdgeLinkPost>("post_id").unique().onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<UniqueEdgeLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_uniq_edge_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
@@ -711,8 +711,8 @@ private class UniqueSingleIdxLinkTag : EntSchema("uniq_single_idx_link_tags", cl
 }
 private class UniqueSingleIdxLinkPostTag : EntSchema("uniq_single_idx_link_post_tags", clientName = "uniqueSingleIdxLinkPostTags") {
     override fun id() = EntId.long()
-    val post by belongsTo<UniqueSingleIdxLinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<UniqueSingleIdxLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<UniqueSingleIdxLinkPost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<UniqueSingleIdxLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_uniq_single_idx_link_post_tags_post_tag", post.fk, tag.fk).unique()
     val byPost = index("idx_uniq_single_idx_link_post_tags_post", post.fk).unique()
 }
@@ -728,8 +728,8 @@ private class ExplicitIdLinkTag : EntSchema("explicit_id_link_tags", clientName 
 }
 private class ExplicitIdLinkPostTag : EntSchema("explicit_id_link_post_tags", clientName = "explicitIdLinkPostTags") {
     override fun id() = EntId.string() // explicit caller-provided id
-    val post by belongsTo<ExplicitIdLinkPost>("post").onDelete(OnDelete.CASCADE)
-    val tag by belongsTo<ExplicitIdLinkTag>("tag").onDelete(OnDelete.CASCADE)
+    val post by belongsTo<ExplicitIdLinkPost>("post_id").onDelete(OnDelete.CASCADE)
+    val tag by belongsTo<ExplicitIdLinkTag>("tag_id").onDelete(OnDelete.CASCADE)
     val pair = index("idx_explicit_id_link_post_tags_post_tag", post.fk, tag.fk).unique()
 }
 
@@ -1182,7 +1182,7 @@ class EdgeCodegenTest {
             .generate("TeamMember", byName["TeamMember"]!!, names).toString()
 
         // TeamMember has `val teamId = int("team_id"); val team =
-        // belongsTo<Team>("team").field(teamId)`. A
+        // belongsTo<Team>("team_id").field(teamId)`. A
         assert(output.contains("var teamId: Int? = null")) {
             "Required field-backed FKs should use the same incomplete draft shape\n$output"
         }
@@ -1213,7 +1213,7 @@ class EdgeCodegenTest {
         val output = createRequiredInputViolations("RequiredPet", byName["RequiredPet"]!!, names)
             .replace("\\s+".toRegex(), " ")
 
-        // RequiredPet has `val owner = belongsTo<Owner>("owner")` (no
+        // RequiredPet has `val owner = belongsTo<Owner>("owner_id")` (no
         // .field(...), no default). The repo must report the missing
         // input before resolution so the runtime executor maps it to a
         // typed mutation result.
@@ -1378,7 +1378,7 @@ class EdgeCodegenTest {
         val output = EntityGenerator("com.example.ent")
             .generate("Pet", byName["Pet"]!!, names).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("val owner: EdgeRef<Pet, Owner, OwnerQueryScope> = EdgeRef(\"owner\") { OwnerQueryScope(NoopDriver) }")) {
+        assert(output.contains("val owner: EdgeRef<Pet, Owner, OwnerQueryScope> = EdgeRef(\"owner_id\") { OwnerQueryScope(NoopDriver) }")) {
             "Should emit EdgeRef<Pet, Owner, OwnerQueryScope> for the owner edge\n$output"
         }
         // The FK column ref still lives next to it
@@ -1997,8 +1997,8 @@ class EdgeCodegenTest {
             target = pet,
             kind = EdgeKind.ManyToMany(ManyToManyThrough.ThroughEntity(
                 junction = projectAssignment,
-                sourceEdge = "assignee",
-                targetEdge = "reviewer",
+                sourceEdge = "assignee_id",
+                targetEdge = "reviewer_id",
             )),
         )
 
@@ -2021,8 +2021,8 @@ class EdgeCodegenTest {
             target = pet,
             kind = EdgeKind.ManyToMany(ManyToManyThrough.ThroughEntity(
                 junction = projectAssignment,
-                sourceEdge = "project",
-                targetEdge = "project",
+                sourceEdge = "project_id",
+                targetEdge = "project_id",
             )),
         )
 
