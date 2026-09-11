@@ -2,10 +2,12 @@ package entkt.runtime
 
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.IsolationLevel
+import entkt.runtime.driver.NoopDriver
 import kotlin.reflect.KParameter
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -23,6 +25,11 @@ import kotlin.test.assertTrue
  * materialize again).
  */
 class DriverContractTest {
+
+    @Test
+    fun `drivers without a conflict classifier retain the unclassified fallback`() {
+        assertNull(NoopDriver.classifyConflictException(Exception("unknown database failure")))
+    }
 
     private fun assertAbstract(name: String, why: String) {
         val member = DatabaseDriver::class.declaredMemberFunctions.first { it.name == name }

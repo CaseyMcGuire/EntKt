@@ -19,9 +19,12 @@ import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.DatabaseGraphStorage
 import entkt.runtime.query.execution.ReadQueryCompiler
 import entkt.runtime.query.execution.RelationshipReadContext
+import entkt.runtime.result.EntDatabaseConflictException
 import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 
 class DatabaseGraphStorageTest {
     private data class Parent(
@@ -170,11 +173,23 @@ class DatabaseGraphStorageTest {
 
         val calls = mutableListOf<Call>()
         val directCalls = mutableListOf<DirectToManyQuery>()
+        val failures = mutableMapOf<String, Exception>()
+        val classifiedExceptions = mutableListOf<Exception>()
+
+        override fun classifyConflictException(exception: Exception): EntDatabaseConflictException? {
+            classifiedExceptions += exception
+            return if (exception in failures.values) {
+                EntDatabaseConflictException("40001", "serialization failure", exception)
+            } else {
+                null
+            }
+        }
 
         override fun directToManyWindowCapability(): DirectToManyWindowCapability = capability
 
         override fun queryDirectToMany(query: DirectToManyQuery): RelatedRows {
             directCalls += query
+            failures[query.targetTable]?.let { throw it }
             return nativeRows(query)
         }
 
@@ -187,6 +202,7 @@ class DatabaseGraphStorageTest {
             lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Map<String, Any?>> {
             calls += Call(table, predicates, limit, offset)
+            failures[table]?.let { throw it }
             return rows.getValue(table)
                 .filter { row -> predicates.all { matches(it, row) } }
                 .let { ordered(it, orderBy) }
@@ -231,6 +247,63 @@ class DatabaseGraphStorageTest {
     }
 
     private val viewerContext = ViewerContext(Viewer.User(7L))
+
+    @Test
+    fun `to-one target reads classify database conflicts`() {
+        val cause = Exception("target read conflict")
+        val driver = RowsDriver(emptyMap()).apply { failures["favorites"] = cause }
+
+        val conflict = assertFailsWith<EntDatabaseConflictException> {
+            storage(driver).loadRelationship(
+                EdgeSelection(FavoriteEdge, query(FavoriteMapping), EdgeVisibility.REQUIRE_VISIBLE),
+                sources = listOf(Parent(1L, 7L)),
+                context = relationshipContext(EdgeStep(Parent::class, "favorite", Favorite::class)),
+            )
+        }
+
+        assertSame(cause, conflict.cause)
+        assertEquals(listOf(cause), driver.classifiedExceptions)
+    }
+
+    @Test
+    fun `native and emulated to-many reads classify database conflicts`() {
+        for (capability in DirectToManyWindowCapability.entries) {
+            val cause = Exception("to-many read conflict")
+            val driver = RowsDriver(emptyMap(), capability).apply { failures["children"] = cause }
+
+            val conflict = assertFailsWith<EntDatabaseConflictException> {
+                storage(driver).loadRelationship(
+                    EdgeSelection(ChildrenEdge, query(ChildMapping), EdgeVisibility.REQUIRE_VISIBLE),
+                    sources = listOf(Parent(1L, null)),
+                    context = relationshipContext(EdgeStep(Parent::class, "children", Child::class)),
+                )
+            }
+
+            assertSame(cause, conflict.cause)
+            assertEquals(listOf(cause), driver.classifiedExceptions)
+        }
+    }
+
+    @Test
+    fun `junction discovery and target reads classify database conflicts`() {
+        for (table in listOf("memberships", "tags")) {
+            val cause = Exception("conflict reading $table")
+            val driver = RowsDriver(
+                mapOf("memberships" to listOf(mapOf("id" to 1L, "parent_id" to 1L, "tag_id" to 7L))),
+            ).apply { failures[table] = cause }
+
+            val conflict = assertFailsWith<EntDatabaseConflictException> {
+                storage(driver).loadRelationship(
+                    EdgeSelection(TagsEdge, query(TagMapping), EdgeVisibility.REQUIRE_VISIBLE),
+                    sources = listOf(Parent(1L, null)),
+                    context = relationshipContext(EdgeStep(Parent::class, "tags", Tag::class)),
+                )
+            }
+
+            assertSame(cause, conflict.cause)
+            assertEquals(listOf(cause), driver.classifiedExceptions)
+        }
+    }
 
     @Test
     fun `root loading prepares the query and preserves the terminal row bound`() {

@@ -43,13 +43,16 @@ enum class MutationWriteState {
  * only the not-committed and unknown outcomes are representable.
  */
 enum class TransactionFailureState {
-    /** Rollback was confirmed; the transaction has no durable effect. */
+    /**
+     * The transaction did not commit: it never began, rolled back, or its
+     * commit was definitively rejected.
+     */
     NotCommitted,
 
     /**
-     * Neither commit nor rollback could be confirmed — the failed
-     * commit may already have reached the database. Never retried
-     * automatically.
+     * Whether the transaction committed could not be established. A failed
+     * commit may already have taken effect; a later rollback alone cannot
+     * rule that out. Never retried automatically.
      */
     OutcomeUnknown,
 }

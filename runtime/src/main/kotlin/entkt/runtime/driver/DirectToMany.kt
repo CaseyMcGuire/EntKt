@@ -172,15 +172,17 @@ public fun executeDirectToMany(
         return RelatedRows(emptyList(), strategy)
     }
     return when (capability) {
-        DirectToManyWindowCapability.NATIVE -> driver.queryDirectToMany(query)
+        DirectToManyWindowCapability.NATIVE -> driver.executeRead { driver.queryDirectToMany(query) }
         DirectToManyWindowCapability.EMULATED -> {
-            val rows = driver.query(
-                query.targetTable,
-                emulationPredicates,
-                query.effectiveOrder,
-                null,
-                null,
-            )
+            val rows = driver.executeRead {
+                driver.query(
+                    query.targetTable,
+                    emulationPredicates,
+                    query.effectiveOrder,
+                    null,
+                    null,
+                )
+            }
             RelatedRows(
                 rows.map { RelatedRow(it[query.targetForeignKey], it) },
                 EagerWindowStrategy.IN_MEMORY_EMULATED,

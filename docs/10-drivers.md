@@ -54,6 +54,8 @@ interface DatabaseDriver {
     ): DriverTransactionResult<T>
     val inTransaction: Boolean
 
+    fun classifyConflictException(exception: Exception): EntDatabaseConflictException? = null
+
     fun classifyMutationException(
         exception: Exception,
         entity: String,
@@ -208,15 +210,24 @@ discipline.
   only after commit is confirmed. If the block throws an ordinary
   exception and rollback is confirmed, the driver returns
   `Failed(exception, NotCommitted)`; a failed rollback returns
-  `OutcomeUnknown`, and a failed commit returns `OutcomeUnknown` even
-  if a later rollback appears to succeed (the commit may already have
-  reached the database). A `CancellationException` is rethrown only
-  after confirmed rollback; commit-time cancellation or cancellation
+  `OutcomeUnknown`. A recognized definitive commit rejection returns
+  `NotCommitted`; other commit failures return `OutcomeUnknown` even if
+  a later rollback succeeds (the commit may already have taken effect).
+  Cleanup failures cannot erase a confirmed rejection. A `CancellationException`
+  is rethrown only after confirmed rollback; commit-time cancellation or cancellation
   followed by an unconfirmed rollback returns
   `Failed(cancellation, OutcomeUnknown)`. JVM `Error`s still rethrow.
   Calling `withTransaction()`
   on an already-transactional driver throws
   `NestedTransactionUnsupportedException` before entering the block.
+- `classifyConflictException()` recognizes a low-level database concurrency
+  conflict as `EntDatabaseConflictException`, preserving the driver error code
+  and original exception as its cause. The default returns null; transaction-scoped
+  and decorating drivers should forward the underlying driver's implementation.
+  Canonical root and eager reads call it around driver reads only, not interceptors,
+  entity decoding, or privacy evaluation. Unrecognized exceptions retain their
+  identity. Classification performs no I/O, does not search arbitrary exception
+  causes, and does not itself establish a transaction outcome or authorize a retry.
 - `classifyMutationException()` maps a low-level exception from a **mutation**
   into a state-bearing `EntMutationException?` — the returned
   exception's own `writeState` is the classification, with no parallel
@@ -226,9 +237,10 @@ discipline.
   `null` means "no more precise classification"; generated mutation
   code then falls back to its phase-derived write state (using
   `PersistenceUnknown` for an unclassified write exception, never
-  optimistically `NotPersisted`). Read execution never consults it —
-  canonical reads store the original exception directly in
-  `ReadResult.Failed`.
+  optimistically `NotPersisted`). Reads use the separate conflict classifier;
+  they do not acquire mutation-specific write states. PostgreSQL shares conflict
+  recognition between the two classifiers. Low-level driver reads still throw
+  their original errors; the runtime performs read-result classification.
 - `inTransaction` is `false` on the root client driver and `true` on the
   driver passed inside `withTransaction { tx -> ... }`. Generated
   `save()` paths use this to enforce
@@ -526,8 +538,9 @@ client.withTransaction { tx ->
 The client-level `withTransaction` returns `TransactionResult<T>`
 (project with `.getOrThrow()`); a mutation failure produced through
 `tx` marks the scope rollback-only even if its result is ignored.
-After confirmed rollback, `.getOrThrow()` rethrows the stored exception
-directly; an unknown transaction outcome throws
+For `NotCommitted`, including a confirmed rollback or recognized definitive commit
+rejection, `.getOrThrow()` rethrows the stored exception directly; an unknown outcome
+throws
 `EntTransactionOutcomeUnknownException` instead.
 The generated `tx` is an `EntTransactionClient`, which has no
 `withTransaction` member, so client-level nesting does not compile.
@@ -598,6 +611,23 @@ Unsupported levels are rejected before the block or transaction I/O with
 application code runs. Existing commit/rollback certainty rules still apply;
 isolation does not turn an uncertain commit into a safe-to-retry failure.
 Savepoints, nested transactions, and automatic retries are not enabled.
+
+#### Conflict reporting
+
+PostgreSQL recognizes serialization failures (`40001`) and deadlocks (`40P01`)
+for canonical reads, mutation statements, and transaction commit. Reads and commit
+use `EntDatabaseConflictException`; mutation statements retain `EntConflictException`
+and its mutation write state. Both implement `EntConflictFailure`.
+
+At commit, a recognized conflict is `NotCommitted` only when the exception contains
+the server's error response. An error code alone, a wrapped cause, or a later successful
+rollback does not prove commit rejection. Unconfirmed outcomes remain `OutcomeUnknown`,
+even when the underlying exception is recognized as a conflict. Driver cleanup still
+runs; it cannot change a definitive rejection into an uncertain outcome.
+
+Other commit errors retain the existing conservative handling. No automatic retries
+are introduced. See [Conflicts and transaction outcomes](04-queries.md#conflicts-and-transaction-outcomes)
+for application handling and retry constraints.
 
 ### Locking (RFC #4)
 
@@ -720,10 +750,10 @@ contract:
    forward this operation.
 5. `withTransaction()` must honor the write-certainty contract:
    `DriverTransactionResult.Success` only after confirmed commit;
-   `Failed(exception, NotCommitted)` only after confirmed rollback;
-   `OutcomeUnknown` for rollback or commit failures (a failed commit
-   stays `OutcomeUnknown` even if a later rollback appears to
-   succeed); cleanup failures after a confirmed commit must not turn
+   `Failed(exception, NotCommitted)` after confirmed rollback or a recognized
+   definitive commit rejection; `OutcomeUnknown` for an unconfirmed rollback or
+   commit outcome (a later successful rollback cannot disprove an earlier commit).
+   Cleanup failures cannot erase a definitive rejection or turn a confirmed
    success into failure. Block-time cancellation is rethrown only after
    confirmed rollback; commit-time cancellation or an unconfirmed rollback is
    `OutcomeUnknown`. JVM errors are rolled back best-effort and rethrown. The

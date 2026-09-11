@@ -27,6 +27,7 @@ import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.EntDatabaseConflictException
 import entkt.runtime.result.EntityKey
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.PrivacyDenial
@@ -54,6 +55,13 @@ class ReadQueryExecutorRootTest {
         var orderBy: List<OrderField<*>>? = null
         var limit: Int? = null
         var offset: Int? = null
+        var classify: (Exception) -> EntDatabaseConflictException? = { null }
+        val classifiedExceptions = mutableListOf<Exception>()
+
+        override fun classifyConflictException(exception: Exception): EntDatabaseConflictException? {
+            classifiedExceptions += exception
+            return classify(exception)
+        }
 
         override fun query(
             table: String,
@@ -91,6 +99,8 @@ class ReadQueryExecutorRootTest {
         var privacyEnabled = true
         var denials: List<PrivacyDenial?> = emptyList()
         var preparationFailure: Throwable? = null
+        var decodingFailure: Throwable? = null
+        var privacyFailure: Throwable? = null
         val interceptorContexts = mutableListOf<QueryContext>()
         var interceptorBehavior: (InterceptScope<Item>, QueryContext) -> Unit = { _, context ->
             events += if (context.operation == ReadOperation.ALL || context.operation == ReadOperation.FIRST) {
@@ -114,6 +124,7 @@ class ReadQueryExecutorRootTest {
         override val table: String = "items"
 
         override fun decode(row: Map<String, Any?>): Item {
+            decodingFailure?.let { throw it }
             val id = row.getValue("id") as Long
             events += "decode:$id"
             return Item(id)
@@ -181,6 +192,7 @@ class ReadQueryExecutorRootTest {
                 assertSame(adapter as Any, entity as Any)
                 assertSame(adapter.viewerContext, viewerContext)
                 adapter.events += "load-privacy:${entities.joinToString { it.id.toString() }}"
+                adapter.privacyFailure?.let { throw it }
                 val denials = adapter.denials.ifEmpty { List(entities.size) { null } }
                 return privacyEvaluation(
                     subjects = entities,
@@ -212,6 +224,60 @@ class ReadQueryExecutorRootTest {
             is ReadResult.Success -> ReadResult.Success(result.value.firstOrNull())
             is ReadResult.Failed -> result
         }
+
+    @Test
+    fun `root reads classify database conflicts without running decoding or privacy`() {
+        val events = mutableListOf<String>()
+        val cause = Exception("database conflict")
+        val conflict = EntDatabaseConflictException("40001", "serialization failure", cause)
+        val driver = QueryDriver(emptyList(), events, cause).apply {
+            classify = { conflict }
+        }
+        val adapter = Adapter(events, driver)
+
+        val result = assertIs<ReadResult.Failed>(readAll(adapter))
+
+        assertSame(conflict, result.exception)
+        assertSame(conflict, assertFailsWith<EntDatabaseConflictException> { result.getOrThrow() })
+        assertEquals(listOf(cause), driver.classifiedExceptions)
+        assertEquals(listOf("read-guard", "root-interceptors", "driver"), events)
+    }
+
+    @Test
+    fun `interceptor decoding and privacy exceptions do not enter database classification`() {
+        for (phase in listOf("interceptor", "decode", "privacy")) {
+            val events = mutableListOf<String>()
+            val cause = Exception("failure in $phase")
+            val driver = QueryDriver(listOf(mapOf("id" to 1L)), events).apply {
+                classify = { EntDatabaseConflictException("40001", "must not classify", it) }
+            }
+            val adapter = Adapter(events, driver).apply {
+                when (phase) {
+                    "interceptor" -> preparationFailure = cause
+                    "decode" -> decodingFailure = cause
+                    "privacy" -> privacyFailure = cause
+                }
+            }
+
+            val result = assertIs<ReadResult.Failed>(readAll(adapter))
+
+            assertSame(cause, result.exception)
+            assertEquals(emptyList(), driver.classifiedExceptions)
+        }
+    }
+
+    @Test
+    fun `database cancellation and fatal errors bypass conflict classification`() {
+        for (failure in listOf(CancellationException("cancelled"), AssertionError("fatal"))) {
+            val events = mutableListOf<String>()
+            val driver = QueryDriver(emptyList(), events, failure).apply {
+                classify = { EntDatabaseConflictException("40001", "must not classify", it) }
+            }
+
+            assertSame(failure, assertFailsWith<Throwable> { readAll(Adapter(events, driver)) })
+            assertEquals(emptyList(), driver.classifiedExceptions)
+        }
+    }
 
     @Test
     fun `read query executor rejects a negative terminal bound`() {

@@ -29,6 +29,17 @@ above it.
 
 ## Unreleased
 
+- **Classify database conflicts across reads and transaction commit** (`runtime`, `postgres`)
+  Recognized read and commit conflicts now use `EntDatabaseConflictException`
+  instead of exposing a raw PostgreSQL exception. It and the existing mutation
+  `EntConflictException` implement `EntConflictFailure`. Server-confirmed
+  serialization/deadlock rejections at commit now report `NotCommitted` rather
+  than `OutcomeUnknown`.
+  _Migration:_ update handlers that catch raw PostgreSQL exceptions from read
+  or transaction projections. Use the typed conflict's `code`/`cause` for diagnostics,
+  and check transaction outcome before considering retries. Uncertain outcomes
+  still throw `EntTransactionOutcomeUnknownException`; no automatic retries are added.
+
 - **Expose field uniqueness only on supported builders** (`schema`)
   `.unique()` is no longer a member of the common `FieldBuilder`. Scalar and
   enum builders retain it; JSON and pgvector fields reject it at compile time

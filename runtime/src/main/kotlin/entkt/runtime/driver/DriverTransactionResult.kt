@@ -17,10 +17,11 @@ import entkt.runtime.result.TransactionFailureState
  * - [Success] only after commit is confirmed.
  * - Block failure with confirmed rollback →
  *   `Failed(exception, NotCommitted)`.
- * - Rollback failure → `Failed(exception, OutcomeUnknown)`.
- * - Commit failure → `Failed(commitException, OutcomeUnknown)`, even
- *   if a later rollback call appears to succeed — the failed commit
- *   may already have reached the database.
+ * - Block failure with unconfirmed rollback → `Failed(exception, OutcomeUnknown)`.
+ * - A recognized definitive database rejection of commit →
+ *   `Failed(exception, NotCommitted)`, even if subsequent cleanup fails.
+ * - Commit failure without definitive rejection →
+ *   `Failed(exception, OutcomeUnknown)`, even if a later rollback succeeds.
  * - Cleanup failures after a confirmed commit must never demote
  *   [Success] to a failed or unknown outcome.
  * - A `CancellationException` before commit is rethrown only after
@@ -38,10 +39,10 @@ sealed interface DriverTransactionResult<out T> {
 
     /**
      * The transaction did not commit ([TransactionFailureState.NotCommitted],
-     * rollback confirmed) or its outcome could not be established
-     * ([TransactionFailureState.OutcomeUnknown]). [exception] is the
-     * ordinary exception that stopped the block or boundary, with any
-     * rollback/cleanup failures attached as suppressed.
+     * rollback or commit rejection confirmed) or its outcome could not be
+     * established ([TransactionFailureState.OutcomeUnknown]). [exception]
+     * is the ordinary or classified exception that stopped the block or
+     * boundary, with any rollback/cleanup failures attached as suppressed.
      */
     data class Failed(
         val exception: Exception,

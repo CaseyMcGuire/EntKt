@@ -83,6 +83,14 @@ certainty handling as failures in the block. No automatic retries or savepoints
 are added. See [Transaction isolation](../docs/10-drivers.md#transaction-isolation)
 for examples, locking behavior, and failure handling.
 
+Serialization failures (`40001`) and deadlocks (`40P01`) are recognized across
+canonical reads, mutation statements, and commit. At commit, a recognized conflict
+with a server error response reports `NotCommitted`; an uncertain outcome stays
+`OutcomeUnknown`, regardless of a later successful rollback. The original exception
+is preserved as the conflict's cause. See
+[Conflict reporting](../docs/10-drivers.md#conflict-reporting) for the shared
+`EntConflictFailure` marker and application-handling guidance.
+
 ## Tests
 
 `PostgresDriverTest` runs the full driver contract against

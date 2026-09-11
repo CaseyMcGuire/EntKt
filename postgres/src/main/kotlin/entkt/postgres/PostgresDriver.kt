@@ -924,10 +924,11 @@ class PostgresDriver(
      * [DatabaseDriver.withTransaction] write-certainty contract: `Success`
      * only after a confirmed commit; an ordinary block failure with a
      * confirmed rollback is `Failed(exception, NotCommitted)`; a
-     * failed rollback or a failed commit is
-     * `Failed(exception, OutcomeUnknown)` — a failed COMMIT may
-     * already have reached the server, so a later apparently
-     * successful rollback never downgrades it to `NotCommitted`.
+     * failed rollback or an unconfirmed commit outcome is
+     * `Failed(exception, OutcomeUnknown)`. A server-confirmed
+     * serialization or deadlock rejection at commit is `NotCommitted`;
+     * otherwise a later successful rollback cannot prove that the
+     * failed COMMIT did not already take effect.
      * A `CancellationException` is rethrown only when rollback is
      * confirmed before commit; commit-time cancellation or an
      * unconfirmed rollback is `Failed(exception, OutcomeUnknown)`.
@@ -941,9 +942,8 @@ class PostgresDriver(
      *
      *  - A `rollback()` failure is attached to the outcome's stored
      *    (or propagating) exception via `addSuppressed` rather than
-     *    reported in its place — and flips the failure state to
-     *    `OutcomeUnknown`, the one sanctioned way cleanup affects the
-     *    outcome.
+     *    reported in its place. It makes a block failure's outcome
+     *    unknown, but cannot erase a server-confirmed commit rejection.
      *  - Connection-release failures after a **successful commit** are
      *    swallowed. Surfacing them would report failure for durably
      *    committed work, and any retry wrapper would then re-apply an
@@ -976,8 +976,8 @@ class PostgresDriver(
         // / JVM errors / setup failures) or stored in Failed. Cleanup
         // failures attach here rather than supplanting the outcome.
         var attachTo: Throwable? = null
-        // Whether the transaction reached a decided end (committed or
-        // rolled back). Gates the autocommit restore — see
+        // Whether commit or rollback completed on the connection. A rejected
+        // commit still needs cleanup before restoring autocommit — see
         // [releaseConnection].
         var resolved = false
         try {
@@ -1047,20 +1047,26 @@ class PostgresDriver(
                 DriverTransactionResult.Success(result)
             } catch (commitFailure: Throwable) {
                 attachTo = commitFailure
-                // The failed COMMIT may already have reached the
-                // server. Roll back for connection hygiene, but the
-                // outcome stays OutcomeUnknown regardless of whether
-                // that rollback appears to succeed.
-                resolved = rollbackAttributingFailure(conn, commitFailure)
                 if (commitFailure !is Exception) {
-                    // JVM errors cannot be stored in the result
-                    // algebra. Cancellation is an Exception and stays
-                    // structural here because commit may have happened.
+                    resolved = rollbackAttributingFailure(conn, commitFailure)
                     throw commitFailure
                 }
+
+                val conflict = classifyConflictException(commitFailure)
+                val reported = conflict ?: commitFailure
+                attachTo = reported
+                val commitRejected = conflict != null &&
+                    commitFailure is org.postgresql.util.PSQLException &&
+                    commitFailure.serverErrorMessage != null
+
+                // A recognized server rejection proves no commit occurred.
+                // Other failures (including cancellation) remain uncertain,
+                // even if the subsequent connection-hygiene rollback succeeds.
+                resolved = rollbackAttributingFailure(conn, reported)
                 DriverTransactionResult.Failed(
-                    commitFailure,
-                    TransactionFailureState.OutcomeUnknown,
+                    reported,
+                    if (commitRejected) TransactionFailureState.NotCommitted
+                    else TransactionFailureState.OutcomeUnknown,
                 )
             }
         } catch (e: Throwable) {
@@ -1183,7 +1189,26 @@ class PostgresDriver(
         )
     }
 
-    // ---------- DatabaseDriver exception classification (write certainty) ----------
+    // ---------- DatabaseDriver exception classification ----------
+
+    /**
+     * Recognize serialization failures (`40001`) and deadlocks (`40P01`).
+     * The SQLSTATE identifies the conflict, not the transaction outcome: commit
+     * handling must separately establish a definitive server rejection.
+     */
+    override fun classifyConflictException(
+        exception: Exception,
+    ): entkt.runtime.result.EntDatabaseConflictException? {
+        if (exception !is org.postgresql.util.PSQLException) return null
+        val state = exception.sqlState
+        if (state != "40001" && state != "40P01") return null
+
+        return entkt.runtime.result.EntDatabaseConflictException(
+            code = state,
+            message = exception.message ?: "database concurrency conflict",
+            cause = exception,
+        )
+    }
 
     /**
      * Classify a [PSQLException] thrown by one of this driver's
@@ -1205,9 +1230,8 @@ class PostgresDriver(
      *    [entkt.runtime.result.EntConflictException] (also
      *    `NotPersisted`). Statement-level only: these classifications
      *    describe a failed *statement*, whose effect did not persist.
-     *    Commit-path failures never reach classification — the
-     *    transaction boundary reports those as `OutcomeUnknown`
-     *    itself.
+     *    Read and commit paths use [classifyConflictException] instead;
+     *    transaction completion determines its final outcome separately.
      *
      * Anything unrecognized returns `null`; the generated terminal
      * then stores the original exception with its phase-derived
@@ -1232,11 +1256,12 @@ class PostgresDriver(
                 cause = exception,
             )
         }
-        if (state == "40001" || state == "40P01") {
+        val conflict = classifyConflictException(exception)
+        if (conflict != null) {
             return entkt.runtime.result.EntConflictException(
                 entityType = entity,
                 operation = operation,
-                code = state,
+                code = conflict.code,
                 message = exception.message ?: "serialization conflict",
                 cause = exception,
             )

@@ -248,7 +248,7 @@ class EntConflictException(
     val code: String?,
     message: String,
     cause: Exception? = null,
-) : EntMutationException(MutationWriteState.NotPersisted, message, cause)
+) : EntMutationException(MutationWriteState.NotPersisted, message, cause), EntConflictFailure
 
 /**
  * An unclassified failure during mutation terminal execution: an

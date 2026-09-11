@@ -1,6 +1,7 @@
 package entkt.runtime
 
 import entkt.runtime.result.EntConflictException
+import entkt.runtime.result.EntConflictFailure
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntException
 import entkt.runtime.result.EntMutationException
@@ -87,6 +88,7 @@ class EntExceptionTest {
         )
         assertEquals(MutationWriteState.NotPersisted, ex.writeState)
         assertNull(ex.cause)
+        assertIs<EntConflictFailure>(ex)
     }
 
     // ---- state-bearing mutation failure types ----

@@ -7,6 +7,7 @@ import entkt.runtime.driver.DirectToManyQuery
 import entkt.runtime.driver.DirectToManyWindowCapability
 import entkt.runtime.driver.PerParentWindow
 import entkt.runtime.driver.executeDirectToMany
+import entkt.runtime.driver.executeRead
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.ViewerContext
@@ -306,14 +307,16 @@ internal class DatabaseGraphStorage(
         offset: Int?,
         maximumEntities: Int? = null,
     ): List<Entity> {
-        val rows = driver.query(
-            query.table,
-            query.predicates,
-            query.orderBy,
-            limit,
-            offset,
-            query.lockMode,
-        )
+        val rows = driver.executeRead {
+            driver.query(
+                query.table,
+                query.predicates,
+                query.orderBy,
+                limit,
+                offset,
+                query.lockMode,
+            )
+        }
         val boundedRows = maximumEntities?.let(rows::take) ?: rows
         return boundedRows.map(entity::decode)
     }

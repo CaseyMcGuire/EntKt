@@ -43,11 +43,8 @@ import kotlin.test.assertTrue
  * `writeState` hardcoding NotPersisted for the recognized statement-
  * level rejection.
  *
- * A 40001/40P01 serialization-conflict test (EntConflictException) is
- * deliberately absent: reproducing a genuine serialization failure
- * requires racing concurrent SERIALIZABLE transactions and is not
- * cheaply deterministic here; the mapping is unit-pinned in
- * `PostgresDriverClassifyTest`.
+ * [TransactionConflictIntegrationTest] covers real 40001/40P01 conflicts
+ * through generated reads, mutations, and transaction completion.
  */
 @Testcontainers
 class SqlstateConstraintMappingPostgresIntegrationTest {

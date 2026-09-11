@@ -217,6 +217,11 @@ internal class PostgresTransactionalDriver(
     // Exception classification delegates to root — the PSQLException
     // shape is the same whether thrown from a tx-scoped or root-
     // scoped statement.
+    override fun classifyConflictException(
+        exception: Exception,
+    ): entkt.runtime.result.EntDatabaseConflictException? =
+        root.classifyConflictException(exception)
+
     override fun classifyMutationException(
         exception: Exception,
         entity: String,

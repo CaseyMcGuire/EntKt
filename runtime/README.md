@@ -89,8 +89,10 @@ examples and database-specific semantics.
 transaction and reports the outcome structurally as
 `DriverTransactionResult<T>`: `Success` only after a confirmed commit;
 an ordinary block failure with a confirmed rollback is
-`Failed(exception, NotCommitted)`; a failed rollback or commit is
-`Failed(exception, OutcomeUnknown)`. `CancellationException` rethrows only
+`Failed(exception, NotCommitted)`. A recognized definitive commit rejection also
+reports `NotCommitted`; an unconfirmed rollback or commit outcome reports
+`OutcomeUnknown`. A successful rollback after an uncertain commit does not prove
+that the commit failed. `CancellationException` rethrows only
 after confirmed rollback; commit-time cancellation or an unconfirmed rollback
 is `Failed(cancellation, OutcomeUnknown)`. JVM `Error`s still rethrow. Calling
 `withTransaction` again on the transaction-scoped driver throws
@@ -99,3 +101,10 @@ before the nested block runs. Generated transaction clients omit the
 nested entry point entirely. The client-level transaction boundary
 (`runEntTransaction` + `TransactionScope.orRollback()`) builds on this
 contract; see the operation-result-algebra design note.
+
+Recognized conflicts share `EntConflictFailure`: `EntConflictException` retains
+mutation-specific state, while `EntDatabaseConflictException` represents database
+conflicts in reads and transaction completion. Runtime read classification wraps
+only driver reads, preserving application callback exceptions and cancellation.
+Neither the marker nor the driver error code authorizes a retry. See
+[Conflicts and transaction outcomes](../docs/04-queries.md#conflicts-and-transaction-outcomes).

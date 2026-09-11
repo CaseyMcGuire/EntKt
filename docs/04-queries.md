@@ -922,6 +922,14 @@ do not automatically mark the transaction rollback-only; use `orRollback()` when
 failure should stop the transaction. A database statement failure can still
 abort it. Singular absence remains a successful null, not a locked target.
 
+Recognized PostgreSQL deadlocks and serialization failures return
+`ReadResult.Failed(EntDatabaseConflictException(...))`, retaining the SQLSTATE
+as `code` and the original driver exception as `cause`. This also applies to
+ordinary root and eager reads. `visibleOrNull()` does not hide these failures.
+Use `orRollback()` to stop immediately and preserve the conflict at the transaction
+boundary; ignoring an aborted read can instead lead to a later transaction-aborted
+error. See [Conflicts and transaction outcomes](#conflicts-and-transaction-outcomes).
+
 Only the final root rows are locked. For example,
 `tx.users.query().queryPosts().forUpdate()` locks posts, not the source users.
 Eager-loaded entities and junction rows remain ordinary reads. Locking a parent
@@ -971,10 +979,10 @@ a normally returning block still rolls back and reports the first
 recorded failure. If the block throws, the transaction rolls back.
 `TransactionResult` is `Success(value)` or
 `Failed(exception, transactionState)` with `transactionState` either
-`NotCommitted` (rollback confirmed) or `OutcomeUnknown`;
-`.getOrThrow()` rethrows the exact stored exception when rollback was
-confirmed, so ordinary typed catches work. When commit or rollback
-could not be confirmed, it instead throws
+`NotCommitted` (the transaction did not commit) or `OutcomeUnknown`;
+`.getOrThrow()` rethrows the exact stored exception for `NotCommitted`, including
+a confirmed rollback or a recognized definitive commit rejection.
+If EntKt cannot establish whether the transaction committed, it instead throws
 `EntTransactionOutcomeUnknownException` with the stored exception as
 its cause. Callers needing the complete state without throwing can
 inspect `TransactionResult.Failed` directly.
@@ -998,3 +1006,49 @@ For write-side transaction discipline — `TransactionRequirement`
 (per-save row-locking update mode) — see [Hooks → Execution
 Order](05-hooks.md#execution-order) and
 [Drivers → Locking (RFC #4)](10-drivers.md#locking-rfc-4).
+
+### Conflicts and transaction outcomes
+
+Conflicts retain the result type of the operation that encountered them:
+
+- A recognized database conflict during a read uses `EntDatabaseConflictException`
+  inside `ReadResult.Failed`.
+- A recognized mutation-statement conflict uses `EntConflictException` inside
+  `MutationResult.Failed`, preserving its entity, operation, and mutation write state.
+- A recognized conflict during transaction commit uses `EntDatabaseConflictException`
+  inside `TransactionResult.Failed`, with the final transaction state reported separately.
+
+Both exception types implement `EntConflictFailure`, so application boundaries
+can recognize the shared category without parsing driver exceptions. The existing
+`EntConflictException` also covers optimistic-concurrency rejections, which do not
+necessarily abort a transaction. The marker itself is not a retry policy.
+
+For PostgreSQL, SQLSTATE `40001` identifies a serialization failure and `40P01`
+identifies a deadlock. If a commit call receives a recognized conflict with a
+server error response, EntKt reports `NotCommitted`. If the commit outcome is
+uncertain—for example, the connection drops before its acknowledgement—EntKt
+reports `OutcomeUnknown`. A subsequent successful rollback does not prove that
+the earlier commit failed. Cleanup failures remain diagnostic information and
+cannot erase a confirmed commit rejection.
+
+Check the transaction state before interpreting its exception:
+
+```kotlin
+// result is returned by client.withTransaction { tx -> ... }
+if (result is TransactionResult.Failed) {
+    if (result.transactionState == TransactionFailureState.OutcomeUnknown) {
+        // Reconcile the outcome; the transaction may have committed.
+    } else if (result.exception is EntConflictFailure) {
+        // Report a concurrency conflict, or apply an explicit retry policy.
+    } else {
+        throw result.exception
+    }
+}
+```
+
+No automatic retries, rereads, or changes to hook/privacy behavior are added.
+If you choose to retry a known-aborted transaction, rerun the **entire transaction**,
+including its reads and decisions, and ensure external side effects are safe to
+repeat. `NotCommitted` covers only the managed database transaction, not another
+connection or an external service. See PostgreSQL's
+[serialization failure guidance](https://www.postgresql.org/docs/current/mvcc-serialization-failure-handling.html).

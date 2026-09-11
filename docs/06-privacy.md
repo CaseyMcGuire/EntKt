@@ -853,8 +853,9 @@ try {
 }
 ```
 
-After confirmed rollback, the original exception is safe to classify for the
-managed transaction. `EntTransactionOutcomeUnknownException`, by contrast,
+With `NotCommitted` (a confirmed rollback or recognized definitive commit rejection),
+the stored exception can be classified for the managed transaction.
+`EntTransactionOutcomeUnknownException`, by contrast,
 means that transaction may have committed. Its `exception` and `cause` retain
 the underlying failure for diagnostics, not normalization into an ordinary
 client error. Do not blindly retry unless the complete operation—including

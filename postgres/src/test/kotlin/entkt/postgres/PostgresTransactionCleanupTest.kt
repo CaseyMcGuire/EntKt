@@ -4,9 +4,15 @@ import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.DriverTransactionResult
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
+import entkt.runtime.driver.IsolationLevel
 import entkt.runtime.mutation.RelationshipLockKey
+import entkt.runtime.result.EntConflictFailure
+import entkt.runtime.result.EntDatabaseConflictException
 import entkt.runtime.result.TransactionFailureState
 import entkt.schema.FieldType
+import org.postgresql.util.PSQLException
+import org.postgresql.util.PSQLState
+import org.postgresql.util.ServerErrorMessage
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
@@ -21,6 +27,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -230,6 +237,140 @@ class PostgresTransactionCleanupTest {
     }
 
     // ---------- commit failures ----------
+
+    @Test
+    fun `server-confirmed concurrency rejection reports a typed conflict and NotCommitted`() {
+        for (state in listOf("40001", "40P01")) {
+            freshLedger()
+            val original = serverConflict(state)
+            val (driver, recorder) = driverThrowingOn("commit" to original)
+
+            val result = driver.withTransaction { tx ->
+                tx.insert("tx_ledger", mapOf("memo" to "rejected"))
+            }
+
+            val failed = assertIs<DriverTransactionResult.Failed>(result)
+            val conflict = assertIs<EntDatabaseConflictException>(failed.exception)
+            assertIs<EntConflictFailure>(conflict)
+            assertEquals(state, conflict.code)
+            assertSame(original, conflict.cause)
+            assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+            assertTrue("rollback" in recorder.calls)
+            assertTrue("setAutoCommit(true)" in recorder.calls)
+            assertEquals(emptyList(), memos())
+        }
+    }
+
+    @Test
+    fun `cleanup failure cannot erase confirmed commit rejection or restore autocommit prematurely`() {
+        freshLedger()
+        val original = serverConflict("40001")
+        val rollbackFailure = SQLException("rollback failed")
+        val closeFailure = SQLException("close failed")
+        val (driver, recorder) = driverThrowingOn(
+            "commit" to original,
+            "rollback" to rollbackFailure,
+            "close" to closeFailure,
+        )
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "rejected"))
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        val conflict = assertIs<EntDatabaseConflictException>(failed.exception)
+        assertSame(original, conflict.cause)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertEquals(listOf(rollbackFailure, closeFailure), conflict.suppressed.toList())
+        assertFalse("setAutoCommit(true)" in recorder.calls)
+        assertTrue("close" in recorder.calls)
+        assertEquals(emptyList(), memos())
+    }
+
+    @Test
+    fun `conflict SQLSTATE without a server response does not prove commit was rejected`() {
+        freshLedger()
+        val original = PSQLException("could not serialize", PSQLState.SERIALIZATION_FAILURE)
+        val (driver, recorder) = driverThrowingOn("commit" to original)
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "unconfirmed"))
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        val conflict = assertIs<EntDatabaseConflictException>(failed.exception)
+        assertSame(original, conflict.cause)
+        assertEquals("40001", conflict.code)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failed.transactionState)
+        assertTrue("rollback" in recorder.calls)
+    }
+
+    @Test
+    fun `a wrapped server conflict does not prove commit was rejected`() {
+        freshLedger()
+        val wrapper = SQLException("connection lost", "08006", serverConflict("40001"))
+        val (driver, _) = driverThrowingOn("commit" to wrapper)
+
+        val result = driver.withTransaction { tx ->
+            tx.insert("tx_ledger", mapOf("memo" to "unconfirmed"))
+        }
+
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        assertSame(wrapper, failed.exception)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failed.transactionState)
+    }
+
+    @Test
+    fun `application block failures are not reclassified as commit conflicts`() {
+        freshLedger()
+        val original = serverConflict("40001")
+        val (driver, recorder) = driverFailingOn()
+
+        val failed = assertIs<DriverTransactionResult.Failed>(driver.withTransaction { throw original })
+
+        assertSame(original, failed.exception)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertFalse("commit" in recorder.calls)
+        assertTrue("rollback" in recorder.calls)
+    }
+
+    @Test
+    fun `real serialization failure at commit is typed and confirmed not committed without retries`() {
+        val first = freshLedger()
+        val firstId = first.insert("tx_ledger", mapOf("memo" to "first")).getValue("id")!!
+        val secondId = first.insert("tx_ledger", mapOf("memo" to "second")).getValue("id")!!
+        val second = PostgresDriver(realDataSource, autoDdl = false).also { it.register(LEDGER) }
+        var firstAttempts = 0
+        var secondAttempts = 0
+        var firstBlockCompleted = false
+
+        val result = first.withTransaction(IsolationLevel.Serializable) { tx ->
+            firstAttempts++
+            assertEquals(2L, tx.count("tx_ledger", emptyList()))
+            val concurrent = second.withTransaction(IsolationLevel.Serializable) { other ->
+                secondAttempts++
+                assertEquals(2L, other.count("tx_ledger", emptyList()))
+                tx.update("tx_ledger", firstId, mapOf("memo" to "first changed"))
+                other.update("tx_ledger", secondId, mapOf("memo" to "second changed"))
+            }
+            assertIs<DriverTransactionResult.Success<*>>(concurrent)
+            firstBlockCompleted = true
+        }
+
+        assertTrue(firstBlockCompleted, "the failure must occur after the application block finishes")
+        val failed = assertIs<DriverTransactionResult.Failed>(result)
+        val conflict = assertIs<EntDatabaseConflictException>(failed.exception)
+        assertEquals("40001", conflict.code)
+        assertNotNull(assertIs<PSQLException>(conflict.cause).serverErrorMessage)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertEquals(listOf("first", "second changed"), memos())
+        assertEquals(1, firstAttempts)
+        assertEquals(1, secondAttempts)
+    }
+
+    private fun serverConflict(sqlState: String): PSQLException = PSQLException(
+        ServerErrorMessage("SERROR\u0000C$sqlState\u0000Mtransaction conflict\u0000"),
+    )
 
     @Test
     fun `a failing commit reports OutcomeUnknown even though the hygiene rollback succeeds`() {

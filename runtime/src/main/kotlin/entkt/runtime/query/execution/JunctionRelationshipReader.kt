@@ -5,6 +5,7 @@ package entkt.runtime.query.execution
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.runtime.driver.DatabaseDriver
+import entkt.runtime.driver.executeRead
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.query.EdgeSelection
@@ -122,13 +123,16 @@ internal class JunctionRelationshipReader(
             return emptyList()
         }
 
-        return driver.query(
-            query.table,
-            query.predicates,
-            query.orderBy,
-            null,
-            null,
-        ).map(entity::decode)
+        val rows = driver.executeRead {
+            driver.query(
+                query.table,
+                query.predicates,
+                query.orderBy,
+                null,
+                null,
+            )
+        }
+        return rows.map(entity::decode)
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -153,13 +157,15 @@ internal class JunctionRelationshipReader(
         if (sourceKeys.isEmpty()) {
             return JunctionRead(emptyList(), emptyList())
         }
-        val rows = driver.query(
-            junctionQuery.table,
-            junctionQuery.predicates,
-            junctionQuery.orderBy,
-            null,
-            null,
-        )
+        val rows = driver.executeRead {
+            driver.query(
+                junctionQuery.table,
+                junctionQuery.predicates,
+                junctionQuery.orderBy,
+                null,
+                null,
+            )
+        }
         val targetKeys = rows.map { row ->
             row[storage.targetColumn]?.let { targetKey -> targetKey as TargetKey }
         }.distinct()

@@ -20,6 +20,8 @@ import entkt.runtime.privacyEvaluation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntPrivacyDeniedException
+import entkt.runtime.result.EntDatabaseConflictException
+import entkt.runtime.result.EntConflictFailure
 import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.ReadResult
@@ -82,6 +84,8 @@ class ForUpdateQueryTest {
         var mutationLockSupported = false
         var closed: Exception? = null
         var failure: Throwable? = null
+        var classify: (Exception) -> EntDatabaseConflictException? = { null }
+        val classifiedExceptions = mutableListOf<Exception>()
         var rows = listOf(listOf(mapOf<String, Any?>("id" to 1L, "parent_id" to 2L)))
         var denied = emptySet<Long>()
         var intercept: (InterceptScope<Item>, QueryContext) -> Unit = { _, _ -> }
@@ -89,6 +93,11 @@ class ForUpdateQueryTest {
             override val inTransaction: Boolean get() = transactional
             override val supportsQueryForUpdate: Boolean get() = supported
             override val supportsReadRowForUpdate: Boolean get() = mutationLockSupported
+
+            override fun classifyConflictException(exception: Exception): EntDatabaseConflictException? {
+                classifiedExceptions += exception
+                return classify(exception)
+            }
 
             override fun query(
                 table: String,
@@ -258,6 +267,26 @@ class ForUpdateQueryTest {
         for (uncaptured in listOf(CancellationException("cancelled"), AssertionError("fatal"))) {
             operational.failure = uncaptured
             assertSame(uncaptured, assertFailsWith<Throwable> { operational.locking().all(operational.viewer) })
+        }
+    }
+
+    @Test
+    fun `both locking terminals report typed conflicts before privacy and preserve projection behavior`() {
+        for (first in listOf(false, true)) {
+            val cause = Exception("database conflict")
+            val fixture = Fixture().apply {
+                failure = cause
+                classify = { EntDatabaseConflictException("40P01", "deadlock", it) }
+            }
+            val query = fixture.locking()
+            val result = if (first) query.firstOrNull(fixture.viewer) else query.all(fixture.viewer)
+            val conflict = assertIs<EntDatabaseConflictException>(assertIs<ReadResult.Failed>(result).exception)
+
+            assertIs<EntConflictFailure>(conflict)
+            assertSame(cause, conflict.cause)
+            assertEquals(listOf(cause), fixture.classifiedExceptions)
+            assertTrue(fixture.events.none { it.startsWith("privacy") })
+            assertSame(conflict, assertFailsWith<EntDatabaseConflictException> { result.getOrThrow() })
         }
     }
 

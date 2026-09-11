@@ -15,9 +15,9 @@ import entkt.runtime.driver.IsolationLevel
  * `Success(value)` is returned only after commit is confirmed.
  * [Failed] deliberately does not return the block's value; its
  * [Failed.transactionState] is structurally limited to
- * [TransactionFailureState.NotCommitted] (rollback confirmed) and
- * [TransactionFailureState.OutcomeUnknown] (neither commit nor
- * rollback could be confirmed).
+ * [TransactionFailureState.NotCommitted] (the transaction did not commit) and
+ * [TransactionFailureState.OutcomeUnknown] (whether it committed could not
+ * be established).
  */
 sealed interface TransactionResult<out T> {
     /** The transaction committed; [value] is the block's return value. */
@@ -51,7 +51,7 @@ sealed interface TransactionResult<out T> {
     }
 
     /**
-     * Return the committed block value. A confirmed rollback rethrows the
+     * Return the committed block value. A confirmed non-commit rethrows the
      * exact stored exception; an unknown commit/rollback outcome throws
      * [EntTransactionOutcomeUnknownException] with the stored exception as
      * both its [EntTransactionOutcomeUnknownException.exception] property
@@ -98,7 +98,7 @@ sealed interface TransactionResult<out T> {
  * failure stored by [TransactionResult.Failed] and is also the standard
  * exception cause.
  *
- * Confirmed rollback does not use a carrier exception: `getOrThrow()`
+ * Confirmed non-commit does not use a carrier exception: `getOrThrow()`
  * rethrows the stored exception directly so ordinary typed catches keep
  * working at application boundaries. The constructor is internal;
  * callers catch and inspect instances produced by EntKt rather than
@@ -261,10 +261,13 @@ class TransactionCoordinator @EntktInternal constructor() {
  * - block value returned and scope not rollback-only → driver commit;
  *   `Success(value)` only after confirmed commit.
  * - block stopped via [TransactionScope.orRollback], or an ordinary
- *   exception thrown by the block (or commit) → that exit cause is
+ *   exception thrown by the block → that exit cause is
  *   primary; distinct recorded mutation failures are attached to it
  *   as flat suppressed exceptions in encounter order. Rollback
  *   confirmed → `NotCommitted`, else `OutcomeUnknown`.
+ * - commit failure → preserve the driver's classified exception and final
+ *   outcome: `NotCommitted` for a definitive rejection, otherwise
+ *   `OutcomeUnknown` even if a subsequent rollback succeeds.
  * - block returned normally while rollback-only → rollback; the
  *   *first* recorded failure is primary with later distinct recorded
  *   failures suppressed onto it.

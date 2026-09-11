@@ -1,4 +1,5 @@
 package entkt.runtime.driver
+import entkt.runtime.result.EntDatabaseConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.mutation.RelationshipLockKey
@@ -491,9 +492,11 @@ interface DatabaseDriver {
      *   confirmed, return `Failed(exception, NotCommitted)`; if the
      *   rollback itself fails, return `Failed(exception, OutcomeUnknown)`
      *   with the rollback failure suppressed on the exception.
-     * - If commit fails, return `Failed(commitException, OutcomeUnknown)`
-     *   even when a later rollback call appears to succeed — the
-     *   failed commit may already have reached the database.
+     * - A recognized definitive database rejection of commit returns
+     *   `Failed(exception, NotCommitted)`, even if subsequent cleanup fails.
+     * - A commit failure without definitive rejection returns
+     *   `Failed(exception, OutcomeUnknown)`, even when a later rollback
+     *   succeeds — the failed commit may already have taken effect.
      * - Cleanup failures after a confirmed commit must never turn a
      *   successful commit into a failed or unknown outcome.
      * - A `CancellationException` before commit is rethrown only after
@@ -740,6 +743,21 @@ interface DatabaseDriver {
     }
 
     /**
+     * Recognize a concurrency conflict from this driver's low-level database
+     * execution, preserving the original [exception] as the cause. Returning
+     * `null` means the driver has no precise conflict classification.
+     *
+     * Classification performs no I/O and makes no persistence or transaction
+     * outcome claim. A transaction boundary must separately establish whether
+     * commit was rejected or its outcome remains unknown.
+     *
+     * Call only around database operations, not application callbacks. Do not
+     * search arbitrary exception causes for a recognizable driver exception.
+     * The default returns `null` for drivers without a conflict classifier.
+     */
+    fun classifyConflictException(exception: Exception): EntDatabaseConflictException? = null
+
+    /**
      * Classify an [exception] thrown by one of this driver's
      * low-level *mutation* operations into a state-bearing
      * [entkt.runtime.result.EntMutationException]. Returning `null`
@@ -765,8 +783,8 @@ interface DatabaseDriver {
      *    whose persistence outcome the driver *does* know;
      *  - return `null` for anything unrecognized.
      *
-     * Read execution never calls this method — canonical reads store
-     * the original exception directly.
+     * Read execution uses [classifyConflictException] instead, preserving
+     * unrecognized exceptions without mutation-specific state.
      *
      * The default returns `null` so third-party drivers inherit the
      * documented fallback behavior without having to opt in.

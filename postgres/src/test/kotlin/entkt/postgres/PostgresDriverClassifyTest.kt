@@ -1,12 +1,18 @@
 package entkt.postgres
 
+import entkt.runtime.driver.KotlinxJsonCodec
 import entkt.runtime.result.EntConflictException
+import entkt.runtime.result.EntConflictFailure
 import entkt.runtime.result.EntConstraintViolationException
+import entkt.runtime.result.EntDatabaseConflictException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.MutationWriteState
 import org.postgresql.util.PSQLException
 import org.postgresql.util.PSQLState
 import org.postgresql.util.ServerErrorMessage
+import java.lang.reflect.Proxy
+import java.sql.Connection
+import java.sql.SQLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -15,7 +21,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 /**
- * Unit tests for [PostgresDriver.classifyMutationException]. Doesn't
+ * Unit tests for [PostgresDriver.classifyMutationException] and
+ * [PostgresDriver.classifyConflictException]. Doesn't
  * need Testcontainers — we synthesize PSQLException values with known
  * SQLSTATE values and verify the classifier returns a state-bearing
  * typed exception directly (no parallel state field): SQLSTATE 23xxx
@@ -52,6 +59,102 @@ class PostgresDriverClassifyTest {
             if (column != null) append('c').append(column).append('\u0000')
         }
         return PSQLException(ServerErrorMessage(encoded))
+    }
+
+    // ---------- shared concurrency conflict classification ----------
+
+    @Test
+    fun `database conflicts preserve SQLSTATE message and the original exception`() {
+        for (state in listOf("40001", "40P01")) {
+            val psql = serverError(state, "database concurrency conflict")
+            val conflict = assertIs<EntDatabaseConflictException>(driver.classifyConflictException(psql))
+
+            assertEquals(state, conflict.code)
+            assertEquals(psql.message, conflict.message)
+            assertSame(psql, conflict.cause)
+            assertIs<EntConflictFailure>(conflict)
+        }
+    }
+
+    @Test
+    fun `conflict recognition alone does not require a server rejection response`() {
+        val psql = PSQLException("could not serialize", PSQLState.SERIALIZATION_FAILURE)
+        assertNull(psql.serverErrorMessage)
+
+        val conflict = assertNotNull(driver.classifyConflictException(psql))
+
+        assertEquals("40001", conflict.code)
+        assertSame(psql, conflict.cause)
+        // This identifies the conflict only; commit handling must independently
+        // verify a server rejection before reporting NotCommitted.
+    }
+
+    @Test
+    fun `shared classification does not include constraints or other database failures`() {
+        val exceptions = listOf(
+            serverError("23505", "duplicate key"),
+            serverError("08006", "connection lost"),
+            serverError("25P02", "transaction already aborted"),
+            serverError("55P03", "lock not available"),
+            PSQLException("no state attached", null as PSQLState?),
+        )
+        for (exception in exceptions) {
+            assertNull(driver.classifyConflictException(exception))
+        }
+    }
+
+    @Test
+    fun `shared classification does not trust other exception types or search their causes`() {
+        val psql = serverError("40001", "could not serialize")
+        val exceptions = listOf(
+            IllegalStateException("application failure"),
+            SQLException("not a PostgreSQL exception", "40001"),
+            IllegalStateException("application failure", psql),
+        )
+        for (exception in exceptions) {
+            assertNull(driver.classifyConflictException(exception))
+        }
+    }
+
+    @Test
+    fun `mutation classification shares conflict recognition without wrapping the original cause`() {
+        for (state in listOf("40001", "40P01")) {
+            val psql = serverError(state, "database concurrency conflict")
+            val databaseConflict = assertNotNull(driver.classifyConflictException(psql))
+            val mutationConflict = assertIs<EntConflictException>(
+                driver.classifyMutationException(psql, "User", EntOperation.UPDATE),
+            )
+
+            assertEquals(databaseConflict.code, mutationConflict.code)
+            assertEquals(databaseConflict.message, mutationConflict.message)
+            assertSame(psql, mutationConflict.cause)
+            assertEquals("User", mutationConflict.entityType)
+            assertEquals(EntOperation.UPDATE, mutationConflict.operation)
+            assertEquals(MutationWriteState.NotPersisted, mutationConflict.writeState)
+            assertIs<EntConflictFailure>(mutationConflict)
+        }
+    }
+
+    @Test
+    fun `transaction-scoped drivers forward conflict classification without connection access`() {
+        val connection = Proxy.newProxyInstance(
+            Connection::class.java.classLoader,
+            arrayOf(Connection::class.java),
+        ) { _, method, _ -> error("classification must not call Connection.${method.name}") } as Connection
+        val tx = PostgresTransactionalDriver(
+            conn = connection,
+            root = driver,
+            ops = PostgresOperations(emptyMap(), PostgresValueCodec(KotlinxJsonCodec())),
+        )
+
+        for (state in listOf("40001", "40P01")) {
+            val psql = serverError(state, "database concurrency conflict")
+            val conflict = assertNotNull(tx.classifyConflictException(psql))
+
+            assertEquals(state, conflict.code)
+            assertSame(psql, conflict.cause)
+        }
+        assertNull(tx.classifyConflictException(SQLException("connection lost", "08006")))
     }
 
     // ---------- 23xxx: integrity constraint violations ----------
