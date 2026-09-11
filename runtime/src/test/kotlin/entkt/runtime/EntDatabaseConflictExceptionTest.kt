@@ -4,6 +4,7 @@ import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntConflictFailure
 import entkt.runtime.result.EntDatabaseConflictException
 import entkt.runtime.result.EntException
+import entkt.runtime.result.EntMutationDatabaseConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntUnexpectedMutationException
@@ -42,6 +43,24 @@ class EntDatabaseConflictExceptionTest {
 
         assertNull(conflict.code)
         assertIs<EntConflictFailure>(conflict)
+    }
+
+    @Test
+    fun `mutation database conflicts retain the code cause and boundary write state`() {
+        for (code in listOf("40001", "40P01", null)) {
+            val original = Exception("database rejected the transaction")
+            val conflict = EntDatabaseConflictException(code, "database conflict", original)
+            for (writeState in MutationWriteState.entries) {
+                val failure = EntMutationDatabaseConflictException(writeState, conflict)
+
+                assertIs<EntConflictFailure>(failure)
+                assertEquals(writeState, failure.writeState)
+                assertEquals(code, failure.code)
+                assertSame(conflict, failure.cause)
+                assertSame(original, failure.cause.cause)
+                assertTrue(failure.stackTrace.isNotEmpty())
+            }
+        }
     }
 
     @Test

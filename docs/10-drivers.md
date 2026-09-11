@@ -617,7 +617,10 @@ Savepoints, nested transactions, and automatic retries are not enabled.
 PostgreSQL recognizes serialization failures (`40001`) and deadlocks (`40P01`)
 for canonical reads, mutation statements, and transaction commit. Reads and commit
 use `EntDatabaseConflictException`; mutation statements retain `EntConflictException`
-and its mutation write state. Both implement `EntConflictFailure`.
+and its mutation write state. When a classified read or owned-commit conflict crosses
+a mutation boundary, the runtime uses `EntMutationDatabaseConflictException` with
+that mutation's write state. All three implement `EntConflictFailure`; drivers do
+not construct the mutation boundary wrapper.
 
 At commit, a recognized conflict is `NotCommitted` only when the exception contains
 the server's error response. An error code alone, a wrapped cause, or a later successful

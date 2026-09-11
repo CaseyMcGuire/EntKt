@@ -7,7 +7,6 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
-import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.TransactionResult
@@ -97,7 +96,7 @@ class MutationExecutor(
                 reason = completion.denial.reason,
             ),
         )
-        is MutationCompletion.ReturnFailed -> fail(EntUnexpectedMutationException(writeState, completion.cause))
+        is MutationCompletion.ReturnFailed -> fail(mutationFailure(writeState, completion.cause))
     }
 
     private fun <Result> capture(
@@ -124,7 +123,7 @@ class MutationExecutor(
             fail(e.exception)
         } catch (e: Exception) {
             fail(
-                EntUnexpectedMutationException(
+                mutationFailure(
                     execution?.writeState ?: MutationWriteState.NotPersisted,
                     e,
                 ),

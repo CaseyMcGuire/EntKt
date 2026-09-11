@@ -9,6 +9,9 @@ import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntConflictException
+import entkt.runtime.result.EntConflictFailure
+import entkt.runtime.result.EntDatabaseConflictException
+import entkt.runtime.result.EntMutationDatabaseConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -148,6 +151,72 @@ class MutationExecutorTest {
     }
 
     @Test
+    fun `thrown and returned database conflicts retain the mutation boundary write state`() {
+        for (inTransaction in listOf(false, true)) {
+            for (writes in listOf(false, true)) {
+                for (returned in listOf(false, true)) {
+                    val cause = databaseConflict()
+                    val harness = Harness(inTransaction = inTransaction)
+                    harness.writes = writes
+                    if (returned) {
+                        harness.completion = MutationCompletion.ReturnFailed(cause)
+                    } else {
+                        harness.runFailure = cause
+                    }
+
+                    val result = harness.execute()
+                    val failure = assertIs<EntMutationDatabaseConflictException>(failed(result))
+                    val expectedState = when {
+                        !writes -> MutationWriteState.NotPersisted
+                        inTransaction -> MutationWriteState.TransactionPending
+                        else -> MutationWriteState.Committed
+                    }
+
+                    assertEquals(expectedState, failure.writeState)
+                    assertIs<EntConflictFailure>(failure)
+                    assertEquals("40001", failure.code)
+                    assertSame(cause, failure.cause)
+                    assertSame(failure, harness.runtime.failures.single())
+                    assertSame(failure, assertFailsWith<EntMutationDatabaseConflictException> { result.getOrThrow() })
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `a propagated mutation database conflict cannot supply the outer mutation write state`() {
+        val cause = databaseConflict()
+        val secondary = IllegalStateException("cleanup failed")
+        val nested = EntMutationDatabaseConflictException(MutationWriteState.NotPersisted, cause)
+        nested.addSuppressed(secondary)
+        val harness = Harness()
+        harness.runFailure = nested
+
+        val failure = assertIs<EntMutationDatabaseConflictException>(failed(harness.execute()))
+
+        assertEquals(MutationWriteState.Committed, failure.writeState)
+        assertSame(cause, failure.cause)
+        assertSame(secondary, failure.suppressed.single())
+    }
+
+    @Test
+    fun `callback failures do not acquire conflict classification from arbitrary causes or foreign mutation claims`() {
+        val causes = listOf(
+            IllegalStateException("callback wrapper", databaseConflict()),
+            conflict(),
+        )
+        for (cause in causes) {
+            val harness = Harness()
+            harness.runFailure = cause
+
+            val failure = unexpected(harness.execute())
+
+            assertEquals(MutationWriteState.Committed, failure.writeState)
+            assertSame(cause, failure.cause)
+        }
+    }
+
+    @Test
     fun `owned return failures remain neutral until commit is confirmed`() {
         val cause = IllegalStateException("LOAD failed")
         for (completion in listOf(denied(), MutationCompletion.ReturnFailed(cause))) {
@@ -198,11 +267,111 @@ class MutationExecutorTest {
 
     @Test
     fun `confirmed rollback preserves typed NotPersisted failures`() {
-        val harness = Harness(atomic = true)
-        val rejection = conflict()
-        harness.ownedTransaction = { _, _ -> transactionFailure(rejection) }
+        val rejections = listOf(
+            conflict(),
+            EntMutationDatabaseConflictException(MutationWriteState.NotPersisted, databaseConflict()),
+        )
+        for (rejection in rejections) {
+            val harness = Harness(atomic = true)
+            harness.ownedTransaction = { _, _ -> transactionFailure(rejection) }
 
-        assertSame(rejection, failed(harness.execute()))
+            assertSame(rejection, failed(harness.execute()))
+        }
+    }
+
+    @Test
+    fun `owned commit conflicts preserve transaction certainty and captured return diagnostics`() {
+        val disclosure = IllegalStateException("LOAD failed")
+        val completions = listOf(MutationCompletion.Ready("Ada"), denied(), MutationCompletion.ReturnFailed(disclosure))
+        for (state in TransactionFailureState.entries) {
+            for (completion in completions) {
+                val root = Harness(atomic = true)
+                val tx = Harness(inTransaction = true)
+                val cause = databaseConflict()
+                tx.completion = completion
+                root.ownedTransaction = { input, capture ->
+                    assertIs<MutationResult.Success<*>>(tx.executeOwned(input, capture))
+                    transactionFailure(cause, state)
+                }
+
+                val failure = assertIs<EntMutationDatabaseConflictException>(failed(root.execute()))
+                val expectedState = if (state == TransactionFailureState.NotCommitted) {
+                    MutationWriteState.NotPersisted
+                } else {
+                    MutationWriteState.PersistenceUnknown
+                }
+
+                assertEquals(expectedState, failure.writeState)
+                assertEquals("40001", failure.code)
+                assertSame(cause, failure.cause)
+                assertSame(failure, root.runtime.failures.single())
+                when (completion) {
+                    is MutationCompletion.ReturnDenied -> {
+                        val suppressed = assertIs<EntMutationPrivacyDeniedException>(failure.suppressed.single())
+                        assertEquals(expectedState, suppressed.writeState)
+                    }
+                    is MutationCompletion.ReturnFailed -> assertSame(disclosure, failure.suppressed.single())
+                    is MutationCompletion.Ready -> assertTrue(failure.suppressed.isEmpty())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `owned transaction rebases a pending database conflict without losing its classification or diagnostics`() {
+        for (state in TransactionFailureState.entries) {
+            val root = Harness(atomic = true)
+            val tx = Harness(inTransaction = true)
+            val cause = databaseConflict()
+            val secondary = IllegalStateException("cleanup failed")
+            tx.runFailure = cause
+            root.ownedTransaction = { input, capture ->
+                val pending = assertIs<EntMutationDatabaseConflictException>(failed(tx.executeOwned(input, capture)))
+                assertEquals(MutationWriteState.TransactionPending, pending.writeState)
+                pending.addSuppressed(secondary)
+                transactionFailure(pending, state)
+            }
+
+            val failure = assertIs<EntMutationDatabaseConflictException>(failed(root.execute()))
+
+            assertEquals(
+                if (state == TransactionFailureState.NotCommitted) MutationWriteState.NotPersisted
+                else MutationWriteState.PersistenceUnknown,
+                failure.writeState,
+            )
+            assertEquals("40001", failure.code)
+            assertSame(cause, failure.cause)
+            assertSame(secondary, failure.suppressed.single())
+        }
+    }
+
+    @Test
+    fun `owned returned database conflicts are classified after commit or confirmed rollback`() {
+        for (committed in listOf(false, true)) {
+            val root = Harness(atomic = true)
+            val tx = Harness(inTransaction = true)
+            val cause = databaseConflict()
+            val commitFailure = IllegalStateException("commit failed")
+            tx.completion = MutationCompletion.ReturnFailed(cause)
+            root.ownedTransaction = { input, capture ->
+                val result = assertIs<MutationResult.Success<MutationCompletion<String>>>(tx.executeOwned(input, capture))
+                assertTrue(tx.runtime.failures.isEmpty(), "returned LOAD failures remain neutral until completion")
+                if (committed) TransactionResult.Success(result.value) else transactionFailure(commitFailure)
+            }
+
+            val failure = assertIs<EntMutationDatabaseConflictException>(failed(root.execute()))
+
+            assertEquals(
+                if (committed) MutationWriteState.Committed else MutationWriteState.NotPersisted,
+                failure.writeState,
+            )
+            assertSame(cause, failure.cause)
+            if (committed) {
+                assertTrue(failure.suppressed.isEmpty())
+            } else {
+                assertSame(commitFailure, failure.suppressed.single())
+            }
+        }
     }
 
     @Test
@@ -427,6 +596,8 @@ class MutationExecutorTest {
     private fun unexpected(result: MutationResult<*>): EntUnexpectedMutationException = assertIs(failed(result))
 
     private fun conflict() = EntConflictException("Widget", EntOperation.CREATE, "conflict", "conflict")
+
+    private fun databaseConflict() = EntDatabaseConflictException("40001", "serialization failure", Exception("database"))
 
     private fun denied() = MutationCompletion.ReturnDenied(PrivacyDenial("Widget", EntityKey("id", 1L), "hidden"))
 

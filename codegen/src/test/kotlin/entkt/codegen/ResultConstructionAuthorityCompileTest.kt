@@ -287,7 +287,7 @@ class ResultConstructionAuthorityCompileTest {
     }
 
     @Test
-    fun `a when over the six mutation failure subtypes is exhaustive without an else`() {
+    fun `when expressions over mutation and conflict failure subtypes are exhaustive without an else`() {
         val result = compile(
             snippet(
                 "Exhaustive.kt",
@@ -295,7 +295,10 @@ class ResultConstructionAuthorityCompileTest {
                 package com.example.app
 
                 import entkt.runtime.result.EntConflictException
+                import entkt.runtime.result.EntConflictFailure
                 import entkt.runtime.result.EntConstraintViolationException
+                import entkt.runtime.result.EntDatabaseConflictException
+                import entkt.runtime.result.EntMutationDatabaseConflictException
                 import entkt.runtime.result.EntMutationException
                 import entkt.runtime.result.EntMutationPrivacyDeniedException
                 import entkt.runtime.result.EntTargetAbsentException
@@ -308,7 +311,14 @@ class ResultConstructionAuthorityCompileTest {
                     is EntValidationException -> "validation"
                     is EntConstraintViolationException -> "constraint"
                     is EntConflictException -> "conflict"
+                    is EntMutationDatabaseConflictException -> "database conflict during mutation"
                     is EntUnexpectedMutationException -> "unexpected"
+                }
+
+                fun describeConflict(e: EntConflictFailure): String = when (e) {
+                    is EntConflictException -> "mutation statement or optimistic conflict"
+                    is EntDatabaseConflictException -> "database conflict"
+                    is EntMutationDatabaseConflictException -> "database conflict during mutation"
                 }
                 """,
             ),
@@ -316,7 +326,7 @@ class ResultConstructionAuthorityCompileTest {
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
-            "Expected the else-free when over the six subtypes to compile, got:\n${result.messages}",
+            "Expected the else-free when expressions over mutation and conflict subtypes to compile, got:\n${result.messages}",
         )
     }
 

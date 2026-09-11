@@ -29,6 +29,15 @@ above it.
 
 ## Unreleased
 
+- **Preserve database conflict classification through mutations** (`runtime`)
+  A classified database conflict propagated from a hook's read, returned-entity
+  loading, or owned transaction commit now uses `EntMutationDatabaseConflictException`
+  instead of `EntUnexpectedMutationException`. It implements `EntConflictFailure`
+  and retains the enclosing mutation's write state, including committed or uncertain outcomes.
+  _Migration:_ add the new subtype to exhaustive `when` expressions over
+  `EntMutationException` or `EntConflictFailure`. Check write/transaction state before considering retries;
+  the conflict marker alone does not establish retry safety.
+
 - **Classify database conflicts across reads and transaction commit** (`runtime`, `postgres`)
   Recognized read and commit conflicts now use `EntDatabaseConflictException`
   instead of exposing a raw PostgreSQL exception. It and the existing mutation

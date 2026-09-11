@@ -14,6 +14,7 @@ import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntConflictFailure
 import entkt.runtime.result.EntDatabaseConflictException
+import entkt.runtime.result.EntMutationDatabaseConflictException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntTransactionOutcomeUnknownException
 import entkt.runtime.result.MutationResult
@@ -115,6 +116,111 @@ class TransactionConflictIntegrationTest : PostgresTestBase() {
         assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
         assertEquals(listOf("After"), client.users.query().all(viewer).getOrThrow().map { it.name })
         assertEquals(1, attempts)
+    }
+
+    @Test
+    fun `locking read in a mutation hook preserves its conflict at the mutation and transaction boundaries`() {
+        val driver = resetAndDriver()
+        val observer = EntClient(driver)
+        val target = user(observer, "Target")
+        val other = EntClient(newDriver())
+        val client = EntClient(driver) {
+            hooks {
+                users {
+                    beforeCreate { state ->
+                        state.client.users.query { where(User.id eq target.id) }
+                            .forUpdate().firstOrNull(viewer).getOrThrow()
+                        state
+                    }
+                }
+            }
+        }
+        var mutationFailure: EntMutationDatabaseConflictException? = null
+
+        val result = client.withTransaction(isolation = IsolationLevel.RepeatableRead) { tx ->
+            tx.users.findById(viewer, target.id).orRollback()
+            other.users.update(target.id) { name = "Other committed" }.save(viewer).getOrThrow()
+            val mutation = tx.users.create { name = "Never created"; email = "never@example.com" }.save(viewer)
+            mutationFailure = assertIs<EntMutationDatabaseConflictException>(assertIs<MutationResult.Failed>(mutation).exception)
+            mutation.orRollback()
+        }
+
+        val failed = assertIs<TransactionResult.Failed>(result)
+        val conflict = assertIs<EntMutationDatabaseConflictException>(failed.exception)
+        assertSame(assertNotNull(mutationFailure), conflict)
+        assertIs<EntConflictFailure>(conflict)
+        assertEquals(MutationWriteState.NotPersisted, conflict.writeState)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        assertEquals("40001", conflict.code)
+        assertEquals("40001", assertIs<PSQLException>(conflict.cause.cause).sqlState)
+        assertSame(conflict, assertFailsWith<EntMutationDatabaseConflictException> { result.getOrThrow() })
+        assertEquals(listOf("Other committed"), observer.users.query().all(viewer).getOrThrow().map { it.name })
+    }
+
+    @Test
+    fun `owned createMany commit preserves a real serialization conflict and confirms rollback`() {
+        val observer = EntClient(resetAndDriver())
+        val target = user(observer, "Target")
+        val other = EntClient(timedDriver())
+        val firstRead = CountDownLatch(1)
+        val secondRead = CountDownLatch(1)
+        val inserted = CountDownLatch(1)
+        val pool = Executors.newSingleThreadExecutor()
+
+        try {
+            // Both transactions read the same rows before either writes. The other
+            // transaction commits first, forcing createMany's SSI failure at COMMIT.
+            val worker = pool.submit<TransactionResult<Unit>> {
+                check(firstRead.await(10, TimeUnit.SECONDS)) { "createMany must read first" }
+                other.withTransaction(isolation = IsolationLevel.Serializable) { tx ->
+                    tx.users.query().all(viewer).orRollback()
+                    secondRead.countDown()
+                    check(inserted.await(10, TimeUnit.SECONDS)) { "createMany must insert before the other write" }
+                    tx.users.update(target.id) { name = "Other committed" }.save(viewer).orRollback()
+                }
+            }
+            val serializableSource = object : DataSource by dataSource {
+                override fun getConnection(): Connection = dataSource.connection.also { connection ->
+                    connection.transactionIsolation = Connection.TRANSACTION_SERIALIZABLE
+                    connection.createStatement().use { it.execute("SET statement_timeout = '10s'") }
+                }
+            }
+            var afterCreateCompleted = false
+            val client = EntClient(PostgresDriver(serializableSource)) {
+                hooks {
+                    users {
+                        beforeCreate { state ->
+                            state.client.users.query().all(viewer).getOrThrow()
+                            firstRead.countDown()
+                            check(secondRead.await(10, TimeUnit.SECONDS)) { "the other transaction must finish its read" }
+                            state
+                        }
+                        afterCreate {
+                            inserted.countDown()
+                            worker.get(15, TimeUnit.SECONDS).getOrThrow()
+                            afterCreateCompleted = true
+                        }
+                    }
+                }
+            }
+
+            val result = client.users.createMany(viewer, {
+                name = "Should roll back"
+                email = "rolled-back@example.com"
+            })
+
+            assertTrue(afterCreateCompleted, "the lifecycle must finish before owned commit fails")
+            val conflict = assertIs<EntMutationDatabaseConflictException>(assertIs<MutationResult.Failed>(result).exception)
+            assertIs<EntConflictFailure>(conflict)
+            assertEquals(MutationWriteState.NotPersisted, conflict.writeState)
+            assertEquals("40001", conflict.code)
+            assertNotNull(assertIs<PSQLException>(conflict.cause.cause).serverErrorMessage)
+            assertSame(conflict, assertFailsWith<EntMutationDatabaseConflictException> { result.getOrThrow() })
+            assertEquals(listOf("Other committed"), observer.users.query().all(viewer).getOrThrow().map { it.name })
+        } finally {
+            pool.shutdownNow()
+            assertTrue(pool.awaitTermination(15, TimeUnit.SECONDS))
+        }
     }
 
     @Test

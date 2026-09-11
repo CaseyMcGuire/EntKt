@@ -2,6 +2,7 @@
 
 package entkt.runtime.mutation.execution
 
+import entkt.runtime.result.EntDatabaseConflictException
 import entkt.runtime.result.EntMutationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -23,7 +24,7 @@ internal object MutationTransactionFailure {
         val denial = completionCapture?.denial
         val exception = when {
             txResult.transactionState == TransactionFailureState.OutcomeUnknown ->
-                EntUnexpectedMutationException(
+                mutationFailure(
                     MutationWriteState.PersistenceUnknown,
                     stored,
                 ).also { unknown ->
@@ -40,11 +41,14 @@ internal object MutationTransactionFailure {
                     }
                 }
 
-            stored is EntMutationException -> {
-                val primary = if (stored.writeState == MutationWriteState.NotPersisted) {
+            stored is EntMutationException || stored is EntDatabaseConflictException -> {
+                val primary = if (
+                    stored is EntMutationException &&
+                    stored.writeState == MutationWriteState.NotPersisted
+                ) {
                     stored
                 } else {
-                    EntUnexpectedMutationException(
+                    mutationFailure(
                         MutationWriteState.NotPersisted,
                         unexpectedCauseOrSelf(stored),
                     )
@@ -78,14 +82,14 @@ internal object MutationTransactionFailure {
                 if (stored !== rolledBack) rolledBack.addSuppressed(stored)
             }
 
-            disclosure != null -> EntUnexpectedMutationException(
+            disclosure != null -> mutationFailure(
                 MutationWriteState.NotPersisted,
                 disclosure,
             ).also { rolledBack ->
                 if (stored !== disclosure) rolledBack.addSuppressed(stored)
             }
 
-            else -> EntUnexpectedMutationException(
+            else -> mutationFailure(
                 MutationWriteState.NotPersisted,
                 unexpectedCauseOrSelf(stored),
             )

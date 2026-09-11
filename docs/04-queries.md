@@ -1017,11 +1017,20 @@ Conflicts retain the result type of the operation that encountered them:
   `MutationResult.Failed`, preserving its entity, operation, and mutation write state.
 - A recognized conflict during transaction commit uses `EntDatabaseConflictException`
   inside `TransactionResult.Failed`, with the final transaction state reported separately.
+- When a classified database conflict propagates through a mutation—for example,
+  from a hook's locking read, returned-entity loading, or owned transaction commit—
+  `MutationResult.Failed` contains `EntMutationDatabaseConflictException`. Its `code`
+  exposes the database conflict code, and its `cause` retains the classified database
+  exception and original driver cause. Its write state comes from the enclosing mutation,
+  not from the nested operation.
 
-Both exception types implement `EntConflictFailure`, so application boundaries
+All three exception types implement `EntConflictFailure`, so application boundaries
 can recognize the shared category without parsing driver exceptions. The existing
 `EntConflictException` also covers optimistic-concurrency rejections, which do not
 necessarily abort a transaction. The marker itself is not a retry policy.
+At a mutation boundary, inspect `writeState` first: a post-write conflict can still
+report `Committed` or `TransactionPending`, and an uncertain owned commit remains
+`PersistenceUnknown`. A confirmed owned-transaction rollback reports `NotPersisted`.
 
 For PostgreSQL, SQLSTATE `40001` identifies a serialization failure and `40P01`
 identifies a deadlock. If a commit call receives a recognized conflict with a

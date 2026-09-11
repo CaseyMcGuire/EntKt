@@ -137,12 +137,13 @@ sealed interface EntPrivacyFailure
  * handling; adding a new direct subtype is consequently a
  * source-breaking algebra change that must be recorded as such.
  *
- * Classification is positional, not type-based: only EntKt's own
- * classification points may place one of these directly in a
- * [MutationResult.Failed]. An exception crossing an application
- * callback boundary is foreign even if application code constructed an
- * EntKt exception type — it is wrapped in
- * [EntUnexpectedMutationException] with EntKt's own state assessment.
+ * Only EntKt's classification points may place one of these directly in a
+ * [MutationResult.Failed]. An exception crossing an application callback
+ * boundary never supplies this mutation's write state. Already-classified
+ * database conflicts retain their category via
+ * [EntMutationDatabaseConflictException], using the boundary's state assessment.
+ * Other callback exceptions are wrapped in [EntUnexpectedMutationException],
+ * even if application code constructed an EntKt exception type.
  */
 sealed class EntMutationException(
     val writeState: MutationWriteState,
@@ -251,14 +252,15 @@ class EntConflictException(
 ) : EntMutationException(MutationWriteState.NotPersisted, message, cause), EntConflictFailure
 
 /**
- * An unclassified failure during mutation terminal execution: an
- * exception crossing an application callback boundary (hook,
+ * An unexpected failure during mutation terminal execution: an
+ * unclassified exception crossing an application callback boundary (hook,
  * validator, normalizer, derivation, privacy rule), an unrecognized
  * driver or materialization exception, an unavailable capability
  * discovered during execution, or an EntKt invariant failure. The
  * original exception is always preserved as [cause]; [writeState] is
  * EntKt's own assessment at the failing execution boundary — never a
- * state claim read from the foreign exception.
+ * state claim read from the foreign exception. Already-classified database
+ * conflicts instead use [EntMutationDatabaseConflictException].
  */
 class EntUnexpectedMutationException(
     writeState: MutationWriteState,

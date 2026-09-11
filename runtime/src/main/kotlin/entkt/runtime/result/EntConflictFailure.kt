@@ -7,6 +7,7 @@ package entkt.runtime.result
  *
  * This marker does not establish the transaction's final outcome or make an
  * operation safe to retry. Inspect [TransactionResult.Failed.transactionState]
- * at the transaction boundary; external side effects may need separate handling.
+ * at the transaction boundary and [EntMutationException.writeState] at a mutation
+ * boundary; external side effects may need separate handling.
  */
 sealed interface EntConflictFailure
