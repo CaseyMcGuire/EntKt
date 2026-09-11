@@ -233,6 +233,45 @@ privacy {
 Under fail-closed privacy this is the explicit opt-in to "no restriction"
 for an operation — use it deliberately.
 
+### Conditional Rules — `allowIf` and `denyIf`
+
+Use these runtime helpers when a Boolean condition is enough to decide whether
+a rule should allow or deny. They return ordinary `PrivacyRule` values and work
+with the existing `load`, `create`, `update`, and `delete` methods:
+
+```kotlin
+import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.allowIf
+import entkt.runtime.privacy.denyIf
+import entkt.runtime.privacy.userIdOrNull
+
+// Inside a User policy:
+privacy {
+    load(
+        denyIf("Authentication required") { context, _ ->
+            context.viewerContext.viewer is Viewer.Anonymous
+        },
+        allowIf { context, user ->
+            context.viewerContext.userIdOrNull() == user.id
+        },
+    )
+}
+```
+
+- `allowIf`: true returns `Allow`; false returns `Continue`, not `Deny`.
+- `denyIf`: true returns `Deny` with the supplied reason; false returns
+  `Continue`, not `Allow`.
+
+The first decisive rule still wins. Put mandatory denial checks before any
+rule that can allow access; an earlier `Allow` skips later checks. If every
+condition falls through, access remains denied. In particular, a policy made
+only of `denyIf` rules does not allow access when none match.
+
+Conditions run once per reached item using the current rule context. They
+inherit scalar rules' serial batch behavior; use `batchPrivacyRule` when you
+need a shared lookup across items. Exceptions retain ordinary rule failure
+handling and are not converted into privacy denials.
+
 ## Setting Up Privacy
 
 ### Supplying the Viewer Context
