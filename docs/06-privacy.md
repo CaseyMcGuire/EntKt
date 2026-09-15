@@ -139,6 +139,50 @@ Each operation gets its own item type (see [Operation Items](#operation-items)
 below), so rules are type-safe for the operation they guard. The same item type
 is used by scalar and batch rules.
 
+### ContextPrivacyRule
+
+Use `ContextPrivacyRule<Client>` when a rule depends on the viewer or read client,
+but not on an entity, candidate, or mutation input. A single rule can be registered
+for multiple entities and operations without an `Item` generic or an unused parameter:
+
+```kotlin
+fun interface ContextPrivacyRule<in Client : EntRuleClient> {
+    fun run(context: PrivacyRuleContext<Client>): PrivacyDecision
+}
+
+class RequireAuthenticated : ContextPrivacyRule<ReadOnlyEntClient> {
+    override fun run(context: PrivacyRuleContext<ReadOnlyEntClient>): PrivacyDecision =
+        if (context.viewerContext.viewer is Viewer.Anonymous) {
+            PrivacyDecision.Deny("Authentication required")
+        } else {
+            PrivacyDecision.Allow
+        }
+}
+
+val authenticated = RequireAuthenticated()
+
+// Inside a policy; the same instance can also be injected into other policies.
+privacy {
+    create(authenticated)
+    update(authenticated)
+    delete(authenticated)
+}
+```
+
+`load(authenticated)` is supported too. Context-only rules share registration order
+with item-aware and batch rules; use repeated registration calls to mix rule kinds.
+The runtime invokes a context-only rule **once per item that reaches it**, not once
+per operation or batch. Duplicate items are evaluated separately, decisions are
+not cached, and an empty phase invokes no rules. Each invocation receives the
+current phase's viewer context and read client, including transaction-scoped clients.
+Exceptions follow ordinary privacy-rule failure handling; explicit privacy bypass
+skips context-only rules just as it skips other privacy rules.
+
+This is a separate contract, not a replacement for `PrivacyRule<Client, Item>`.
+`allowIf` and `denyIf` still receive both context and item and retain their existing
+Allow/Continue and Deny/Continue semantics. A context-only rule explicitly chooses
+its own Allow, Deny, or Continue decision.
+
 ### BatchPrivacyRule
 
 Use an explicit batch rule when one callback should inspect all items or
@@ -320,10 +364,11 @@ val client = EntClient(driver) {
 
 Each entity's `privacy { }` block exposes four methods matching the
 four operations: `load()`, `create()`, `update()`, `delete()`. Each keeps its
-scalar-rule `vararg` overload and also accepts one `BatchPrivacyRule`. Register
-multiple batch rules with repeated calls; there are no parallel `loadBatch` or
-`createBatch` methods in Kotlin. Java calls the explicitly named batch JVM
-overloads such as `loadBatchRule` and `createBatchRule`.
+scalar-rule `vararg` overload and also accepts one `BatchPrivacyRule` or one
+`ContextPrivacyRule`. Register multiple batch/context-only rules with repeated
+calls; there are no parallel `loadBatch` or `createBatch` methods in Kotlin.
+Java calls explicitly named JVM overloads, such as `loadBatchRule` for batch
+rules and `loadContextRule` for context-only rules.
 
 ## Evaluation Semantics
 
@@ -428,8 +473,9 @@ returns `MutationResult.Failed(EntMutationPrivacyDeniedException)` with
 
 ## Operation Contexts
 
-Every privacy rule receives one shared `PrivacyRuleContext` parameter in
-addition to its item or item batch. Its `client` is an
+Every privacy rule receives one shared `PrivacyRuleContext` parameter.
+Item-aware and batch rules also receive their item or item batch; context-only
+rules receive just the context. Its `client` is an
 `ReadOnlyEntClient`: a stable read-only client shared with validation rules.
 Rules normally pass the
 **caller's** `context.viewerContext` when querying the graph to decide (ownership
@@ -914,6 +960,7 @@ For each schema with a policy, entkt provides:
 |-------------|---------|
 | `{Entity}WriteCandidate` | Shared writable-field values; direct input for CREATE privacy and validation rules |
 | `PrivacyRuleContext<Client>` | Shared supplied `viewerContext` and stable privacy read client |
+| `ContextPrivacyRule<Client>` | Reusable runtime rule that only receives the shared context, with no item type |
 | `{Entity}` | Direct input for scalar LOAD rules and each item in batch LOAD rules |
 | `{Entity}UpdateRuleInput` | Shared per-entity input for UPDATE privacy and validation rules |
 | `{Entity}DeleteRuleInput` | Shared per-entity input for DELETE privacy and validation rules |

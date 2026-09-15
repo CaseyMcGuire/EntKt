@@ -6,6 +6,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
@@ -33,6 +34,8 @@ import entkt.schema.Field
 
 private val PRIVACY_RULE = ClassName("entkt.runtime.privacy", "PrivacyRule")
 private val BATCH_PRIVACY_RULE = ClassName("entkt.runtime.privacy", "BatchPrivacyRule")
+private val CONTEXT_PRIVACY_RULE = ClassName("entkt.runtime.privacy", "ContextPrivacyRule")
+private val AS_PRIVACY_RULE = MemberName("entkt.runtime.privacy", "asPrivacyRuleForInternalUse")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
@@ -437,7 +440,7 @@ internal class PrivacyGenerator(
         }
     }
 
-    /** Emit scalar and batch-rule overloads for one privacy operation. */
+    /** Emit item-aware, batch, and context-only rule overloads for one privacy operation. */
     private fun TypeSpec.Builder.addRuleFunctions(
         operation: String,
         ruleType: ClassName,
@@ -451,6 +454,14 @@ internal class PrivacyGenerator(
             addAnnotation(annotation(JVM_NAME) { addMember("%S", "${operation}BatchRule") })
             parameter("rule", batchRuleType)
             statement("config.%LRules.add(rule)", operation)
+        }
+        function(operation) {
+            addAnnotation(annotation(JVM_NAME) { addMember("%S", "${operation}ContextRule") })
+            addAnnotation(annotation(ClassName("kotlin", "OptIn")) {
+                addMember("%T::class", PRIVACY_ENTKT_INTERNAL)
+            })
+            parameter("rule", CONTEXT_PRIVACY_RULE.parameterizedBy(ClassName(packageName, "ReadOnlyEntClient")))
+            statement("config.%LRules.add(rule.%M())", operation, AS_PRIVACY_RULE)
         }
     }
 

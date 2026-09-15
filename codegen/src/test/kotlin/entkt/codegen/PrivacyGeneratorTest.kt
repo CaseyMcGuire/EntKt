@@ -171,6 +171,15 @@ class PrivacyGeneratorTest {
             assert(output.contains("config.${operation}Rules.add(rule)")) {
                 "Batch $operation overload should append to the shared list\n$output"
             }
+            assert(output.contains("fun $operation(rule: ContextPrivacyRule<ReadOnlyEntClient>)")) {
+                "Context-only $operation overload should retain the concrete read client\n$output"
+            }
+            assert(output.contains("@JvmName(\"${operation}ContextRule\")")) {
+                "Context-only $operation overload should have a distinct Java name\n$output"
+            }
+            assert(output.contains("config.${operation}Rules.add(rule.asPrivacyRuleForInternalUse())")) {
+                "Context-only $operation overload should delegate adaptation to the runtime\n$output"
+            }
         }
         assert(output.contains("fun updateDerivesFromCreate()")) {
             "Should have updateDerivesFromCreate method\n$output"
