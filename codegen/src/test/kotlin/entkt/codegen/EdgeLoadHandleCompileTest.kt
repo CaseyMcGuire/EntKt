@@ -2,9 +2,10 @@
 
 package entkt.codegen
 
-import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.schema.EntSchema
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -37,18 +38,9 @@ class EdgeLoadHandleCompileTest {
             .toCompileTestSources()
     }
 
-    private fun compile(sources: List<SourceFile>): JvmCompilationResult =
-        KotlinCompilation().apply {
-            this.sources = sources
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
-
     @Test
     fun `loadEdge returns an EdgeLoad handle that may be ignored or chained`() {
-        val result = compile(
+        val result = compileSources(
             generatedSources() + SourceFile.kotlin(
                 "EdgeLoadSnippet.kt",
                 """
@@ -90,7 +82,7 @@ class EdgeLoadHandleCompileTest {
 
     @Test
     fun `Java callers use the zero-block overload without a default-argument marker`() {
-        val result = compile(
+        val result = compileSources(
             generatedSources() + SourceFile.java(
                 "EdgeLoadJavaSnippet.java",
                 """

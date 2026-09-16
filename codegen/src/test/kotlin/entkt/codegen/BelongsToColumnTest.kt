@@ -84,51 +84,47 @@ class BelongsToColumnTest {
     @Test
     fun `generated reads writes and named index helpers preserve Kotlin ID names with literal columns`() {
         val generated = EntGenerator("com.example.ent").generate(schemas().map(::SchemaInput))
-        val result = KotlinCompilation().apply {
-            sources = generated.toCompileTestSources() + SourceFile.kotlin(
-                "Application.kt",
-                """
-                @file:OptIn(entkt.query.EntktInternal::class)
-                package com.example.app
-                import com.example.ent.*
-                import entkt.runtime.driver.NoopDriver
-                import entkt.runtime.privacy.ViewerContext
-                import java.util.UUID
+        val application = SourceFile.kotlin(
+            "Application.kt",
+            """
+            @file:OptIn(entkt.query.EntktInternal::class)
+            package com.example.app
+            import com.example.ent.*
+            import entkt.runtime.driver.NoopDriver
+            import entkt.runtime.privacy.ViewerContext
+            import java.util.UUID
 
-                fun exercise() {
-                    val client = EntClient(NoopDriver)
-                    val converter = RecordCreateConverter(NoopDriver, client.hookClientScopeForInternalUse)
-                    val draft = RecordCreateDraft().apply {
-                        ownerId = 1L
-                        problemLanguageId = 2L
-                        rawId = 3L
-                        writer = 4L
-                    }
-                    val viewer = ViewerContext.privacyBypass_DANGEROUS("literal-fk-test")
-                    val shared = converter.toBeforeSaveState(draft)
-                    val state = converter.toBeforeCreateState(viewer, draft, shared)
-                    val prepared = converter.resolve(draft, state)
-                    check(prepared.values["owner_ref"] == 1L)
-                    check(prepared.values["problem_language_id"] == 2L)
-                    check(prepared.values["plain"] == 3L)
-                    check(prepared.values["writer_key"] == 4L)
-                    check("owner_ref_id" !in prepared.values)
-                    check("problem_language_id_id" !in prepared.values)
-                    client.records.update(42L) { ownerId = 5L; tags.add(UUID.randomUUID()) }
-                    client.records.indexes.byOwnerAndLanguage(ownerId = 1L, problemLanguageId = 2L).query()
-                    client.recordTags.indexes.byPair(recordId = 42L, tagId = UUID.randomUUID()).find(viewer)
-                    client.records.query().queryOwner()
-                    client.owners.query().queryRecords()
-                    client.owners.query().queryFeaturedRecord()
-                    client.records.query().queryTags()
+            fun exercise() {
+                val client = EntClient(NoopDriver)
+                val converter = RecordCreateConverter(NoopDriver, client.hookClientScopeForInternalUse)
+                val draft = RecordCreateDraft().apply {
+                    ownerId = 1L
+                    problemLanguageId = 2L
+                    rawId = 3L
+                    writer = 4L
                 }
-                """.trimIndent(),
-            )
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+                val viewer = ViewerContext.privacyBypass_DANGEROUS("literal-fk-test")
+                val shared = converter.toBeforeSaveState(draft)
+                val state = converter.toBeforeCreateState(viewer, draft, shared)
+                val prepared = converter.resolve(draft, state)
+                check(prepared.values["owner_ref"] == 1L)
+                check(prepared.values["problem_language_id"] == 2L)
+                check(prepared.values["plain"] == 3L)
+                check(prepared.values["writer_key"] == 4L)
+                check("owner_ref_id" !in prepared.values)
+                check("problem_language_id_id" !in prepared.values)
+                client.records.update(42L) { ownerId = 5L; tags.add(UUID.randomUUID()) }
+                client.records.indexes.byOwnerAndLanguage(ownerId = 1L, problemLanguageId = 2L).query()
+                client.recordTags.indexes.byPair(recordId = 42L, tagId = UUID.randomUUID()).find(viewer)
+                client.records.query().queryOwner()
+                client.owners.query().queryRecords()
+                client.owners.query().queryFeaturedRecord()
+                client.records.query().queryTags()
+            }
+            """.trimIndent(),
+        )
+
+        val result = compileSources(generated.toCompileTestSources() + application)
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
         result.classLoader.loadClass("com.example.app.ApplicationKt").getMethod("exercise").invoke(null)
         val updates = generated.single { it.name == "RecordUpdateDraft" }.toString()

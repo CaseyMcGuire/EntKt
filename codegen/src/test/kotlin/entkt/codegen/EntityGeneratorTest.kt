@@ -1,6 +1,9 @@
 package entkt.codegen
 
 import entkt.codegen.entity.EntityGenerator
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.Ticket
+import entkt.codegen.fixtures.User
 import entkt.runtime.entity.EntEntity
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
@@ -11,42 +14,6 @@ import java.util.UUID
 import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
-
-enum class Priority { LOW, MEDIUM, HIGH }
-enum class Category { BUG, FEATURE }
-
-class Car : EntSchema("cars", clientName = "cars") {
-    override fun id() = EntId.int()
-    val model by string("model")
-    val year by int("year")
-    val price by float("price").nullable()
-
-    val user by belongsTo<User>("user_id").inverse(User::cars)
-}
-
-class Ticket : EntSchema("tickets", clientName = "tickets") {
-    override fun id() = EntId.int()
-    val title by string("title")
-    val priority by enum<Priority>("priority")
-    val category by enum<Category>("category")
-}
-
-class User : EntSchema("users", clientName = "users") {
-    override fun id() = EntId.uuid()
-
-    val createdAt by instant("created_at").immutable()
-    val updatedAt by instant("updated_at")
-    val name by string("name")
-    val age by int("age").nullable()
-    val email by string("email").unique()
-    val active by bool("active").default(true)
-
-    val cars by hasMany<Car>("cars")
-
-    val idxCreatedAt = index("idx_created_at", createdAt)
-    val idxNameEmail = index("idx_name_email", name, email).unique()
-    val idxEmailActive = index("idx_email_active", email).where("active = true")
-}
 
 // Test helper schemas for edge tests that need named file-level classes
 // (reified type params can't reference anonymous/local types from other anonymous objects)

@@ -1,5 +1,7 @@
 package entkt.codegen
 
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.codegen.query.EntityDescriptorGenerator
 import entkt.codegen.query.QueryGenerator
 import entkt.codegen.query.QueryScopeGenerator

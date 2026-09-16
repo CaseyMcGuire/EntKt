@@ -11,8 +11,8 @@ import kotlin.test.assertTrue
 
 /** Exercise the runtime repository surface as application code, without internal opt-ins. */
 class RepositoryCompileTest {
-    private fun compile(body: String): JvmCompilationResult = KotlinCompilation().apply {
-        sources = listOf(
+    private fun compile(body: String): JvmCompilationResult = compileSources(
+        listOf(
             SourceFile.kotlin(
                 "RepositoryTypes.kt",
                 """
@@ -59,12 +59,8 @@ class RepositoryCompileTest {
                 $body
                 """.trimIndent(),
             ),
-        )
-        inheritClassPath = true
-        kotlincArguments = listOf("-Xskip-metadata-version-check")
-        jvmTarget = "17"
-        messageOutputStream = java.io.OutputStream.nullOutputStream()
-    }.compile()
+        ),
+    )
 
     @Test
     fun `inherited entry points retain concrete types and need no internal opt-in`() {

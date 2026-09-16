@@ -2,9 +2,10 @@
 
 package entkt.codegen
 
-import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.schema.EntSchema
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -52,21 +53,9 @@ class ValidationReadClientCompileTest {
         """.trimIndent(),
     )
 
-    private fun compile(sources: List<SourceFile>): JvmCompilationResult =
-        KotlinCompilation().apply {
-            this.sources = sources
-            inheritClassPath = true
-            // kctfork bundles its own kotlinc, which may lag the project's
-            // compiler; the contract under test (member resolution on the
-            // generated types) is independent of the metadata version.
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
-
     @Test
     fun `validator can read - query terminals, byId family, and index helpers`() {
-        val result = compile(
+        val result = compileSources(
             generatedSources() + validatorSnippet(
                 """
                 val concrete: ReadOnlyEntClient = ctx.client

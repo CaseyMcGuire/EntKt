@@ -2,9 +2,10 @@
 
 package entkt.codegen
 
-import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.schema.EntSchema
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -62,17 +63,8 @@ class PrivacyReadClientCompileTest {
         """.trimIndent(),
     )
 
-    private fun compile(sources: List<SourceFile>): JvmCompilationResult =
-        KotlinCompilation().apply {
-            this.sources = sources
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
-
     private fun assertUnresolved(member: String, body: String, ruleType: String = "CarLoadPrivacyRule") {
-        val result = compile(generatedSources() + ruleSnippet(body, ruleType))
+        val result = compileSources(generatedSources() + ruleSnippet(body, ruleType))
         assertNotEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
@@ -89,7 +81,7 @@ class PrivacyReadClientCompileTest {
         // The positive twin: the viewer-scoped read surface promised to
         // rules. If this test stops compiling, the negatives below prove
         // nothing.
-        val result = compile(
+        val result = compileSources(
             generatedSources() + ruleSnippet(
                 """
                 val concrete: ReadOnlyEntClient = ctx.client
@@ -114,7 +106,7 @@ class PrivacyReadClientCompileTest {
             for (clientType in listOf("ReadOnlyEntClient", "EntClient")) {
                 val method = if (owned) "executeInOwnedTransactionForInternalUse" else "execute"
                 val capture = if (owned) "completionCapture = MutationCompletionCapture()," else ""
-                val result = compile(
+                val result = compileSources(
                     generatedSources() + SourceFile.kotlin(
                         "MutationRuleClientSnippet.kt",
                         """
@@ -156,7 +148,7 @@ class PrivacyReadClientCompileTest {
 
     @Test
     fun `privacy rule can explicitly select a bypass context for a terminal`() {
-        val result = compile(
+        val result = compileSources(
             generatedSources() + ruleSnippet(
                 """
                 ctx.client.cars.query().all(
@@ -176,7 +168,7 @@ class PrivacyReadClientCompileTest {
     fun `all four privacy contexts expose the read-only client`() {
         // Type pins for every operation context — a regression returning
         // EntClient or another capability surface breaks the assignment.
-        val result = compile(
+        val result = compileSources(
             generatedSources() + SourceFile.kotlin(
                 "AllContextsSnippet.kt",
                 """
@@ -299,7 +291,7 @@ class PrivacyReadClientCompileTest {
     )
 
     private fun assertAdapterRemoved(adapter: String, call: String) {
-        val result = compile(generatedSources() + mintSnippet(call))
+        val result = compileSources(generatedSources() + mintSnippet(call))
         assertNotEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,

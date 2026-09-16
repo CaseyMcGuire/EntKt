@@ -1,6 +1,8 @@
 package entkt.codegen
 
 import entkt.codegen.client.ClientGenerator
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass

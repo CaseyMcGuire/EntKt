@@ -5,6 +5,8 @@ package entkt.codegen
 import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.schema.EntSchema
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -29,13 +31,7 @@ class TransactionClientCompileTest {
     }
 
     private fun compile(snippet: SourceFile): JvmCompilationResult =
-        KotlinCompilation().apply {
-            sources = generatedSources() + snippet
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+        compileSources(generatedSources() + snippet)
 
     @Test
     fun `transaction blocks receive a contextless transaction client`() {

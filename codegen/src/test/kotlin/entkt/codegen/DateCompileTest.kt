@@ -24,27 +24,23 @@ class DateCompileTest {
         val schema = DateRecord()
         schema.finalize(mapOf(DateRecord::class to schema))
         val generated = EntGenerator("com.example.ent").generate(listOf(SchemaInput(schema)))
-        return KotlinCompilation().apply {
-            sources = generated.toCompileTestSources() + SourceFile.kotlin(
-                "DateApiProbe.kt",
-                """
-                import com.example.ent.DateRecord
-                import com.example.ent.EntClient
-                import entkt.query.isNotNull
-                import entkt.runtime.privacy.ViewerContext
-                import java.time.Instant
-                import java.time.LocalDate
+        val application = SourceFile.kotlin(
+            "DateApiProbe.kt",
+            """
+            import com.example.ent.DateRecord
+            import com.example.ent.EntClient
+            import entkt.query.isNotNull
+            import entkt.runtime.privacy.ViewerContext
+            import java.time.Instant
+            import java.time.LocalDate
 
-                fun checkApis(client: EntClient, context: ViewerContext) {
-                    $body
-                }
-                """.trimIndent(),
-            )
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+            fun checkApis(client: EntClient, context: ViewerContext) {
+                $body
+            }
+            """.trimIndent(),
+        )
+
+        return compileSources(generated.toCompileTestSources() + application)
     }
 
     @Test

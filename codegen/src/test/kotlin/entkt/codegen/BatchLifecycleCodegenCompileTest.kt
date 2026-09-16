@@ -5,6 +5,8 @@ package entkt.codegen
 import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test
@@ -48,22 +50,7 @@ class BatchLifecycleCodegenCompileTest {
     }
 
     private fun compile(snippet: SourceFile): JvmCompilationResult =
-        KotlinCompilation().apply {
-            sources = generatedSources() + snippet
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
-
-    private fun compileGenerated(sources: List<SourceFile>): JvmCompilationResult =
-        KotlinCompilation().apply {
-            this.sources = sources
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+        compileSources(generatedSources() + snippet)
 
     @Test
     fun `generated lifecycle DSL accepts scalar spread and explicit batch callbacks together`() {
@@ -177,7 +164,7 @@ class BatchLifecycleCodegenCompileTest {
             .generate(schemas.map { SchemaInput(it) })
             .toCompileTestSources()
 
-        val result = compileGenerated(generated)
+        val result = compileSources(generated)
 
         assertEquals(
             KotlinCompilation.ExitCode.OK,
@@ -235,7 +222,7 @@ class BatchLifecycleCodegenCompileTest {
             """.trimIndent(),
             )
 
-        val result = compileGenerated(generated)
+        val result = compileSources(generated)
 
         assertEquals(
             KotlinCompilation.ExitCode.OK,
@@ -457,7 +444,7 @@ class BatchLifecycleCodegenCompileTest {
             """.trimIndent(),
         )
 
-        val result = compileGenerated(generated + probe)
+        val result = compileSources(generated + probe)
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,

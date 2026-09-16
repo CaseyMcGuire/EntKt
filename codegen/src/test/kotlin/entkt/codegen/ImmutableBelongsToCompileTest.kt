@@ -3,6 +3,7 @@
 package entkt.codegen
 
 import com.squareup.kotlinpoet.TypeSpec
+import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
 import entkt.codegen.metadata.computeEdgeFks
@@ -66,26 +67,24 @@ class ImmutableBelongsToCompileTest {
         }
     }
 
-    private fun compile(body: String) = KotlinCompilation().apply {
-        sources = EntGenerator("com.example.ent").generate(schemas().map(::SchemaInput)).toCompileTestSources() +
-            SourceFile.kotlin(
-                "Application.kt",
-                """
-                @file:OptIn(entkt.query.EntktInternal::class)
-                package com.example.app
+    private fun compile(body: String): JvmCompilationResult {
+        val generated = EntGenerator("com.example.ent")
+            .generate(schemas().map(::SchemaInput)).toCompileTestSources()
+        val application = SourceFile.kotlin(
+            "Application.kt",
+            """
+            @file:OptIn(entkt.query.EntktInternal::class)
+            package com.example.app
 
-                import com.example.ent.*
-                import entkt.runtime.driver.NoopDriver
-                import entkt.runtime.privacy.ViewerContext
+            import com.example.ent.*
+            import entkt.runtime.driver.NoopDriver
+            import entkt.runtime.privacy.ViewerContext
 
-                $body
-                """.trimIndent(),
-            )
-        inheritClassPath = true
-        kotlincArguments = listOf("-Xskip-metadata-version-check")
-        jvmTarget = "17"
-        messageOutputStream = java.io.OutputStream.nullOutputStream()
-    }.compile()
+            $body
+            """.trimIndent(),
+        )
+        return compileSources(generated + application)
+    }
 
     @Test
     fun `create retains immutable FK assignments defaults and beforeCreate replacements`() {

@@ -120,13 +120,7 @@ class CreateConverterCompileTest {
             }
             """.trimIndent(),
         )
-        val result = KotlinCompilation().apply {
-            sources = generated.toCompileTestSources() + probe
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+        val result = compileSources(generated.toCompileTestSources() + probe)
 
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
         val probeClass = result.classLoader.loadClass("com.example.app.CreatePreparationProbe")

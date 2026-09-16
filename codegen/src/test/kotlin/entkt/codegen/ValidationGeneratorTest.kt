@@ -1,5 +1,7 @@
 package entkt.codegen
 
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.codegen.mutation.ValidationGenerator
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass

@@ -5,6 +5,8 @@ package entkt.codegen
 import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test
@@ -21,31 +23,27 @@ class GeneratedRepositoryCompileTest {
         schemas.forEach { it.finalize(registry) }
         val generated = EntGenerator("com.example.ent").generate(schemas.map(::SchemaInput))
 
-        return KotlinCompilation().apply {
-            sources = generated.toCompileTestSources() + SourceFile.kotlin(
-                "Application.kt",
-                """
-                package com.example.app
+        val application = SourceFile.kotlin(
+            "Application.kt",
+            """
+            package com.example.app
 
-                import com.example.ent.*
-                import entkt.query.Predicate
-                import entkt.runtime.mutation.PendingCreateMutation
-                import entkt.runtime.mutation.PendingUpdateMutation
-                import entkt.runtime.mutation.RelationshipLocking
-                import entkt.runtime.mutation.UpdateConsistency
-                import entkt.runtime.privacy.ViewerContext
-                import entkt.runtime.result.MutationResult
-                import entkt.runtime.result.ReadResult
-                import java.util.UUID
+            import com.example.ent.*
+            import entkt.query.Predicate
+            import entkt.runtime.mutation.PendingCreateMutation
+            import entkt.runtime.mutation.PendingUpdateMutation
+            import entkt.runtime.mutation.RelationshipLocking
+            import entkt.runtime.mutation.UpdateConsistency
+            import entkt.runtime.privacy.ViewerContext
+            import entkt.runtime.result.MutationResult
+            import entkt.runtime.result.ReadResult
+            import java.util.UUID
 
-                $body
-                """.trimIndent(),
-            )
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+            $body
+            """.trimIndent(),
+        )
+
+        return compileSources(generated.toCompileTestSources() + application)
     }
 
     @Test

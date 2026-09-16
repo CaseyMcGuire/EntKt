@@ -2,14 +2,18 @@
 
 package entkt.codegen
 
+import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
 import entkt.schema.EntId
 import entkt.schema.EntSchema
+import org.junit.jupiter.api.TestInstance
+import java.lang.reflect.InvocationTargetException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class NamedIndexHelperCompileTest {
     private class Problem : EntSchema("problems", clientName = "problems") {
         override fun id() = EntId.long()
@@ -45,25 +49,26 @@ class NamedIndexHelperCompileTest {
         import entkt.runtime.query.*
         import entkt.runtime.result.EntPrivacyDeniedException
         import entkt.runtime.result.ReadResult
+        import kotlin.test.assertEquals
+        import kotlin.test.assertIs
+        import kotlin.test.assertTrue
 
         $body
         """.trimIndent(),
     )
 
-    private fun compile(vararg application: SourceFile) = KotlinCompilation().apply {
+    private fun compile(vararg application: SourceFile): JvmCompilationResult {
         val schemas = listOf(Problem(), TestCase())
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        sources = EntGenerator("com.example.ent").generate(schemas.map(::SchemaInput)).toCompileTestSources() + application
-        inheritClassPath = true
-        kotlincArguments = listOf("-Xskip-metadata-version-check")
-        jvmTarget = "17"
-        messageOutputStream = java.io.OutputStream.nullOutputStream()
-    }.compile()
+        val generated = EntGenerator("com.example.ent")
+            .generate(schemas.map(::SchemaInput)).toCompileTestSources()
+        return compileSources(generated + application)
+    }
 
-    @Test
-    fun `named shortcuts compile on root transaction and read-only clients and keep normal read execution`() {
-        val result = compile(
+    // Compile once for this suite; each runtime probe constructs its own mutable fixture.
+    private val validCompilation by lazy {
+        compile(
             source("Application", """
                 fun use(client: EntClient, rules: ReadOnlyEntClient, viewer: ViewerContext) {
                     val full: TestCaseIndexes.ProblemIdPosition =
@@ -84,7 +89,7 @@ class NamedIndexHelperCompileTest {
                 }
             """.trimIndent()),
             source("Probe", """
-                fun exercise() {
+                private class Fixture {
                     var calls = 0
                     var privacyCalls = 0
                     var allow = true
@@ -97,7 +102,7 @@ class NamedIndexHelperCompileTest {
                         ): List<Map<String, Any?>> {
                             calls++
                             lastPredicates = predicates
-                            check(table == "test_cases")
+                            assertEquals("test_cases", table)
                             return listOf(mapOf(
                                 "id" to 42L, "problem_id" to 7L, "sort_position" to 3,
                                 "status" to "ready", "nickname" to null,
@@ -110,7 +115,7 @@ class NamedIndexHelperCompileTest {
                             privacy {
                                 load(TestCaseLoadPrivacyRule { _, entity ->
                                     privacyCalls++
-                                    check(entity.id == 42L)
+                                    assertEquals(42L, entity.id)
                                     if (allow) PrivacyDecision.Allow else PrivacyDecision.Deny("hidden")
                                 })
                             }
@@ -126,36 +131,100 @@ class NamedIndexHelperCompileTest {
                     val chained = client.testCases.indexes.problemId(7L).position(3)
                     val read = client.readOnlyClient.testCases.indexes.byProblemAndPosition(7L, 3)
                     val expected = listOf(TestCase.problemId.eq(7L), TestCase.position.eq(3))
-                    check(named.query().captureEntityQuery().predicates == expected)
-                    check(chained.query().captureEntityQuery().predicates == expected)
-                    check(read.query().captureEntityQuery().predicates == expected)
-                    check(calls == 0 && privacyCalls == 0 && operations.isEmpty())
-
                     val viewer = ViewerContext(Viewer.User(1L))
+                }
+
+                fun buildsPredicatesWithoutExecuting() = with(Fixture()) {
+                    assertEquals(expected, named.query().captureEntityQuery().predicates)
+                    assertEquals(expected, chained.query().captureEntityQuery().predicates)
+                    assertEquals(expected, read.query().captureEntityQuery().predicates)
+                    assertEquals(0, calls)
+                    assertEquals(0, privacyCalls)
+                    assertTrue(operations.isEmpty())
+                }
+
+                fun returnsEquivalentRows() = with(Fixture()) {
                     val namedResult = named.find(viewer)
-                    check(namedResult.getOrThrow()?.id == 42L)
-                    check(chained.find(viewer) == namedResult)
-                    check(read.find(viewer) == namedResult)
-                    check(lastPredicates == expected)
-                    check(calls == 3 && privacyCalls == 3)
-                    check(operations == List(3) { ReadOperation.FIRST })
+                    assertEquals(42L, namedResult.getOrThrow()?.id)
+                    assertEquals(namedResult, chained.find(viewer))
+                    assertEquals(namedResult, read.find(viewer))
+                    assertEquals(expected, lastPredicates)
+                    assertEquals(3, calls)
+                }
+
+                fun evaluatesPrivacyOnEveryRead() = with(Fixture()) {
+                    named.find(viewer).getOrThrow()
+                    chained.find(viewer).getOrThrow()
+                    read.find(viewer).getOrThrow()
+                    assertEquals(3, privacyCalls)
 
                     allow = false
                     for (denied in listOf(named.find(viewer), read.find(viewer))) {
-                        check(denied is ReadResult.Failed && denied.exception is EntPrivacyDeniedException)
+                        val failure = assertIs<ReadResult.Failed>(denied)
+                        assertIs<EntPrivacyDeniedException>(failure.exception)
                     }
-                    check(calls == 5 && privacyCalls == 5)
+                    assertEquals(5, calls)
+                    assertEquals(5, privacyCalls)
+                }
 
+                fun invokesReadInterceptors() = with(Fixture()) {
+                    named.find(viewer).getOrThrow()
+                    chained.find(viewer).getOrThrow()
+                    read.find(viewer).getOrThrow()
+                    assertEquals(List(3) { ReadOperation.FIRST }, operations)
+                }
+
+                fun preservesOriginalQuery() = with(Fixture()) {
+                    named.find(viewer).getOrThrow()
                     val original = named.query()
                     val filtered = original.where(TestCase.status.eq("ready"))
-                    check(original.captureEntityQuery().predicates == expected)
-                    check(filtered.captureEntityQuery().predicates == expected + TestCase.status.eq("ready"))
-                    check(calls == 5)
+                    assertEquals(expected, original.captureEntityQuery().predicates)
+                    assertEquals(expected + TestCase.status.eq("ready"), filtered.captureEntityQuery().predicates)
+                    assertEquals(1, calls)
                 }
             """.trimIndent(), internal = true),
         )
+    }
+
+    @Test
+    fun `named shortcuts compile on root transaction and read-only clients`() {
+        val result = validCompilation
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
-        result.classLoader.loadClass("com.example.app.ProbeKt").getMethod("exercise").invoke(null)
+    }
+
+    @Test
+    fun `named shortcuts build the same predicates as chained keys without executing reads`() {
+        runProbe("buildsPredicatesWithoutExecuting")
+    }
+
+    @Test
+    fun `named shortcuts return the same rows as chained and read-only lookups`() {
+        runProbe("returnsEquivalentRows")
+    }
+
+    @Test
+    fun `named shortcuts apply load privacy on every read`() {
+        runProbe("evaluatesPrivacyOnEveryRead")
+    }
+
+    @Test
+    fun `named shortcuts invoke normal read interceptors`() {
+        runProbe("invokesReadInterceptors")
+    }
+
+    @Test
+    fun `named query refinements leave the original query unchanged`() {
+        runProbe("preservesOriginalQuery")
+    }
+
+    private fun runProbe(name: String) {
+        val result = validCompilation
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+        try {
+            result.classLoader.loadClass("com.example.app.ProbeKt").getMethod(name).invoke(null)
+        } catch (failure: InvocationTargetException) {
+            throw failure.targetException
+        }
     }
 
     @Test

@@ -5,6 +5,8 @@ package entkt.codegen
 import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -16,35 +18,31 @@ class ImmutableQueryCompileTest {
         schemas.forEach { it.finalize(registry) }
         val generated = EntGenerator("com.example.ent").generate(schemas.map(::SchemaInput))
         val optIn = if (internal) "@file:OptIn(entkt.query.EntktInternal::class)" else ""
-        return KotlinCompilation().apply {
-            sources = generated.toCompileTestSources() + SourceFile.kotlin(
-                "Application.kt",
-                """
-                $optIn
-                package com.example.app
+        val application = SourceFile.kotlin(
+            "Application.kt",
+            """
+            $optIn
+            package com.example.app
 
-                import com.example.ent.*
-                import entkt.query.Op
-                import entkt.query.Predicate
-                import entkt.query.OrderField
-                import entkt.runtime.driver.DatabaseDriver
-                import entkt.runtime.driver.NoopDriver
-                import entkt.runtime.privacy.ViewerContext
-                import entkt.runtime.query.EdgeLoad
-                import entkt.runtime.query.EdgeVisibility
-                import entkt.runtime.query.QuerySource
-                import entkt.runtime.result.EntQueryConfigurationException
-                import entkt.runtime.result.ReadResult
-                import java.util.UUID
+            import com.example.ent.*
+            import entkt.query.Op
+            import entkt.query.Predicate
+            import entkt.query.OrderField
+            import entkt.runtime.driver.DatabaseDriver
+            import entkt.runtime.driver.NoopDriver
+            import entkt.runtime.privacy.ViewerContext
+            import entkt.runtime.query.EdgeLoad
+            import entkt.runtime.query.EdgeVisibility
+            import entkt.runtime.query.QuerySource
+            import entkt.runtime.result.EntQueryConfigurationException
+            import entkt.runtime.result.ReadResult
+            import java.util.UUID
 
-                $body
-                """.trimIndent(),
-            )
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+            $body
+            """.trimIndent(),
+        )
+
+        return compileSources(generated.toCompileTestSources() + application)
     }
 
     @Test

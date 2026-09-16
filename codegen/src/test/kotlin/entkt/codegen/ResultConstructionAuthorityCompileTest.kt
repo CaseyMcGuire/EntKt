@@ -5,6 +5,8 @@ package entkt.codegen
 import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import entkt.schema.EntSchema
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -39,13 +41,7 @@ import kotlin.test.assertTrue
 class ResultConstructionAuthorityCompileTest {
 
     private fun compile(vararg sources: SourceFile): JvmCompilationResult =
-        KotlinCompilation().apply {
-            this.sources = sources.toList()
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+        compileSources(sources.toList())
 
     private fun snippet(name: String, code: String) = SourceFile.kotlin(name, code.trimIndent())
 
@@ -187,13 +183,7 @@ class ResultConstructionAuthorityCompileTest {
         val sources = EntGenerator("com.example.ent")
             .generate(listOf(SchemaInput(car), SchemaInput(user)))
             .toCompileTestSources()
-        val result = KotlinCompilation().apply {
-            this.sources = sources
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+        val result = compileSources(sources)
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,

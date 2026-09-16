@@ -34,13 +34,7 @@ class BytesEqualityCompileTest {
         val sources = EntGenerator("com.example.ent")
             .generate(listOf(SchemaInput(schema)))
             .toCompileTestSources()
-        return KotlinCompilation().apply {
-            this.sources = sources
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+        return compileSources(sources)
     }
 
     @Test

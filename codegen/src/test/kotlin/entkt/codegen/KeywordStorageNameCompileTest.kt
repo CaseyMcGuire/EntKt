@@ -61,13 +61,7 @@ class KeywordStorageNameCompileTest {
 
     @Test
     fun `keyword storage names generate compilable source`() {
-        val result = KotlinCompilation().apply {
-            sources = generate().toCompileTestSources()
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+        val result = compileSources(generate().toCompileTestSources())
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,

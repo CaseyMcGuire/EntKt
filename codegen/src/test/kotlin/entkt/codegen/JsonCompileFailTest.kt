@@ -5,7 +5,6 @@
 
 package entkt.codegen
 
-import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
 import entkt.schema.EntId
@@ -75,27 +74,11 @@ class JsonCompileFailTest {
             .toCompileTestSources()
     }
 
-    private fun compile(sources: List<SourceFile>): JvmCompilationResult =
-        KotlinCompilation().apply {
-            this.sources = sources
-            // The generated code references entkt runtime/query classes,
-            // kotlinx-serialization-core, and the test-defined element class.
-            inheritClassPath = true
-            // kctfork bundles its own kotlinc, which may lag the project's
-            // compiler; the contract under test (companion serializer
-            // resolution) is independent of the metadata version.
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            // The inherited classpath is built for 17; match it so calls
-            // into inline entkt functions don't trip the jvm-target check.
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
-
     @Test
     fun `control - generated code without a json field compiles`() {
         // Proves the harness itself is sound (classpath, targets, codegen
         // output) so the failing test below can't pass vacuously.
-        val result = compile(generatedSources(BareBoard()))
+        val result = compileSources(generatedSources(BareBoard()))
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
@@ -105,7 +88,7 @@ class JsonCompileFailTest {
 
     @Test
     fun `generated code for built-in arrays compiles`() {
-        val result = compile(generatedSources(BuiltinArrayBoard()))
+        val result = compileSources(generatedSources(BuiltinArrayBoard()))
         assertEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
@@ -115,7 +98,7 @@ class JsonCompileFailTest {
 
     @Test
     fun `a json type argument without kotlinx serialization support fails to compile`() {
-        val result = compile(generatedSources(RectBoard()))
+        val result = compileSources(generatedSources(RectBoard()))
         assertNotEquals(
             KotlinCompilation.ExitCode.OK,
             result.exitCode,
@@ -134,7 +117,7 @@ class JsonCompileFailTest {
         // jackson-mode metadata is mapper-neutral (klass/kType/typeName), so
         // no serializer symbols are referenced and PlainRect needs neither
         // @Serializable nor the serialization compiler plugin.
-        val result = compile(
+        val result = compileSources(
             generatedSources(RectBoard(), jsonMapper = entkt.runtime.driver.JsonMapperIds.JACKSON),
         )
         assertEquals(

@@ -21,15 +21,6 @@ class WriteCandidateCompileTest {
         override fun id() = EntId.int()
     }
 
-    private fun compile(sources: List<SourceFile>): JvmCompilationResult =
-        KotlinCompilation().apply {
-            this.sources = sources
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
-
     private fun mutationTypes(candidate: String): List<String> = listOf(
         "CreateMutationConverter<WidgetDraft, $candidate, Widget, BeforeCreate>",
         "CreateMutationOperation<EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
@@ -42,7 +33,7 @@ class WriteCandidateCompileTest {
         "DeleteRuleCandidate<Widget, $candidate>",
     )
 
-    private fun compileTypes(types: List<String>): JvmCompilationResult = compile(
+    private fun compileTypes(types: List<String>): JvmCompilationResult = compileSources(
         listOf(
             SourceFile.kotlin(
                 "CandidateBounds.kt",
@@ -180,7 +171,7 @@ class WriteCandidateCompileTest {
             else -> "DeleteManyMutationOperation<EntRuleClient, Widget, WidgetCandidate>"
         }
 
-        return compile(
+        return compileSources(
             listOf(
                 SourceFile.kotlin(
                     "OperationFactoryBounds.kt",
@@ -296,7 +287,7 @@ class WriteCandidateCompileTest {
         val generated = EntGenerator("com.example.ent")
             .generate(schemas.map { SchemaInput(it) })
             .toCompileTestSources()
-        val result = compile(
+        val result = compileSources(
             generated + SourceFile.kotlin(
                 "GeneratedCandidateBounds.kt",
                 """

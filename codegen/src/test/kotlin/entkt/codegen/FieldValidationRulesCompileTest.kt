@@ -5,6 +5,8 @@ package entkt.codegen
 import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.User
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -37,13 +39,7 @@ class FieldValidationRulesCompileTest {
             }
             """.trimIndent(),
         )
-        return KotlinCompilation().apply {
-            sources = generated + policy
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+        return compileSources(generated + policy)
     }
 
     @Test

@@ -1,5 +1,8 @@
 package entkt.codegen
 
+import entkt.codegen.fixtures.Car
+import entkt.codegen.fixtures.Ticket
+import entkt.codegen.fixtures.User
 import entkt.codegen.mutation.UpdateGenerator
 import entkt.codegen.client.RepoGenerator
 import entkt.schema.EntId
