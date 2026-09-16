@@ -6,6 +6,7 @@ import entkt.codegen.mutation.ValidationGenerator
 import entkt.schema.EntSchema
 import kotlin.reflect.KClass
 import kotlin.test.Test
+import kotlin.test.assertEquals
 
 private fun finalize(vararg schemas: EntSchema) {
     val registry = schemas.associateBy { it::class }
@@ -108,34 +109,23 @@ class ValidationGeneratorTest {
         assert(output.contains("class UserValidationScope")) {
             "Should generate ValidationScope\n$output"
         }
-        assert(output.contains("fun create(vararg rules: UserCreateValidationRule)")) {
-            "Should have create method\n$output"
+        assert(output.contains("fun create(vararg rules: UserCreateBatchValidationRule)")) {
+            "Should register batch create rules under the existing DSL name\n$output"
         }
-        assert(output.contains("fun update(vararg rules: UserUpdateValidationRule)")) {
-            "Should have update method\n$output"
+        assert(output.contains("fun update(vararg rules: UserUpdateBatchValidationRule)")) {
+            "Should register batch update rules under the existing DSL name\n$output"
         }
-        assert(output.contains("fun delete(vararg rules: UserDeleteValidationRule)")) {
-            "Should have delete method\n$output"
-        }
-        assert(output.contains("fun create(rule: UserCreateBatchValidationRule)")) {
-            "Should register a single batch create rule under the existing DSL name\n$output"
-        }
-        assert(output.contains("fun update(rule: UserUpdateBatchValidationRule)")) {
-            "Should register a single batch update rule under the existing DSL name\n$output"
-        }
-        assert(output.contains("fun delete(rule: UserDeleteBatchValidationRule)")) {
-            "Should register a single batch delete rule under the existing DSL name\n$output"
+        assert(output.contains("fun delete(vararg rules: UserDeleteBatchValidationRule)")) {
+            "Should register batch delete rules under the existing DSL name\n$output"
         }
         listOf("create", "update", "delete").forEach { operation ->
-            assert(output.contains("@JvmName(\"${operation}BatchRule\")")) {
-                "Batch $operation overload should have a distinct Java name\n$output"
-            }
+            assertEquals(1, Regex("fun $operation\\(").findAll(output).count(), output)
             assert(output.contains("config.${operation}Rules.addAll(rules)")) {
-                "Scalar $operation overload should append to the shared list\n$output"
+                "$operation should append scalar and batch rules to the shared list\n$output"
             }
-            assert(output.contains("config.${operation}Rules.add(rule)")) {
-                "Batch $operation overload should append to the shared list\n$output"
-            }
+        }
+        assert(!output.contains("@JvmName")) {
+            "One registration method per operation needs no alternate Java names\n$output"
         }
         assert(output.contains("fun updateDerivesFromCreate()")) {
             "Should have updateDerivesFromCreate method\n$output"

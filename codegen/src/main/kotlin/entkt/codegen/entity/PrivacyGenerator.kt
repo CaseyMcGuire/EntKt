@@ -185,10 +185,6 @@ internal class PrivacyGenerator(
             buildPrivacyScope(
                 privacyScopeClass,
                 configClass,
-                ClassName(packageName, loadRule),
-                ClassName(packageName, createRule),
-                ClassName(packageName, updateRule),
-                ClassName(packageName, deleteRule),
                 ClassName(packageName, loadBatchRule),
                 ClassName(packageName, createBatchRule),
                 ClassName(packageName, updateBatchRule),
@@ -409,10 +405,6 @@ internal class PrivacyGenerator(
     private fun buildPrivacyScope(
         scopeClass: ClassName,
         configClass: ClassName,
-        loadRuleType: ClassName,
-        createRuleType: ClassName,
-        updateRuleType: ClassName,
-        deleteRuleType: ClassName,
         loadBatchRuleType: ClassName,
         createBatchRuleType: ClassName,
         updateBatchRuleType: ClassName,
@@ -427,10 +419,10 @@ internal class PrivacyGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("config")
             }
-            addRuleFunctions("load", loadRuleType, loadBatchRuleType)
-            addRuleFunctions("create", createRuleType, createBatchRuleType)
-            addRuleFunctions("update", updateRuleType, updateBatchRuleType)
-            addRuleFunctions("delete", deleteRuleType, deleteBatchRuleType)
+            addRuleFunctions("load", loadBatchRuleType)
+            addRuleFunctions("create", createBatchRuleType)
+            addRuleFunctions("update", updateBatchRuleType)
+            addRuleFunctions("delete", deleteBatchRuleType)
             function("updateDerivesFromCreate") {
                 statement("config.updateDerivesFromCreate = true")
             }
@@ -440,20 +432,14 @@ internal class PrivacyGenerator(
         }
     }
 
-    /** Emit item-aware, batch, and context-only rule overloads for one privacy operation. */
+    /** Emit shared scalar/batch registration and a separate context-only overload. */
     private fun TypeSpec.Builder.addRuleFunctions(
         operation: String,
-        ruleType: ClassName,
         batchRuleType: ClassName,
     ) {
         function(operation) {
-            parameter("rules", ruleType) { addModifiers(KModifier.VARARG) }
+            parameter("rules", batchRuleType) { addModifiers(KModifier.VARARG) }
             statement("config.%LRules.addAll(rules)", operation)
-        }
-        function(operation) {
-            addAnnotation(annotation(JVM_NAME) { addMember("%S", "${operation}BatchRule") })
-            parameter("rule", batchRuleType)
-            statement("config.%LRules.add(rule)", operation)
         }
         function(operation) {
             addAnnotation(annotation(JVM_NAME) { addMember("%S", "${operation}ContextRule") })

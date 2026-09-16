@@ -256,12 +256,34 @@ batch remain bound to it.
 Returning decisions created by another batch is an operational
 `EntBatchRuleContractException`, not an invalid decision. Java or unchecked
 code that returns `null` instead of `RuleDecisions`, or returns a null/invalid
-decision, receives the same contract error. Scalar
-and batch validators use the same `create`, `update`, and `delete` registration
-names in Kotlin and one shared registration order. Generated batch overloads
-use JVM names such as `createBatchRule` so Java lambdas remain unambiguous. A
+decision, receives the same contract error. Scalar and batch validators use
+one vararg method per operation: `create`, `update`, and `delete`, with the
+same names in Kotlin and Java. Scalar validators implement `BatchValidationRule`,
+so both kinds share one registration method and one registration order. A
 batch validator receives a singleton `RuleBatch` for a scalar mutation and is
 not invoked for an empty phase.
+
+Pass several batch validators with `create(firstBatchRule, secondBatchRule)`,
+or spread a typed array with
+`create(*batchRules)`. Scalar and batch validators can also share a single
+call, such as `create(scalarRule, batchRule, anotherScalarRule)`. Rules are
+appended in argument order. An empty call or array registers nothing. The
+same applies to `update` and `delete`.
+
+For an inline scalar validator, use `ValidationRule { context, item -> ... }`
+or the generated lifecycle-specific rule constructor. The registration method
+infers the client and item types:
+
+```kotlin
+create(ValidationRule { context, candidate ->
+    ValidationDecision.Valid
+})
+```
+
+Bare scalar lambdas are not accepted by the shared method. Existing scalar
+validator objects and field-validation helpers work unchanged. In Java, assign
+a scalar lambda to a typed `ValidationRule` variable before passing it to the
+shared method; a bare Java lambda targets `BatchValidationRule`.
 
 ### EntValidationException
 

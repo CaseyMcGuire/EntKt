@@ -178,8 +178,7 @@ fun interface PrivacyRule<in Client : EntRuleClient, in Item> : BatchPrivacyRule
  * Construct an explicitly batch-aware privacy rule.
  *
  * The ordinary interface plus named factory keeps batch-taking callbacks
- * explicit at registration sites instead of making a lambda ambiguous between
- * one item and a batch of items.
+ * explicit at Kotlin registration sites. Use [PrivacyRule] for a scalar callback.
  */
 fun <Client : EntRuleClient, Item> batchPrivacyRule(
     block: (

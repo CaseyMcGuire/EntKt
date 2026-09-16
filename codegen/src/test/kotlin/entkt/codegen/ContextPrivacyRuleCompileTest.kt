@@ -164,9 +164,11 @@ class ContextPrivacyRuleCompileTest {
                 package com.example.app;
 
                 import com.example.ent.ReadOnlyEntClient;
+                import com.example.ent.User;
                 import com.example.ent.UserPrivacyScope;
                 import entkt.runtime.privacy.ContextPrivacyRule;
                 import entkt.runtime.privacy.PrivacyDecision;
+                import entkt.runtime.privacy.PrivacyRule;
                 import entkt.runtime.privacy.PrivacyRuleContext;
 
                 public final class ContextRuleJava implements ContextPrivacyRule<ReadOnlyEntClient> {
@@ -182,7 +184,8 @@ class ContextPrivacyRuleCompileTest {
                         scope.createContextRule(shared);
                         scope.updateContextRule(shared);
                         scope.deleteContextRule(context -> PrivacyDecision.Allow.INSTANCE);
-                        scope.load((context, item) -> PrivacyDecision.Allow.INSTANCE);
+                        PrivacyRule<ReadOnlyEntClient, User> scalar = (context, item) -> PrivacyDecision.Allow.INSTANCE;
+                        scope.load(scalar);
                     }
                 }
                 """.trimIndent(),

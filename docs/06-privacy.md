@@ -252,12 +252,34 @@ batch remain bound to it.
 Returning decisions created by another batch is an operational
 `EntBatchRuleContractException`, not a denial. Java or unchecked code that
 returns `null` instead of `RuleDecisions`, or returns a null/invalid decision,
-receives the same contract error. Scalar and batch rules register
-under the existing `load`, `create`, `update`, and `delete` names in Kotlin and
-share one registration order. Generated batch overloads use JVM names such as
-`loadBatchRule` and `createBatchRule` so Java lambdas remain unambiguous. A
+receives the same contract error. Scalar and batch rules register through one
+vararg method per operation: `load`, `create`, `update`, and `delete`, with the
+same names in Kotlin and Java. Scalar rules implement `BatchPrivacyRule`, so
+both kinds share one registration method and one registration order. A
 batch rule receives a singleton `RuleBatch` for a scalar operation and is not
 invoked for an empty phase.
+
+Pass several batch rules with
+`load(firstBatchRule, secondBatchRule)`, or spread a typed array with
+`load(*batchRules)`. Scalar and batch rules can also share a single call, such
+as `load(scalarRule, batchRule, anotherScalarRule)`. Rules are appended in
+argument order. An empty call or array registers nothing. The same applies
+to `create`, `update`, and `delete`.
+
+For an inline scalar rule, use `PrivacyRule { context, entity -> ... }` or
+the generated lifecycle-specific rule constructor. The registration method
+infers the client and item types:
+
+```kotlin
+load(PrivacyRule { context, entity ->
+    PrivacyDecision.Allow
+})
+```
+
+Bare scalar lambdas are not accepted by the shared method. Existing scalar
+rule objects and helpers such as `allowIf` and `denyIf` work unchanged. In
+Java, assign a scalar lambda to a typed `PrivacyRule` variable before passing
+it to the shared method; a bare Java lambda targets `BatchPrivacyRule`.
 
 **Stock rule — `allowAll`.** The runtime ships `allowAll`, a rule that
 permits any operation on any entity. Because `PrivacyRule` is contravariant
@@ -363,12 +385,11 @@ val client = EntClient(driver) {
 ```
 
 Each entity's `privacy { }` block exposes four methods matching the
-four operations: `load()`, `create()`, `update()`, `delete()`. Each keeps its
-scalar-rule `vararg` overload and also accepts one `BatchPrivacyRule` or one
-`ContextPrivacyRule`. Register multiple batch/context-only rules with repeated
-calls; there are no parallel `loadBatch` or `createBatch` methods in Kotlin.
-Java calls explicitly named JVM overloads, such as `loadBatchRule` for batch
-rules and `loadContextRule` for context-only rules.
+four operations: `load()`, `create()`, `update()`, `delete()`. Each accepts a
+vararg of scalar and/or batch rules. A separate overload accepts one
+`ContextPrivacyRule`; register multiple context-only rules with repeated calls.
+Java uses the same operation names for scalar and batch rules, and explicitly
+named JVM overloads such as `loadContextRule` for context-only rules.
 
 ## Evaluation Semantics
 

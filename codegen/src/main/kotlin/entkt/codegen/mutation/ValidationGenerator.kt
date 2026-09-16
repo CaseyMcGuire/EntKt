@@ -1,13 +1,11 @@
 package entkt.codegen.mutation
 
-import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeSpec
-import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.kotlinFile
@@ -20,7 +18,6 @@ import entkt.schema.EntSchema
 
 private val VALIDATION_RULE = ClassName("entkt.runtime.validation", "ValidationRule")
 private val BATCH_VALIDATION_RULE = ClassName("entkt.runtime.validation", "BatchValidationRule")
-private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
 private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
 private val VALIDATION_ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val RESOLVED_ENTITY_VALIDATION_CONFIG =
@@ -100,9 +97,6 @@ internal class ValidationGenerator(
                 buildValidationScope(
                     scopeClass,
                     configClass,
-                    ClassName(packageName, createRule),
-                    ClassName(packageName, updateRule),
-                    ClassName(packageName, deleteRule),
                     ClassName(packageName, createBatchRule),
                     ClassName(packageName, updateBatchRule),
                     ClassName(packageName, deleteBatchRule),
@@ -155,9 +149,6 @@ internal class ValidationGenerator(
     private fun buildValidationScope(
         scopeClass: ClassName,
         configClass: ClassName,
-        createRuleType: ClassName,
-        updateRuleType: ClassName,
-        deleteRuleType: ClassName,
         createBatchRuleType: ClassName,
         updateBatchRuleType: ClassName,
         deleteBatchRuleType: ClassName,
@@ -171,33 +162,23 @@ internal class ValidationGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("config")
             }
-            addRuleFunctions("create", createRuleType, createBatchRuleType)
-            addRuleFunctions("update", updateRuleType, updateBatchRuleType)
-            addRuleFunctions("delete", deleteRuleType, deleteBatchRuleType)
+            addRuleFunction("create", createBatchRuleType)
+            addRuleFunction("update", updateBatchRuleType)
+            addRuleFunction("delete", deleteBatchRuleType)
             function("updateDerivesFromCreate") {
                 statement("config.updateDerivesFromCreate = true")
             }
         }
     }
 
-    /** Add scalar and batch overloads for one validation operation. */
-    private fun TypeSpec.Builder.addRuleFunctions(
+    /** Add one registration method accepting both scalar and batch validators. */
+    private fun TypeSpec.Builder.addRuleFunction(
         operation: String,
-        ruleType: ClassName,
         batchRuleType: ClassName,
     ) {
         function(operation) {
-            addParameter("rules", ruleType, KModifier.VARARG)
+            addParameter("rules", batchRuleType, KModifier.VARARG)
             statement("config.%LRules.addAll(rules)", operation)
         }
-        function(operation) {
-            addAnnotation(jvmName("${operation}BatchRule"))
-            parameter("rule", batchRuleType)
-            statement("config.%LRules.add(rule)", operation)
-        }
-    }
-
-    private fun jvmName(name: String): AnnotationSpec = annotation(JVM_NAME) {
-        addMember("%S", name)
     }
 }

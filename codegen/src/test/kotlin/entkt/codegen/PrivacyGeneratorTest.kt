@@ -8,6 +8,7 @@ import entkt.schema.EntId
 import entkt.schema.EntSchema
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
 private fun finalize(vararg schemas: EntSchema) {
@@ -100,27 +101,27 @@ class PrivacyGeneratorTest {
     }
 
     @Test
-    fun `generates scalar batch and context registration signatures for each operation`() {
+    fun `generates one scalar and batch registration method plus a context overload per operation`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
         assertContains(output, "class UserPrivacyScope")
         for ((operation, ruleType) in ruleTypes) {
-            assertContains(output, "fun $operation(vararg rules: ${ruleType}PrivacyRule)")
-            assertContains(output, "fun $operation(rule: ${ruleType}BatchPrivacyRule)")
+            assertContains(output, "fun $operation(vararg rules: ${ruleType}BatchPrivacyRule)")
             assertContains(output, "fun $operation(rule: ContextPrivacyRule<ReadOnlyEntClient>)")
+            assertEquals(2, Regex("fun $operation\\(").findAll(output).count(), output)
         }
     }
 
     @Test
-    fun `batch and context registration have distinct Java names`() {
+    fun `only context registration has a distinct Java name`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
         for (operation in ruleTypes.keys) {
-            assertContains(output, "@JvmName(\"${operation}BatchRule\")")
+            assertFalse(output.contains("@JvmName(\"${operation}BatchRule\")"))
             assertContains(output, "@JvmName(\"${operation}ContextRule\")")
         }
     }
@@ -133,7 +134,6 @@ class PrivacyGeneratorTest {
 
         for (operation in ruleTypes.keys) {
             assertContains(output, "config.${operation}Rules.addAll(rules)")
-            assertContains(output, "config.${operation}Rules.add(rule)")
             assertContains(output, "config.${operation}Rules.add(rule.asPrivacyRuleForInternalUse())")
         }
     }
