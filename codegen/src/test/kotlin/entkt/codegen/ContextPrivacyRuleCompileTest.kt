@@ -11,11 +11,15 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class ContextPrivacyRuleCompileTest {
-    private fun compile(body: String, additionalSources: List<SourceFile> = emptyList()): JvmCompilationResult {
+    private fun compile(vararg application: SourceFile): JvmCompilationResult {
         val generated = EntGenerator("com.example.ent")
             .generate(listOf(SchemaInput(Car()), SchemaInput(User())))
             .toCompileTestSources()
-        val source = SourceFile.kotlin(
+        return compileSources(generated + application)
+    }
+
+    private fun contextRulesSource(body: String): SourceFile =
+        SourceFile.kotlin(
             "ContextRules.kt",
             """
             package com.example.app
@@ -27,18 +31,10 @@ class ContextPrivacyRuleCompileTest {
             $body
             """.trimIndent(),
         )
-        return KotlinCompilation().apply {
-            sources = generated + source + additionalSources
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
-    }
 
     @Test
     fun `one context rule class can register across entities and all four operations`() {
-        val result = compile(
+        val source = contextRulesSource(
             """
             class AuthenticatedRule : ContextPrivacyRule<ReadOnlyEntClient> {
                 override fun run(context: PrivacyRuleContext<ReadOnlyEntClient>): PrivacyDecision {
@@ -77,12 +73,14 @@ class ContextPrivacyRuleCompileTest {
             """.trimIndent(),
         )
 
+        val result = compile(source)
+
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
     }
 
     @Test
     fun `context rules retain client inference and mix with existing item-aware registrations`() {
-        val result = compile(
+        val source = contextRulesSource(
             """
             private val general = ContextPrivacyRule<EntRuleClient> { PrivacyDecision.Continue }
 
@@ -114,12 +112,14 @@ class ContextPrivacyRuleCompileTest {
             """.trimIndent(),
         )
 
+        val result = compile(source)
+
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
     }
 
     @Test
     fun `context rules requiring an unrelated client cannot register`() {
-        val result = compile(
+        val source = contextRulesSource(
             """
             class OtherClient : EntRuleClient
             val rule = ContextPrivacyRule<OtherClient> { PrivacyDecision.Allow }
@@ -132,12 +132,14 @@ class ContextPrivacyRuleCompileTest {
             """.trimIndent(),
         )
 
+        val result = compile(source)
+
         assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
     }
 
     @Test
     fun `context rules cannot write through their read-only client`() {
-        val result = compile(
+        val source = contextRulesSource(
             """
             val rule = ContextPrivacyRule<ReadOnlyEntClient> { context ->
                 context.client.users.create { name = "not allowed" }
@@ -146,14 +148,15 @@ class ContextPrivacyRuleCompileTest {
             """.trimIndent(),
         )
 
+        val result = compile(source)
+
         assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
     }
 
     @Test
     fun `Java can implement and register context-only rules without ambiguous overloads`() {
         val result = compile(
-            body = "",
-            additionalSources = listOf(SourceFile.java(
+            SourceFile.java(
                 "ContextRuleJava.java",
                 """
                 package com.example.app;
@@ -181,7 +184,7 @@ class ContextPrivacyRuleCompileTest {
                     }
                 }
                 """.trimIndent(),
-            )),
+            ),
         )
 
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
@@ -192,13 +195,7 @@ class ContextPrivacyRuleCompileTest {
         val generated = EntGenerator("com.example.ent")
             .generate(listOf(SchemaInput(ContextPrivacyRule())))
             .toCompileTestSources()
-        val result = KotlinCompilation().apply {
-            sources = generated
-            inheritClassPath = true
-            kotlincArguments = listOf("-Xskip-metadata-version-check")
-            jvmTarget = "17"
-            messageOutputStream = java.io.OutputStream.nullOutputStream()
-        }.compile()
+        val result = compileSources(generated)
 
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
     }
