@@ -4,4 +4,7 @@ package entkt.runtime.query
 enum class QueryLockMode {
     None,
     ForUpdate,
+
+    /** Lock available root rows, skipping those whose row locks cannot be acquired immediately. */
+    ForUpdateSkipLocked,
 }

@@ -187,6 +187,9 @@ internal class PostgresTransactionalDriver(
     override val supportsQueryForUpdate: Boolean
         get() = root.supportsQueryForUpdate
 
+    override val supportsQuerySkipLocked: Boolean
+        get() = root.supportsQuerySkipLocked
+
     override fun readRowForUpdate(table: String, id: Any): Map<String, Any?>? {
         checkOpen(); return ops.readRowForUpdate(conn, table, id)
     }

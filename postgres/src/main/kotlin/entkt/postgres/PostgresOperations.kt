@@ -249,6 +249,8 @@ internal class PostgresOperations(
         when (lockMode) {
             QueryLockMode.None -> Unit
             QueryLockMode.ForUpdate -> sql.append(" FOR UPDATE OF ").append(baseAlias)
+            QueryLockMode.ForUpdateSkipLocked ->
+                sql.append(" FOR UPDATE OF ").append(baseAlias).append(" SKIP LOCKED")
         }
 
         return PreparedSql(sql.toString(), builder.params.toList())
@@ -263,7 +265,7 @@ internal class PostgresOperations(
         offset: Int?,
         lockMode: QueryLockMode = QueryLockMode.None,
     ): List<Map<String, Any?>> {
-        if (lockMode == QueryLockMode.ForUpdate) {
+        if (lockMode != QueryLockMode.None) {
             check(!conn.autoCommit) { "Query FOR UPDATE requires a transaction connection" }
         }
         val schema = schemaFor(table)

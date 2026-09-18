@@ -255,11 +255,13 @@ interface DatabaseDriver {
      * accumulates them as a list and the driver folds them). The
      * driver applies `orderBy` then `offset`/`limit` after filtering.
      *
-     * [lockMode] applies only to the root table. [QueryLockMode.ForUpdate]
-     * requires [supportsQueryForUpdate] and an active transaction, and holds locks until that
-     * transaction ends. Drivers must reject unsupported locking or non-transactional locking
-     * before executing SQL; they must never silently run an unlocked read. Native pagination
-     * semantics apply (for example, PostgreSQL also locks rows skipped by OFFSET).
+     * [lockMode] applies only to the root table. Locking requires [supportsQueryForUpdate]
+     * and an active transaction, and holds locks until that transaction ends.
+     * [QueryLockMode.ForUpdateSkipLocked] additionally requires [supportsQuerySkipLocked]
+     * and omits rows whose locks cannot be acquired immediately. Drivers must reject
+     * unsupported or non-transactional locking before executing SQL; they must never
+     * silently run an unlocked read or ignore skip-locked intent. Native pagination
+     * semantics apply (for example, PostgreSQL also locks available rows skipped by OFFSET).
      */
     fun query(
         table: String,
@@ -272,6 +274,10 @@ interface DatabaseDriver {
 
     /** Query-level root-row locking support, distinct from the by-id mutation lock primitive. */
     val supportsQueryForUpdate: Boolean
+        get() = false
+
+    /** Skipping unavailable root-row locks during a query; requires [supportsQueryForUpdate] too. */
+    val supportsQuerySkipLocked: Boolean
         get() = false
 
     /**

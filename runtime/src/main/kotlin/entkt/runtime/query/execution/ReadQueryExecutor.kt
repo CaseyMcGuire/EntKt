@@ -81,6 +81,11 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
                 "${query.entity.entityName} forUpdate requires a driver with supportsQueryForUpdate = true",
             )
         }
+        if (lockMode == QueryLockMode.ForUpdateSkipLocked && !driver.supportsQuerySkipLocked) {
+            throw UnsupportedDriverCapabilityException(
+                "${query.entity.entityName} skipLocked requires a driver with supportsQuerySkipLocked = true",
+            )
+        }
     }
 
     /** Compile a captured entity query for a framework-owned storage operation. */

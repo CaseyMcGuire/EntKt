@@ -802,8 +802,8 @@ read. The `context` carries:
   for root reads
 - `context.isEagerSubquery` — true iff the operation is
   `EAGER_LOAD` or `EAGER_JUNCTION`
-- `context.lockMode` — read-only `QueryLockMode.None` or `ForUpdate` for this
-  step's `currentEntity`. Locking terminals still use `ALL` / `FIRST`;
+- `context.lockMode` — read-only `QueryLockMode.None`, `ForUpdate`, or
+  `ForUpdateSkipLocked` for this step's `currentEntity`. Locking terminals still use `ALL` / `FIRST`;
   traversal-source, eager, and edge-predicate steps report `None`.
 
 The `scope` exposes only operations that *narrow* the query:
@@ -901,9 +901,10 @@ val user = client.withTransaction { tx ->
 }.getOrThrow()
 ```
 
-`forUpdate()` returns `ForUpdateQuery<Entity>`, which exposes only
+`forUpdate()` returns `ForUpdateQuery<Entity>`, which exposes
 `all(viewerContext): ReadResult<List<Entity>>` and
-`firstOrNull(viewerContext): ReadResult<Entity?>`. Finish filtering, ordering,
+`firstOrNull(viewerContext): ReadResult<Entity?>`, plus the immutable
+`skipLocked()` option described below. Finish filtering, ordering,
 pagination, traversal, and eager selection before calling it. Construction
 performs no I/O; each terminal runs a fresh read on the original client binding.
 Later query branches cannot change that captured description.
@@ -941,6 +942,47 @@ preselection or page refilling. PostgreSQL also locks rows skipped by `OFFSET`,
 and concurrent predicate rechecks can leave locks on rows not returned.
 An explicit cursor predicate can avoid stepping past rows with an offset.
 
+### Skipping locked rows
+
+Call `skipLocked()` after `forUpdate()` to omit rows whose row locks cannot be
+acquired immediately instead of waiting for those rows:
+
+```kotlin
+client.withTransaction { tx ->
+    val available = tx.users.query {
+        orderBy(User.id.asc())
+        limit(10)
+    }.forUpdate().skipLocked().all(viewerContext).orRollback()
+
+    // Work with these rows through tx while their locks remain held.
+}.getOrThrow()
+```
+
+`skipLocked()` returns a new `ForUpdateQuery`; it performs no I/O and does not
+change the original wrapper's waiting behavior. It is available only on that
+wrapper, not on ordinary queries, rule-client queries, or query configuration
+scopes. A supporting driver and an active transaction are still required.
+Unsupported drivers return `ReadResult.Failed(UnsupportedDriverCapabilityException)`
+before interceptors or SQL, never silently falling back to waiting.
+
+PostgreSQL executes `FOR UPDATE OF <root alias> SKIP LOCKED`. Skipped root rows
+are omitted from root LOAD evaluation. Returned roots follow the ordinary privacy and eager
+loading pipeline; privacy denials still fail the read and do not cause another
+row to be fetched. Acquired locks remain held until commit or rollback, even
+after a privacy denial. Source, eager, and junction reads remain unlocked.
+
+`all()` can succeed with an empty list and `firstOrNull()` with null even when
+matching rows exist but are locked by another transaction. `LIMIT` applies to
+the available rows; native `OFFSET` behavior still locks available rows stepped
+past. EntKt adds no preselection or page-refilling queries.
+
+This is useful for concurrent queue consumers, not for a complete or stable
+view of matching rows. For a job queue, persist the claim before committing;
+the row lock alone does not reserve work after the transaction ends. Skip-locked
+reads can still wait on table-level locks and do not eliminate transaction
+conflicts or guarantee fairness. See the
+[PostgreSQL locking-clause documentation](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE).
+
 The following are deliberately unavailable at compile time:
 
 ```kotlin
@@ -950,7 +992,7 @@ tx.users.query().forUpdate().queryPosts()     // traversal after locking
 context.client.users.query().forUpdate()      // privacy/validation rule client
 ```
 
-V1 has no `FOR SHARE`, `NOWAIT`, `SKIP LOCKED`, automatic transactions, or retries.
+There is no `FOR SHARE`, `NOWAIT`, automatic transaction creation, or automatic retry.
 
 ## Transactions
 

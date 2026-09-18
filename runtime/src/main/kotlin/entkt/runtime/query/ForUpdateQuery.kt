@@ -16,10 +16,25 @@ import entkt.runtime.result.ReadResult
  * and selected-edge reads follow the normal read pipeline. A denial
  * does not release acquired locks. Native database pagination and locking semantics apply.
  */
-class ForUpdateQuery<Entity : EntEntity<*>> @EntktInternal constructor(
+class ForUpdateQuery<Entity : EntEntity<*>> private constructor(
     private val query: EntityQuery<Entity>,
     private val executor: ReadQueryExecutor<Entity>?,
+    private val lockMode: QueryLockMode,
 ) {
+    @EntktInternal
+    constructor(query: EntityQuery<Entity>, executor: ReadQueryExecutor<Entity>?) :
+        this(query, executor, QueryLockMode.ForUpdate)
+
+    /**
+     * Return a new query that skips rows whose locks cannot be acquired immediately.
+     *
+     * Performs no I/O and leaves this query unchanged. Terminals still require an active
+     * transaction and driver support. Empty results can mean all matching rows are locked;
+     * LOAD privacy is unchanged. This does not prevent waits on table-level locks.
+     */
+    fun skipLocked(): ForUpdateQuery<Entity> =
+        ForUpdateQuery(query, executor, QueryLockMode.ForUpdateSkipLocked)
+
     fun all(viewerContext: ViewerContext): ReadResult<List<Entity>> =
         read(viewerContext, ReadOperation.ALL, maximumRows = null)
 
@@ -42,7 +57,7 @@ class ForUpdateQuery<Entity : EntEntity<*>> @EntktInternal constructor(
             captureQuery = { query },
             operation = operation,
             maximumRows = maximumRows,
-            lockMode = QueryLockMode.ForUpdate,
+            lockMode = lockMode,
         )
     }
 }

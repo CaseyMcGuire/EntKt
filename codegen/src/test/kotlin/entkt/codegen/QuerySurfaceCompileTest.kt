@@ -80,6 +80,11 @@ class QuerySurfaceCompileTest {
                 val indexedLock: ForUpdateQuery<User> = fullRange.forUpdate()
                 val traversedLock: ForUpdateQuery<Car> = fullIndexedTraversal.forUpdate()
                 val groupLock: ForUpdateQuery<User> = fullManyToMany.forUpdate()
+                val skipping: ForUpdateQuery<User> = locking.skipLocked()
+                val skippingIndex: ForUpdateQuery<User> = fullRange.forUpdate().skipLocked()
+                val skippingTraversal: ForUpdateQuery<Car> = fullIndexedTraversal.forUpdate().skipLocked()
+                val availableRows: ReadResult<List<User>> = skipping.all(ctx)
+                val availableOne: ReadResult<User?> = skipping.firstOrNull(ctx)
                 val lockedRows: ReadResult<List<User>> = locking.all(ctx)
                 val lockedOne: ReadResult<User?> = locking.firstOrNull(ctx)
                 val found: ReadResult<User?> = rules.users.indexes.email("a@b.c").find(ctx)
@@ -91,6 +96,7 @@ class QuerySurfaceCompileTest {
                     val txIndex: UserQuery = tx.users.indexes.email("a@b.c").query()
                     val txTraversal: CarQuery = txIndex.queryCars()
                     val txLock: ForUpdateQuery<Car> = txTraversal.forUpdate()
+                    val txSkipping: ForUpdateQuery<Car> = txLock.skipLocked()
                 }
             }
 
@@ -199,7 +205,27 @@ class QuerySurfaceCompileTest {
     }
 
     @Test
-    fun `locking wrappers expose no configuration traversal or additional locking methods`() {
+    fun `skipLocked is unavailable before forUpdate and inside query configuration scopes`() {
+        val expressions = mapOf(
+            "FullQuery" to "client.users.query().skipLocked()",
+            "RuleQuery" to "rules.users.query().skipLocked()",
+            "SourceScope" to "client.users.query { skipLocked() }",
+            "EagerScope" to "client.users.query { loadCars { skipLocked() } }",
+            "ConfigureScope" to "client.users.query().configure { skipLocked() }",
+        )
+        val result = compile(*expressions.map { (name, expression) ->
+            source(name, "fun misuse$name(client: EntClient, rules: ReadOnlyEntClient) { $expression }")
+        }.toTypedArray())
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
+        for (name in expressions.keys) {
+            assertTrue(result.messages.lineSequence().any {
+                it.contains("$name.kt:") && it.contains("Unresolved reference") && it.contains("skipLocked")
+            }, "Expected skipLocked to be unavailable in $name:\n${result.messages}")
+        }
+    }
+
+    @Test
+    fun `locking wrappers expose no query configuration traversal or relocking methods`() {
         val expressions = mapOf(
             "Where" to "where(User.active.eq(true))",
             "Order" to "orderBy(User.id.asc())",

@@ -40,6 +40,7 @@ import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.visibleOrNull
 import java.sql.SQLException
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -142,6 +143,134 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
                 pool.shutdownNow()
                 assertTrue(pool.awaitTermination(15, TimeUnit.SECONDS))
             }
+        }
+    }
+
+    @Test
+    fun `skipLocked workers select disjoint windows and retain locks until commit or rollback`() {
+        for (rollback in listOf(false, true)) {
+            val client = EntClient(resetAndDriver())
+            val other = EntClient(newDriver())
+            val users = listOf("A", "B", "C").map { user(client, it) }
+            val pool = Executors.newSingleThreadExecutor()
+            val claimed = CompletableFuture<List<Long>>()
+            val release = CountDownLatch(1)
+            val stop = IllegalStateException("deliberate rollback")
+            try {
+                client.withTransaction { tx ->
+                    val first = tx.users.query { orderBy(User.id.asc()) }
+                        .forUpdate().skipLocked().firstOrNull(testViewerContext).orRollback()
+                    assertEquals(users[0].id, assertNotNull(first).id)
+                    val worker = pool.submit {
+                        try {
+                            val result = other.withTransaction { second ->
+                                val selected = second.users.query { orderBy(User.id.asc()); limit(2) }
+                                    .forUpdate().skipLocked().all(testViewerContext).orRollback()
+                                claimed.complete(selected.map { it.id })
+                                check(release.await(10, TimeUnit.SECONDS)) { "Worker was not released" }
+                                if (rollback) throw stop
+                            }
+                            if (rollback) {
+                                val failure = assertIs<TransactionResult.Failed>(result)
+                                assertSame(stop, failure.exception)
+                                assertEquals(TransactionFailureState.NotCommitted, failure.transactionState)
+                            } else {
+                                result.getOrThrow()
+                            }
+                        } catch (failure: Throwable) {
+                            claimed.completeExceptionally(failure)
+                            throw failure
+                        }
+                    }
+
+                    assertEquals(users.drop(1).map { it.id }, claimed.get(5, TimeUnit.SECONDS))
+                    assertTrue(users.none { canLock(User.TABLE, it.id) }, "Both workers must retain their row locks")
+                    release.countDown()
+                    worker.get(5, TimeUnit.SECONDS)
+                    assertTrue(users.drop(1).all { canLock(User.TABLE, it.id) })
+                    assertFalse(canLock(User.TABLE, users[0].id), "The first transaction is still active")
+                }.getOrThrow()
+                assertTrue(users.all { canLock(User.TABLE, it.id) })
+            } finally {
+                release.countDown()
+                pool.shutdownNow()
+                assertTrue(pool.awaitTermination(15, TimeUnit.SECONDS))
+            }
+        }
+    }
+
+    @Test
+    fun `skipLocked returns empty and null without waiting when every matching row is locked`() {
+        val client = EntClient(resetAndDriver())
+        val other = EntClient(newDriver())
+        val existing = user(client, "A")
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            client.withTransaction { tx ->
+                tx.users.query().forUpdate().all(testViewerContext).orRollback()
+                val worker = pool.submit<Pair<List<User>, User?>> {
+                    other.withTransaction { second ->
+                        val query = second.users.query().forUpdate().skipLocked()
+                        query.all(testViewerContext).orRollback() to query.firstOrNull(testViewerContext).orRollback()
+                    }.getOrThrow()
+                }
+                val (all, first) = worker.get(5, TimeUnit.SECONDS)
+                assertEquals(emptyList(), all)
+                assertEquals(null, first)
+                assertFalse(canLock(User.TABLE, existing.id))
+            }.getOrThrow()
+            assertEquals(existing.id, other.withTransaction { tx ->
+                tx.users.query().forUpdate().skipLocked().firstOrNull(testViewerContext).orRollback()?.id
+            }.getOrThrow())
+        } finally {
+            pool.shutdownNow()
+            assertTrue(pool.awaitTermination(15, TimeUnit.SECONDS))
+        }
+    }
+
+    @Test
+    fun `skipLocked excludes locked rows before privacy and never replaces denied rows`() {
+        val setup = EntClient(resetAndDriver())
+        val users = listOf("A", "B", "C").map { user(setup, it) }
+        val recording = RecordingDriver(newDriver())
+        val evaluated = mutableListOf<Long>()
+        val client = EntClient(recording) {
+            policies {
+                users(object : EntityPolicy<User, UserPolicyScope> {
+                    override fun configure(scope: UserPolicyScope) = scope.run {
+                        privacy {
+                            load(UserLoadPrivacyRule { _, item ->
+                                evaluated += item.id
+                                if (item.id == users[1].id) PrivacyDecision.Deny("hidden") else PrivacyDecision.Allow
+                            })
+                        }
+                    }
+                })
+            }
+        }
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            setup.withTransaction { owner ->
+                owner.users.query { where(User.id eq users[0].id) }
+                    .forUpdate().firstOrNull(testViewerContext).orRollback()
+                val worker = pool.submit<ReadResult<User?>> {
+                    client.withTransaction { tx ->
+                        val result = tx.users.query { orderBy(User.id.asc()) }
+                            .forUpdate().skipLocked().firstOrNull(viewer)
+                        assertFalse(canLock(User.TABLE, users[1].id), "LOAD denial must not release the acquired lock")
+                        result
+                    }.getOrThrow()
+                }
+                val result = worker.get(5, TimeUnit.SECONDS)
+                assertIs<EntPrivacyDeniedException>(assertIs<ReadResult.Failed>(result).exception)
+                assertEquals(listOf(users[1].id), evaluated)
+                assertEquals(listOf("withTransaction", "query:users"), recording.calls)
+                assertTrue(canLock(User.TABLE, users[1].id))
+                assertTrue(canLock(User.TABLE, users[2].id))
+            }.getOrThrow()
+        } finally {
+            pool.shutdownNow()
+            assertTrue(pool.awaitTermination(15, TimeUnit.SECONDS))
         }
     }
 

@@ -864,11 +864,14 @@ class PostgresDriver(
         offset: Int?,
         lockMode: QueryLockMode,
     ): List<Map<String, Any?>> {
-        if (lockMode == QueryLockMode.ForUpdate) requireTransactionForLocking("query(forUpdate)")
+        if (lockMode != QueryLockMode.None) requireTransactionForLocking("query(forUpdate)")
         return withConnection { ops.query(it, table, predicates, orderBy, limit, offset, lockMode) }
     }
 
     override val supportsQueryForUpdate: Boolean
+        get() = true
+
+    override val supportsQuerySkipLocked: Boolean
         get() = true
 
     override fun requireBindCapacity(minimumParameters: Long, table: String) =

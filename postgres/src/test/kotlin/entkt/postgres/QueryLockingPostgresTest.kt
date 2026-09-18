@@ -60,6 +60,7 @@ class QueryLockingPostgresTest {
         val order = listOf(OrderField<Any>("id", OrderDirection.DESC))
         val ordinary = ops.buildSelectSql(items.table, predicates, order, 5, 2)
         val locking = ops.buildSelectSql(items.table, predicates, order, 5, 2, QueryLockMode.ForUpdate)
+        val skipping = ops.buildSelectSql(items.table, predicates, order, 5, 2, QueryLockMode.ForUpdateSkipLocked)
 
         assertEquals(
             "SELECT t0.* FROM \"query_lock_items\" AS t0 WHERE t0.\"name\" = ? " +
@@ -69,6 +70,8 @@ class QueryLockingPostgresTest {
         assertEquals(ordinary.sql + " FOR UPDATE OF t0", locking.sql)
         assertEquals(ordinary.params, locking.params)
         assertEquals(listOf("selected"), locking.params.map { it.value })
+        assertEquals(locking.sql + " SKIP LOCKED", skipping.sql)
+        assertEquals(ordinary.params, skipping.params)
     }
 
     @Test
@@ -88,12 +91,13 @@ class QueryLockingPostgresTest {
                 Predicate.HasEdgeFromShape<Any, Any>("parent", source),
                 Predicate.HasEdgeWith<Any, Any>("parent", Predicate.Leaf("name", Op.EQ, "related")),
             ),
-            emptyList(), 4, 2, QueryLockMode.ForUpdate,
+            emptyList(), 4, 2, QueryLockMode.ForUpdateSkipLocked,
         )
 
-        assertTrue(prepared.sql.endsWith("LIMIT 4 OFFSET 2 FOR UPDATE OF t0"), prepared.sql)
+        assertTrue(prepared.sql.endsWith("LIMIT 4 OFFSET 2 FOR UPDATE OF t0 SKIP LOCKED"), prepared.sql)
         assertTrue("LIMIT 3 OFFSET 1" in prepared.sql, prepared.sql)
         assertEquals(1, Regex("FOR UPDATE").findAll(prepared.sql).count())
+        assertEquals(1, Regex("SKIP LOCKED").findAll(prepared.sql).count())
         assertEquals(listOf("source", "related"), prepared.params.map { it.value })
     }
 
@@ -104,10 +108,13 @@ class QueryLockingPostgresTest {
         ) { _, method, _ -> error("Unexpected pool access: ${method.name}") } as DataSource
         val driver = PostgresDriver(pool)
         assertTrue(driver.supportsQueryForUpdate)
-        val failure = assertFailsWith<IllegalStateException> {
-            driver.query(items.table, emptyList(), emptyList(), null, null, QueryLockMode.ForUpdate)
+        assertTrue(driver.supportsQuerySkipLocked)
+        for (mode in listOf(QueryLockMode.ForUpdate, QueryLockMode.ForUpdateSkipLocked)) {
+            val failure = assertFailsWith<IllegalStateException> {
+                driver.query(items.table, emptyList(), emptyList(), null, null, mode)
+            }
+            assertTrue("requires a transaction-scoped driver" in failure.message.orEmpty())
         }
-        assertTrue("requires a transaction-scoped driver" in failure.message.orEmpty())
     }
 
     @Test
@@ -120,10 +127,12 @@ class QueryLockingPostgresTest {
                 else -> error("Unexpected connection access: ${method.name}")
             }
         } as Connection
-        val failure = assertFailsWith<IllegalStateException> {
-            ops.query(connection, items.table, emptyList(), emptyList(), null, null, QueryLockMode.ForUpdate)
+        for (mode in listOf(QueryLockMode.ForUpdate, QueryLockMode.ForUpdateSkipLocked)) {
+            val failure = assertFailsWith<IllegalStateException> {
+                ops.query(connection, items.table, emptyList(), emptyList(), null, null, mode)
+            }
+            assertEquals("Query FOR UPDATE requires a transaction connection", failure.message)
         }
-        assertEquals("Query FOR UPDATE requires a transaction connection", failure.message)
     }
 
     @Test
@@ -133,6 +142,7 @@ class QueryLockingPostgresTest {
         val transaction = driver.withTransaction { tx ->
             escaped = tx
             assertTrue(tx.supportsQueryForUpdate)
+            assertTrue(tx.supportsQuerySkipLocked)
             val parent = tx.insert(parents.table, mapOf("name" to "parent"))
             val item = tx.insert(items.table, mapOf("name" to "uncommitted", "parent_id" to parent.getValue("id")))
             val rows = tx.query(
@@ -142,11 +152,19 @@ class QueryLockingPostgresTest {
             )
             // A query borrowing a separate connection cannot see this uncommitted row.
             assertEquals(listOf(item), rows)
+            assertEquals(rows, tx.query(
+                items.table,
+                listOf(Predicate.Leaf<Any>("id", Op.EQ, item.getValue("id"))),
+                emptyList(), 1, 0, QueryLockMode.ForUpdateSkipLocked,
+            ))
             rows
         }
         assertIs<DriverTransactionResult.Success<*>>(transaction)
         assertFailsWith<IllegalStateException> {
             escaped!!.query(items.table, emptyList(), emptyList(), null, null, QueryLockMode.ForUpdate)
+        }
+        assertFailsWith<IllegalStateException> {
+            escaped!!.query(items.table, emptyList(), emptyList(), null, null, QueryLockMode.ForUpdateSkipLocked)
         }
     }
 

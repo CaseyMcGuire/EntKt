@@ -30,6 +30,7 @@ interface DatabaseDriver {
         lockMode: QueryLockMode = QueryLockMode.None,
     ): List<Map<String, Any?>>
     val supportsQueryForUpdate: Boolean
+    val supportsQuerySkipLocked: Boolean
     fun count(table: String, predicates: List<Predicate<*>>): Long
     fun exists(table: String, predicates: List<Predicate<*>>): Boolean
 
@@ -95,8 +96,13 @@ interface DatabaseDriver {
   `ForUpdate` locks only the selected root table and requires an active
   transaction plus `supportsQueryForUpdate = true` (default: false). Drivers
   must reject unsupported or non-transactional locking before SQL, never silently
-  run an unlocked query. Custom overrides and decorators must accept and forward
-  the lock mode. This capability is independent of `supportsReadRowForUpdate`.
+  run an unlocked query. `ForUpdateSkipLocked` additionally requires
+  `supportsQuerySkipLocked = true` (default: false) and omits rows whose locks
+  cannot be acquired immediately. It must never be downgraded to a waiting
+  `ForUpdate` read. PostgreSQL advertises both capabilities and renders
+  `FOR UPDATE OF <root alias> SKIP LOCKED`. Custom overrides and decorators
+  must accept and forward the lock mode and capabilities. These capabilities
+  are independent of `supportsReadRowForUpdate`.
   Native pagination semantics apply; PostgreSQL also locks rows skipped by
   `OFFSET`. No hidden preselection or pagination rewrite is performed.
 - Postgres raw row maps may use any `Number` subtype for numeric columns.

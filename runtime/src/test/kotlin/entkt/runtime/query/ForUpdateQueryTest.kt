@@ -30,6 +30,7 @@ import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -81,6 +82,7 @@ class ForUpdateQueryTest {
         val contexts = mutableListOf<QueryContext>()
         var transactional = true
         var supported = true
+        var skipLockedSupported = true
         var mutationLockSupported = false
         var closed: Exception? = null
         var failure: Throwable? = null
@@ -92,6 +94,7 @@ class ForUpdateQueryTest {
         val driver = object : DatabaseDriver by NoopDriver {
             override val inTransaction: Boolean get() = transactional
             override val supportsQueryForUpdate: Boolean get() = supported
+            override val supportsQuerySkipLocked: Boolean get() = skipLockedSupported
             override val supportsReadRowForUpdate: Boolean get() = mutationLockSupported
 
             override fun classifyConflictException(exception: Exception): EntDatabaseConflictException? {
@@ -168,6 +171,105 @@ class ForUpdateQueryTest {
         assertTrue(fixture.contexts.all { it.lockMode == QueryLockMode.ForUpdate && it.viewerContext === fixture.viewer })
         assertEquals(listOf("guard", "interceptor:ALL", "driver:ForUpdate", "privacy:1",
             "guard", "interceptor:FIRST", "driver:ForUpdate", "privacy:1"), fixture.events)
+    }
+
+    @Test
+    fun `skipLocked is inert immutable and preserves the captured query through both terminals`() {
+        val fixture = Fixture()
+        val predicate = Predicate.Leaf<Item>("active", Op.EQ, true)
+        val query = EntityQuery(
+            Items,
+            predicates = listOf(predicate),
+            orderBy = listOf(OrderField("id", OrderDirection.DESC)),
+            limit = 4,
+            offset = 2,
+        )
+        val waiting = fixture.locking(query)
+        val skipping = waiting.skipLocked()
+        val repeated = skipping.skipLocked()
+        assertTrue(fixture.events.isEmpty())
+        assertTrue(waiting !== skipping)
+
+        assertEquals(listOf(Item(1L, 2L)), skipping.all(fixture.viewer).getOrThrow())
+        waiting.firstOrNull(fixture.viewer).getOrThrow()
+        assertEquals(Item(1L, 2L), repeated.firstOrNull(fixture.viewer).getOrThrow())
+        val modes = listOf(QueryLockMode.ForUpdateSkipLocked, QueryLockMode.ForUpdate, QueryLockMode.ForUpdateSkipLocked)
+        assertEquals(modes, fixture.calls.map { it.lockMode })
+        assertEquals(modes, fixture.contexts.map { it.lockMode })
+        assertEquals(listOf(4, 1, 1), fixture.calls.map { it.limit })
+        assertTrue(fixture.calls.all {
+            it.predicates == listOf(predicate) && it.order == query.orderBy && it.offset == 2
+        })
+        assertEquals(3, fixture.events.count { it == "privacy:1" })
+    }
+
+    @Test
+    fun `skipLocked checks transaction both capabilities and execution lifetime before any work`() {
+        assertFalse(NoopDriver.supportsQuerySkipLocked)
+        val outside = Fixture().apply { transactional = false }
+        assertIs<TransactionRequiredException>(
+            assertIs<ReadResult.Failed>(outside.locking().skipLocked().all(outside.viewer)).exception,
+        )
+        assertEquals(listOf("guard"), outside.events)
+
+        val noLocking = Fixture().apply { supported = false }
+        assertIs<UnsupportedDriverCapabilityException>(
+            assertIs<ReadResult.Failed>(noLocking.locking().skipLocked().all(noLocking.viewer)).exception,
+        )
+        assertEquals(listOf("guard"), noLocking.events)
+
+        val noSkipping = Fixture().apply { skipLockedSupported = false }
+        val unsupported = assertIs<UnsupportedDriverCapabilityException>(
+            assertIs<ReadResult.Failed>(noSkipping.locking().skipLocked().firstOrNull(noSkipping.viewer)).exception,
+        )
+        assertTrue("supportsQuerySkipLocked" in unsupported.message.orEmpty())
+        assertEquals(listOf("guard"), noSkipping.events)
+        noSkipping.locking().all(noSkipping.viewer).getOrThrow()
+        assertEquals(QueryLockMode.ForUpdate, noSkipping.calls.single().lockMode)
+
+        val expired = Fixture()
+        val captured = expired.locking().skipLocked()
+        val closed = IllegalStateException("transaction ended")
+        expired.closed = closed
+        assertSame(closed, assertIs<ReadResult.Failed>(captured.firstOrNull(expired.viewer)).exception)
+        assertEquals(listOf("guard"), expired.events)
+    }
+
+    @Test
+    fun `skipLocked empty results succeed but privacy denials remain failures`() {
+        val fixture = Fixture().apply { rows = listOf(emptyList()) }
+        val query = fixture.locking().skipLocked()
+        assertEquals(emptyList(), query.all(fixture.viewer).getOrThrow())
+        assertEquals(null, query.firstOrNull(fixture.viewer).getOrThrow())
+        assertTrue(fixture.events.none { it.startsWith("privacy") })
+
+        fixture.rows = listOf(listOf(mapOf("id" to 1L)))
+        fixture.denied = setOf(1L)
+        assertIs<EntPrivacyDeniedException>(assertIs<ReadResult.Failed>(query.all(fixture.viewer)).exception)
+        assertIs<EntPrivacyDeniedException>(assertIs<ReadResult.Failed>(query.firstOrNull(fixture.viewer)).exception)
+        assertEquals(4, fixture.calls.size, "Privacy denials must not trigger replacement reads")
+    }
+
+    @Test
+    fun `skipLocked affects only final roots and preserves required selected-edge failures`() {
+        val fixture = Fixture().apply {
+            rows = listOf(rows.single(), listOf(mapOf("id" to 2L)))
+            denied = setOf(2L)
+        }
+        val query = EntityQuery(
+            Items,
+            source = QuerySource.Traversal(EntityQuery(Items), Parent),
+            predicates = listOf(Predicate.HasEdge("parent")),
+            edges = listOf(EdgeSelection(Parent, EntityQuery(Items), EdgeVisibility.REQUIRE_VISIBLE)),
+        )
+        val result = fixture.locking(query).skipLocked().all(fixture.viewer)
+        val denial = assertIs<EntPrivacyDeniedException>(assertIs<ReadResult.Failed>(result).exception)
+        assertIs<LoadDenialOrigin.SelectedEdgePath>(denial.origin)
+        assertEquals(listOf(QueryLockMode.ForUpdateSkipLocked, QueryLockMode.None), fixture.calls.map { it.lockMode })
+        assertEquals(
+            listOf(QueryLockMode.None, QueryLockMode.ForUpdateSkipLocked, QueryLockMode.None, QueryLockMode.None),
+            fixture.contexts.map { it.lockMode },
+        )
     }
 
     @Test
