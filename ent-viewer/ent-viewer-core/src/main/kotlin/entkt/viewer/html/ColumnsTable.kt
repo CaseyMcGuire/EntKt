@@ -3,6 +3,7 @@ package entkt.viewer.html
 import entkt.runtime.driver.EntitySchema
 import entkt.viewer.EntViewerColumn
 import kotlinx.html.FlowContent
+import kotlinx.html.div
 import kotlinx.html.span
 import kotlinx.html.table
 import kotlinx.html.tbody
@@ -13,7 +14,7 @@ import kotlinx.html.tr
 
 /**
  * Schema-page column listing: the Kotlin-facing ent type, the underlying
- * database type, and nullable/unique/sensitive flags.
+ * database type, field comments, and nullable/unique/sensitive flags.
  */
 internal fun FlowContent.columnsTable(columns: List<EntViewerColumn>, schema: EntitySchema) {
     val metadataByName = schema.columns.associateBy { it.name }
@@ -24,11 +25,17 @@ internal fun FlowContent.columnsTable(columns: List<EntViewerColumn>, schema: En
             }
             tbody {
                 for (col in columns) {
+                    val metadata = metadataByName[col.name]
                     tr {
-                        td { +col.name }
+                        td {
+                            +col.name
+                            val comment = metadata?.comment
+                            if (!comment.isNullOrBlank()) {
+                                div("muted") { +comment }
+                            }
+                        }
                         td { +col.entType.ifEmpty { col.type.name.lowercase() } }
                         td {
-                            val metadata = metadataByName[col.name]
                             +(metadata?.let { dbDisplayType(schema, it) } ?: "-")
                         }
                         td {

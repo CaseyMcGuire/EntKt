@@ -84,6 +84,10 @@ above; pass the raw, still percent-encoded request path.
 `{type}` is the generated entity name in lower camel case (`User` -> `user`,
 `StudyAsset` -> `studyAsset`).
 
+On an entity's schema page, field comments declared with `.comment("...")`
+appear beneath the column names. Comments are displayed as plain text, not
+HTML; fields without a nonblank comment show only their names.
+
 ## Gating access
 
 Layered, each answering a different question:
