@@ -90,13 +90,13 @@ entktFlyway {
 dependencies {
     schemas(project(":schema"))
 
-    entktCodegen("io.entkt:codegen:0.1.0-alpha.1")
-    entktCodegen("io.entkt:postgres:0.1.0-alpha.1")
-    entktCodegen("io.entkt:flyway:0.1.0-alpha.1")
+    entktCodegen("io.entkt:codegen:0.1.0-alpha.3")
+    entktCodegen("io.entkt:postgres:0.1.0-alpha.3")
+    entktCodegen("io.entkt:flyway:0.1.0-alpha.3")
 
-    implementation("io.entkt:runtime:0.1.0-alpha.1")
-    implementation("io.entkt:postgres:0.1.0-alpha.1")
-    implementation("io.entkt:migrations:0.1.0-alpha.1")
+    implementation("io.entkt:runtime:0.1.0-alpha.3")
+    implementation("io.entkt:postgres:0.1.0-alpha.3")
+    implementation("io.entkt:migrations:0.1.0-alpha.3")
 }
 ```
 

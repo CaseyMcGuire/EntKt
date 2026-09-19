@@ -29,6 +29,33 @@ above it.
 
 ## Unreleased
 
+## 0.1.0-alpha.3
+
+Upgrade the plugin and every EntKt dependency together, then regenerate code.
+
+- **Use exact foreign-key column names in `belongsTo`** (`schema`, `codegen`)
+  The string names the physical column; EntKt no longer appends `_id`.
+  _Migration:_ replace `belongsTo<User>("author")` with
+  `belongsTo<User>("author_id")` to preserve an existing `author_id` column.
+  With `.field(...)`, use the explicit field's column name. This declaration
+  change does not require a database migration when the column name is preserved.
+
+- **Derive relationship names from their delegated properties** (`schema`, `codegen`)
+  `hasOne`, `hasMany`, and `manyToMany` no longer accept a name string.
+  Every relationship, including `belongsTo`, uses its Kotlin property name
+  verbatim as its logical name, independently of storage column names.
+  _Migration:_ use `val testCases by hasMany<TestCase>()` and analogous
+  declarations. Regenerate code and update helper names or string-based edge
+  lookups if the previous name differed from the property. Keep physical
+  table, foreign-key, and junction mappings unchanged to avoid schema drift.
+
+- **Register scalar and batch rules through one vararg method** (`codegen`)
+  Each privacy and validation operation now accepts scalar and batch rule
+  instances together, in registration order. Separate scalar overloads are removed.
+  _Migration:_ wrap inline scalar lambdas in `PrivacyRule { context, item -> ... }`
+  or `ValidationRule { context, item -> ... }` (or their generated typealiases).
+  Existing rule instances can still be passed directly.
+
 - **Preserve database conflict classification through mutations** (`runtime`)
   A classified database conflict propagated from a hook's read, returned-entity
   loading, or owned transaction commit now uses `EntMutationDatabaseConflictException`
@@ -48,6 +75,8 @@ above it.
   or transaction projections. Use the typed conflict's `code`/`cause` for diagnostics,
   and check transaction outcome before considering retries. Uncertain outcomes
   still throw `EntTransactionOutcomeUnknownException`; no automatic retries are added.
+
+## Earlier changes (through 0.1.0-alpha.2)
 
 - **Expose field uniqueness only on supported builders** (`schema`)
   `.unique()` is no longer a member of the common `FieldBuilder`. Scalar and

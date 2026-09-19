@@ -19,15 +19,14 @@ generation into your build automatically.
 
 The plugin ID is `"io.entkt"`:
 
-The examples target `0.1.0-alpha.1`. Until that version is publicly released,
-run `./gradlew publishToMavenLocal` from the EntKt checkout first. Once the
-release is available on Central, `mavenLocal()` is no longer needed.
+The examples target `0.1.0-alpha.3`. Keep the plugin and all EntKt dependencies
+on the same version. Released versions resolve from Maven Central; to try an
+unpublished checkout, follow [local preparation](publishing.md#local-preparation).
 
 ```kotlin
 // settings.gradle.kts
 pluginManagement {
     repositories {
-        mavenLocal()
         mavenCentral() // EntKt plugin markers are published here.
         gradlePluginPortal()
     }
@@ -38,11 +37,10 @@ pluginManagement {
 // build.gradle.kts
 plugins {
     kotlin("jvm") version "2.3.20"
-    id("io.entkt") version "0.1.0-alpha.1"
+    id("io.entkt") version "0.1.0-alpha.3"
 }
 
 repositories {
-    mavenLocal()
     mavenCentral()
 }
 
@@ -59,11 +57,11 @@ entkt {
 
 dependencies {
     schemas(project(":schema"))  // your schema module
-    entktCodegen("io.entkt:codegen:0.1.0-alpha.1")
-    entktCodegen("io.entkt:postgres:0.1.0-alpha.1")
-    implementation("io.entkt:runtime:0.1.0-alpha.1")
-    implementation("io.entkt:postgres:0.1.0-alpha.1")
-    implementation("io.entkt:migrations:0.1.0-alpha.1")
+    entktCodegen("io.entkt:codegen:0.1.0-alpha.3")
+    entktCodegen("io.entkt:postgres:0.1.0-alpha.3")
+    implementation("io.entkt:runtime:0.1.0-alpha.3")
+    implementation("io.entkt:postgres:0.1.0-alpha.3")
+    implementation("io.entkt:migrations:0.1.0-alpha.3")
 }
 ```
 

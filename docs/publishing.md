@@ -2,9 +2,8 @@
 
 The release version is defined once as `entktVersion` in the root
 `gradle.properties`. All published modules and both Gradle plugin markers use
-that version. The initial target is `0.1.0-alpha.1`: an experimental release
-whose APIs may change in later alphas. Preparing this configuration does not
-mean the version has been published.
+that version. Alpha releases are experimental and their APIs may change.
+Changing the version in the checkout does not mean it has been published.
 
 ## What is published
 
