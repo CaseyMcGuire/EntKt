@@ -58,6 +58,9 @@ internal class PostgresTransactionalDriver(
         root.registerAll(schemas)
     }
 
+    override val supportsRequiredOneConstraints: Boolean
+        get() = root.supportsRequiredOneConstraints
+
     override fun registeredIdColumn(table: String): String {
         checkOpen()
         return root.registeredIdColumn(table)

@@ -102,6 +102,48 @@ class FkSemanticsDiffTest {
     }
 
     @Test
+    fun `deferred NO ACTION cannot be replaced by RESTRICT`() {
+        val desired = desiredFk.copy(onDelete = FkAction.NO_ACTION, deferrable = true, initiallyDeferred = true)
+        for (current in listOf(
+            desired.copy(onDelete = FkAction.RESTRICT),
+            desired.copy(onUpdate = FkAction.RESTRICT),
+            desired.copy(initiallyDeferred = false),
+            desired.copy(deferrable = false, initiallyDeferred = false),
+        )) {
+            assertDropAndReAdd(differ.diff(
+                NormalizedSchema(mapOf("posts" to postsTable(desired))),
+                NormalizedSchema(mapOf("posts" to postsTable(current))),
+            ))
+        }
+        assertNoDrift(differ.diff(
+            NormalizedSchema(mapOf("posts" to postsTable(desired))),
+            NormalizedSchema(mapOf("posts" to postsTable(desired.copy(constraintName = "custom_name")))),
+        ))
+    }
+
+    @Test
+    fun `making one required relationship optional drops only its constraint`() {
+        val profile = NormalizedForeignKey(
+            columns = listOf("id"), targetTable = "profiles", targetColumns = listOf("user_id"),
+            onDelete = FkAction.NO_ACTION, constraintName = "required_one_users_profile",
+            deferrable = true, initiallyDeferred = true,
+        )
+        val settings = profile.copy(targetTable = "settings", constraintName = "required_one_users_settings")
+        val current = postsTable(profile).copy(name = "users", foreignKeys = listOf(profile, settings))
+        val desired = current.copy(foreignKeys = listOf(settings))
+
+        val result = differ.diff(
+            NormalizedSchema(mapOf("users" to desired)),
+            NormalizedSchema(mapOf("users" to current)),
+        )
+        assertTrue(result.ops.isEmpty())
+        assertEquals(
+            listOf(MigrationOp.DropForeignKey("users", listOf("id"), "required_one_users_profile")),
+            result.manual,
+        )
+    }
+
+    @Test
     fun `ON DELETE SET DEFAULT never collapses into an inferred action`() {
         // A nullable FK's DSL default resolves to SET NULL. Before
         // the exact-action model, SET DEFAULT introspected to null and

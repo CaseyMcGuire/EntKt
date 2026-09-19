@@ -300,8 +300,16 @@ class HasManyBuilder<Target : EntSchema> internal constructor(
 class HasOneBuilder<Target : EntSchema> internal constructor(
     @PublishedApi internal val targetClass: KClass<Target>,
 ) : HasOneHandle<Target>, EdgeBuilderBase() {
+    private var required: Boolean = false
     private var comment: String? = null
     private var resolvedTarget: EntSchema? = null
+
+    /**
+     * Require one related row for every surviving owner at transaction commit.
+     * Create the owner and its related row in the same transaction. This is a
+     * storage constraint, not a guarantee that a viewer may read the related row.
+     */
+    fun required(): HasOneBuilder<Target> = apply { checkNotFrozen(); required = true }
 
     fun comment(text: String): HasOneBuilder<Target> = apply { checkNotFrozen(); comment = text }
 
@@ -323,7 +331,7 @@ class HasOneBuilder<Target : EntSchema> internal constructor(
         return Edge(
             name = edgeName,
             target = target,
-            kind = EdgeKind.HasOne,
+            kind = EdgeKind.HasOne(required = required),
             comment = comment,
             declarationName = declarationName,
         )

@@ -257,7 +257,8 @@ class PostgresDriver(
                         // (5) Now that every table in the batch exists, the
                         // constraints between them all resolve.
                         for (schema in fresh.values) {
-                            for (fk in ddl.foreignKeysFor(schema)) ensureForeignKey(conn, stmt, fk)
+                            val foreignKeys = ddl.foreignKeysFor(schema)
+                            for (fk in foreignKeys) ensureForeignKey(conn, stmt, fk, foreignKeys)
                         }
                     }
                 }
@@ -331,6 +332,7 @@ class PostgresDriver(
         // Reject native-storage columns whose codec this driver can't handle
         // (Postgres supports postgres.vector; everything else fails here).
         checkNativeStorageSupported(schema)
+        checkRequiredOneConstraintsSupported(schema)
         // Reject typed JSON only if unsupported (Postgres supports it).
         checkTypedJsonSupported(schema)
         // Cross-check every JSON column against the configured codec: the
@@ -377,41 +379,46 @@ class PostgresDriver(
      * checked before any create: an equivalent constraint under any
      * name satisfies the declaration; a different one fails loudly.
      */
-    private fun ensureForeignKey(conn: java.sql.Connection, stmt: java.sql.Statement, fk: ForeignKeyDdl) {
-        when (val existing = findConstraint(conn, fk)) {
-            null -> {
-                // Every live FK on the source column, whatever its name or
-                // target. All of them must be the declared constraint: a
-                // stale FK to a DIFFERENT target would otherwise stay
-                // invisible, the blind create would double-constrain the
-                // column (every write failing against a table the schema
-                // never declared), and an equivalent constraint must not
-                // mask a rogue twin enforcing rules nobody declared.
-                val sameColumn = findSourceColumnConstraints(conn, fk)
-                val foreign = sameColumn.filter { (_, c) -> !c.matches(fk) }
-                check(foreign.isEmpty()) {
-                    "Table '${fk.table}' already has a foreign key on (${fk.column}) under a " +
-                        "different name, and it is not the constraint this schema describes. " +
-                        "Auto-DDL will not alter or duplicate it — drop it, or move this schema " +
-                        "onto the migration path.\n" +
-                        "  schema wants: FOREIGN KEY (${fk.column}) REFERENCES " +
-                        "${fk.targetTable}(${fk.targetColumn}) ON DELETE ${fk.onDelete}\n" +
-                        foreign.joinToString("\n") { (name, c) ->
-                            "  database has: [$name] ${c.describe()}"
-                        }
-                }
-                if (sameColumn.isEmpty()) createForeignKey(stmt, fk)
-                // else: already enforced under another name — done.
-            }
-            else -> check(existing.matches(fk)) {
-                "Table '${fk.table}' already has a constraint named '${fk.constraintName}', but it is not " +
-                    "the one this schema describes. Auto-DDL will not alter an existing constraint — drop it, " +
-                    "or move this schema onto the migration path.\n" +
-                    "  schema wants: FOREIGN KEY (${fk.column}) REFERENCES ${fk.targetTable}(${fk.targetColumn}) " +
-                    "ON DELETE ${fk.onDelete}\n" +
-                    "  database has: ${existing.describe()}"
-            }
+    private fun ensureForeignKey(
+        conn: java.sql.Connection,
+        stmt: java.sql.Statement,
+        fk: ForeignKeyDdl,
+        declarations: List<ForeignKeyDdl>,
+    ) {
+        val existing = findConstraint(conn, fk)
+        check(existing == null || existing.matches(fk)) {
+            "Table '${fk.table}' already has a constraint named '${fk.constraintName}', but it is not " +
+                "the one this schema describes. Auto-DDL will not alter an existing constraint — drop it, " +
+                "or move this schema onto the migration path.\n" +
+                "  schema wants: ${fk.sql}\n" +
+                "  database has: ${existing!!.describe()}"
         }
+
+        val sameColumn = findSourceColumnConstraints(conn, fk)
+        // Several required hasOne edges may legitimately constrain the same
+        // owner id. Allow only peers matching another declared constraint;
+        // an undeclared target or an immediate twin is still schema drift.
+        // Each lookup compares target OIDs, preserving search_path semantics.
+        val declaredPeers = declarations.filter { it.column == fk.column && it != fk }
+            .flatMap { peer ->
+                findSourceColumnConstraints(conn, peer)
+                    .filter { (_, constraint) -> constraint.matches(peer) }
+                    .map { (name, _) -> name }
+            }.toSet()
+        val foreign = sameColumn.filter { (name, constraint) ->
+            !constraint.matches(fk) && name !in declaredPeers
+        }
+        check(foreign.isEmpty()) {
+            "Table '${fk.table}' already has a foreign key on (${fk.column}) under a " +
+                "different name, and it is not a constraint this schema describes. " +
+                "Auto-DDL will not alter or duplicate it — drop it, or move this schema " +
+                "onto the migration path.\n" +
+                "  schema wants: ${fk.sql}\n" +
+                foreign.joinToString("\n") { (name, constraint) ->
+                    "  database has: [$name] ${constraint.describe()}"
+                }
+        }
+        if (sameColumn.none { (_, constraint) -> constraint.matches(fk) }) createForeignKey(stmt, fk)
     }
 
     /** Execute the `ADD CONSTRAINT`, sharpening a missing-target error. */
@@ -563,9 +570,9 @@ class PostgresDriver(
          * catalog columns rather than `pg_get_constraintdef` text, which
          * varies in formatting across server versions.
          *
-         * `ON DELETE` is the only clause [ForeignKeyDdl] varies, so every
-         * other attribute is checked against the server default that the
-         * rendered `ADD CONSTRAINT` would produce. Those aren't cosmetic:
+         * Compare actions and timing against the declared constraint, and
+         * other attributes against the server defaults the rendered
+         * `ADD CONSTRAINT` would produce. Those aren't cosmetic:
          * a `NOT VALID` twin never checked the rows already in the table,
          * a `DEFERRABLE` one moves enforcement to commit time, and an
          * `ON UPDATE` action fires on parent-key updates the schema never
@@ -577,16 +584,16 @@ class PostgresDriver(
         fun matches(fk: ForeignKeyDdl): Boolean =
             isForeignKey &&
                 targetMatches &&
-                restrictLikeEquivalent(deleteCode, fk.onDeleteCode) &&
+                restrictLikeEquivalent(deleteCode, fk.onDeleteCode, deferrable || fk.deferrable) &&
                 // Every FK this driver renders is single-column; a
                 // composite one under the same name is a mismatch.
                 columnCount == 1 &&
                 columnName == fk.column &&
                 targetColumn == fk.targetColumn &&
-                restrictLikeEquivalent(updateCode, NO_ACTION) &&
+                restrictLikeEquivalent(updateCode, NO_ACTION, deferrable || fk.deferrable) &&
                 validated &&
-                !deferrable &&
-                !deferred &&
+                deferrable == fk.deferrable &&
+                deferred == fk.initiallyDeferred &&
                 // Semantically inert while every FK here is
                 // single-column — MATCH FULL and MATCH SIMPLE differ
                 // only in how they treat a partially-null key — but
@@ -639,7 +646,7 @@ class PostgresDriver(
 
             /**
              * Immediate `RESTRICT` and `NO ACTION` behave identically
-             * for the non-deferrable constraints this driver creates
+             * for non-deferrable constraints
              * (deferrability is compared strictly alongside), and
              * [entkt.migrations.SchemaDiffer] deliberately equates
              * them — so a plain hand-written `REFERENCES` (server
@@ -647,8 +654,8 @@ class PostgresDriver(
              * the `RESTRICT` a required edge resolves to while
              * `migrate validate` calls the same database in sync.
              */
-            fun restrictLikeEquivalent(a: Char, b: Char): Boolean =
-                a == b || (a in RESTRICT_LIKE_CODES && b in RESTRICT_LIKE_CODES)
+            fun restrictLikeEquivalent(a: Char, b: Char, deferrable: Boolean): Boolean =
+                a == b || (!deferrable && a in RESTRICT_LIKE_CODES && b in RESTRICT_LIKE_CODES)
 
             val RESTRICT_LIKE_CODES = setOf(NO_ACTION, RESTRICT)
         }
@@ -871,6 +878,9 @@ class PostgresDriver(
     override val supportsQueryForUpdate: Boolean
         get() = true
 
+    override val supportsRequiredOneConstraints: Boolean
+        get() = true
+
     override val supportsQuerySkipLocked: Boolean
         get() = true
 
@@ -1058,11 +1068,12 @@ class PostgresDriver(
                 val conflict = classifyConflictException(commitFailure)
                 val reported = conflict ?: commitFailure
                 attachTo = reported
-                val commitRejected = conflict != null &&
-                    commitFailure is org.postgresql.util.PSQLException &&
-                    commitFailure.serverErrorMessage != null
+                val commitRejected = commitFailure is org.postgresql.util.PSQLException &&
+                    commitFailure.serverErrorMessage != null &&
+                    (conflict != null || commitFailure.sqlState?.startsWith("23") == true)
 
-                // A recognized server rejection proves no commit occurred.
+                // A recognized server rejection proves no commit occurred,
+                // including integrity failures from deferred required-hasOne FKs.
                 // Other failures (including cancellation) remain uncertain,
                 // even if the subsequent connection-hygiene rollback succeeds.
                 resolved = rollbackAttributingFailure(conn, reported)

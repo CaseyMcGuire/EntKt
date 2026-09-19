@@ -69,6 +69,7 @@ abstract class EntityRepository<
     private val defaultRelationshipLocking: RelationshipLocking = RelationshipLocking.OwnerOnly,
 ) {
     init {
+        driver.checkRequiredOneConstraintsSupported(entity.schema)
         driver.register(entity.schema)
     }
 

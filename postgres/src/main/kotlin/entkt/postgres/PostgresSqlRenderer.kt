@@ -110,14 +110,19 @@ class PostgresSqlRenderer(
         table: String,
         fk: entkt.migrations.NormalizedForeignKey,
     ): List<String> {
-        val constraintName = truncateIdentifier("fk_${table}_${fk.columns.joinToString("_")}")
+        val constraintName = truncateIdentifier(fk.constraintName ?: "fk_${table}_${fk.columns.joinToString("_")}")
         val onDelete = fk.onDelete.toSql()
+        val timing = if (fk.deferrable) {
+            if (fk.initiallyDeferred) " DEFERRABLE INITIALLY DEFERRED" else " DEFERRABLE INITIALLY IMMEDIATE"
+        } else {
+            ""
+        }
         val cols = fk.columns.joinToString(", ") { quote(it) }
         val targetCols = fk.targetColumns.joinToString(", ") { quote(it) }
         return listOf(
             "ALTER TABLE ${quote(table)} ADD CONSTRAINT ${quote(constraintName)} " +
                 "FOREIGN KEY ($cols) REFERENCES ${quote(fk.targetTable)} ($targetCols) " +
-                "ON DELETE $onDelete",
+                "ON DELETE $onDelete$timing",
         )
     }
 

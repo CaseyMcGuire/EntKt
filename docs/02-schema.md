@@ -316,9 +316,14 @@ class Post : EntSchema("posts", clientName = "posts") {
 
 `hasMany<Target>()` declares the "one" side of a one-to-many
 relationship. No FK column is added to this entity — the FK lives on
-the target. `hasOne<Target>()` describes a zero-or-one relationship
+the target. `hasOne<Target>()` describes a zero-or-one relationship by default
 (the inverse `belongsTo` must have `.unique()`). Both use the delegated
 property name as the relationship identifier, without a separate name string.
+
+Add `.required()` to require exactly one related row for every surviving owner
+at transaction commit. The inverse `belongsTo` must still declare `.unique()`.
+Create the owner and related row in the same transaction; committing without the
+related row fails. See [required one-to-one relationships](03-edges.md#required-one-to-one-relationships).
 
 ```kotlin
 class User : EntSchema("users", clientName = "users") {

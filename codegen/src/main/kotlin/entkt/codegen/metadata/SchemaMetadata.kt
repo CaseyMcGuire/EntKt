@@ -8,6 +8,7 @@ import com.squareup.kotlinpoet.asTypeName
 import entkt.codegen.columnName
 import entkt.codegen.kotlinpoet.codeBlock
 import entkt.runtime.driver.JsonMapperIds
+import entkt.runtime.driver.RequiredOneConstraint
 import entkt.codegen.apiName
 import entkt.schema.Edge
 import entkt.schema.EdgeKind
@@ -21,6 +22,7 @@ internal val COLUMN_METADATA = ClassName("entkt.runtime.driver", "ColumnMetadata
 internal val EDGE_METADATA = ClassName("entkt.runtime.driver", "EdgeMetadata")
 internal val INDEX_METADATA = ClassName("entkt.runtime.driver", "IndexMetadata")
 internal val FOREIGN_KEY_REF = ClassName("entkt.runtime.driver", "ForeignKeyRef")
+private val REQUIRED_ONE_CONSTRAINT = ClassName("entkt.runtime.driver", "RequiredOneConstraint")
 internal val ID_STRATEGY = ClassName("entkt.runtime.driver", "IdStrategy")
 internal val FIELD_TYPE = ClassName("entkt.schema", "FieldType")
 internal val ON_DELETE = ClassName("entkt.schema", "OnDelete")
@@ -390,6 +392,15 @@ internal fun resolveEdgeJoin(
     }
 }
 
+/** Shared by generated runtime metadata and the migration schema builder. */
+internal fun requiredOneConstraintsFor(schema: EntSchema): List<RequiredOneConstraint> =
+    schema.edges().mapNotNull { edge ->
+        val kind = edge.kind
+        if (kind !is EdgeKind.HasOne || !kind.required) return@mapNotNull null
+        val join = checkNotNull(resolveEdgeJoin(edge, schema))
+        RequiredOneConstraint(edge.name, edge.target.tableName, join.targetColumn)
+    }
+
 /**
  * Resolve a many-to-many edge's join through its junction table.
  * The junction schema declares `belongsTo` edges pointing at both
@@ -632,6 +643,17 @@ internal fun entitySchemaCodeBlock(
         add("  columns = %L,\n", columnsLiteral)
         add("  edges = %L,\n", edgesLiteral)
         add("  indexes = %L,\n", indexesLiteral)
+        val requiredOneConstraints = requiredOneConstraintsFor(schema)
+        if (requiredOneConstraints.isNotEmpty()) {
+            add("  requiredOneConstraints = listOf(\n")
+            for (constraint in requiredOneConstraints) {
+                add(
+                    "    %T(edgeName = %S, targetTable = %S, targetColumn = %S),\n",
+                    REQUIRED_ONE_CONSTRAINT, constraint.edgeName, constraint.targetTable, constraint.targetColumn,
+                )
+            }
+            add("  ),\n")
+        }
         add(")")
     }
 }

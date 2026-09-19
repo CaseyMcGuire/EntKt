@@ -7,6 +7,7 @@ repositories {
 }
 
 val codegenRunner: Configuration by configurations.creating
+val requiredOneCodegenRunner: Configuration by configurations.creating
 
 dependencies {
     implementation(project(":schema"))
@@ -19,6 +20,8 @@ dependencies {
 
     codegenRunner(project(":integration-tests:schema"))
     codegenRunner(project(":codegen"))
+    requiredOneCodegenRunner(project(path = ":integration-tests:schema", configuration = "requiredOneSchemas"))
+    requiredOneCodegenRunner(project(":codegen"))
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.junit.jupiter.engine)
@@ -40,14 +43,32 @@ val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
     inputs.files(project(":integration-tests:schema").fileTree("src/main/kotlin"))
 }
 
+val requiredOneGeneratedDir = layout.buildDirectory.dir("generated/required-one-entkt")
+val generateRequiredOneEntkt = tasks.register<JavaExec>("generateRequiredOneEntkt") {
+    group = "entkt"
+    description = "Generates an isolated client for required hasOne integration tests"
+    classpath = requiredOneCodegenRunner
+    mainClass.set("entkt.codegen.GenerateMainKt")
+    args("entkt.integrationtest.required.ent", requiredOneGeneratedDir.get().asFile.absolutePath)
+    outputs.dir(requiredOneGeneratedDir)
+    inputs.files(project(":integration-tests:schema").fileTree("src/requiredOne/kotlin"))
+}
+
 sourceSets {
     main {
         kotlin.srcDir(generateEntkt.map { generatedDir })
+    }
+    test {
+        kotlin.srcDir(generateRequiredOneEntkt.map { requiredOneGeneratedDir })
     }
 }
 
 tasks.named("compileKotlin") {
     dependsOn(generateEntkt)
+}
+
+tasks.named("compileTestKotlin") {
+    dependsOn(generateRequiredOneEntkt)
 }
 
 java {

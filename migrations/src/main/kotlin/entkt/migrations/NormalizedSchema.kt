@@ -79,11 +79,23 @@ data class NormalizedSchema(
                         )
                     }
 
+                val requiredOneForeignKeys = schema.requiredOneConstraints.map { constraint ->
+                    NormalizedForeignKey(
+                        columns = listOf(schema.idColumn),
+                        targetTable = constraint.targetTable,
+                        targetColumns = listOf(constraint.targetColumn),
+                        onDelete = FkAction.NO_ACTION,
+                        constraintName = typeMapper.normalizeIdentifier(constraint.constraintName(schema.table)),
+                        deferrable = true,
+                        initiallyDeferred = true,
+                    )
+                }
+
                 schema.table to NormalizedTable(
                     name = schema.table,
                     columns = columns,
                     indexes = columnUniqueIndexes + compositeIndexes,
-                    foreignKeys = foreignKeys,
+                    foreignKeys = foreignKeys + requiredOneForeignKeys,
                 )
             }
             return NormalizedSchema(tables)
@@ -730,7 +742,7 @@ data class NormalizedForeignKey(
      * and no inference at comparison time.
      */
     val onDelete: FkAction,
-    /** Actual constraint name from introspection, or null for entity-derived FKs. */
+    /** Actual or explicitly derived constraint name; null uses the ordinary column-FK name. */
     val constraintName: String? = null,
     /** ON UPDATE action; entkt only ever creates the default. */
     val onUpdate: FkAction = FkAction.NO_ACTION,

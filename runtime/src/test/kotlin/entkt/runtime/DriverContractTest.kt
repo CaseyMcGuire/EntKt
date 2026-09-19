@@ -3,10 +3,17 @@ package entkt.runtime
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.IsolationLevel
 import entkt.runtime.driver.NoopDriver
+import entkt.runtime.driver.ColumnMetadata
+import entkt.runtime.driver.EntitySchema
+import entkt.runtime.driver.IdStrategy
+import entkt.runtime.driver.RequiredOneConstraint
+import entkt.runtime.mutation.UnsupportedDriverCapabilityException
+import entkt.schema.FieldType
 import kotlin.reflect.KParameter
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -25,6 +32,20 @@ import kotlin.test.assertTrue
  * materialize again).
  */
 class DriverContractTest {
+
+    @Test
+    fun `required relationships need explicit driver support`() {
+        val schema = EntitySchema(
+            "users", "id", IdStrategy.AUTO_LONG,
+            listOf(ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true)),
+            emptyMap(),
+            requiredOneConstraints = listOf(RequiredOneConstraint("profile", "profiles", "user_id")),
+        )
+        assertFailsWith<UnsupportedDriverCapabilityException> {
+            NoopDriver.checkRequiredOneConstraintsSupported(schema)
+        }
+        NoopDriver.checkRequiredOneConstraintsSupported(schema.copy(requiredOneConstraints = emptyList()))
+    }
 
     @Test
     fun `drivers without a conflict classifier retain the unclassified fallback`() {

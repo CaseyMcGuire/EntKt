@@ -39,7 +39,8 @@ on the client. See [Field Validation Rules](../docs/07-validation.md#field-valid
 ## Edges
 
 `belongsTo<Target>(column)` (FK-owning side), `hasMany<Target>()` (one-to-many),
-`hasOne<Target>()` (zero-or-one), `manyToMany<Target>()` (via junction).
+`hasOne<Target>()` (zero-or-one; `.required()` requires one at transaction commit),
+`manyToMany<Target>()` (via junction).
 Relationship names come from the delegated `val`; only `belongsTo` needs a
 column name, which is used verbatim without adding a suffix.
 Modifiers: `.inverse(Target::edge)`, `.nullable()` (`belongsTo` is required by

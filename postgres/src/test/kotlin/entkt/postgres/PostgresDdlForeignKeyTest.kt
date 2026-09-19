@@ -4,6 +4,9 @@ import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.ForeignKeyRef
 import entkt.runtime.driver.IdStrategy
+import entkt.runtime.driver.RequiredOneConstraint
+import entkt.migrations.MigrationOp
+import entkt.migrations.NormalizedSchema
 import entkt.schema.FieldType
 import entkt.schema.OnDelete
 import kotlin.test.Test
@@ -109,5 +112,36 @@ class PostgresDdlForeignKeyTest {
             columns = listOf(ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true)),
         )
         assertEquals(emptyList(), ddl.foreignKeysFor(schema))
+    }
+
+    @Test
+    fun `required inverse DDL and migration DDL agree on endpoints names and timing`() {
+        val schema = EntitySchema(
+            "users", "key", IdStrategy.EXPLICIT,
+            listOf(ColumnMetadata("key", FieldType.LONG, nullable = false, primaryKey = true)),
+            emptyMap(),
+            requiredOneConstraints = listOf(
+                RequiredOneConstraint("profile", "profiles", "owner_id"),
+                RequiredOneConstraint("settings", "settings", "user_id"),
+            ),
+        )
+        val autoDdl = ddl.foreignKeysFor(schema)
+        val normalized = NormalizedSchema.fromEntitySchemas(listOf(schema), PostgresTypeMapper())
+        val migrations = normalized.tables.getValue("users").foreignKeys
+            .flatMap { PostgresSqlRenderer().render(MigrationOp.AddForeignKey("users", it)) }
+
+        assertEquals(2, autoDdl.size)
+        assertEquals(autoDdl.map { it.sql.replace("\"(\"", "\" (\"") }, migrations)
+        for (fk in autoDdl) {
+            assertTrue(fk.deferrable)
+            assertTrue(fk.initiallyDeferred)
+            assertEquals('a', fk.onDeleteCode)
+        }
+        assertEquals(
+            "ALTER TABLE \"users\" ADD CONSTRAINT \"required_one_users_profile\" " +
+                "FOREIGN KEY (\"key\") REFERENCES \"profiles\"(\"owner_id\") " +
+                "ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED",
+            autoDdl.first().sql,
+        )
     }
 }

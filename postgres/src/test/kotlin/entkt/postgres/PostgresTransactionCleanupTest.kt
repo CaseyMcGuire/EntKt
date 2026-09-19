@@ -306,6 +306,35 @@ class PostgresTransactionCleanupTest {
     }
 
     @Test
+    fun `a server integrity rejection stays NotCommitted even if cleanup fails`() {
+        freshLedger()
+        val original = PSQLException(
+            ServerErrorMessage("SERROR\u0000C23503\u0000Mrequired profile is missing\u0000"),
+        )
+        val rollbackFailure = SQLException("rollback failed")
+        val (driver, recorder) = driverThrowingOn("commit" to original, "rollback" to rollbackFailure)
+        val result = driver.withTransaction { tx -> tx.insert("tx_ledger", mapOf("memo" to "rejected")) }
+
+        val failure = assertIs<DriverTransactionResult.Failed>(result)
+        assertSame(original, failure.exception)
+        assertEquals(TransactionFailureState.NotCommitted, failure.transactionState)
+        assertTrue(rollbackFailure in original.suppressed)
+        assertFalse("setAutoCommit(true)" in recorder.calls)
+    }
+
+    @Test
+    fun `an integrity SQLSTATE without a server response does not prove commit rejection`() {
+        freshLedger()
+        val original = PSQLException("connection failed", PSQLState.FOREIGN_KEY_VIOLATION)
+        val (driver, _) = driverThrowingOn("commit" to original)
+        val result = driver.withTransaction { tx -> tx.insert("tx_ledger", mapOf("memo" to "unconfirmed")) }
+
+        val failure = assertIs<DriverTransactionResult.Failed>(result)
+        assertSame(original, failure.exception)
+        assertEquals(TransactionFailureState.OutcomeUnknown, failure.transactionState)
+    }
+
+    @Test
     fun `a wrapped server conflict does not prove commit was rejected`() {
         freshLedger()
         val wrapper = SQLException("connection lost", "08006", serverConflict("40001"))

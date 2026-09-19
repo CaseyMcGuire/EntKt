@@ -5,6 +5,7 @@ import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.ForeignKeyRef
 import entkt.runtime.driver.IdStrategy
 import entkt.runtime.driver.IndexMetadata
+import entkt.runtime.driver.RequiredOneConstraint
 import entkt.schema.FieldType
 import java.time.LocalDate
 import kotlin.test.Test
@@ -18,6 +19,36 @@ import kotlin.test.assertTrue
 class NormalizedSchemaTest {
 
     private enum class Color { RED, GREEN }
+
+    @Test
+    fun `required to-one relationships normalize to distinct deferred reverse foreign keys`() {
+        val schema = EntitySchema(
+            table = "users",
+            idColumn = "key",
+            idStrategy = IdStrategy.EXPLICIT,
+            columns = listOf(ColumnMetadata("key", FieldType.LONG, nullable = false, primaryKey = true)),
+            edges = emptyMap(),
+            requiredOneConstraints = listOf(
+                RequiredOneConstraint("profile", "profiles", "user_id"),
+                RequiredOneConstraint("settings", "settings", "owner_ref"),
+            ),
+        )
+        val table = NormalizedSchema.fromEntitySchemas(listOf(schema), typeMapper).tables.getValue("users")
+
+        assertEquals(listOf("key"), table.columns.map { it.name })
+        assertEquals(2, table.foreignKeys.size)
+        assertEquals(
+            listOf("required_one_users_profile", "required_one_users_settings"),
+            table.foreignKeys.map { it.constraintName },
+        )
+        for (fk in table.foreignKeys) {
+            assertEquals(listOf("key"), fk.columns)
+            assertEquals(FkAction.NO_ACTION, fk.onDelete)
+            assertTrue(fk.deferrable)
+            assertTrue(fk.initiallyDeferred)
+        }
+        assertEquals(listOf("user_id", "owner_ref"), table.foreignKeys.map { it.targetColumns.single() })
+    }
 
     private val typeMapper = object : TypeMapper {
         override fun sqlTypeFor(

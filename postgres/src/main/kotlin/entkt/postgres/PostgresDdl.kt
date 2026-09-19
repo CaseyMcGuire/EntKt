@@ -29,7 +29,7 @@ internal data class ForeignKeyDdl(
      * comparing against a constraint already in the catalog.
      */
     val onDeleteCode: Char,
-    /** Derived constraint name, `fk_<table>_<column>`. */
+    /** Derived column-FK or required-inverse constraint name. */
     val constraintName: String,
     /**
      * Plain `ALTER TABLE ... ADD CONSTRAINT`. Applying this idempotently
@@ -38,6 +38,8 @@ internal data class ForeignKeyDdl(
      * no `IF NOT EXISTS` form.
      */
     val sql: String,
+    val deferrable: Boolean = false,
+    val initiallyDeferred: Boolean = false,
 )
 
 /**
@@ -108,7 +110,7 @@ internal class PostgresDdl {
     }
 
     /**
-     * Build one [ForeignKeyDdl] per FK column on [schema], as a
+     * Build one [ForeignKeyDdl] per FK column or required inverse on [schema], as a
      * standalone `ALTER TABLE ... ADD CONSTRAINT` rather than an inline
      * `REFERENCES` in [createTableSql].
      *
@@ -119,7 +121,7 @@ internal class PostgresDdl {
      * the cycle arbitrarily, and whichever table lands first fails with
      * `42P01 undefined_table`. Separating these from [createTableSql]
      * lets `PostgresDriver.registerAll` create every table in a batch
-     * before adding any constraint, at which point ordering is
+     * and its unique indexes before adding any constraint, at which point ordering is
      * irrelevant. This also matches [PostgresSqlRenderer], which has
      * always emitted FKs as separate `ALTER TABLE` statements on the
      * migration path.
@@ -146,6 +148,23 @@ internal class PostgresDdl {
                 sql = "ALTER TABLE ${quote(schema.table)} ADD CONSTRAINT ${quote(name)} " +
                     "FOREIGN KEY (${quote(col.name)}) REFERENCES ${quote(ref.table)}(${quote(ref.column)}) " +
                     "ON DELETE $onDelete",
+            )
+        } + schema.requiredOneConstraints.map { constraint ->
+            val name = typeMapper.normalizeIdentifier(constraint.constraintName(schema.table))
+            ForeignKeyDdl(
+                table = schema.table,
+                column = schema.idColumn,
+                targetTable = constraint.targetTable,
+                targetColumn = constraint.targetColumn,
+                onDelete = "NO ACTION",
+                onDeleteCode = 'a',
+                constraintName = name,
+                sql = "ALTER TABLE ${quote(schema.table)} ADD CONSTRAINT ${quote(name)} " +
+                    "FOREIGN KEY (${quote(schema.idColumn)}) " +
+                    "REFERENCES ${quote(constraint.targetTable)}(${quote(constraint.targetColumn)}) " +
+                    "ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED",
+                deferrable = true,
+                initiallyDeferred = true,
             )
         }
 

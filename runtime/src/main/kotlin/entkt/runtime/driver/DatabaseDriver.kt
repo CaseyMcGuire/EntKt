@@ -37,8 +37,9 @@ interface DatabaseDriver {
      * constructing any repo, so a driver that materializes storage sees
      * the whole set at once rather than one schema at a time.
      *
-     * Implementations that emit DDL **must** create every table before
-     * adding any constraint that spans tables. Foreign keys between
+     * Implementations that emit DDL **must** create every table and its
+     * referenced unique indexes before adding cross-table constraints.
+     * Foreign keys between
      * mutually-referencing entities have no valid one-at-a-time
      * ordering — whichever table is created first would reference one
      * that doesn't exist yet — so the batch is what makes such a schema
@@ -69,6 +70,23 @@ interface DatabaseDriver {
      * foreign key whose target hasn't been registered yet.
      */
     fun register(schema: EntitySchema)
+
+    /** Whether required inverse to-one constraints can be enforced at commit. */
+    val supportsRequiredOneConstraints: Boolean get() = false
+
+    /**
+     * Registration implementations call this before materializing a schema.
+     * Repositories also check it so unsupported drivers cannot silently accept
+     * the generated required-relationship contract.
+     */
+    fun checkRequiredOneConstraintsSupported(schema: EntitySchema) {
+        if (schema.requiredOneConstraints.isNotEmpty() && !supportsRequiredOneConstraints) {
+            throw UnsupportedDriverCapabilityException(
+                "${schema.table} declares hasOne().required(), but ${this::class.simpleName} " +
+                    "does not support required to-one constraints at transaction commit",
+            )
+        }
+    }
 
     /**
      * Return the registered primary-key column for [table].

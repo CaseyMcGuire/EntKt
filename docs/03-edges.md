@@ -99,6 +99,54 @@ val users = client.users.query {
 users[0].edges.posts.requireLoaded()  // → List<Post>
 ```
 
+## Required one-to-one relationships
+
+`hasOne<T>()` is optional by default. Add `.required()` when every owner must
+have exactly one related row at transaction commit:
+
+```kotlin
+class User : EntSchema("users", clientName = "users") {
+    override fun id() = EntId.long()
+    val profile by hasOne<Profile>().required()
+}
+
+class Profile : EntSchema("profiles", clientName = "profiles") {
+    override fun id() = EntId.long()
+    val user by belongsTo<User>("user_id").unique().inverse(User::profile)
+}
+```
+
+The unique `profiles.user_id` permits at most one profile per user. PostgreSQL
+also enforces a reverse foreign key from `users.id` to `profiles.user_id`, using
+`ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED`. This requires at least one
+profile per surviving user, without adding a column. Generated metadata and
+the migration workflow describe the same constraint.
+
+Create both rows inside one explicit transaction:
+
+```kotlin
+val user = client.withTransaction { tx ->
+    val user = tx.users.create {}.saveAndLoad(viewerContext).getOrThrow()
+    tx.profiles.create { userId = user.id }.save(viewerContext).getOrThrow()
+    user
+}.getOrThrow()
+```
+
+- A temporary gap is allowed inside the transaction. Committing without the
+  profile fails with `TransactionFailureState.NotCommitted`.
+- Deleting or reassigning the only profile fails at commit if its user remains
+  without one. Replacing it in the same transaction is allowed.
+- Deleting both rows is allowed, respecting the existing FK's `onDelete`
+  action and deletion order. `.required()` does not introduce cascading writes.
+- Creating a user by itself in autocommit fails; EntKt does not create a profile
+  automatically. Check the outer transaction result, not only each inner save.
+- Existing users must have matching profiles before a migration can add this
+  constraint. Adding `.required()` does not backfill missing rows.
+
+Requiredness is a database existence guarantee, not read permission. Edge
+privacy, filters, and selected-edge result types remain unchanged. Drivers
+without required-to-one constraint support reject repositories using this feature.
+
 ## Many-to-many
 
 M2M relationships use a junction table — a separate `EntSchema` with

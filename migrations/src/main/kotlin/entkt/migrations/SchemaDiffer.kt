@@ -396,9 +396,10 @@ class SchemaDiffer {
     /**
      * Whether the desired and current FK agree on every semantic
      * attribute beyond their (already matched) endpoints. ON DELETE and
-     * ON UPDATE compare with RESTRICT ≡ NO ACTION — for the immediate,
-     * non-deferred constraints entkt creates, the two behave
-     * identically. Everything else the catalog reports — MATCH type,
+     * ON UPDATE compare with RESTRICT ≡ NO ACTION only when neither FK
+     * is deferrable. A required hasOne needs deferred NO ACTION: RESTRICT
+     * would reject temporary gaps even inside a transaction.
+     * Everything else the catalog reports — MATCH type,
      * deferrability, and `NOT VALID` — must equal what entkt would
      * create: the auto-DDL guard ([entkt.postgres] `ensureForeignKey`)
      * rejects those same twins as constraints "enforcing rules nobody
@@ -406,15 +407,15 @@ class SchemaDiffer {
      * the driver.
      */
     private fun fkSemanticsMatch(desired: NormalizedForeignKey, current: NormalizedForeignKey): Boolean =
-        actionsEquivalent(desired.onDelete, current.onDelete) &&
-            actionsEquivalent(desired.onUpdate, current.onUpdate) &&
+        actionsEquivalent(desired.onDelete, current.onDelete, desired.deferrable || current.deferrable) &&
+            actionsEquivalent(desired.onUpdate, current.onUpdate, desired.deferrable || current.deferrable) &&
             desired.matchType == current.matchType &&
             desired.deferrable == current.deferrable &&
             desired.initiallyDeferred == current.initiallyDeferred &&
             desired.validated == current.validated
 
-    private fun actionsEquivalent(a: FkAction, b: FkAction): Boolean =
-        a == b || (a in RESTRICT_LIKE && b in RESTRICT_LIKE)
+    private fun actionsEquivalent(a: FkAction, b: FkAction, deferrable: Boolean): Boolean =
+        a == b || (!deferrable && a in RESTRICT_LIKE && b in RESTRICT_LIKE)
 
     private companion object {
         /** Immediate RESTRICT and NO ACTION are behaviorally identical. */
