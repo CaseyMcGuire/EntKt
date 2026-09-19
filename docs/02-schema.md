@@ -948,3 +948,19 @@ class User : EntSchema("users", clientName = "users") {
 Mixin fields are included in the generated entity class and create/update
 drafts. Immutable fields (like `createdAt` above) are omitted from the update
 draft. Relationship edges stay on the host schema.
+
+Mixins also support both typed JSON overloads, including generic payloads:
+
+```kotlin
+class SharedInput(scope: EntMixin.Scope) : EntMixin(scope) {
+    val input by json<List<InputItem>>("input")
+    val metadata by json("metadata", InputMetadata::class).nullable()
+}
+
+// In each schema that needs these fields:
+val sharedInput = include(::SharedInput)
+```
+
+The including schema receives ordinary `input` and `metadata` fields, without a
+`sharedInput` prefix. JSON type validation, modifiers, and mapper requirements
+are the same as for fields declared directly on `EntSchema`.

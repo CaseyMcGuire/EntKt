@@ -57,6 +57,50 @@ class JsonFieldBuilderCompileTest {
     }
 
     @Test
+    fun `mixin JSON overloads retain concrete and nested handle types in client code`() {
+        val result = compile(
+            """
+            class SharedInput(scope: EntMixin.Scope) : EntMixin(scope) {
+                val metadata: JsonFieldBuilder<Metadata> by json("metadata", Metadata::class)
+                    .nullable().immutable().sensitive().comment("Metadata")
+                val input: JsonFieldBuilder<List<Metadata>> by json<List<Metadata>>("input")
+                val nested by json<Map<String, List<Metadata?>>>("nested").nullable()
+            }
+
+            class Document : EntSchema("documents", clientName = "documents") {
+                override fun id() = EntId.long()
+                val shared = include(::SharedInput)
+            }
+
+            fun handles(document: Document) {
+                val metadata: FieldHandle<Metadata> = document.shared.metadata
+                val input: FieldHandle<List<Metadata>> = document.shared.input
+                val nested: FieldHandle<Map<String, List<Metadata?>>> = document.shared.nested
+            }
+            """.trimIndent(),
+        )
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+    }
+
+    @Test
+    fun `mixin JSON handles reject a different value type`() {
+        val result = compile(
+            """
+            class SharedInput(scope: EntMixin.Scope) : EntMixin(scope) {
+                val metadata by json("metadata", Metadata::class)
+                val input by json<List<Metadata>>("input")
+            }
+
+            fun wrongClass(shared: SharedInput): FieldHandle<OtherMetadata> = shared.metadata
+            fun wrongElement(shared: SharedInput): FieldHandle<List<OtherMetadata>> = shared.input
+            """.trimIndent(),
+        )
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
+        assertTrue(result.messages.contains("mismatch", ignoreCase = true), result.messages)
+        assertTrue(result.messages.contains("OtherMetadata"), result.messages)
+    }
+
+    @Test
     fun `inferred JSON handles reject a different value type`() {
         for (declaration in listOf("json<Metadata>(\"metadata\")", "json(\"metadata\", Metadata::class)")) {
             assertTypeMismatch(declaration, "OtherMetadata")

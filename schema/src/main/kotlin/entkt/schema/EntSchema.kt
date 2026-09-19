@@ -330,6 +330,12 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
     @PublishedApi internal inline fun <reified E : Enum<E>> enumForMixin(name: String): EnumFieldBuilder<E> =
         enum(name, E::class)
 
+    @PublishedApi internal fun <T : Any> jsonForMixin(name: String, klass: KClass<T>): JsonFieldBuilder<T> =
+        json(name, klass)
+
+    @PublishedApi internal inline fun <reified T : Any> jsonForMixin(name: String): JsonFieldBuilder<T> =
+        registerJson(name, typeOf<T>())
+
     // ── Edge builder methods ───────────────────────────────────────
 
     /** Declare a relationship stored in exactly [column]; no FK suffix is added. */

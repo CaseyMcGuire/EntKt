@@ -4,6 +4,7 @@ import kotlin.reflect.typeOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotSame
 import kotlin.test.assertTrue
 
 // A plain data class is enough here: the schema DSL stores only the KType.
@@ -22,9 +23,71 @@ private class JsonSchema : EntSchema("docs", clientName = "jsonSchemas") {
 
 class JsonFieldTest {
 
+    private class JsonFields(scope: EntMixin.Scope) : EntMixin(scope) {
+        val metadata by json("metadata", Meta::class).nullable().immutable().sensitive().comment("Shared metadata")
+        val items by json<List<Meta>>("items")
+        val nested by json<Map<String, List<Meta?>>>("nested")
+    }
+
+    private class Document : EntSchema("documents", clientName = "documents") {
+        override fun id() = EntId.long()
+        val shared = include(::JsonFields)
+    }
+
     private fun finalize(vararg schemas: EntSchema) {
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
+    }
+
+    @Test
+    fun `mixins register typed JSON fields independently on each host with no property prefix`() {
+        val first = Document()
+        val second = Document()
+        finalize(first)
+        finalize(second)
+        assertNotSame(first.shared.metadata, second.shared.metadata)
+        assertEquals(first.fields(), second.fields())
+
+        val fields = first.fields().associateBy { it.name }
+        assertEquals(listOf("metadata", "items", "nested"), fields.keys.toList())
+        val metadata = fields.getValue("metadata")
+        assertEquals("metadata", metadata.declarationName)
+        assertEquals(FieldType.JSON, metadata.type)
+        assertEquals(typeOf<Meta>(), metadata.jsonType)
+        assertTrue(metadata.nullable)
+        assertTrue(metadata.immutable)
+        assertTrue(metadata.sensitive)
+        assertEquals("Shared metadata", metadata.comment)
+        assertEquals(typeOf<List<Meta>>(), fields.getValue("items").jsonType)
+        assertEquals(typeOf<Map<String, List<Meta?>>>(), fields.getValue("nested").jsonType)
+    }
+
+    @Test
+    fun `mixins reject raw generic JSON classes through the same schema validation`() {
+        class RawFields(scope: EntMixin.Scope) : EntMixin(scope) {
+            val items by json("items", List::class)
+        }
+        val error = assertFailsWith<IllegalArgumentException> {
+            object : EntSchema("bad", clientName = "bad") {
+                override fun id() = EntId.long()
+                val shared = include(::RawFields)
+            }
+        }
+        assertTrue("type parameters" in error.message.orEmpty(), error.message)
+    }
+
+    @Test
+    fun `mixins reject star-projected JSON types through the same schema validation`() {
+        class StarFields(scope: EntMixin.Scope) : EntMixin(scope) {
+            val items by json<List<*>>("items")
+        }
+        val error = assertFailsWith<IllegalArgumentException> {
+            object : EntSchema("bad", clientName = "bad") {
+                override fun id() = EntId.long()
+                val shared = include(::StarFields)
+            }
+        }
+        assertTrue("star projection" in error.message.orEmpty(), error.message)
     }
 
     @Test

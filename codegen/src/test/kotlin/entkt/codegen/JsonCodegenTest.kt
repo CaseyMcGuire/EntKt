@@ -3,8 +3,10 @@
 package entkt.codegen
 
 import entkt.schema.EntId
+import entkt.schema.EntMixin
 import entkt.schema.EntSchema
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -17,6 +19,16 @@ private class JsonArticle : EntSchema("articles", clientName = "jsonArticles") {
     override fun id() = EntId.long()
     val title by string("title")
     val metadata by json("metadata", Meta::class).nullable()
+}
+
+private class SharedJsonFields(scope: EntMixin.Scope) : EntMixin(scope) {
+    val input by json("input", Meta::class).nullable()
+    val items by json<List<Meta>>("items")
+}
+
+private class JsonMixinArticle : EntSchema("mixin_articles", clientName = "mixinArticles") {
+    override fun id() = EntId.long()
+    val shared = include(::SharedJsonFields)
 }
 
 // Generic JSON shapes: the full KType must survive into the property type,
@@ -61,6 +73,22 @@ class JsonCodegenTest {
     private fun gen(): Map<String, String> = gen(JsonArticle())
 
     private fun genGeneric(): Map<String, String> = gen(JsonBoard())
+
+    @Test
+    fun `mixin JSON fields generate ordinary typed entity and draft properties with serializers`() {
+        val generated = gen(JsonMixinArticle())
+        val entity = generated.getValue("JsonMixinArticle")
+        assertContains(entity, "input: Meta?")
+        assertContains(entity, "items: List<Meta>")
+        assertContains(entity, "NullableJsonColumn<JsonMixinArticle, Meta>")
+        assertContains(entity, "JsonColumn<JsonMixinArticle, List<Meta>>")
+        assertContains(entity, "kotlinxSerializer = Meta.serializer()")
+        assertContains(entity, "kotlinxSerializer = ListSerializer(Meta.serializer())")
+        for (draft in listOf("JsonMixinArticleCreateDraft", "JsonMixinArticleUpdateDraft")) {
+            assertContains(generated.getValue(draft), "input: Meta?")
+            assertContains(generated.getValue(draft), "items: List<Meta>?")
+        }
+    }
 
     @Test
     fun `entity exposes the supplied JSON class as the property type`() {

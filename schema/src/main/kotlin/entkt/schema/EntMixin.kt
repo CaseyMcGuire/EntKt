@@ -29,6 +29,10 @@ abstract class EntMixin protected constructor(
 
     protected inline fun <reified E : Enum<E>> enum(name: String) = schema.enum<E>(name)
 
+    protected fun <T : Any> json(name: String, klass: KClass<T>): JsonFieldBuilder<T> = schema.json(name, klass)
+
+    protected inline fun <reified T : Any> json(name: String): JsonFieldBuilder<T> = schema.json<T>(name)
+
     protected fun index(name: String, vararg fields: IndexableColumn) =
         schema.index(name, *fields)
 
@@ -51,6 +55,11 @@ abstract class EntMixin protected constructor(
 
         @PublishedApi
         internal inline fun <reified E : Enum<E>> enum(name: String) = host.enumForMixin<E>(name)
+
+        fun <T : Any> json(name: String, klass: KClass<T>): JsonFieldBuilder<T> = host.jsonForMixin(name, klass)
+
+        @PublishedApi
+        internal inline fun <reified T : Any> json(name: String): JsonFieldBuilder<T> = host.jsonForMixin<T>(name)
 
         fun index(name: String, vararg fields: IndexableColumn) = host.indexForMixin(name, *fields)
 
