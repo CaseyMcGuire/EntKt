@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
 private class HePost : EntSchema("he_posts", clientName = "hePosts") {
     override fun id() = EntId.long()
     val title by string("title")
-    val tags by manyToMany<HeTag>("tags")
+    val tags by manyToMany<HeTag>()
         .throughLink<HePostTag>(HePostTag::post, HePostTag::tag)
 }
 
@@ -35,7 +35,7 @@ private class HePostTag : EntSchema("he_post_tags", clientName = "hePostTags") {
 
 private class HeTeam : EntSchema("he_teams", clientName = "heTeams") {
     override fun id() = EntId.long()
-    val members by manyToMany<HeMember>("members")
+    val members by manyToMany<HeMember>()
         .throughEntity<HeMembership>(HeMembership::team, HeMembership::member)
 }
 
@@ -54,9 +54,9 @@ private class HeMembership : EntSchema("he_memberships", clientName = "heMembers
 
 private class HeDoc : EntSchema("he_docs", clientName = "heDocs") {
     override fun id() = EntId.long()
-    val tags by manyToMany<HeLabel>("tags")
+    val tags by manyToMany<HeLabel>()
         .throughLink<HeDocTag>(HeDocTag::doc, HeDocTag::tag)
-    val labels by manyToMany<HeLabel>("labels")
+    val labels by manyToMany<HeLabel>()
         .throughLink<HeDocLabel>(HeDocLabel::doc, HeDocLabel::label)
 }
 
@@ -164,11 +164,7 @@ class HelperEligibleM2MTest {
     }
 
     @Test
-    fun `M2M mutator names come from the edge declaration, not its storage name`() {
-        // The storage name is snake_case (`manyToMany<Tag>("primary_tags")`)
-        // and the declaration is `tags`. The generated mutator follows the
-        // declaration; the storage name stays the metadata lookup key.
-        // Nothing converts `primary_tags` into a Kotlin identifier.
+    fun `M2M mutators and lookup keys use the relationship declaration`() {
         val post = SnakePost()
         val label = SnakeLabel()
         val pl = SnakePostLabel()
@@ -176,7 +172,7 @@ class HelperEligibleM2MTest {
         val names = mapOf<EntSchema, String>(post to "SnakePost", label to "SnakeLabel", pl to "SnakePostLabel")
 
         val eligible = helperEligibleM2MEdges(post, names).single()
-        assertEquals("primary_tags", eligible.edgeName, "edgeName is the storage name (for metadata lookup)")
+        assertEquals("tags", eligible.edgeName, "edgeName is the declaration name used for metadata lookup")
         assertEquals(
             "tags", eligible.mutatorPropertyName,
             "mutatorPropertyName is the edge's Kotlin declaration name",
@@ -188,10 +184,10 @@ class HelperEligibleM2MTest {
     }
 }
 
-// snake_case edge name fixture for the case-conversion test above.
+// The relationship name is independent of the target type and junction table.
 private class SnakePost : EntSchema("snake_posts", clientName = "snakePosts") {
     override fun id() = EntId.long()
-    val tags by manyToMany<SnakeLabel>("primary_tags")
+    val tags by manyToMany<SnakeLabel>()
         .throughLink<SnakePostLabel>(SnakePostLabel::post, SnakePostLabel::label)
 }
 private class SnakeLabel : EntSchema("snake_labels", clientName = "snakeLabels") {

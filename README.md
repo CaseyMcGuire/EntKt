@@ -20,7 +20,7 @@ class User : EntSchema("users", clientName = "users") {
     val age by int("age").nullable()
     val active by bool("active").default(true)
 
-    val posts by hasMany<Post>("posts")
+    val posts by hasMany<Post>()
 }
 ```
 

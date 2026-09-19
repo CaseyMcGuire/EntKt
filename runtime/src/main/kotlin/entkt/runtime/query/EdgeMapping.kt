@@ -19,7 +19,7 @@ interface EdgeMapping<
     /** Entity reached through the edge. */
     val target: EntityMapping<Target>
 
-    /** Storage identifier carried by generated edge predicates. */
+    /** Driver lookup key carried by generated edge predicates; not a column name. */
     val storageName: String
 
     /** Information required to lower a chained query across this edge. */

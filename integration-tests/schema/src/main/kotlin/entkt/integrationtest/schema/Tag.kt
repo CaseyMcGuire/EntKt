@@ -11,6 +11,6 @@ class Tag : EntSchema("tags", clientName = "tags") {
     // symmetric link-table writes: the symmetric reverse of `Post.tags` — same `PostTag` junction,
     // FK pair swapped. Both orientations are writable by default, so this side
     // gets the full add/remove/set surface and idempotent junction inserts.
-    val posts by manyToMany<Post>("posts")
+    val posts by manyToMany<Post>()
         .throughLink<PostTag>(PostTag::tag, PostTag::post)
 }

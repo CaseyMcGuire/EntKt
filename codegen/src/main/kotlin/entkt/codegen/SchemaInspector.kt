@@ -307,7 +307,7 @@ object SchemaInspector {
         return schema.edges().mapNotNull { edge ->
             val bt = edge.kind as? EdgeKind.BelongsTo ?: return@mapNotNull null
             val explicitField = bt.field
-            val fkColumn = explicitField ?: edge.name
+            val fkColumn = bt.column
             val nullable = if (explicitField != null) {
                 schema.fields().find { it.name == explicitField }?.nullable ?: !bt.required
             } else {
@@ -338,7 +338,7 @@ object SchemaInspector {
             val targetName = schemaNames[edge.target] ?: edge.target::class.simpleName ?: "?"
             when (val kind = edge.kind) {
                 is EdgeKind.BelongsTo -> {
-                    val fkColumn = kind.field ?: edge.name
+                    val fkColumn = kind.column
                     val inverse = tryFindInverseName(edge, schema)
                     ExplainedEdge(
                         name = edge.name,

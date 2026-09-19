@@ -10,10 +10,10 @@ For the schema DSL reference (modifiers, syntax), see [Schema](02-schema.md#edge
 
 | Relationship | Schema DSL | FK lives on | Table created |
 |---|---|---|---|
-| One-to-many | `hasMany<Post>("posts")` | Target table | None |
-| Many-to-one | `belongsTo<User>("author").inverse(User::posts)` | This table | None |
-| One-to-one | `hasOne<Profile>("profile")` / `belongsTo<User>("user").unique()` | BelongsTo side | None |
-| Many-to-many | `manyToMany<Group>("groups").throughEntity<UserGroup>(...)` *or* `.throughLink<UserGroup>(...)` | Junction table | Junction table |
+| One-to-many | `hasMany<Post>()` | Target table | None |
+| Many-to-one | `belongsTo<User>("author_id").inverse(User::posts)` | This table | None |
+| One-to-one | `hasOne<Profile>()` / `belongsTo<User>("user_id").unique()` | BelongsTo side | None |
+| Many-to-many | `manyToMany<Group>().throughEntity<UserGroup>(...)` *or* `.throughLink<UserGroup>(...)` | Junction table | Declared separately by the junction schema |
 
 ## One-to-many / many-to-one
 
@@ -22,12 +22,12 @@ A one-to-many relationship is always declared from both sides:
 ```kotlin
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
-    val posts by hasMany<Post>("posts")     // "one" side — no column added to users table
+    val posts by hasMany<Post>()     // "one" side — no column added to users table
 }
 
 class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
-    val author by belongsTo<User>("author")  // "many" side — adds author_id column to posts table
+    val author by belongsTo<User>("author_id")  // "many" side — adds author_id column to posts table
         .inverse(User::posts)               // links this edge to User.posts
                                             // required-by-default — author_id is NOT NULL
 }
@@ -43,14 +43,15 @@ class Post : EntSchema("posts", clientName = "posts") {
 | `author_id` | (matches User's ID type) | NOT NULL, REFERENCES users(id) |
 | ... | | |
 
-The FK column name defaults to `{edge_name}_id` — so `belongsTo<User>("author")`
-creates `author_id`. Override it with `.field()`:
+The `belongsTo` argument is the exact FK column name: `belongsTo<User>("author_id")`
+creates `author_id`, without adding or removing a suffix. Use `.field()` to
+reuse a scalar declaration with the same column name:
 
 ```kotlin
 class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
     val writerId by long("writer_id")
-    val author by belongsTo<User>("author").inverse(User::posts).field(writerId)
+    val author by belongsTo<User>("writer_id").inverse(User::posts).field(writerId)
 }
 ```
 
@@ -117,7 +118,7 @@ comparison):
 ```kotlin
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
-    val groups by manyToMany<Group>("groups")
+    val groups by manyToMany<Group>()
         .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 
@@ -128,8 +129,8 @@ class Group : EntSchema("groups", clientName = "groups") {
 
 class UserGroup : EntSchema("user_groups", clientName = "userGroups") {
     override fun id() = EntId.long()
-    val user by belongsTo<User>("user")
-    val group by belongsTo<Group>("group")
+    val user by belongsTo<User>("user_id")
+    val group by belongsTo<Group>("group_id")
 }
 ```
 
@@ -258,14 +259,14 @@ the junction has two edges to the same schema. Use `sourceEdge` and
 ```kotlin
 class Person : EntSchema("people", clientName = "persons") {
     override fun id() = EntId.long()
-    val friends by manyToMany<Person>("friends")
+    val friends by manyToMany<Person>()
         .throughEntity<Friendship>(Friendship::user, Friendship::friend)
 }
 
 class Friendship : EntSchema("friendships", clientName = "friendships") {
     override fun id() = EntId.long()
-    val user by belongsTo<Person>("user")
-    val friend by belongsTo<Person>("friend")
+    val user by belongsTo<Person>("user_id")
+    val friend by belongsTo<Person>("friend_id")
 }
 ```
 
@@ -280,15 +281,15 @@ edges to the same target type for different purposes:
 ```kotlin
 class Project : EntSchema("projects", clientName = "projects") {
     override fun id() = EntId.long()
-    val assignees by manyToMany<Pet>("assignees")
+    val assignees by manyToMany<Pet>()
         .throughEntity<ProjectAssignment>(ProjectAssignment::project, ProjectAssignment::assignee)
 }
 
 class ProjectAssignment : EntSchema("project_assignments", clientName = "projectAssignments") {
     override fun id() = EntId.long()
-    val project by belongsTo<Project>("project")
-    val assignee by belongsTo<Pet>("assignee")
-    val reviewer by belongsTo<Pet>("reviewer").nullable()   // different role, same target type
+    val project by belongsTo<Project>("project_id")
+    val assignee by belongsTo<Pet>("assignee_id")
+    val reviewer by belongsTo<Pet>("reviewer_id").nullable()   // different role, same target type
 }
 ```
 
@@ -300,9 +301,9 @@ for the DSL reference. The table mapping:
 
 | Edge declaration | FK constraint |
 |---|---|
-| `belongsTo<User>("author")` | `REFERENCES users(id) ON DELETE RESTRICT` |
-| `belongsTo<User>("author").nullable()` | `REFERENCES users(id) ON DELETE SET NULL` |
-| `belongsTo<User>("owner").onDelete(CASCADE)` | `REFERENCES users(id) ON DELETE CASCADE` |
+| `belongsTo<User>("author_id")` | `REFERENCES users(id) ON DELETE RESTRICT` |
+| `belongsTo<User>("author_id").nullable()` | `REFERENCES users(id) ON DELETE SET NULL` |
+| `belongsTo<User>("owner_id").onDelete(CASCADE)` | `REFERENCES users(id) ON DELETE CASCADE` |
 
 `belongsTo(...)` is required by default; add `.nullable()` to declare an
 nullable relationship. When no explicit `.onDelete()` is set, the default

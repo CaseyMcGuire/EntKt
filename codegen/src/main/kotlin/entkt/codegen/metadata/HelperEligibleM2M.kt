@@ -30,7 +30,7 @@ import entkt.schema.ManyToManyThrough
  * two M2M edges to the same target on the same source schema do not
  * collide. Both names come from the edge's Kotlin declaration: the
  * property is the declaration itself and the class is its stem, so
- * `val tags by manyToMany<Tag>("primary_tags")` generates
+ * `val tags by manyToMany<Tag>()` generates
  * `val tags: TagsEdgeMutator`. The storage string `primary_tags` never
  * reaches the generated Kotlin API.
  */

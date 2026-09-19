@@ -194,7 +194,7 @@ internal class GeneratedMemberManifest(val schema: String) {
  * properties from the update-draft manifest — hiding collisions
  * between user-declared fields and the mutator properties (e.g.
  * `val tags = string("tags")` on a schema with a
- * `manyToMany<Tag>("tags")` through-link edge). Lenient mode keeps
+ * `manyToMany<Tag>()` through-link edge). Lenient mode keeps
  * the fail-soft so the inspector doesn't drown out the upstream
  * error that almost certainly caused the M2M-resolution throw.
  */

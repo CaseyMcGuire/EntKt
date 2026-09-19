@@ -26,7 +26,8 @@ class BelongsToColumnTest {
         val registry = listOf(Target(), record).associateBy { it::class }
         registry.values.forEach { it.finalize(registry) }
         assertEquals(columns, record.indexes().single().fields)
-        assertEquals(columns, record.edges().map { it.name })
+        assertEquals(columns, record.edges().map { (it.kind as EdgeKind.BelongsTo).column })
+        assertEquals(listOf("problemLanguage", "writer", "owner", "unusual"), record.edges().map { it.name })
         assertEquals(listOf("problemLanguage", "writer", "owner", "unusual"), record.edges().map { it.declarationName })
     }
 
@@ -54,7 +55,8 @@ class BelongsToColumnTest {
         val registry = listOf(Target(), record).associateBy { it::class }
         registry.values.forEach { it.finalize(registry) }
         val edge = record.edges().single()
-        assertEquals("writer_ref", edge.name)
+        assertEquals("author", edge.name)
+        assertEquals("writer_ref", (edge.kind as EdgeKind.BelongsTo).column)
         assertEquals("writer_ref", (edge.kind as EdgeKind.BelongsTo).field)
         assertEquals(listOf("writer_ref"), record.indexes().single().fields)
     }

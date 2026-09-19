@@ -24,8 +24,8 @@ class DelegateBindingTest {
     private fun fieldByColumn(schema: EntSchema, column: String): Field =
         schema.fields().single { it.name == column }
 
-    private fun edgeByStorage(schema: EntSchema, storage: String): Edge =
-        schema.edges().single { it.name == storage }
+    private fun edgeByName(schema: EntSchema, name: String): Edge =
+        schema.edges().single { it.name == name }
 
     // ── Binding happens at construction ────────────────────────────
 
@@ -70,16 +70,17 @@ class DelegateBindingTest {
         )
         registry.values.forEach { it.finalize(registry) }
 
-        assertEquals("writer", edgeByStorage(article, "primary_author_id").declarationName)
-        assertEquals("relatedStories", edgeByStorage(article, "related_stories").declarationName)
-        assertEquals("mainProfile", edgeByStorage(article, "main_profile").declarationName)
-        assertEquals("labels", edgeByStorage(article, "person_links").declarationName)
+        assertEquals("writer", edgeByName(article, "writer").declarationName)
+        assertEquals("relatedStories", edgeByName(article, "relatedStories").declarationName)
+        assertEquals("mainProfile", edgeByName(article, "mainProfile").declarationName)
+        assertEquals("labels", edgeByName(article, "labels").declarationName)
 
-        // Storage names survive unchanged for joins and migrations.
+        // Relationships use property names; the FK column remains explicit.
         assertEquals(
-            setOf("primary_author_id", "related_stories", "main_profile", "person_links"),
+            setOf("writer", "relatedStories", "mainProfile", "labels"),
             article.edges().map { it.name }.toSet(),
         )
+        assertEquals("primary_author_id", (edgeByName(article, "writer").kind as EdgeKind.BelongsTo).column)
     }
 
     @Test
@@ -118,7 +119,8 @@ class DelegateBindingTest {
         val writer: BelongsToBuilder<Target> = schema.writer
         assertEquals("title", title.fieldName)
         assertEquals("author_id", authorId.fieldName)
-        assertEquals("author_id", writer.edgeName)
+        assertEquals("writer", writer.edgeName)
+        assertEquals("author_id", writer.column)
         // Reading the property twice yields the same builder, not a copy.
         assertSame(schema.title, schema.title)
     }
@@ -324,7 +326,7 @@ class DelegateBindingTest {
             Post::class to post,
         )
         registry.values.forEach { it.finalize(registry) }
-        assertEquals("writer", edgeByStorage(post, "writer_id").declarationName)
+        assertEquals("writer", edgeByName(post, "writer").declarationName)
     }
 
     @Test
@@ -348,7 +350,7 @@ class DelegateBindingTest {
     @Test
     fun `a foreign object cannot bind an edge declaration name either`() {
         val err = assertFailsWith<IllegalStateException> { ForeignEdgeHost() }
-        assertContains(err.message!!, "'legacy_children'")
+        assertContains(err.message!!, "'children'")
         assertContains(err.message!!, "neither the declaring schema nor a mixin")
     }
 
@@ -416,9 +418,9 @@ private class BindingTimestamps(scope: EntMixin.Scope) : EntMixin(scope) {
 private class Article2 : EntSchema("articles2", clientName = "articles2") {
     override fun id() = EntId.long()
     val writer by belongsTo<Profile2>("primary_author_id")
-    val relatedStories by hasMany<Article2>("related_stories")
-    val mainProfile by hasOne<Profile2>("main_profile")
-    val labels by manyToMany<Profile2>("person_links")
+    val relatedStories by hasMany<Article2>()
+    val mainProfile by hasOne<Profile2>()
+    val labels by manyToMany<Profile2>()
         .throughLink<Junction2>(Junction2::left, Junction2::right)
 }
 
@@ -476,7 +478,7 @@ private class EdgeSmugglingMixin(
 
 private class EdgeSmugglingHost : EntSchema("smuggle_hosts", clientName = "smuggleHosts") {
     override fun id() = EntId.long()
-    private val raw = hasMany<SmuggleChild>("children")
+    private val raw = hasMany<SmuggleChild>()
     val m = include { scope -> EdgeSmugglingMixin(scope, raw) }
 }
 
@@ -525,5 +527,5 @@ private class ForeignFieldHost : EntSchema("foreign_hosts", clientName = "foreig
 
 private class ForeignEdgeHost : EntSchema("foreign_edge_hosts", clientName = "foreignEdgeHosts") {
     override fun id() = EntId.long()
-    val children = ForeignEdgeHolder(hasMany<ForeignChild>("legacy_children"))
+    val children = ForeignEdgeHolder(hasMany<ForeignChild>())
 }

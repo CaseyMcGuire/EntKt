@@ -414,7 +414,7 @@ private class CompanionAuthor : EntSchema("companion_authors", clientName = "com
 private class CompanionPost : EntSchema("companion_posts", clientName = "companionPosts") {
     override fun id() = EntId.long()
     val author by belongsTo<CompanionAuthor>("author_id")
-    val authorId by hasMany<CompanionReader>("post_readers")
+    val authorId by hasMany<CompanionReader>()
 }
 
 private class CompanionReader : EntSchema("companion_readers", clientName = "companionReaders") {
@@ -433,7 +433,7 @@ private class EdgesCopyTarget : EntSchema("edges_copy_targets", clientName = "ed
 private class EdgesCopyOwner : EntSchema("edges_copy_owners", clientName = "edgesCopyOwners") {
     override fun id() = EntId.long()
     // `copy` is synthesized on the Edges data class.
-    val copy by hasMany<EdgesCopyTarget>("owner")
+    val copy by hasMany<EdgesCopyTarget>()
 }
 
 // Regression fixture for an edge whose load method used to collide with
@@ -445,7 +445,7 @@ private class LoadClashTarget : EntSchema("load_clash_targets", clientName = "lo
 
 private class LoadClashOwner : EntSchema("load_clash_owners", clientName = "loadClashOwners") {
     override fun id() = EntId.long()
-    val edges by hasMany<LoadClashTarget>("owner")
+    val edges by hasMany<LoadClashTarget>()
 }
 
 // Query-artifact collision fixture. An edge declared `limit` generates
@@ -457,7 +457,7 @@ private class QueryClashTarget : EntSchema("query_clash_targets", clientName = "
 
 private class QueryClashOwner : EntSchema("query_clash_owners", clientName = "queryClashOwners") {
     override fun id() = EntId.long()
-    val limit by hasMany<QueryClashTarget>("owner")
+    val limit by hasMany<QueryClashTarget>()
 }
 
 private class IsPrefix : EntSchema("is_prefix", clientName = "isPrefixes") {

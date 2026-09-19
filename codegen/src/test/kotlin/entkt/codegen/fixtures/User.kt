@@ -14,7 +14,7 @@ class User : EntSchema("users", clientName = "users") {
     val email by string("email").unique()
     val active by bool("active").default(true)
 
-    val cars by hasMany<Car>("cars")
+    val cars by hasMany<Car>()
 
     val idxCreatedAt = index("idx_created_at", createdAt)
     val idxNameEmail = index("idx_name_email", name, email).unique()

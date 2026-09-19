@@ -34,7 +34,7 @@ class User : EntSchema("users", clientName = "users") {
     val active by bool("active").default(true)
     val createdAt by instant("created_at").immutable()
 
-    val cars by hasMany<Car>("cars")
+    val cars by hasMany<Car>()
 
     val byNameEmail = index("idx_name_email", name, email).unique()
     val byCreatedAt = index("idx_created_at", createdAt)
@@ -45,7 +45,7 @@ class Group : EntSchema("groups", clientName = "groups") {
     override fun id() = EntId.int()
     val name by string("name")
 
-    val users by manyToMany<User>("users")
+    val users by manyToMany<User>()
         .throughEntity<UserGroup>(UserGroup::group, UserGroup::user)
 }
 
@@ -74,7 +74,7 @@ class Company : EntSchema("companies", clientName = "companies") {
 
     val name by string("name").unique()
 
-    val employees by hasMany<User>("employees")
+    val employees by hasMany<User>()
 }
 
 class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
@@ -114,7 +114,7 @@ class NoteWithInitMixin : EntSchema("notes", clientName = "noteWithInitMixins") 
 
 private class ComputedGetterTarget : EntSchema("targets", clientName = "computedGetterTargets") {
     override fun id() = EntId.int()
-    val items get() = hasMany<ComputedGetterSource>("items")
+    val items get() = hasMany<ComputedGetterSource>()
 }
 
 private class ComputedGetterSource : EntSchema("sources", clientName = "computedGetterSources") {
@@ -134,7 +134,7 @@ private class ComputedGetterJunction : EntSchema("junctions", clientName = "comp
 
 private class ComputedGetterOwner : EntSchema("owners", clientName = "computedGetterOwners") {
     override fun id() = EntId.int()
-    val sides by manyToMany<M2mSide>("sides")
+    val sides by manyToMany<M2mSide>()
         .throughEntity<ComputedGetterJunction>(ComputedGetterJunction::left, ComputedGetterJunction::right)
 }
 
@@ -156,7 +156,7 @@ private class BadSourceJunction : EntSchema("bad_source_junction", clientName = 
 }
 private class WrongSourceTargetOwner : EntSchema("wst_owner", clientName = "wrongSourceTargetOwners") {
     override fun id() = EntId.int()
-    val bs by manyToMany<M2mTargetB>("bs")
+    val bs by manyToMany<M2mTargetB>()
         .throughEntity<BadSourceJunction>(BadSourceJunction::first, BadSourceJunction::second)
 }
 
@@ -166,7 +166,7 @@ private class WrongSourceTargetOwner : EntSchema("wst_owner", clientName = "wron
 // after the source-side check passes.
 private class WrongTargetTargetOwner : EntSchema("wtt_owner", clientName = "wrongTargetTargetOwners") {
     override fun id() = EntId.int()
-    val bs by manyToMany<M2mTargetB>("bs")
+    val bs by manyToMany<M2mTargetB>()
         .throughEntity<BadTargetJunction>(BadTargetJunction::owner, BadTargetJunction::wrongTarget)
 }
 private class BadTargetJunction : EntSchema("bad_target_junction", clientName = "badTargetJunctions") {
@@ -181,7 +181,7 @@ private class SamePropJunction : EntSchema("same_prop_junction", clientName = "s
 }
 private class SamePropOwner : EntSchema("same_prop_owner", clientName = "samePropOwners") {
     override fun id() = EntId.int()
-    val xs by manyToMany<M2mTargetA>("xs")
+    val xs by manyToMany<M2mTargetA>()
         .throughEntity<SamePropJunction>(SamePropJunction::only, SamePropJunction::only)
 }
 
@@ -362,13 +362,13 @@ class SchemaTest {
         assertEquals(2, edges.size)
 
         val userEdge = edges[0]
-        assertEquals("user_id", userEdge.name)
+        assertEquals("user", userEdge.name)
         val userKind = userEdge.kind as EdgeKind.BelongsTo
         assertEquals("user_id", userKind.field)
         assertTrue(userKind.required)
 
         val groupEdge = edges[1]
-        assertEquals("group_id", groupEdge.name)
+        assertEquals("group", groupEdge.name)
         val groupKind = groupEdge.kind as EdgeKind.BelongsTo
         assertEquals("group_id", groupKind.field)
     }
@@ -453,9 +453,15 @@ class SchemaTest {
 
     @Test
     fun `manyToMany requires through`() {
-        assertFailsWith<IllegalStateException> {
-            ManyToManyBuilder<Group>("groups", Group::class).build()
+        class Owner : EntSchema("owners", clientName = "owners") {
+            override fun id() = EntId.long()
+            val groups by manyToMany<Group>()
         }
+        val owner = Owner()
+        val error = assertFailsWith<IllegalStateException> {
+            owner.finalize(mapOf(Owner::class to owner, Group::class to Group()))
+        }
+        assertContains(error.message!!, "must declare a write model")
     }
 
     @Test
@@ -593,7 +599,7 @@ class SchemaTest {
     fun `edges cannot be accessed before finalization`() {
         class Unfinalized : EntSchema("unfinalized", clientName = "unfinalizeds") {
             override fun id() = EntId.int()
-            val something by hasMany<Car>("something")
+            val something by hasMany<Car>()
         }
         val schema = Unfinalized()
 

@@ -20,7 +20,7 @@ import kotlin.reflect.typeOf
  * class User : EntSchema("users", clientName = "users") {
  *     override fun id() = EntId.long()
  *     val name by string("name")
- *     val posts by hasMany<Post>("posts")
+ *     val posts by hasMany<Post>()
  * }
  * ```
  *
@@ -95,7 +95,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
         //
         // Storage names are exempt. They reach generated source only as
         // string literals and reach SQL only as quoted identifiers, so
-        // `string("class")` and `hasMany<Item>("object")` are valid —
+        // `string("class")` and `belongsTo<Item>("object")` are valid —
         // the Kotlin API those produce comes from the declaration, not
         // the storage string. List sourced from Kotlin's grammar
         // (KotlinSpec section "Hard keywords").
@@ -349,35 +349,44 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
         target: KClass<Target>,
     ): BelongsToBuilder<Target> = BelongsToBuilder<Target>(column, target).also { validateName(column, "FK column"); checkNotFinalized(); it.declarationOwner = this; _edges.add(it) }
 
-    protected inline fun <reified Target : EntSchema> hasMany(
-        name: String,
-    ): HasManyBuilder<Target> = hasMany(name, Target::class)
+    /** Declare an inverse to-many relationship named by its delegated Kotlin property. */
+    protected inline fun <reified Target : EntSchema> hasMany(): HasManyBuilder<Target> =
+        hasMany(Target::class)
 
     @PublishedApi
     internal fun <Target : EntSchema> hasMany(
-        name: String,
         target: KClass<Target>,
-    ): HasManyBuilder<Target> = HasManyBuilder<Target>(name, target).also { validateName(name, "Edge"); checkNotFinalized(); it.declarationOwner = this; _edges.add(it) }
+    ): HasManyBuilder<Target> = HasManyBuilder<Target>(target).also {
+        checkNotFinalized()
+        it.declarationOwner = this
+        _edges.add(it)
+    }
 
-    protected inline fun <reified Target : EntSchema> hasOne(
-        name: String,
-    ): HasOneBuilder<Target> = hasOne(name, Target::class)
+    /** Declare an inverse zero-or-one relationship named by its delegated Kotlin property. */
+    protected inline fun <reified Target : EntSchema> hasOne(): HasOneBuilder<Target> =
+        hasOne(Target::class)
 
     @PublishedApi
     internal fun <Target : EntSchema> hasOne(
-        name: String,
         target: KClass<Target>,
-    ): HasOneBuilder<Target> = HasOneBuilder<Target>(name, target).also { validateName(name, "Edge"); checkNotFinalized(); it.declarationOwner = this; _edges.add(it) }
+    ): HasOneBuilder<Target> = HasOneBuilder<Target>(target).also {
+        checkNotFinalized()
+        it.declarationOwner = this
+        _edges.add(it)
+    }
 
-    protected inline fun <reified Target : EntSchema> manyToMany(
-        name: String,
-    ): ManyToManyBuilder<Target> = manyToMany(name, Target::class)
+    /** Declare a junction-backed relationship named by its delegated Kotlin property. */
+    protected inline fun <reified Target : EntSchema> manyToMany(): ManyToManyBuilder<Target> =
+        manyToMany(Target::class)
 
     @PublishedApi
     internal fun <Target : EntSchema> manyToMany(
-        name: String,
         target: KClass<Target>,
-    ): ManyToManyBuilder<Target> = ManyToManyBuilder<Target>(name, target).also { validateName(name, "Edge"); checkNotFinalized(); it.declarationOwner = this; _edges.add(it) }
+    ): ManyToManyBuilder<Target> = ManyToManyBuilder<Target>(target).also {
+        checkNotFinalized()
+        it.declarationOwner = this
+        _edges.add(it)
+    }
 
     // ── Index builder methods ──────────────────────────────────────
 
@@ -519,10 +528,10 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
      */
     fun finalize(registry: Map<KClass<out EntSchema>, EntSchema>) {
         check(!_finalized) { "Schema '${this::class.simpleName}' has already been finalized" }
+        validateDeclarationBindings()
         for (edge in _edges) {
             edge.resolve(registry, this::class)
         }
-        validateDeclarationBindings()
         validateIndexDeclarationBindings()
         // Freeze all builders so mutations after finalization are rejected
         for (field in _fields) { field.frozen = true }
@@ -623,7 +632,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
         // (1) Registered builders that never bound to a property.
         val unbound = buildList {
             for (f in _fields) if (f.declarationName == null) add("field '${f.fieldName}'")
-            for (e in _edges) if (e.declarationName == null) add("edge '${e.edgeName}'")
+            for (e in _edges) if (e.declarationName == null) add("edge '${e.diagnosticName}'")
         }
         if (unbound.isNotEmpty()) {
             error(
@@ -786,7 +795,7 @@ abstract class EntSchema(val tableName: String, val clientName: String) {
                 val e = edge.build()
                 val bt = e.kind as EdgeKind.BelongsTo
                 if (bt.unique) {
-                    val fkCol = bt.field ?: e.name
+                    val fkCol = bt.column
                     seenShapes.add(shapeOf(listOf(fkCol), true, null, null, null, null))
                 }
             }

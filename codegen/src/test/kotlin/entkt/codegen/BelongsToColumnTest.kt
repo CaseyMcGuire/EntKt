@@ -18,8 +18,10 @@ import kotlin.test.assertEquals
 class BelongsToColumnTest {
     private class Owner : EntSchema("owners", clientName = "owners") {
         override fun id() = EntId.long()
-        val records by hasMany<Record>("records")
-        val featuredRecord by hasOne<Record>("featured_record")
+        val records by hasMany<Record>()
+        val featuredRecord by hasOne<Record>()
+        // A physical FK column may share a name with another relationship.
+        val parent by belongsTo<Owner>("records").nullable()
     }
 
     private class Record : EntSchema("records", clientName = "records") {
@@ -32,7 +34,7 @@ class BelongsToColumnTest {
         val writer by long("writer_key")
         val author by belongsTo<Owner>("writer_key").field(writer)
         val byOwnerAndLanguage by index("idx_owner_language", owner.fk, problemLanguage.fk)
-        val tags by manyToMany<Tag>("tags").throughLink<RecordTag>(RecordTag::record, RecordTag::tag)
+        val tags by manyToMany<Tag>().throughLink<RecordTag>(RecordTag::record, RecordTag::tag)
     }
 
     private class Tag : EntSchema("tags", clientName = "tags") {
@@ -82,6 +84,20 @@ class BelongsToColumnTest {
     }
 
     @Test
+    fun `relationship names do not collide with physical FK columns`() {
+        val schemas = schemas()
+        val names = schemas.associateWith { it::class.simpleName!! }
+        val owner = schemas.filterIsInstance<Owner>().single()
+        val edges = owner.edges().associateBy { it.name }
+
+        assertEquals(setOf("records", "featuredRecord", "parent"), edges.keys)
+        assertEquals(listOf("id", "records"), columnMetadataFor(owner, names).map { it.name })
+        assertEquals("records", resolveEdgeJoin(edges.getValue("parent"), owner)!!.sourceColumn)
+        assertEquals("owner_ref", resolveEdgeJoin(edges.getValue("records"), owner)!!.targetColumn)
+        assertEquals("featured_key", resolveEdgeJoin(edges.getValue("featuredRecord"), owner)!!.targetColumn)
+    }
+
+    @Test
     fun `generated reads writes and named index helpers preserve Kotlin ID names with literal columns`() {
         val generated = EntGenerator("com.example.ent").generate(schemas().map(::SchemaInput))
         val application = SourceFile.kotlin(
@@ -96,6 +112,11 @@ class BelongsToColumnTest {
 
             fun exercise() {
                 val client = EntClient(NoopDriver)
+                check(Owner.SCHEMA.edges.keys == setOf("records", "featuredRecord", "parent"))
+                check(Owner.SCHEMA.edges.getValue("parent").sourceColumn == "records")
+                check(Owner.SCHEMA.edges.getValue("records").targetColumn == "owner_ref")
+                check(Record.SCHEMA.edges.getValue("tags").junctionSourceColumn == "record_ref")
+                check(Record.SCHEMA.edges.getValue("tags").junctionTargetColumn == "tag_key")
                 val converter = RecordCreateConverter(NoopDriver, client.hookClientScopeForInternalUse)
                 val draft = RecordCreateDraft().apply {
                     ownerId = 1L

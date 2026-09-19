@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
 // O2O Two Types
 private class O2oUser : EntSchema("o2o_users", clientName = "o2oUsers") {
     override fun id() = EntId.uuid()
-    val profile by hasOne<O2oProfile>("profile")
+    val profile by hasOne<O2oProfile>()
 }
 
 private class O2oProfile : EntSchema("o2o_profiles", clientName = "o2oProfiles") {
@@ -33,7 +33,7 @@ private class O2oProfile : EntSchema("o2o_profiles", clientName = "o2oProfiles")
 // O2M Two Types
 private class O2mUser : EntSchema("o2m_users", clientName = "o2mUsers") {
     override fun id() = EntId.long()
-    val posts by hasMany<O2mPost>("posts")
+    val posts by hasMany<O2mPost>()
 }
 
 private class O2mPost : EntSchema("o2m_posts", clientName = "o2mPosts") {
@@ -45,7 +45,7 @@ private class O2mPost : EntSchema("o2m_posts", clientName = "o2mPosts") {
 // M2M Two Types
 private class M2mUser : EntSchema("m2m_users", clientName = "m2mUsers") {
     override fun id() = EntId.long()
-    val groups by manyToMany<M2mGroup>("groups")
+    val groups by manyToMany<M2mGroup>()
         .throughEntity<M2mUserGroup>(M2mUserGroup::user, M2mUserGroup::group)
 }
 
@@ -63,7 +63,7 @@ private class M2mUserGroup : EntSchema("m2m_user_groups", clientName = "m2mUserG
 // M2M Same Type
 private class M2mPerson : EntSchema("m2m_people", clientName = "m2mPersons") {
     override fun id() = EntId.long()
-    val friends by manyToMany<M2mPerson>("friends")
+    val friends by manyToMany<M2mPerson>()
         .throughEntity<M2mFriendship>(M2mFriendship::user, M2mFriendship::friend)
 }
 
@@ -77,13 +77,13 @@ private class M2mFriendship : EntSchema("m2m_friendships", clientName = "m2mFrie
 // M2M Bidirectional
 private class M2mBiUser : EntSchema("m2m_bi_users", clientName = "m2mBiUsers") {
     override fun id() = EntId.long()
-    val groups by manyToMany<M2mBiGroup>("groups")
+    val groups by manyToMany<M2mBiGroup>()
         .throughEntity<M2mBiMembership>(M2mBiMembership::user, M2mBiMembership::group)
 }
 
 private class M2mBiGroup : EntSchema("m2m_bi_groups", clientName = "m2mBiGroups") {
     override fun id() = EntId.long()
-    val users by manyToMany<M2mBiUser>("users")
+    val users by manyToMany<M2mBiUser>()
         .throughEntity<M2mBiMembership>(M2mBiMembership::group, M2mBiMembership::user)
 }
 
@@ -651,7 +651,7 @@ class PostgresDdlTest {
     fun `O2O same type - self-referencing unique FK`() {
         class Employee : EntSchema("employees", clientName = "employees") {
             override fun id() = EntId.long()
-            val mentee by hasOne<Employee>("mentee")
+            val mentee by hasOne<Employee>()
             val mentor by belongsTo<Employee>("mentor_id")
                 .inverse(Employee::mentee)
                 .unique()
@@ -700,7 +700,7 @@ class PostgresDdlTest {
     fun `O2M same type - self-referencing tree`() {
         class Category : EntSchema("categories", clientName = "categories") {
             override fun id() = EntId.long()
-            val children by hasMany<Category>("children")
+            val children by hasMany<Category>()
             val parent by belongsTo<Category>("parent_id")
                 .inverse(Category::children)
                 .nullable()

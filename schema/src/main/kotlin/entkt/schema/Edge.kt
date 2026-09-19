@@ -1,7 +1,7 @@
 package entkt.schema
 
 data class Edge(
-    /** Storage identifier; for belongsTo, this is the exact FK column name. */
+    /** Relationship identifier, taken verbatim from the delegated Kotlin property. */
     val name: String,
     val target: EntSchema,
     val kind: EdgeKind,
@@ -9,9 +9,9 @@ data class Edge(
     val comment: String? = null,
     /**
      * Kotlin `val` name of the delegated schema property that declared
-     * this edge — the name every generated edge API uses. [name] stays
-     * the storage identifier used for joins, edge lookup, and migration
-     * identity; the two are independent.
+     * this edge — the name every generated edge API and internal lookup uses.
+     * Physical FK columns live in [EdgeKind.BelongsTo.column], independently
+     * of this name.
      *
      * Bound by the edge builder's `provideDelegate` during schema
      * construction. Nullable only for a builder that was registered but

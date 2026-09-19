@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 class BelongsToImmutableTest {
     private class Owner : EntSchema("owners", clientName = "owners") {
         override fun id() = EntId.long()
-        val records by hasMany<Record>("records")
+        val records by hasMany<Record>()
     }
 
     private class Record : EntSchema("records", clientName = "records") {
@@ -40,12 +40,12 @@ class BelongsToImmutableTest {
         assertTrue((owner.kind as EdgeKind.BelongsTo).immutable)
         assertEquals("records", owner.ref)
         assertEquals(
-            EdgeKind.BelongsTo(required = false, unique = true, onDelete = OnDelete.SET_NULL, immutable = true),
+            EdgeKind.BelongsTo(column = "reviewer_id", required = false, unique = true, onDelete = OnDelete.SET_NULL, immutable = true),
             edges.getValue("reviewer").kind,
         )
         assertFalse((edges.getValue("editor").kind as EdgeKind.BelongsTo).immutable)
         assertEquals(
-            EdgeKind.BelongsTo(field = "writer_id", immutable = true),
+            EdgeKind.BelongsTo(column = "writer_id", field = "writer_id", immutable = true),
             edges.getValue("author").kind,
         )
         assertEquals(listOf(listOf("owner_id"), listOf("writer_id")), record.indexes().map { it.fields })

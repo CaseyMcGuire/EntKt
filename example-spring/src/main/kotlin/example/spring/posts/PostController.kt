@@ -88,7 +88,7 @@ class PostController(
      *
      * Demonstrates the generated forward M2M *eager-load* surface
      * (`PostQueryScope.loadTags { }`) declared by `Post.tags =
-     * manyToMany<Tag>(...).throughEntity<PostTag>(...)`. The query
+     * manyToMany<Tag>().throughEntity<PostTag>(...)`. The query
      * fetches the matching `Post` row plus all related `Tag` rows in
      * the runtime's M2M-eager-load helper (junction-IN → target-IN);
      * the loaded list lands on the entity's generated `Edges.tags`

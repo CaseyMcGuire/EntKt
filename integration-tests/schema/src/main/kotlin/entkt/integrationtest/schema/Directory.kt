@@ -42,6 +42,6 @@ class Directory : EntSchema("legacy_people_tbl", clientName = "people") {
      * callers see come from this declaration — so a divergent M2M is
      * the case that separates the two.
      */
-    val topics by manyToMany<Topic>("legacy_topic_links")
+    val topics by manyToMany<Topic>()
         .throughLink<DirectoryTopic>(DirectoryTopic::directory, DirectoryTopic::topic)
 }

@@ -1472,7 +1472,7 @@ class UpdateGeneratorTest {
 
 private class UuidJunctionPost : EntSchema("uuid_junction_posts", clientName = "uuidJunctionPosts") {
     override fun id() = EntId.long()
-    val tags by manyToMany<UuidJunctionTag>("tags")
+    val tags by manyToMany<UuidJunctionTag>()
         .throughLink<UuidJunctionPostTag>(UuidJunctionPostTag::post, UuidJunctionPostTag::tag)
 }
 private class UuidJunctionTag : EntSchema("uuid_junction_tags", clientName = "uuidJunctionTags") {
@@ -1512,7 +1512,7 @@ private fun makeClientUuidJunctionSchemas(): ClientUuidJunctionSchemas {
 private class M2MPost : EntSchema("m2m_posts", clientName = "m2MPosts") {
     override fun id() = EntId.long()
     val title by string("title")
-    val tags by manyToMany<M2MTag>("tags")
+    val tags by manyToMany<M2MTag>()
         .throughLink<M2MPostTag>(M2MPostTag::post, M2MPostTag::tag)
 }
 private class M2MTag : EntSchema("m2m_tags", clientName = "m2MTags") {
@@ -1546,7 +1546,7 @@ private fun makeLinkM2MSchemas(): LinkSchemas {
 // throughEntity (must NOT get mutator codegen)
 private class M2MTeam : EntSchema("m2m_teams", clientName = "m2MTeams") {
     override fun id() = EntId.long()
-    val members by manyToMany<M2MMember>("members")
+    val members by manyToMany<M2MMember>()
         .throughEntity<M2MTeamMembership>(M2MTeamMembership::team, M2MTeamMembership::member)
 }
 private class M2MMember : EntSchema("m2m_members", clientName = "m2MMembers") {
@@ -1580,9 +1580,9 @@ private fun makeEntityM2MSchemas(): EntitySchemas {
 // the two don't collide.
 private class M2MDoc : EntSchema("m2m_docs", clientName = "m2MDocs") {
     override fun id() = EntId.long()
-    val tags by manyToMany<M2MLabel>("tags")
+    val tags by manyToMany<M2MLabel>()
         .throughLink<M2MDocTag>(M2MDocTag::doc, M2MDocTag::tag)
-    val labels by manyToMany<M2MLabel>("labels")
+    val labels by manyToMany<M2MLabel>()
         .throughLink<M2MDocLabel>(M2MDocLabel::doc, M2MDocLabel::label)
 }
 private class M2MLabel : EntSchema("m2m_labels", clientName = "m2MLabels") {
@@ -1631,9 +1631,9 @@ private fun makeMultiEdgeSchemas(): MultiEdgeSchemas {
 // relationship lock whose guard ORs both mutators.
 private class DupJunctionDoc : EntSchema("dup_junction_docs", clientName = "dupJunctionDocs") {
     override fun id() = EntId.long()
-    val tags by manyToMany<DupJunctionTag>("tags")
+    val tags by manyToMany<DupJunctionTag>()
         .throughLink<DupJunctionDocTag>(DupJunctionDocTag::doc, DupJunctionDocTag::tag)
-    val moreTags by manyToMany<DupJunctionTag>("more_tags")
+    val moreTags by manyToMany<DupJunctionTag>()
         .throughLink<DupJunctionDocTag>(DupJunctionDocTag::doc, DupJunctionDocTag::tag)
 }
 private class DupJunctionTag : EntSchema("dup_junction_tags", clientName = "dupJunctionTags") {

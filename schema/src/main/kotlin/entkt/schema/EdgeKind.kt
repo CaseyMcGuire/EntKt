@@ -2,6 +2,8 @@ package entkt.schema
 
 sealed interface EdgeKind {
     data class BelongsTo(
+        /** Exact physical FK column, independent of the relationship's Kotlin name. */
+        val column: String,
         val required: Boolean = true,
         val unique: Boolean = false,
         val field: String? = null,

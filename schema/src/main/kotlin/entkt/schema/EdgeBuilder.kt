@@ -41,8 +41,13 @@ private fun <T : EntSchema> resolvePropertySafely(
     return result
 }
 
-abstract class EdgeBuilderBase {
-    abstract val edgeName: String
+abstract class EdgeBuilderBase(private val storageName: String? = null) {
+    /** Relationship identifier, taken verbatim from its delegated Kotlin property. */
+    val edgeName: String
+        get() = checkNotNull(declarationName) { "Edge must be bound to a Kotlin property with `by`" }
+
+    internal val diagnosticName: String
+        get() = declarationName ?: storageName ?: "<unbound>"
     internal var frozen: Boolean = false
     internal var declarationOwner: EntSchema? = null
 
@@ -82,7 +87,7 @@ abstract class EdgeBuilderBase {
         declarationName = bindDeclarationName(
             property = property,
             kind = "Edge",
-            storageName = edgeName,
+            storageName = storageName ?: property.name,
             owner = declarationOwner,
             existing = declarationName,
             thisRef = thisRef,
@@ -92,7 +97,7 @@ abstract class EdgeBuilderBase {
     }
 
     protected fun checkNotFrozen() {
-        check(!frozen) { "Edge '$edgeName' cannot be modified after schema finalization" }
+        check(!frozen) { "Edge '$diagnosticName' cannot be modified after schema finalization" }
     }
 
     abstract fun resolve(registry: Map<KClass<out EntSchema>, EntSchema>, owner: KClass<out EntSchema>)
@@ -108,13 +113,13 @@ internal class FkColumn(
     private val edgeBuilder: BelongsToBuilder<*>,
 ) : IndexableColumn {
     internal val declarationOwner: EntSchema? get() = edgeBuilder.declarationOwner
-    override val fieldName: String get() = edgeBuilder.edgeName
+    override val fieldName: String get() = edgeBuilder.column
 }
 
 class BelongsToBuilder<Target : EntSchema> internal constructor(
-    override val edgeName: String,
+    val column: String,
     @PublishedApi internal val targetClass: KClass<Target>,
-) : BelongsToHandle<Target>, EdgeBuilderBase() {
+) : BelongsToHandle<Target>, EdgeBuilderBase(column) {
 
     /**
      * An [IndexableColumn] for the FK column backing this edge.
@@ -156,13 +161,13 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
         val fieldOwner = (handle as? FieldBuilder<*, *>)?.declarationOwner
         if (fieldOwner != null && declarationOwner != null && fieldOwner !== declarationOwner) {
             error(
-                "belongsTo('$edgeName').field() references '${handle.fieldName}' which belongs to schema " +
+                "belongsTo('$column').field() references '${handle.fieldName}' which belongs to schema " +
                     "'${fieldOwner::class.simpleName}', not '${declarationOwner!!::class.simpleName}'"
             )
         }
-        require(handle.fieldName == edgeName) {
-            "belongsTo('$edgeName').field() references column '${handle.fieldName}', but the relationship " +
-                "declares FK column '$edgeName'. Use the backing field's exact column name in belongsTo()."
+        require(handle.fieldName == column) {
+            "belongsTo('$column').field() references column '${handle.fieldName}', but the relationship " +
+                "declares FK column '$column'. Use the backing field's exact column name in belongsTo()."
         }
         explicitFieldHandle = handle
     }
@@ -245,6 +250,7 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
             name = edgeName,
             target = target,
             kind = EdgeKind.BelongsTo(
+                column = column,
                 required = required,
                 unique = unique,
                 field = explicitFieldHandle?.fieldName,
@@ -259,7 +265,6 @@ class BelongsToBuilder<Target : EntSchema> internal constructor(
 }
 
 class HasManyBuilder<Target : EntSchema> internal constructor(
-    override val edgeName: String,
     @PublishedApi internal val targetClass: KClass<Target>,
 ) : HasManyHandle<Target>, EdgeBuilderBase() {
     private var comment: String? = null
@@ -293,7 +298,6 @@ class HasManyBuilder<Target : EntSchema> internal constructor(
 }
 
 class HasOneBuilder<Target : EntSchema> internal constructor(
-    override val edgeName: String,
     @PublishedApi internal val targetClass: KClass<Target>,
 ) : HasOneHandle<Target>, EdgeBuilderBase() {
     private var comment: String? = null
@@ -341,7 +345,6 @@ class HasOneBuilder<Target : EntSchema> internal constructor(
 internal enum class ManyToManyMode { LINK, ENTITY }
 
 class ManyToManyBuilder<Target : EntSchema> internal constructor(
-    override val edgeName: String,
     @PublishedApi internal val targetClass: KClass<Target>,
 ) : ManyToManyHandle<Target>, EdgeBuilderBase() {
     private var junctionClass: KClass<out EntSchema>? = null
@@ -385,7 +388,7 @@ class ManyToManyBuilder<Target : EntSchema> internal constructor(
     ): ManyToManyBuilder<Target> = apply {
         checkNotFrozen()
         check(this.mode == null) {
-            "manyToMany edge '$edgeName' has both throughLink() and throughEntity() — pick one"
+            "manyToMany edge '$diagnosticName' has both throughLink() and throughEntity() — pick one"
         }
         this.junctionClass = junctionClass
         this.junctionSourceProp = sourceEdge

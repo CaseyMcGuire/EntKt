@@ -15,7 +15,7 @@ import entkt.schema.OnDelete
  * must agree on the storage column.
  */
 data class EdgeFk(
-    /** Storage edge name — the driver's edge-lookup key. */
+    /** Relationship declaration name — the driver's edge-lookup key. */
     val edgeName: String,
     /**
      * The edge's Kotlin declaration name, for caller-facing text. The
@@ -140,7 +140,7 @@ fun computeEdgeFks(
                     edgeName = edge.name,
                     edgeApiName = edge.apiName,
                     propertyName = "${edge.apiName}Id",
-                    columnName = edge.name,
+                    columnName = belongsTo.column,
                     targetName = targetName,
                     targetTable = edge.target.tableName,
                     idType = edge.target.id().type,

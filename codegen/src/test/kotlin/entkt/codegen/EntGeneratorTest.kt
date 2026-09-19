@@ -22,7 +22,7 @@ private fun finalize(vararg schemas: EntSchema) {
 private class M2mGroupSchema : EntSchema("groups", clientName = "m2mGroupSchemas") {
     override fun id() = EntId.int()
     val name by string("name")
-    val members by manyToMany<M2mPersonSchema>("members")
+    val members by manyToMany<M2mPersonSchema>()
         .throughEntity<M2mMembershipSchema>(M2mMembershipSchema::group, M2mMembershipSchema::person)
 }
 

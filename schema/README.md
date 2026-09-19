@@ -38,9 +38,11 @@ on the client. See [Field Validation Rules](../docs/07-validation.md#field-valid
 
 ## Edges
 
-`belongsTo<Target>(name)` (FK-owning side), `hasMany<Target>(name)` (one-to-many),
-`hasOne<Target>(name)` (one-to-one), `manyToMany<Target>(name)` (via junction).
-Modifiers: `.inverse(Target::edge)`, `.nullable()` (to-one edges are required by
+`belongsTo<Target>(column)` (FK-owning side), `hasMany<Target>()` (one-to-many),
+`hasOne<Target>()` (zero-or-one), `manyToMany<Target>()` (via junction).
+Relationship names come from the delegated `val`; only `belongsTo` needs a
+column name, which is used verbatim without adding a suffix.
+Modifiers: `.inverse(Target::edge)`, `.nullable()` (`belongsTo` is required by
 default), `.unique()`, `.field(handle)`,
 `throughLink<Junction>(Junction::src, Junction::tgt)` / `throughEntity<Junction>(...)`,
 `.onDelete(OnDelete.CASCADE | SET_NULL | RESTRICT)`.

@@ -153,7 +153,7 @@ class ImmutableBelongsToCompileTest {
 
     private class LinkOwner(throughLink: Boolean) : EntSchema("link_owners", clientName = "linkOwners") {
         override fun id() = EntId.long()
-        val targets by manyToMany<LinkTarget>("targets").apply {
+        val targets by manyToMany<LinkTarget>().apply {
             if (throughLink) throughLink<Link>(Link::owner, Link::target)
             else throughEntity<Link>(Link::owner, Link::target)
         }

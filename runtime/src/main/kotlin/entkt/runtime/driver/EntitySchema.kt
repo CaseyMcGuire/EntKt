@@ -31,15 +31,12 @@ data class EntitySchema(
      */
     val columns: List<ColumnMetadata>,
     /**
-     * Outgoing edges keyed by the edge's **storage** name — the string
-     * passed to `hasMany(...)` / `belongsTo(...)`, not the Kotlin
-     * property it was declared as. For
-     * `val outgoing by hasMany<Friendship>("sent_requests")` the key is
-     * `"sent_requests"`; `outgoing` names the generated API and never
-     * appears here.
+     * Outgoing edges keyed by their delegated Kotlin property names.
+     * For `val outgoing by hasMany<Friendship>()`, the key is `"outgoing"`.
+     * FK column names are independent and live in each edge's join metadata.
      *
-     * DatabaseDriver authors: predicates reaching a driver carry the storage
-     * name too, so a lookup with the value out of a `Predicate` matches.
+     * DatabaseDriver authors: predicates reaching a driver carry the relationship
+     * identifier too, so a lookup with the value out of a `Predicate` matches.
      * Each entry is the join recipe — see [EdgeMetadata].
      */
     val edges: Map<String, EdgeMetadata>,

@@ -17,5 +17,5 @@ class Post : EntSchema("posts", clientName = "posts") {
     val published by bool("published").default(false)
 
     val author by belongsTo<User>("author_id").inverse(User::posts)
-    val tags by manyToMany<Tag>("tags").throughEntity<PostTag>(PostTag::post, PostTag::tag)
+    val tags by manyToMany<Tag>().throughEntity<PostTag>(PostTag::post, PostTag::tag)
 }

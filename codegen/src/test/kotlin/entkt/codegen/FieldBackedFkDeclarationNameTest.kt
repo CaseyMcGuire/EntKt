@@ -50,7 +50,7 @@ class FieldBackedFkDeclarationNameTest {
         val schemaNames = finalize(target, post)
 
         val fks = computeEdgeFks(post, schemaNames)
-        val fk = fks.single { it.edgeName == "author_id" }
+        val fk = fks.single { it.edgeName == "author" }
         assertEquals("writer", fk.propertyName, "FK property name follows the Kotlin val")
         assertEquals("author_id", fk.columnName, "FK column name still tracks the storage column")
         assertTrue(fk.isFieldBacked)
@@ -66,7 +66,7 @@ class FieldBackedFkDeclarationNameTest {
         val post = Post()
         val schemaNames = finalize(target, post)
 
-        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author_id" }
+        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author" }
         // No declaration-name capture path applies — implicit FKs
         // keep their synthesized `${edgeName}Id` derivation.
         assertEquals("authorId", fk.propertyName)
@@ -88,7 +88,7 @@ class FieldBackedFkDeclarationNameTest {
         val post = Post()
         val schemaNames = finalize(target, post)
 
-        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author_id" }
+        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author" }
         assertEquals("authorId", fk.propertyName, "val authorId + column author_id keeps `authorId` as the FK API")
     }
 
@@ -106,7 +106,7 @@ class FieldBackedFkDeclarationNameTest {
         val post = Post()
         val schemaNames = finalize(target, post)
 
-        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author_id" }
+        val fk = computeEdgeFks(post, schemaNames).single { it.edgeName == "author" }
         assertEquals("maybeWriter", fk.propertyName)
     }
 

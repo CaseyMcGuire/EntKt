@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
 class QuerySurfaceCompileTest {
     private class Group : EntSchema("groups", clientName = "groups") {
         override fun id() = EntId.long()
-        val members by manyToMany<User>("members")
+        val members by manyToMany<User>()
             .throughEntity<Membership>(Membership::group, Membership::user)
     }
 

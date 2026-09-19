@@ -84,7 +84,7 @@ class DelegateBindingCompileFailTest {
             }
             class Post : EntSchema("posts", clientName = "posts") {
                 override fun id() = EntId.long()
-                var tags by hasMany<Tag>("post_tags")
+                var tags by hasMany<Tag>()
             }
             """.trimIndent(),
         )
@@ -134,5 +134,47 @@ class DelegateBindingCompileFailTest {
             result.exitCode,
             "Canonical delegated declarations must compile:\n${result.messages}",
         )
+    }
+
+    @Test
+    fun `relationship builders need no string and preserve their concrete types`() {
+        val result = compile(
+            """
+            class Target : EntSchema("targets", clientName = "targets") {
+                override fun id() = EntId.long()
+            }
+            class Owner : EntSchema("owners", clientName = "owners") {
+                override fun id() = EntId.long()
+                val children: HasManyBuilder<Target> by hasMany<Target>().comment("Children")
+                val primaryChild: HasOneBuilder<Target> by hasOne<Target>()
+                val linkedChildren: ManyToManyBuilder<Target> by manyToMany<Target>()
+                    .throughEntity<Link>(Link::owner, Link::target)
+            }
+            class Link : EntSchema("links", clientName = "links") {
+                override fun id() = EntId.long()
+                val owner by belongsTo<Owner>("owner_ref")
+                val target by belongsTo<Target>("target_ref")
+            }
+            """.trimIndent(),
+        )
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+    }
+
+    @Test
+    fun `non-column relationship builders no longer accept a string`() {
+        for (builder in listOf("hasMany", "hasOne", "manyToMany")) {
+            val result = compile(
+                """
+                class Target : EntSchema("targets", clientName = "targets") {
+                    override fun id() = EntId.long()
+                }
+                class Owner : EntSchema("owners", clientName = "owners") {
+                    override fun id() = EntId.long()
+                    val related by $builder<Target>("legacy_related")
+                }
+                """.trimIndent(),
+            )
+            assertCompileError(result, "Argument type mismatch")
+        }
     }
 }

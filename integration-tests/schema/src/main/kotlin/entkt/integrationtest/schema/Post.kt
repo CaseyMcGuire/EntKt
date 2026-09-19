@@ -16,6 +16,6 @@ class Post : EntSchema("posts", clientName = "posts") {
 
     val title by string("title")
 
-    val tags by manyToMany<Tag>("tags")
+    val tags by manyToMany<Tag>()
         .throughLink<PostTag>(PostTag::post, PostTag::tag)
 }

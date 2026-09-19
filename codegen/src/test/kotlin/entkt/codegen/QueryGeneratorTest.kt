@@ -280,7 +280,7 @@ class QueryGeneratorTest {
 
     @Test
     fun `does not emit traversal when schemaNames is empty`() {
-        // User declares `hasMany<Car>("cars")`, but without a schemaNames map
+        // User declares `hasMany<Car>()`, but without a schemaNames map
         // we can't resolve the target's class name -> no traversal method.
         val user = User()
         finalize(user, Car())

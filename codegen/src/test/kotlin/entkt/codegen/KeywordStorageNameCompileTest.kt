@@ -27,7 +27,7 @@ private class KeywordStorage : EntSchema("object", clientName = "keywordStorages
     val category by string("class")
     val whenever by instant("when")
     val truthy by bool("true")
-    val related by hasMany<KeywordItem>("object")
+    val related by hasMany<KeywordItem>()
 
     val byCategory = index("class", category)
 }

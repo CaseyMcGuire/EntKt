@@ -16,7 +16,7 @@ class User : EntSchema("users", clientName = "users") {
     val age by int("age").nullable()
     val active by bool("active").default(true)
 
-    val posts by hasMany<Post>("posts")
-    val sentRequests by hasMany<Friendship>("sent_requests")
-    val receivedRequests by hasMany<Friendship>("received_requests")
+    val posts by hasMany<Post>()
+    val sentRequests by hasMany<Friendship>()
+    val receivedRequests by hasMany<Friendship>()
 }

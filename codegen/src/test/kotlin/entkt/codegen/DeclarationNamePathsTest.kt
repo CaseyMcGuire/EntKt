@@ -11,13 +11,12 @@ import kotlin.test.assertTrue
 
 private class PathUser : EntSchema("path_users", clientName = "pathUsers") {
     override fun id() = EntId.long()
-    val directories by hasMany<PathDirectory>("legacy_owner")
+    val directories by hasMany<PathDirectory>()
 }
 
 /**
- * Edge storage name (`legacy_owner`) and declaration name (`curator`)
- * disagree, so any place that emits one where the other belongs is
- * visible in the generated source.
+ * The FK column (`legacy_owner_id`) and relationship name (`curator`)
+ * differ, so confusing physical storage with relationship identity is visible.
  */
 private class PathDirectory : EntSchema("path_dirs", clientName = "pathDirs") {
     override fun id() = EntId.long()
@@ -25,14 +24,8 @@ private class PathDirectory : EntSchema("path_dirs", clientName = "pathDirs") {
 }
 
 /**
- * Pins the split between the two edge-name roles.
- *
- * `ResolvedQueryEdge` exposes both, and they are easy to confuse:
- * `name` is the storage identifier that keys driver edge metadata and
- * companion `EdgeRef` predicate dispatch, while `publicName` is the
- * Kotlin declaration that appears in caller-facing diagnostics. Emitting
- * either in the other's place produces code that still compiles — it
- * just reports the wrong name, or silently fails an edge lookup.
+ * Relationship lookup, predicate dispatch, and caller-facing paths all use
+ * the declaration name. Only join metadata should use the physical FK column.
  *
  * See `docs/02-schema.md#names`.
  */
@@ -91,18 +84,15 @@ class DeclarationNamePathsTest {
     }
 
     @Test
-    fun `predicate dispatch and edge refs stay on the storage name`() {
+    fun `predicate dispatch and edge refs use the relationship name`() {
         val (user, dir) = fixture()
         val entity = EntityGenerator("com.example.ent")
             .generate("PathDirectory", dir, names(user, dir))
             .toString().replace("\\s+".toRegex(), " ")
 
-        // The companion EdgeRef is the driver's edge-lookup key, so it
-        // must remain the storage identifier even though the Kotlin
-        // property it hangs off is named `curator`.
         assertTrue(
-            """EdgeRef<PathDirectory, PathUser, PathUserQueryScope> = EdgeRef("legacy_owner_id")""" in entity,
-            "companion EdgeRef must keep the storage edge name\n$entity",
+            """EdgeRef<PathDirectory, PathUser, PathUserQueryScope> = EdgeRef("curator")""" in entity,
+            "companion EdgeRef must use the relationship name\n$entity",
         )
         assertTrue(
             "public val curator:" in entity,
@@ -111,21 +101,17 @@ class DeclarationNamePathsTest {
     }
 
     @Test
-    fun `edge-predicate interception dispatches on storage but seeds the declaration`() {
+    fun `edge-predicate interception uses relationship names while joins use columns`() {
         val (user, dir) = fixture()
-        val query = generatedQueryAndDescriptors(user, dir)
+        val query = generatedQueryAndDescriptors(user, dir).replace("\\s+".toRegex(), " ")
 
-        // The `when` key is the companion EdgeRef's value, so it must
-        // stay storage-keyed or the branch never matches...
         assertTrue(
-            """"legacy_owner_id" to PathDirectoryCuratorEdgeDescriptor""" in query,
-            "edge-predicate dispatch must key on the storage name\n$query",
+            """"curator" to PathDirectoryCuratorEdgeDescriptor""" in query,
+            "edge-predicate dispatch must key on the relationship name\n$query",
         )
-        // ...while the resolved mapping carries the declaration name
-        // that runtime interceptor and denial paths expose.
         assertTrue(
-            """"legacy_owner_id" to PathDirectoryCuratorEdgeDescriptor""" in query,
-            "storage dispatch should resolve the declaration-named typed mapping\n$query",
+            """sourceColumn = "legacy_owner_id"""" in query,
+            "joins must retain the literal FK column\n$query",
         )
         assertTrue(
             """override val name: String = "curator""" in query,

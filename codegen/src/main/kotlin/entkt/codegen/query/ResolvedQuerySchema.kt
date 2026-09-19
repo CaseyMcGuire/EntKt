@@ -112,10 +112,10 @@ internal class ResolvedQueryEdge(
     val targetEdgeFks: List<EdgeFk>,
 ) {
     /**
-     * The edge's **storage** identifier. This is the edge-lookup key in
+     * The edge's declaration-derived identifier. This is the edge-lookup key in
      * driver metadata and the value carried by the companion `EdgeRef`,
      * so predicate dispatch (`Predicate.HasEdgeWith.edge`) matches on
-     * it. Never emit it into a caller-facing path.
+     * it. Physical FK column names are stored separately in the join metadata.
      */
     val name: String get() = edge.name
 

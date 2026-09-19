@@ -61,7 +61,7 @@ private class CommentPostSchema : EntSchema("posts", clientName = "commentPostSc
 private class CommentAuthorSchema : EntSchema("authors", clientName = "commentAuthorSchemas") {
     override fun id() = EntId.int()
     val name by string("name")
-    val posts by hasMany<CommentPostSchema>("posts").comment("All posts authored by this user")
+    val posts by hasMany<CommentPostSchema>().comment("All posts authored by this user")
 }
 
 private class BlobSchema : EntSchema("blobs", clientName = "blobSchemas") {
@@ -311,7 +311,7 @@ class EntityGeneratorTest {
 
     @Test
     fun `emits an EdgeRef on the companion for each declared edge`() {
-        // User has `hasMany<Car>("cars")` — needs the schemaNames map so the
+        // User has `hasMany<Car>()` — needs the schemaNames map so the
         // generator can resolve the target's class names.
         val user = User()
         val car = Car()

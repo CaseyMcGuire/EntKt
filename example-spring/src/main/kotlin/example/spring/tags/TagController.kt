@@ -62,7 +62,7 @@ class TagController(
      * List posts that have this tag.
      *
      * Uses the generated forward M2M traversal `TagQuery.queryPosts()`,
-     * declared by `Tag.posts = manyToMany<Post>(...).throughEntity<PostTag>(...)`
+     * declared by `val posts by manyToMany<Post>().throughEntity<PostTag>(...)`
      * in [example.schema.Tag]. The traversal lowers to a
      * `Predicate.HasM2MEdgeFromShape("posts", <shaped tag source>)`
      * evaluated against each candidate `Post` row — the shape carries

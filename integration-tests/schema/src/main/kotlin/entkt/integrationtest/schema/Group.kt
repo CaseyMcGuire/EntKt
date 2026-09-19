@@ -17,6 +17,6 @@ class Group : EntSchema("groups", clientName = "groups") {
 
     val name by string("name")
 
-    val users by manyToMany<User>("users")
+    val users by manyToMany<User>()
         .throughEntity<Membership>(Membership::group, Membership::user)
 }

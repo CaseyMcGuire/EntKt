@@ -345,7 +345,7 @@ internal fun resolveEdgeJoin(
             val fkColumn = if (fieldName != null) {
                 resolveExplicitField(fieldName, source, edge.name)
             } else {
-                edge.name
+                kind.column
             }
             return EdgeJoin(sourceColumn = fkColumn, targetColumn = "id")
         }
@@ -383,7 +383,7 @@ internal fun resolveEdgeJoin(
             val fkColumn = if (inverseFieldName != null) {
                 resolveExplicitField(inverseFieldName, edge.target, inverse.name)
             } else {
-                inverse.name
+                inverseBt.column
             }
             return EdgeJoin(sourceColumn = "id", targetColumn = fkColumn)
         }
@@ -422,7 +422,7 @@ internal fun resolveM2MEdgeJoin(
     val sourceFk = if (sourceFieldName != null) {
         resolveExplicitField(sourceFieldName, junctionSchema, sourceEdge.name)
     } else {
-        sourceEdge.name
+        sourceBt.column
     }
 
     val targetEdge = junctionEdges.firstOrNull { it.name == through.targetEdge && it.kind is EdgeKind.BelongsTo && it.target === edge.target }
@@ -444,7 +444,7 @@ internal fun resolveM2MEdgeJoin(
     val targetFk = if (targetFieldName != null) {
         resolveExplicitField(targetFieldName, junctionSchema, targetEdge.name)
     } else {
-        targetEdge.name
+        targetBt.column
     }
 
     return EdgeJoin(

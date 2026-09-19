@@ -300,7 +300,7 @@ class PrivacyGeneratorTest {
 private class PrivM2MPost : EntSchema("m2m_priv_posts", clientName = "privM2MPosts") {
     override fun id() = EntId.long()
     val title by string("title")
-    val tags by manyToMany<PrivM2MTag>("tags")
+    val tags by manyToMany<PrivM2MTag>()
         .throughLink<PrivM2MPostTagJunction>(PrivM2MPostTagJunction::post, PrivM2MPostTagJunction::tag)
 }
 private class PrivM2MTag : EntSchema("m2m_priv_tags", clientName = "privM2MTags") {

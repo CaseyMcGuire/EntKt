@@ -13,6 +13,6 @@ class Tag : EntSchema("tags", clientName = "tags") {
     val name by string("name").unique()
     val category by enum<TagCategory>("category")
 
-    val posts by manyToMany<Post>("posts")
+    val posts by manyToMany<Post>()
         .throughEntity<PostTag>(PostTag::tag, PostTag::post)
 }

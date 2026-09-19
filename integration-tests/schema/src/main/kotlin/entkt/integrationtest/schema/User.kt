@@ -12,7 +12,7 @@ class User : EntSchema("users", clientName = "users") {
     // (generated toString redaction + the ent viewer's redacted cells).
     val apiToken by string("api_token").nullable().sensitive()
 
-    val articles by hasMany<Article>("articles")
+    val articles by hasMany<Article>()
 
     /**
      * Inverse of [Directory.curator]. The declaration is `directories`
@@ -20,7 +20,7 @@ class User : EntSchema("users", clientName = "users") {
      * traversal is `queryDirectories()` — nothing derived from storage
      * or from the `Directory` type.
      */
-    val directories by hasMany<Directory>("legacy_owner")
+    val directories by hasMany<Directory>()
 
     /**
      * Inverse side of [Group.users]. Pair-swapped junction edge
@@ -30,7 +30,7 @@ class User : EntSchema("users", clientName = "users") {
      * criteria require null-skip semantics to hold in both
      * directions; this edge is what exercises the inverse half.
      */
-    val groups by manyToMany<Group>("groups")
+    val groups by manyToMany<Group>()
         .throughEntity<Membership>(Membership::user, Membership::group)
 
     /**
@@ -40,5 +40,5 @@ class User : EntSchema("users", clientName = "users") {
      * edges above, and appending keeps their relative order
      * stable.
      */
-    val profile by hasOne<Profile>("profile")
+    val profile by hasOne<Profile>()
 }

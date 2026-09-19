@@ -415,8 +415,8 @@ documented authorization boundary.
 
 ## Edge Traversal
 
-Query builders expose methods for traversing edges. Given a `User` with
-a `hasMany<Post>("posts")` edge, the generated query builder has:
+Query builders expose methods for traversing edges. Given a `User` declaring
+`val posts by hasMany<Post>()`, the generated query builder has:
 
 ### `queryPosts()` -- follow an edge
 
@@ -540,8 +540,8 @@ into the API:
 
 ```kotlin
 class User : EntSchema("people", clientName = "users") {
-    val authoredPosts by hasMany<Post>("authored_post_rows")
-    val reviewedPosts by hasMany<Post>("reviewed_post_rows")
+    val authoredPosts by hasMany<Post>()
+    val reviewedPosts by hasMany<Post>()
 }
 
 client.users.query {
@@ -550,10 +550,9 @@ client.users.query {
 }.all(viewerContext)
 ```
 
-A declaration/storage mismatch generates only the declaration-based
-method: `val directories by hasMany<Directory>("legacy_owner")`
-generates `loadDirectories()` — nothing is derived from the
-`legacy_owner` storage string, the `Directory` type, or an English
+`val directories by hasMany<Directory>()` generates `loadDirectories()`
+and identifies the relationship as `directories`. No separate string is
+needed, and nothing is derived from the `Directory` type or an English
 pluralizer.
 
 The executor is set-based: each configured eager edge collects the

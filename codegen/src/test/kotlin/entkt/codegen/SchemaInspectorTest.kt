@@ -25,7 +25,7 @@ private class InspAuthor : EntSchema("authors", clientName = "inspAuthors") {
     override fun id() = EntId.long()
     val name by string("name")
     val email by string("email").unique()
-    val posts by hasMany<InspPost>("posts")
+    val posts by hasMany<InspPost>()
     val byEmail = index("idx_authors_email", email)
 }
 
@@ -46,13 +46,13 @@ private class InspProfile : EntSchema("profiles", clientName = "inspProfiles") {
 private class InspProfileUser : EntSchema("profile_users", clientName = "inspProfileUsers") {
     override fun id() = EntId.uuid()
     val name by string("name")
-    val profile by hasOne<InspProfile>("profile")
+    val profile by hasOne<InspProfile>()
 }
 
 private class InspTag : EntSchema("tags", clientName = "inspTags") {
     override fun id() = EntId.int()
     val label by string("label")
-    val articles by manyToMany<InspArticle>("articles")
+    val articles by manyToMany<InspArticle>()
         .throughEntity<InspArticleTag>(InspArticleTag::tag, InspArticleTag::article)
 }
 
@@ -72,12 +72,12 @@ private class InspArticleTag : EntSchema("article_tags", clientName = "inspArtic
 // Pair-swapped throughLink fixtures: both declared sides are writable.
 private class InspLinkPost : EntSchema("link_posts", clientName = "inspLinkPosts") {
     override fun id() = EntId.long()
-    val tags by manyToMany<InspLinkTag>("tags")
+    val tags by manyToMany<InspLinkTag>()
         .throughLink<InspLinkPostTag>(InspLinkPostTag::post, InspLinkPostTag::tag)
 }
 private class InspLinkTag : EntSchema("link_tags", clientName = "inspLinkTags") {
     override fun id() = EntId.long()
-    val posts by manyToMany<InspLinkPost>("posts")
+    val posts by manyToMany<InspLinkPost>()
         .throughLink<InspLinkPostTag>(InspLinkPostTag::tag, InspLinkPostTag::post)
 }
 private class InspLinkPostTag : EntSchema("link_post_tags", clientName = "inspLinkPostTags") {
@@ -105,7 +105,7 @@ private class InspEvent : EntSchema("events", clientName = "inspEvents") {
 // Schema pair for testing edge-driven uniqueness on reused FK fields
 private class InspAccountHolder : EntSchema("account_holders", clientName = "inspAccountHolders") {
     override fun id() = EntId.int()
-    val account by hasOne<InspAccount>("account")
+    val account by hasOne<InspAccount>()
 }
 
 private class InspAccount : EntSchema("accounts", clientName = "inspAccounts") {
@@ -117,7 +117,7 @@ private class InspAccount : EntSchema("accounts", clientName = "inspAccounts") {
 
 private class InspCascadeParent : EntSchema("cascade_parents", clientName = "inspCascadeParents") {
     override fun id() = EntId.int()
-    val children by hasMany<InspCascadeChild>("children")
+    val children by hasMany<InspCascadeChild>()
 }
 
 private class InspCascadeChild : EntSchema("cascade_children", clientName = "inspCascadeChilds") {
@@ -161,7 +161,7 @@ class SchemaInspectorTest {
         class Orphan : EntSchema("orphans", clientName = "orphans") { override fun id() = EntId.int() }
         class Parent : EntSchema("parents", clientName = "parents") {
             override fun id() = EntId.int()
-            val orphans by hasMany<Orphan>("orphans")
+            val orphans by hasMany<Orphan>()
         }
         val result = SchemaInspector.validate(listOf(
             SchemaInput(Parent()),
@@ -178,8 +178,8 @@ class SchemaInspectorTest {
         class TargetB : EntSchema("target_b", clientName = "targetBs") { override fun id() = EntId.int() }
         class BadParent : EntSchema("bad_parents", clientName = "badParents") {
             override fun id() = EntId.int()
-            val a by hasMany<TargetA>("a_things")
-            val b by hasMany<TargetB>("b_things")
+            val a by hasMany<TargetA>()
+            val b by hasMany<TargetB>()
         }
         val result = SchemaInspector.validate(listOf(
             SchemaInput(BadParent()),
@@ -227,7 +227,7 @@ class SchemaInspectorTest {
         class Orphan : EntSchema("orphans", clientName = "orphans") { override fun id() = EntId.int() }
         class Parent : EntSchema("parents", clientName = "parents") {
             override fun id() = EntId.int()
-            val orphans by hasMany<Orphan>("orphans")
+            val orphans by hasMany<Orphan>()
         }
         val err = assertFailsWith<IllegalStateException> {
             SchemaInspector.explain(listOf(
@@ -327,7 +327,7 @@ class SchemaInspectorTest {
         assertEquals("id", fk.targetColumn)
         assertFalse(fk.nullable)
         assertEquals("RESTRICT", fk.onDelete)
-        assertEquals("author_id", fk.sourceEdge)
+        assertEquals("author", fk.sourceEdge)
     }
 
     @Test
@@ -338,7 +338,7 @@ class SchemaInspectorTest {
         val junction = graph.schemas.first { it.schemaName == "InspArticleTag" }
 
         assertEquals(2, junction.foreignKeys.size)
-        val articleFk = junction.foreignKeys.first { it.sourceEdge == "article_id" }
+        val articleFk = junction.foreignKeys.first { it.sourceEdge == "article" }
         assertEquals("article_id", articleFk.column)
         assertEquals("articles", articleFk.targetTable)
         assertFalse(articleFk.nullable)
@@ -375,7 +375,7 @@ class SchemaInspectorTest {
     fun `explain captures belongsTo edge with FK and inverse`() {
         val graph = SchemaInspector.explain(inputs(InspAuthor(), InspPost()))
         val post = graph.schemas.first { it.schemaName == "InspPost" }
-        val authorEdge = post.edges.first { it.name == "author_id" }
+        val authorEdge = post.edges.first { it.name == "author" }
         assertEquals("belongsTo", authorEdge.kind)
         assertEquals("InspAuthor", authorEdge.targetSchema)
         assertEquals("author_id", authorEdge.fkColumn)
@@ -391,7 +391,7 @@ class SchemaInspectorTest {
         assertEquals("hasMany", postsEdge.kind)
         assertEquals("InspPost", postsEdge.targetSchema)
         assertNull(postsEdge.fkColumn)
-        assertEquals("author_id", postsEdge.inverse)
+        assertEquals("author", postsEdge.inverse)
     }
 
     @Test
@@ -415,8 +415,8 @@ class SchemaInspectorTest {
 
         val through = articlesEdge.through!!
         assertEquals("article_tags", through.junctionTable)
-        assertEquals("tag_id", through.sourceEdge)
-        assertEquals("article_id", through.targetEdge)
+        assertEquals("tag", through.sourceEdge)
+        assertEquals("article", through.targetEdge)
         // throughEntity has no link-table write helpers.
         assertNull(through.writeHelpers)
     }
@@ -636,8 +636,8 @@ class SchemaInspectorTest {
 
         assertContains(json, "\"kind\": \"manyToMany\"")
         assertContains(json, "\"junctionTable\": \"article_tags\"")
-        assertContains(json, "\"sourceEdge\": \"tag_id\"")
-        assertContains(json, "\"targetEdge\": \"article_id\"")
+        assertContains(json, "\"sourceEdge\": \"tag\"")
+        assertContains(json, "\"targetEdge\": \"article\"")
     }
 
     @Test
@@ -726,10 +726,11 @@ class SchemaInspectorTest {
         assertEquals("legacy_title_txt", title.name)
 
         val edge = doc.edges.first { it.apiName == "writer" }
-        assertEquals("legacy_author_id", edge.name)
+        assertEquals("writer", edge.name)
+        assertEquals("legacy_author_id", edge.fkColumn)
 
         val fk = doc.foreignKeys.first { it.sourceEdgeApiName == "writer" }
-        assertEquals("legacy_author_id", fk.sourceEdge)
+        assertEquals("writer", fk.sourceEdge)
         assertEquals("writerId", fk.propertyName)
         assertEquals("legacy_author_id", fk.column)
 

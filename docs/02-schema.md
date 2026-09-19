@@ -12,22 +12,27 @@ class User : EntSchema("users", clientName = "users") {
     val name by string("name")
     val email by string("email").unique()
 
-    val posts by hasMany<Post>("posts")
+    val posts by hasMany<Post>()
 }
 ```
 
 ## Names
 
-A schema carries three independent kinds of name. entkt never derives
-one from another, and never pluralizes, singularizes, or otherwise
-transforms any of them.
+A schema carries separate type, client, property, and storage names.
+entkt never pluralizes, singularizes, or otherwise transforms them.
 
 | What you write | What it names |
 |---|---|
 | The schema class name (`User`) | Generated types: `User`, `UserQuery`, `UserRepo`, `UserCreateDraft`, `UserUpdateDraft` |
 | `clientName = "users"` | Generated client and configuration properties: `client.users`, `privacy.users { }`, `validation.users { }`, `hooks.users { }` |
 | The delegated `val` (`val email by …`) | Every generated field or edge API: `User.email`, `user.email`, `create.email` |
-| The string argument (`string("email")`, `hasMany<Post>("posts")`) | Storage only: columns, tables, indexes, constraints, joins, migration identity |
+| A storage-name argument (`string("email")`, `belongsTo<User>("author_id")`, `index("idx_email", email)`) | Physical columns, tables, or indexes |
+
+`hasMany<T>()`, `hasOne<T>()`, and `manyToMany<T>()` take no name string:
+their generated APIs and internal relationship identifiers use the delegated
+property name verbatim. They do not name a physical column or table. A
+`belongsTo` relationship also uses its property name for lookup, separately
+from its explicitly named FK column.
 
 Because these are independent, renames have independent consequences:
 
@@ -297,42 +302,44 @@ property declarations on the schema class:
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val posts by hasMany<Post>("posts")
+    val posts by hasMany<Post>()
 }
 
 class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
 
-    val author by belongsTo<User>("author").inverse(User::posts)
+    val author by belongsTo<User>("author_id").inverse(User::posts)
 }
 ```
 
 ### HasMany / HasOne
 
-`hasMany<Target>(name)` declares the "one" side of a one-to-many
+`hasMany<Target>()` declares the "one" side of a one-to-many
 relationship. No FK column is added to this entity — the FK lives on
-the target. `hasOne<Target>(name)` is similar but for one-to-one
-relationships (the inverse `belongsTo` must have `.unique()`).
+the target. `hasOne<Target>()` describes a zero-or-one relationship
+(the inverse `belongsTo` must have `.unique()`). Both use the delegated
+property name as the relationship identifier, without a separate name string.
 
 ```kotlin
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val posts by hasMany<Post>("posts")
+    val posts by hasMany<Post>()
 }
 ```
 
 ### BelongsTo
 
-`belongsTo<Target>(name)` declares the FK-owning side. This synthesizes
-a FK column (e.g. `author_id`) on the current entity. Relationships are
-required-by-default; add `.nullable()` to make the FK nullable.
+`belongsTo<Target>(column)` declares the FK-owning side. The string is the
+exact FK column name on the current entity; no `_id` suffix is added.
+These relationships are required by default; add `.nullable()` to make
+the FK nullable.
 
 ```kotlin
 class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
 
-    val author by belongsTo<User>("author").inverse(User::posts)
+    val author by belongsTo<User>("author_id").inverse(User::posts)
 }
 ```
 
@@ -353,7 +360,7 @@ By default, FK columns use `ON DELETE SET NULL` (nullable) or
 class Pet : EntSchema("pets", clientName = "pets") {
     override fun id() = EntId.int()
 
-    val owner by belongsTo<Owner>("owner").onDelete(OnDelete.CASCADE)
+    val owner by belongsTo<Owner>("owner_id").onDelete(OnDelete.CASCADE)
 }
 ```
 
@@ -392,7 +399,7 @@ The throughEntity case (most domain models start here):
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val groups by manyToMany<Group>("groups")
+    val groups by manyToMany<Group>()
         .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 ```
@@ -409,15 +416,15 @@ junction edge is source vs target:
 class Person : EntSchema("people", clientName = "persons") {
     override fun id() = EntId.long()
 
-    val friends by manyToMany<Person>("friends")
+    val friends by manyToMany<Person>()
         .throughEntity<Friendship>(Friendship::user, Friendship::friend)
 }
 
 class Friendship : EntSchema("friendships", clientName = "friendships") {
     override fun id() = EntId.long()
 
-    val user by belongsTo<Person>("user")
-    val friend by belongsTo<Person>("friend")
+    val user by belongsTo<Person>("user_id")
+    val friend by belongsTo<Person>("friend_id")
 }
 ```
 
@@ -457,13 +464,13 @@ Quick map:
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val profile by hasOne<Profile>("profile")
+    val profile by hasOne<Profile>()
 }
 
 class Profile : EntSchema("profiles", clientName = "profiles") {
     override fun id() = EntId.uuid()
 
-    val user by belongsTo<User>("user")
+    val user by belongsTo<User>("user_id")
         .inverse(User::profile)
         .unique()
 }
@@ -485,8 +492,8 @@ Generated table shape:
 class Employee : EntSchema("employees", clientName = "employees") {
     override fun id() = EntId.long()
 
-    val mentee by hasOne<Employee>("mentee")
-    val mentor by belongsTo<Employee>("mentor")
+    val mentee by hasOne<Employee>()
+    val mentor by belongsTo<Employee>("mentor_id")
         .inverse(Employee::mentee)
         .unique()
 }
@@ -510,13 +517,13 @@ pattern is already bidirectional as soon as you declare the inverse:
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.uuid()
 
-    val profile by hasOne<Profile>("profile")
+    val profile by hasOne<Profile>()
 }
 
 class Profile : EntSchema("profiles", clientName = "profiles") {
     override fun id() = EntId.uuid()
 
-    val user by belongsTo<User>("user")
+    val user by belongsTo<User>("user_id")
         .inverse(User::profile)
         .unique()
 }
@@ -534,13 +541,13 @@ Result:
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val posts by hasMany<Post>("posts")
+    val posts by hasMany<Post>()
 }
 
 class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
 
-    val author by belongsTo<User>("author")
+    val author by belongsTo<User>("author_id")
         .inverse(User::posts)
 }
 ```
@@ -562,8 +569,8 @@ Generated table shape:
 class Category : EntSchema("categories", clientName = "categories") {
     override fun id() = EntId.long()
 
-    val children by hasMany<Category>("children")
-    val parent by belongsTo<Category>("parent")
+    val children by hasMany<Category>()
+    val parent by belongsTo<Category>("parent_id")
         .inverse(Category::children)
         .nullable()
 }
@@ -583,7 +590,7 @@ This is the same physical pattern as O2M two types, but recursive.
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val groups by manyToMany<Group>("groups")
+    val groups by manyToMany<Group>()
         .throughEntity<UserGroup>(UserGroup::user, UserGroup::group)
 }
 
@@ -594,8 +601,8 @@ class Group : EntSchema("groups", clientName = "groups") {
 class UserGroup : EntSchema("user_groups", clientName = "userGroups") {
     override fun id() = EntId.long()
 
-    val user by belongsTo<User>("user")
-    val group by belongsTo<Group>("group")
+    val user by belongsTo<User>("user_id")
+    val group by belongsTo<Group>("group_id")
 
     val byUserGroup = index("idx_user_groups_user_group", user.fk, group.fk).unique()
 }
@@ -622,15 +629,15 @@ an explicit `EntSchema`.
 class Person : EntSchema("people", clientName = "persons") {
     override fun id() = EntId.long()
 
-    val friends by manyToMany<Person>("friends")
+    val friends by manyToMany<Person>()
         .throughEntity<Friendship>(Friendship::user, Friendship::friend)
 }
 
 class Friendship : EntSchema("friendships", clientName = "friendships") {
     override fun id() = EntId.long()
 
-    val user by belongsTo<Person>("user")
-    val friend by belongsTo<Person>("friend")
+    val user by belongsTo<Person>("user_id")
+    val friend by belongsTo<Person>("friend_id")
 
     val byFriendPair = index("idx_friendships_user_friend", user.fk, friend.fk).unique()
 }
@@ -655,29 +662,29 @@ and which is the target — `sourceEdge` first, then `targetEdge`.
 class User : EntSchema("users", clientName = "users") {
     override fun id() = EntId.long()
 
-    val groups by manyToMany<Group>("groups")
+    val groups by manyToMany<Group>()
         .throughEntity<Membership>(Membership::user, Membership::group)
 }
 
 class Group : EntSchema("groups", clientName = "groups") {
     override fun id() = EntId.long()
 
-    val users by manyToMany<User>("users")
+    val users by manyToMany<User>()
         .throughEntity<Membership>(Membership::group, Membership::user)
 }
 
 class Membership : EntSchema("memberships", clientName = "memberships") {
     override fun id() = EntId.long()
 
-    val user by belongsTo<User>("user")
-    val group by belongsTo<Group>("group")
+    val user by belongsTo<User>("user_id")
+    val group by belongsTo<Group>("group_id")
 }
 ```
 
 Result:
 
-- `User` can traverse to `groups` via its own `manyToMany<Group>("groups")` declaration
-- `Group` can traverse to `users` via its own `manyToMany<User>("users")` declaration
+- `User` can traverse to `groups` via its own `manyToMany<Group>()` declaration
+- `Group` can traverse to `users` via its own `manyToMany<User>()` declaration
 - the database contains the `users`, `groups`, and `memberships` tables
 - bidirectional traversal **requires** both endpoints to declare their own
   `manyToMany`; declaring one side does not add an edge to the other.
