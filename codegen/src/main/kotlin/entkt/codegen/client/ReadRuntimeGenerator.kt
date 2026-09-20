@@ -115,7 +115,7 @@ internal class ReadRuntimeGenerator(
             add("return when (entity) {\n")
             for (input in sorted) {
                 add(
-                    "  %T -> %L.hasLoadPrivacy()\n",
+                    "  %T -> this.%N.hasLoadPrivacy()\n",
                     ClassName(packageName, "${input.name}Descriptor"),
                     input.clientName,
                 )
@@ -139,7 +139,7 @@ internal class ReadRuntimeGenerator(
             add("return when (entity) {\n")
             for (input in sorted) {
                 add(
-                    "  %T -> %L.evaluateLoadPrivacy(\n" +
+                    "  %T -> this.%N.evaluateLoadPrivacy(\n" +
                         "    viewerContext,\n" +
                         "    entities as %T<%T>,\n" +
                         "  ) as %T<%L>\n",

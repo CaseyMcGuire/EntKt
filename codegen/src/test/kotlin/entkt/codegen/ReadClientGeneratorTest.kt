@@ -161,14 +161,14 @@ class ReadClientGeneratorTest {
         assert(!output.contains("currentViewerContext") && !output.contains("ViewerContextProvider"))
         assert(
             output.contains(
-                "CarDescriptor -> cars.hasLoadPrivacy()",
+                "CarDescriptor -> this.cars.hasLoadPrivacy()",
             ),
         ) {
             "LOAD configuration should dispatch through generated descriptor identity\n$output"
         }
         assert(
             output.contains(
-                "CarDescriptor -> cars.evaluateLoadPrivacy( " +
+                "CarDescriptor -> this.cars.evaluateLoadPrivacy( " +
                     "viewerContext, entities as List<Car>, ) as PrivacyEvaluation<Entity>",
             ),
         ) {
