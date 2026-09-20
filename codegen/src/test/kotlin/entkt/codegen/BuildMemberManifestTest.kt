@@ -123,17 +123,17 @@ class BuildMemberManifestTest {
         )
 
         assertEquals(
-            setOf("title", "setTitle", "unsetTitle"),
+            setOf("title", "setTitle", "unsetTitle", "copy"),
             byArtifact["NotebookBeforeSaveState"],
         )
         assertEquals(
-            setOf("client", "viewerContext", "title", "setTitle", "unsetTitle"),
+            setOf("client", "viewerContext", "title", "setTitle", "unsetTitle", "copy"),
             byArtifact["NotebookBeforeCreateState"],
         )
         assertEquals(
             setOf(
                 "client", "viewerContext", "before", "pendingEdges",
-                "title", "setTitle", "unsetTitle",
+                "title", "setTitle", "unsetTitle", "copy",
             ),
             byArtifact["NotebookBeforeUpdateState"],
         )

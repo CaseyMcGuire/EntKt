@@ -493,6 +493,9 @@ private fun addStateAssignmentMembers(
     scalars: List<entkt.schema.Field>,
     fks: List<EdgeFk>,
 ) {
+    if (scalars.isNotEmpty() || fks.isNotEmpty()) {
+        manifest.add(artifact, "copy", GeneratedMemberKind.FUNCTION, "private hook-state copy helper")
+    }
     for (field in scalars) {
         addStateAssignmentMembers(
             manifest,

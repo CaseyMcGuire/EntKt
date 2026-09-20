@@ -2,6 +2,7 @@ package entkt.codegen.mutation
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
+import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
 import entkt.codegen.apiName
@@ -140,8 +141,11 @@ internal class MutationGenerator(
                     initializer(assignment.name)
                     assignment.comment?.let { addKdoc("%L", it) }
                 }
-                addFunction(replacementFunction(stateClass, context, assignments, assignment, set = true))
-                addFunction(replacementFunction(stateClass, context, assignments, assignment, set = false))
+                addFunction(replacementFunction(stateClass, assignment, set = true))
+                addFunction(replacementFunction(stateClass, assignment, set = false))
+            }
+            if (assignments.isNotEmpty()) {
+                addFunction(copyFunction(stateClass, context, assignments))
             }
         }
         return kotlinFile(packageName, stateClass.simpleName) {
@@ -152,25 +156,37 @@ internal class MutationGenerator(
 
     private fun replacementFunction(
         stateClass: ClassName,
-        context: List<StateProperty>,
-        assignments: List<Assignment>,
         target: Assignment,
         set: Boolean,
     ) = function(
         (if (set) "set" else "unset") + target.name.replaceFirstChar { it.uppercaseChar() },
         stateClass,
     ) {
-        if (set) parameter("value", target.valueType)
+        if (set) {
+            parameter("value", target.valueType)
+            addStatement("return copy(%N = %T.Set(value))", target.name, FIELD_PATCH)
+        } else {
+            addStatement("return copy(%N = %T.Unset)", target.name, FIELD_PATCH)
+        }
+    }
+
+    private fun copyFunction(
+        stateClass: ClassName,
+        context: List<StateProperty>,
+        assignments: List<Assignment>,
+    ) = function("copy", stateClass) {
+        addModifiers(KModifier.PRIVATE)
+        assignments.forEach { assignment ->
+            parameter(assignment.name, assignment.patchType) {
+                defaultValue("this.%N", assignment.name)
+            }
+        }
         addCode(codeBlock {
             add("return %T(\n", stateClass)
             indent()
-            context.forEach { member -> add("%L = %L,\n", member.name, member.name) }
+            context.forEach { member -> add("%N = this.%N,\n", member.name, member.name) }
             assignments.forEach { assignment ->
-                when {
-                    assignment != target -> add("%L = %L,\n", assignment.name, assignment.name)
-                    set -> add("%L = %T.Set(value),\n", assignment.name, FIELD_PATCH)
-                    else -> add("%L = %T.Unset,\n", assignment.name, FIELD_PATCH)
-                }
+                add("%N = %N,\n", assignment.name, assignment.name)
             }
             unindent()
             add(")\n")
