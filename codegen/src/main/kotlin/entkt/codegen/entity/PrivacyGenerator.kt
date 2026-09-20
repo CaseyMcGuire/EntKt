@@ -6,14 +6,11 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
-import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.metadata.EdgeFk
-import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.kotlinFile
@@ -34,26 +31,21 @@ import entkt.schema.Field
 
 private val PRIVACY_RULE = ClassName("entkt.runtime.privacy", "PrivacyRule")
 private val BATCH_PRIVACY_RULE = ClassName("entkt.runtime.privacy", "BatchPrivacyRule")
-private val CONTEXT_PRIVACY_RULE = ClassName("entkt.runtime.privacy", "ContextPrivacyRule")
-private val AS_PRIVACY_RULE = MemberName("entkt.runtime.privacy", "asPrivacyRuleForInternalUse")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
-private val JVM_NAME = ClassName("kotlin.jvm", "JvmName")
-private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
+private val ENTITY_PRIVACY_CONFIG = ClassName("entkt.runtime.privacy", "EntityPrivacyConfig")
+private val ENTITY_PRIVACY_SCOPE = ClassName("entkt.runtime.privacy", "EntityPrivacyScope")
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val WRITE_CANDIDATE = ClassName("entkt.runtime.mutation", "WriteCandidate")
 private val PENDING_EDGE_OPS = ClassName("entkt.runtime.mutation", "PendingEdgeOps")
 private val UPDATE_PENDING_EDGES =
     ClassName("entkt.runtime.mutation", "UpdatePendingEdges")
 private val EDGE_CHANGES = ClassName("entkt.runtime.mutation", "EdgeChanges")
-private val PRIVACY_ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
-private val RESOLVED_ENTITY_PRIVACY_CONFIG =
-    ClassName("entkt.runtime.privacy", "ResolvedEntityPrivacyConfig")
 
 /**
  * Emits per-entity privacy infrastructure:
  *
- * - `{Entity}PrivacyConfig` — internal mutable config holding rule lists
- * - `{Entity}PrivacyScope` — DSL scope for declaring rules per operation
+ * - `{Entity}PrivacyConfig` — binds the runtime config to the entity's rule types
+ * - `{Entity}PrivacyScope` — binds the runtime registration DSL to the client and lifecycle item types
  * - `{Entity}PolicyScope` — outer scope passed to [EntityPolicy.configure]
  * - `{Entity}WriteCandidate` — snapshot of writable fields for write rules
  * - `{Entity}{Op}PrivacyRule` and `{Entity}{Op}BatchPrivacyRule` — typealiases for each operation's rule types
@@ -185,10 +177,11 @@ internal class PrivacyGenerator(
             buildPrivacyScope(
                 privacyScopeClass,
                 configClass,
-                ClassName(packageName, loadBatchRule),
-                ClassName(packageName, createBatchRule),
-                ClassName(packageName, updateBatchRule),
-                ClassName(packageName, deleteBatchRule),
+                readClientClass,
+                entityClass,
+                candidateClass,
+                updateInput,
+                deleteInput,
             ),
             )
 
@@ -362,92 +355,41 @@ internal class PrivacyGenerator(
         deleteRuleType: ClassName,
     ): TypeSpec {
         return classType(configClass) {
-            for ((name, ruleType) in listOf(
-                "loadRules" to loadRuleType,
-                "createRules" to createRuleType,
-                "updateRules" to updateRuleType,
-                "deleteRules" to deleteRuleType,
-            )) {
-                property(name, MUTABLE_LIST.parameterizedBy(ruleType)) {
-                    initializer("mutableListOf()")
-                }
-            }
-            for (name in listOf("updateDerivesFromCreate", "deleteDerivesFromCreate")) {
-                property(name, Boolean::class.asClassName()) {
-                    mutable(true)
-                    initializer("false")
-                }
-            }
-            val resolvedType = RESOLVED_ENTITY_PRIVACY_CONFIG.parameterizedBy(
-                loadRuleType,
-                createRuleType,
-                updateRuleType,
-                deleteRuleType,
+            superclass(
+                ENTITY_PRIVACY_CONFIG.parameterizedBy(
+                    loadRuleType,
+                    createRuleType,
+                    updateRuleType,
+                    deleteRuleType,
+                ),
             )
-            function("resolveForInternalUse", resolvedType) {
-                addAnnotation(PRIVACY_ENTKT_INTERNAL)
-                addModifiers(KModifier.INTERNAL)
-                statement(
-                    "return %T(\n" +
-                        "  loadRules = loadRules,\n" +
-                        "  createRules = createRules,\n" +
-                        "  updateRules = updateRules,\n" +
-                        "  deleteRules = deleteRules,\n" +
-                        "  updateDerivesFromCreate = updateDerivesFromCreate,\n" +
-                        "  deleteDerivesFromCreate = deleteDerivesFromCreate,\n" +
-                        ")",
-                    resolvedType,
-                )
-            }
         }
     }
 
     private fun buildPrivacyScope(
         scopeClass: ClassName,
         configClass: ClassName,
-        loadBatchRuleType: ClassName,
-        createBatchRuleType: ClassName,
-        updateBatchRuleType: ClassName,
-        deleteBatchRuleType: ClassName,
+        readClientClass: ClassName,
+        entityClass: ClassName,
+        candidateClass: ClassName,
+        updateInput: ClassName,
+        deleteInput: ClassName,
     ): TypeSpec {
         return classType(scopeClass) {
+            superclass(
+                ENTITY_PRIVACY_SCOPE.parameterizedBy(
+                    readClientClass,
+                    entityClass,
+                    candidateClass,
+                    updateInput,
+                    deleteInput,
+                ),
+            )
+            addSuperclassConstructorParameter("config")
             primaryConstructor {
                 addModifiers(KModifier.INTERNAL)
                 parameter("config", configClass)
             }
-            property("config", configClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("config")
-            }
-            addRuleFunctions("load", loadBatchRuleType)
-            addRuleFunctions("create", createBatchRuleType)
-            addRuleFunctions("update", updateBatchRuleType)
-            addRuleFunctions("delete", deleteBatchRuleType)
-            function("updateDerivesFromCreate") {
-                statement("config.updateDerivesFromCreate = true")
-            }
-            function("deleteDerivesFromCreate") {
-                statement("config.deleteDerivesFromCreate = true")
-            }
-        }
-    }
-
-    /** Emit shared scalar/batch registration and a separate context-only overload. */
-    private fun TypeSpec.Builder.addRuleFunctions(
-        operation: String,
-        batchRuleType: ClassName,
-    ) {
-        function(operation) {
-            parameter("rules", batchRuleType) { addModifiers(KModifier.VARARG) }
-            statement("config.%LRules.addAll(rules)", operation)
-        }
-        function(operation) {
-            addAnnotation(annotation(JVM_NAME) { addMember("%S", "${operation}ContextRule") })
-            addAnnotation(annotation(ClassName("kotlin", "OptIn")) {
-                addMember("%T::class", PRIVACY_ENTKT_INTERNAL)
-            })
-            parameter("rule", CONTEXT_PRIVACY_RULE.parameterizedBy(ClassName(packageName, "ReadOnlyEntClient")))
-            statement("config.%LRules.add(rule.%M())", operation, AS_PRIVACY_RULE)
         }
     }
 

@@ -1,5 +1,9 @@
 package entkt.codegen
 
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.entity.PrivacyGenerator
 import entkt.codegen.fixtures.Car
 import entkt.codegen.fixtures.User
@@ -10,6 +14,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 private fun finalize(vararg schemas: EntSchema) {
     val registry = schemas.associateBy { it::class }
@@ -19,12 +24,6 @@ private fun finalize(vararg schemas: EntSchema) {
 class PrivacyGeneratorTest {
 
     private val generator = PrivacyGenerator("com.example.ent")
-    private val ruleTypes = mapOf(
-        "load" to "UserLoad",
-        "create" to "UserCreate",
-        "update" to "UserUpdate",
-        "delete" to "UserDelete",
-    )
 
     @Test
     fun `generates rule typealiases for all four operations`() {
@@ -79,75 +78,49 @@ class PrivacyGeneratorTest {
     }
 
     @Test
-    fun `generates PrivacyConfig with mutable rule lists and derivation flags`() {
+    fun `privacy config only binds lifecycle rule types to the runtime base`() {
         val user = User()
         finalize(user, Car())
-        val output = generator.generate("User", user).toString()
+        val config = generator.generate("User", user).members.filterIsInstance<TypeSpec>()
+            .single { it.name == "UserPrivacyConfig" }
 
-        assertContains(output, "class UserPrivacyConfig")
-        assertContains(output, "val loadRules: MutableList<UserLoadBatchPrivacyRule>")
-        assertContains(output, "val createRules: MutableList<UserCreateBatchPrivacyRule>")
-        assertContains(output, "val updateRules: MutableList<UserUpdateBatchPrivacyRule>")
-        assertContains(output, "val deleteRules: MutableList<UserDeleteBatchPrivacyRule>")
-        assertContains(output, "var updateDerivesFromCreate: Boolean = false")
-        assertContains(output, "var deleteDerivesFromCreate: Boolean = false")
-        val normalized = output.replace("\\s+".toRegex(), " ")
-        assertContains(
-            normalized,
-            "fun resolveForInternalUse(): ResolvedEntityPrivacyConfig<" +
-                "UserLoadBatchPrivacyRule, UserCreateBatchPrivacyRule, " +
-                "UserUpdateBatchPrivacyRule, UserDeleteBatchPrivacyRule>",
+        assertEquals(
+            ClassName("entkt.runtime.privacy", "EntityPrivacyConfig").parameterizedBy(
+                ClassName("com.example.ent", "UserLoadBatchPrivacyRule"),
+                ClassName("com.example.ent", "UserCreateBatchPrivacyRule"),
+                ClassName("com.example.ent", "UserUpdateBatchPrivacyRule"),
+                ClassName("com.example.ent", "UserDeleteBatchPrivacyRule"),
+            ),
+            config.superclass,
         )
+        assertTrue(config.propertySpecs.isEmpty(), "Rule storage and derivation flags belong in runtime")
+        assertTrue(config.funSpecs.isEmpty(), "Resolution belongs in runtime")
     }
 
     @Test
-    fun `generates one scalar and batch registration method plus a context overload per operation`() {
+    fun `privacy scope only binds the client and lifecycle items and passes config to the runtime base`() {
         val user = User()
         finalize(user, Car())
-        val output = generator.generate("User", user).toString()
+        val scope = generator.generate("User", user).members.filterIsInstance<TypeSpec>()
+            .single { it.name == "UserPrivacyScope" }
 
-        assertContains(output, "class UserPrivacyScope")
-        for ((operation, ruleType) in ruleTypes) {
-            assertContains(output, "fun $operation(vararg rules: ${ruleType}BatchPrivacyRule)")
-            assertContains(output, "fun $operation(rule: ContextPrivacyRule<ReadOnlyEntClient>)")
-            assertEquals(2, Regex("fun $operation\\(").findAll(output).count(), output)
-        }
-    }
-
-    @Test
-    fun `only context registration has a distinct Java name`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-
-        for (operation in ruleTypes.keys) {
-            assertFalse(output.contains("@JvmName(\"${operation}BatchRule\")"))
-            assertContains(output, "@JvmName(\"${operation}ContextRule\")")
-        }
-    }
-
-    @Test
-    fun `all registration forms delegate to the shared rule lists`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-
-        for (operation in ruleTypes.keys) {
-            assertContains(output, "config.${operation}Rules.addAll(rules)")
-            assertContains(output, "config.${operation}Rules.add(rule.asPrivacyRuleForInternalUse())")
-        }
-    }
-
-    @Test
-    fun `update and delete can explicitly derive privacy from create`() {
-        val user = User()
-        finalize(user, Car())
-        val output = generator.generate("User", user).toString()
-
-        assertContains(output, "fun updateDerivesFromCreate()")
-        assertContains(output, "config.updateDerivesFromCreate = true")
-        assertContains(output, "fun deleteDerivesFromCreate()")
-        assertContains(output, "config.deleteDerivesFromCreate = true")
+        assertEquals(
+            ClassName("entkt.runtime.privacy", "EntityPrivacyScope").parameterizedBy(
+                ClassName("com.example.ent", "ReadOnlyEntClient"),
+                ClassName("com.example.ent", "User"),
+                ClassName("com.example.ent", "UserWriteCandidate"),
+                ClassName("com.example.ent", "UserUpdateRuleInput"),
+                ClassName("com.example.ent", "UserDeleteRuleInput"),
+            ),
+            scope.superclass,
+        )
+        val constructor = requireNotNull(scope.primaryConstructor)
+        assertEquals(setOf(KModifier.INTERNAL), constructor.modifiers)
+        assertEquals("config", constructor.parameters.single().name)
+        assertEquals(ClassName("com.example.ent", "UserPrivacyConfig"), constructor.parameters.single().type)
+        assertEquals(listOf("config"), scope.superclassConstructorParameters.map { it.toString() })
+        assertTrue(scope.propertySpecs.isEmpty(), "The config is stored only by the runtime base")
+        assertTrue(scope.funSpecs.isEmpty(), "All registration forms and derivation belong in runtime")
     }
 
     @Test
