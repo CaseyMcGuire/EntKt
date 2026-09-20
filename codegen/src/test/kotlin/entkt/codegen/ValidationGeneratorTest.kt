@@ -1,12 +1,16 @@
 package entkt.codegen
 
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.fixtures.Car
 import entkt.codegen.fixtures.User
 import entkt.codegen.mutation.ValidationGenerator
 import entkt.schema.EntSchema
-import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 private fun finalize(vararg schemas: EntSchema) {
     val registry = schemas.associateBy { it::class }
@@ -59,34 +63,22 @@ class ValidationGeneratorTest {
     }
 
     @Test
-    fun `generates ValidationConfig with mutable rule lists and updateDerivesFromCreate`() {
+    fun `validation config only binds lifecycle rule types to the runtime base`() {
         val user = User()
         finalize(user, Car())
-        val output = generator.generate("User", user).toString()
+        val config = generator.generate("User", user).members.filterIsInstance<TypeSpec>()
+            .single { it.name == "UserValidationConfig" }
 
-        assert(output.contains("class UserValidationConfig")) {
-            "Should generate ValidationConfig\n$output"
-        }
-        assert(output.contains("val createRules: MutableList<UserCreateBatchValidationRule>")) {
-            "Should store create rules through the shared batch contract\n$output"
-        }
-        assert(output.contains("val updateRules: MutableList<UserUpdateBatchValidationRule>")) {
-            "Should store update rules through the shared batch contract\n$output"
-        }
-        assert(output.contains("val deleteRules: MutableList<UserDeleteBatchValidationRule>")) {
-            "Should store delete rules through the shared batch contract\n$output"
-        }
-        assert(output.contains("var updateDerivesFromCreate: Boolean = false")) {
-            "Should have updateDerivesFromCreate flag\n$output"
-        }
-        val normalized = output.replace("\\s+".toRegex(), " ")
-        assert(
-            normalized.contains(
-                "fun resolveForInternalUse(): ResolvedEntityValidationConfig<" +
-                    "UserCreateBatchValidationRule, UserUpdateBatchValidationRule, " +
-                    "UserDeleteBatchValidationRule>",
+        assertEquals(
+            ClassName("entkt.runtime.validation", "EntityValidationConfig").parameterizedBy(
+                ClassName("com.example.ent", "UserCreateBatchValidationRule"),
+                ClassName("com.example.ent", "UserUpdateBatchValidationRule"),
+                ClassName("com.example.ent", "UserDeleteBatchValidationRule"),
             ),
-        ) { "Mutable validation config should resolve to the runtime immutable type\n$output" }
+            config.superclass,
+        )
+        assertTrue(config.propertySpecs.isEmpty(), "Rule storage belongs in runtime")
+        assertTrue(config.funSpecs.isEmpty(), "Resolution belongs in runtime")
     }
 
     @Test
@@ -101,35 +93,27 @@ class ValidationGeneratorTest {
     }
 
     @Test
-    fun `generates ValidationScope with DSL methods`() {
+    fun `validation scope only binds lifecycle rule types and passes config to the runtime base`() {
         val user = User()
         finalize(user, Car())
-        val output = generator.generate("User", user).toString()
+        val scope = generator.generate("User", user).members.filterIsInstance<TypeSpec>()
+            .single { it.name == "UserValidationScope" }
 
-        assert(output.contains("class UserValidationScope")) {
-            "Should generate ValidationScope\n$output"
-        }
-        assert(output.contains("fun create(vararg rules: UserCreateBatchValidationRule)")) {
-            "Should register batch create rules under the existing DSL name\n$output"
-        }
-        assert(output.contains("fun update(vararg rules: UserUpdateBatchValidationRule)")) {
-            "Should register batch update rules under the existing DSL name\n$output"
-        }
-        assert(output.contains("fun delete(vararg rules: UserDeleteBatchValidationRule)")) {
-            "Should register batch delete rules under the existing DSL name\n$output"
-        }
-        listOf("create", "update", "delete").forEach { operation ->
-            assertEquals(1, Regex("fun $operation\\(").findAll(output).count(), output)
-            assert(output.contains("config.${operation}Rules.addAll(rules)")) {
-                "$operation should append scalar and batch rules to the shared list\n$output"
-            }
-        }
-        assert(!output.contains("@JvmName")) {
-            "One registration method per operation needs no alternate Java names\n$output"
-        }
-        assert(output.contains("fun updateDerivesFromCreate()")) {
-            "Should have updateDerivesFromCreate method\n$output"
-        }
+        assertEquals(
+            ClassName("entkt.runtime.validation", "EntityValidationScope").parameterizedBy(
+                ClassName("com.example.ent", "UserCreateBatchValidationRule"),
+                ClassName("com.example.ent", "UserUpdateBatchValidationRule"),
+                ClassName("com.example.ent", "UserDeleteBatchValidationRule"),
+            ),
+            scope.superclass,
+        )
+        val constructor = requireNotNull(scope.primaryConstructor)
+        assertEquals(setOf(KModifier.INTERNAL), constructor.modifiers)
+        assertEquals("config", constructor.parameters.single().name)
+        assertEquals(ClassName("com.example.ent", "UserValidationConfig"), constructor.parameters.single().type)
+        assertEquals(listOf("config"), scope.superclassConstructorParameters.map { it.toString() })
+        assertTrue(scope.propertySpecs.isEmpty(), "The config is stored only by the runtime base")
+        assertTrue(scope.funSpecs.isEmpty(), "Registration and derivation belong in runtime")
     }
 
     @Test

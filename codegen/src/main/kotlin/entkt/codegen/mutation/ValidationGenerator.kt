@@ -1,33 +1,27 @@
 package entkt.codegen.mutation
 
-import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.kotlinpoet.classType
-import entkt.codegen.kotlinpoet.function
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
-import entkt.codegen.kotlinpoet.property
-import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.kotlinpoet.typeAlias
 import entkt.schema.EntSchema
 
 private val VALIDATION_RULE = ClassName("entkt.runtime.validation", "ValidationRule")
 private val BATCH_VALIDATION_RULE = ClassName("entkt.runtime.validation", "BatchValidationRule")
-private val MUTABLE_LIST = ClassName("kotlin.collections", "MutableList")
-private val VALIDATION_ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
-private val RESOLVED_ENTITY_VALIDATION_CONFIG =
-    ClassName("entkt.runtime.validation", "ResolvedEntityValidationConfig")
+private val ENTITY_VALIDATION_CONFIG = ClassName("entkt.runtime.validation", "EntityValidationConfig")
+private val ENTITY_VALIDATION_SCOPE = ClassName("entkt.runtime.validation", "EntityValidationScope")
 
 /**
  * Emits per-entity validation infrastructure:
  *
- * - `{Entity}ValidationConfig` — internal mutable config holding rule lists
- * - `{Entity}ValidationScope` — DSL scope for declaring rules per operation
+ * - `{Entity}ValidationConfig` — binds the runtime config to the entity's rule types
+ * - `{Entity}ValidationScope` — binds the runtime registration DSL to the same rule types
  * - `{Entity}{Op}ValidationRule` and `{Entity}{Op}BatchValidationRule` — typealiases for each operation's rule types
  *
  * Unlike privacy, validation has no LOAD operation and its shared rule context
@@ -112,37 +106,13 @@ internal class ValidationGenerator(
         deleteRuleType: ClassName,
     ): TypeSpec {
         return classType(configClass) {
-            for ((name, ruleType) in listOf(
-                "createRules" to createRuleType,
-                "updateRules" to updateRuleType,
-                "deleteRules" to deleteRuleType,
-            )) {
-                property(name, MUTABLE_LIST.parameterizedBy(ruleType)) {
-                    initializer("mutableListOf()")
-                }
-            }
-            property("updateDerivesFromCreate", BOOLEAN) {
-                mutable(true)
-                initializer("false")
-            }
-            val resolvedType = RESOLVED_ENTITY_VALIDATION_CONFIG.parameterizedBy(
-                createRuleType,
-                updateRuleType,
-                deleteRuleType,
+            superclass(
+                ENTITY_VALIDATION_CONFIG.parameterizedBy(
+                    createRuleType,
+                    updateRuleType,
+                    deleteRuleType,
+                ),
             )
-            function("resolveForInternalUse", resolvedType) {
-                addAnnotation(VALIDATION_ENTKT_INTERNAL)
-                addModifiers(KModifier.INTERNAL)
-                statement(
-                    "return %T(\n" +
-                        "  createRules = createRules,\n" +
-                        "  updateRules = updateRules,\n" +
-                        "  deleteRules = deleteRules,\n" +
-                        "  updateDerivesFromCreate = updateDerivesFromCreate,\n" +
-                        ")",
-                    resolvedType,
-                )
-            }
         }
     }
 
@@ -154,31 +124,18 @@ internal class ValidationGenerator(
         deleteBatchRuleType: ClassName,
     ): TypeSpec {
         return classType(scopeClass) {
+            superclass(
+                ENTITY_VALIDATION_SCOPE.parameterizedBy(
+                    createBatchRuleType,
+                    updateBatchRuleType,
+                    deleteBatchRuleType,
+                ),
+            )
+            addSuperclassConstructorParameter("config")
             primaryConstructor {
                 addModifiers(KModifier.INTERNAL)
                 parameter("config", configClass)
             }
-            property("config", configClass) {
-                addModifiers(KModifier.PRIVATE)
-                initializer("config")
-            }
-            addRuleFunction("create", createBatchRuleType)
-            addRuleFunction("update", updateBatchRuleType)
-            addRuleFunction("delete", deleteBatchRuleType)
-            function("updateDerivesFromCreate") {
-                statement("config.updateDerivesFromCreate = true")
-            }
-        }
-    }
-
-    /** Add one registration method accepting both scalar and batch validators. */
-    private fun TypeSpec.Builder.addRuleFunction(
-        operation: String,
-        batchRuleType: ClassName,
-    ) {
-        function(operation) {
-            addParameter("rules", batchRuleType, KModifier.VARARG)
-            statement("config.%LRules.addAll(rules)", operation)
         }
     }
 }
