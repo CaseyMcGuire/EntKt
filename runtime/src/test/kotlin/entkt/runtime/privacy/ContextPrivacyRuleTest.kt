@@ -24,11 +24,13 @@ class ContextPrivacyRuleTest {
                 PrivacyDecision.Allow
             }
         }
-        val numbers: PrivacyRule<TestRuleClient, Int> = shared.asPrivacyRuleForInternalUse()
-        val strings: PrivacyRule<TestRuleClient, String> = shared.asPrivacyRuleForInternalUse()
+        val numbers: PrivacyRule<TestRuleClient, Int> = shared
+        val strings: PrivacyRule<TestRuleClient, String> = shared
         val anonymous = PrivacyRuleContext(ViewerContext(Viewer.Anonymous), TestRuleClient())
 
         assertEquals(0, seen.size, "registration must not evaluate or cache a decision")
+        assertSame(shared, numbers)
+        assertSame(shared, strings)
         assertEquals(PrivacyDecision.Allow, numbers.run(context, 7))
         assertEquals(PrivacyDecision.Deny("authentication required"), strings.run(anonymous, "ignored"))
         assertSame(context, seen[0])
@@ -55,7 +57,7 @@ class ContextPrivacyRuleTest {
                     if (item < 0) PrivacyDecision.Deny("negative") else PrivacyDecision.Continue
                 }
             },
-            shared.asPrivacyRuleForInternalUse(),
+            shared,
             allowIf { _, item ->
                 reachedScalar += item
                 true
@@ -85,7 +87,7 @@ class ContextPrivacyRuleTest {
             if (calls == 2) PrivacyDecision.Deny("changed permission") else PrivacyDecision.Allow
         }
 
-        val decisions = evaluate(listOf(7, 7, 7), listOf(rule.asPrivacyRuleForInternalUse()))
+        val decisions = evaluate(listOf(7, 7, 7), listOf(rule))
 
         assertEquals(3, calls)
         assertEquals(
@@ -100,7 +102,7 @@ class ContextPrivacyRuleTest {
         val rules = listOf<BatchPrivacyRule<TestRuleClient, Int>>(
             denyIf("denied") { _, item -> item < 0 },
             allowIf { _, _ -> true },
-            unreachable.asPrivacyRuleForInternalUse(),
+            unreachable,
         )
 
         assertEquals(emptyList(), evaluate(emptyList(), rules))
@@ -114,7 +116,7 @@ class ContextPrivacyRuleTest {
         val evaluation = correlatePrivacyEvaluationForInternalUse(
             lifecycle = "test privacy",
             subjects = items,
-            decisions = evaluate(items, listOf(rule.asPrivacyRuleForInternalUse())),
+            decisions = evaluate(items, listOf(rule)),
             unresolvedReason = "no rule allowed access",
         )
 
@@ -128,7 +130,7 @@ class ContextPrivacyRuleTest {
             val rule = ContextPrivacyRule<TestRuleClient> { throw failure }
 
             assertSame(failure, assertFails { rule.run(context) })
-            assertSame(failure, assertFails { evaluate(listOf(7), listOf(rule.asPrivacyRuleForInternalUse())) })
+            assertSame(failure, assertFails { evaluate(listOf(7), listOf(rule)) })
         }
     }
 

@@ -21,6 +21,7 @@ class EntityPrivacyScopeTest {
 
     @Test
     fun `registration preserves mixed rule order duplicates and empty inputs in every phase`() {
+        val context = ContextPrivacyRule<EntRuleClient> { error("Registration must not evaluate context rules") }
         val loadScalar = scalarRule<String>()
         val loadBatch = batchRule<String>()
         val createScalar = scalarRule<Int>()
@@ -32,33 +33,37 @@ class EntityPrivacyScopeTest {
         val config = Config()
         val scope = Scope(config)
 
-        scope.load(loadScalar, loadBatch, loadScalar)
+        scope.load(context, loadScalar, loadBatch, loadScalar)
         scope.load(*arrayOf(loadBatch))
+        scope.load(*arrayOf(context, context))
         scope.load()
         scope.load(*emptyArray())
-        scope.create(createScalar, createBatch, createScalar)
+        scope.create(createScalar, context, createBatch, createScalar)
         scope.create(*arrayOf(createBatch))
+        scope.create(*arrayOf(context, context))
         scope.create()
         scope.create(*emptyArray())
-        scope.update(updateBatch, updateScalar)
+        scope.update(updateBatch, updateScalar, context)
         scope.update(*arrayOf(updateScalar, updateBatch))
+        scope.update(*arrayOf(context, context))
         scope.update()
         scope.update(*emptyArray())
-        scope.delete(deleteScalar)
+        scope.delete(context, deleteScalar)
         scope.delete(*arrayOf(deleteBatch, deleteScalar))
+        scope.delete(*arrayOf(context, context))
         scope.delete()
         scope.delete(*emptyArray())
 
-        assertEquals(listOf(loadScalar, loadBatch, loadScalar, loadBatch), config.loadRules)
-        assertEquals(listOf(createScalar, createBatch, createScalar, createBatch), config.createRules)
-        assertEquals(listOf(updateBatch, updateScalar, updateScalar, updateBatch), config.updateRules)
-        assertEquals(listOf(deleteScalar, deleteBatch, deleteScalar), config.deleteRules)
+        assertEquals(listOf(context, loadScalar, loadBatch, loadScalar, loadBatch, context, context), config.loadRules)
+        assertEquals(listOf(createScalar, context, createBatch, createScalar, createBatch, context, context), config.createRules)
+        assertEquals(listOf(updateBatch, updateScalar, context, updateScalar, updateBatch, context, context), config.updateRules)
+        assertEquals(listOf(context, deleteScalar, deleteBatch, deleteScalar, context, context), config.deleteRules)
         assertFalse(config.updateDerivesFromCreate)
         assertFalse(config.deleteDerivesFromCreate)
     }
 
     @Test
-    fun `one context rule adapts to every item type and uses each evaluation's current context`() {
+    fun `one context rule accepts every item type and uses each evaluation's current context`() {
         val seen = mutableListOf<PrivacyRuleContext<EntRuleClient>>()
         val shared = ContextPrivacyRule<EntRuleClient> { context ->
             seen += context
@@ -103,21 +108,23 @@ class EntityPrivacyScopeTest {
         val calls = mutableListOf<String>()
         val config = Config()
         Scope(config).apply {
-            load(batchPrivacyRule { _, batch ->
-                batch.decideEach { item ->
-                    calls += "batch:$item"
+            load(
+                batchPrivacyRule { _, batch ->
+                    batch.decideEach { item ->
+                        calls += "batch:$item"
+                        PrivacyDecision.Continue
+                    }
+                },
+                ContextPrivacyRule {
+                    calls += "context"
                     PrivacyDecision.Continue
-                }
-            })
-            load(ContextPrivacyRule {
-                calls += "context"
-                PrivacyDecision.Continue
-            })
-            load(PrivacyRule { _, item ->
-                calls += "scalar:$item"
-                PrivacyDecision.Allow
-            })
-            load(ContextPrivacyRule { error("An allowed item must not reach later rules") })
+                },
+                PrivacyRule { _, item ->
+                    calls += "scalar:$item"
+                    PrivacyDecision.Allow
+                },
+                ContextPrivacyRule { error("An allowed item must not reach later rules") },
+            )
         }
         assertTrue(calls.isEmpty(), "Registration must not evaluate any rule")
 
@@ -150,15 +157,13 @@ class EntityPrivacyScopeTest {
     }
 
     @Test
-    fun `only context registration has a distinct Java name`() {
+    fun `all privacy rules use one vararg registration method per operation in Java`() {
         val methods = EntityPrivacyScope::class.java.declaredMethods
         for (operation in listOf("load", "create", "update", "delete")) {
-            val itemAware = methods.single { it.name == operation }
-            assertTrue(itemAware.isVarArgs)
-            assertEquals(BatchPrivacyRule::class.java, itemAware.parameterTypes.single().componentType)
-            val contextOnly = methods.single { it.name == "${operation}ContextRule" }
-            assertFalse(contextOnly.isVarArgs)
-            assertEquals(ContextPrivacyRule::class.java, contextOnly.parameterTypes.single())
+            val registration = methods.single { it.name == operation }
+            assertTrue(registration.isVarArgs)
+            assertEquals(BatchPrivacyRule::class.java, registration.parameterTypes.single().componentType)
+            assertFalse(methods.any { it.name == "${operation}ContextRule" })
             assertFalse(methods.any { it.name == "${operation}BatchRule" })
         }
     }

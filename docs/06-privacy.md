@@ -146,8 +146,11 @@ but not on an entity, candidate, or mutation input. A single rule can be registe
 for multiple entities and operations without an `Item` generic or an unused parameter:
 
 ```kotlin
-fun interface ContextPrivacyRule<in Client : EntRuleClient> {
+fun interface ContextPrivacyRule<in Client : EntRuleClient> : PrivacyRule<Client, Any?> {
     fun run(context: PrivacyRuleContext<Client>): PrivacyDecision
+
+    override fun run(context: PrivacyRuleContext<Client>, item: Any?): PrivacyDecision =
+        run(context)
 }
 
 class RequireAuthenticated : ContextPrivacyRule<ReadOnlyEntClient> {
@@ -169,8 +172,12 @@ privacy {
 }
 ```
 
-`load(authenticated)` is supported too. Context-only rules share registration order
-with item-aware and batch rules; use repeated registration calls to mix rule kinds.
+`load(authenticated)` is supported too. Context-only, item-aware, and batch rules
+share one vararg registration method and can be mixed in a single call:
+`load(contextRule, scalarRule, batchRule)`. Multiple context-only rules and typed
+arrays work too: `load(firstContextRule, secondContextRule)` or `load(*contextRules)`.
+For an inline context-only rule, use `ContextPrivacyRule { context -> ... }`.
+
 The runtime invokes a context-only rule **once per item that reaches it**, not once
 per operation or batch. Duplicate items are evaluated separately, decisions are
 not cached, and an empty phase invokes no rules. Each invocation receives the
@@ -178,7 +185,8 @@ current phase's viewer context and read client, including transaction-scoped cli
 Exceptions follow ordinary privacy-rule failure handling; explicit privacy bypass
 skips context-only rules just as it skips other privacy rules.
 
-This is a separate contract, not a replacement for `PrivacyRule<Client, Item>`.
+`ContextPrivacyRule` is a specialized `PrivacyRule` with a context-only callback;
+implementers only supply `run(context)`.
 `allowIf` and `denyIf` still receive both context and item and retain their existing
 Allow/Continue and Deny/Continue semantics. A context-only rule explicitly chooses
 its own Allow, Deny, or Continue decision.
@@ -278,17 +286,17 @@ batch remain bound to it.
 Returning decisions created by another batch is an operational
 `EntBatchRuleContractException`, not a denial. Java or unchecked code that
 returns `null` instead of `RuleDecisions`, or returns a null/invalid decision,
-receives the same contract error. Scalar and batch rules register through one
-vararg method per operation: `load`, `create`, `update`, and `delete`, with the
-same names in Kotlin and Java. Scalar rules implement `BatchPrivacyRule`, so
-both kinds share one registration method and one registration order. A
+receives the same contract error. Context-only, scalar, and batch rules register
+through one vararg method per operation: `load`, `create`, `update`, and `delete`, with the
+same names in Kotlin and Java. All three kinds implement `BatchPrivacyRule`, so
+they share one registration method and one registration order. A
 batch rule receives a singleton `RuleBatch` for a scalar operation and is not
 invoked for an empty phase.
 
 Pass several batch rules with
 `load(firstBatchRule, secondBatchRule)`, or spread a typed array with
-`load(*batchRules)`. Scalar and batch rules can also share a single call, such
-as `load(scalarRule, batchRule, anotherScalarRule)`. Rules are appended in
+`load(*batchRules)`. All three rule kinds can share a single call, such
+as `load(contextRule, scalarRule, batchRule)`. Rules are appended in
 argument order. An empty call or array registers nothing. The same applies
 to `create`, `update`, and `delete`.
 
@@ -412,10 +420,10 @@ val client = EntClient(driver) {
 
 Each entity's `privacy { }` block exposes four methods matching the
 four operations: `load()`, `create()`, `update()`, `delete()`. Each accepts a
-vararg of scalar and/or batch rules. A separate overload accepts one
-`ContextPrivacyRule`; register multiple context-only rules with repeated calls.
-Java uses the same operation names for scalar and batch rules, and explicitly
-named JVM overloads such as `loadContextRule` for context-only rules.
+vararg of context-only, scalar, and/or batch rules in any combination. Java uses
+the same methods; no separate context-only registration is needed. In Java,
+assign a context-only lambda to a `ContextPrivacyRule<Client>` variable before
+passing it to a registration method.
 
 ## Evaluation Semantics
 

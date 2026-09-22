@@ -81,7 +81,7 @@ class ContextPrivacyRuleCompileTest {
     }
 
     @Test
-    fun `context rules retain client inference and mix with existing item-aware registrations`() {
+    fun `context scalar and batch rules mix in one call with client and item inference`() {
         val source = contextRulesSource(
             """
             private val general = ContextPrivacyRule<EntRuleClient> { PrivacyDecision.Continue }
@@ -89,25 +89,43 @@ class ContextPrivacyRuleCompileTest {
             object UserPolicy : EntityPolicy<User, UserPolicyScope> {
                 override fun configure(scope: UserPolicyScope) = scope.run {
                     privacy {
-                        load(general)
-                        load(ContextPrivacyRule { context ->
-                            val client: ReadOnlyEntClient = context.client
-                            PrivacyDecision.Continue
-                        })
-                        load(allowIf { context, user ->
-                            val client: ReadOnlyEntClient = context.client
-                            context.viewerContext.userIdOrNull() == user.id
-                        })
-                        load(batchPrivacyRule { _, items -> items.decideEach { PrivacyDecision.Allow } })
-                        create(ContextPrivacyRule { context ->
-                            val client: ReadOnlyEntClient = context.client
-                            PrivacyDecision.Continue
-                        })
-                        create(denyIf("blank name") { _, candidate -> candidate.name.isBlank() })
-                        update(general)
-                        update(allowIf { _, input -> input.candidate.name.isNotBlank() })
-                        delete(general)
-                        delete(allowIf { context, input -> context.viewerContext.userIdOrNull() == input.entity.id })
+                        load(
+                            general,
+                            ContextPrivacyRule { context ->
+                                val client: ReadOnlyEntClient = context.client
+                                PrivacyDecision.Continue
+                            },
+                            allowIf { context, user ->
+                                val client: ReadOnlyEntClient = context.client
+                                context.viewerContext.userIdOrNull() == user.id
+                            },
+                            batchPrivacyRule { _, items -> items.allowAll() },
+                        )
+                        create(
+                            general,
+                            ContextPrivacyRule { context ->
+                                val client: ReadOnlyEntClient = context.client
+                                PrivacyDecision.Continue
+                            },
+                            denyIf("blank name") { _, candidate -> candidate.name.isBlank() },
+                            batchPrivacyRule { _, items -> items.allowAll() },
+                        )
+                        update(
+                            general,
+                            allowIf { _, input -> input.candidate.name.isNotBlank() },
+                            batchPrivacyRule { _, items -> items.allowAll() },
+                        )
+                        delete(
+                            general,
+                            allowIf { context, input -> context.viewerContext.userIdOrNull() == input.entity.id },
+                            batchPrivacyRule { _, items -> items.allowAll() },
+                        )
+
+                        val contexts = arrayOf(general, general)
+                        load(*contexts)
+                        create(*contexts)
+                        update(*contexts)
+                        delete(*contexts)
                     }
                 }
             }
@@ -156,7 +174,7 @@ class ContextPrivacyRuleCompileTest {
     }
 
     @Test
-    fun `Java can implement and register context-only rules without ambiguous overloads`() {
+    fun `Java can mix context scalar and batch rules through the same vararg methods`() {
         val result = compile(
             SourceFile.java(
                 "ContextRuleJava.java",
@@ -166,6 +184,7 @@ class ContextPrivacyRuleCompileTest {
                 import com.example.ent.ReadOnlyEntClient;
                 import com.example.ent.User;
                 import com.example.ent.UserPrivacyScope;
+                import entkt.runtime.privacy.BatchPrivacyRule;
                 import entkt.runtime.privacy.ContextPrivacyRule;
                 import entkt.runtime.privacy.PrivacyDecision;
                 import entkt.runtime.privacy.PrivacyRule;
@@ -180,12 +199,14 @@ class ContextPrivacyRuleCompileTest {
 
                     public static void register(UserPrivacyScope scope) {
                         ContextRuleJava shared = new ContextRuleJava();
-                        scope.loadContextRule(shared);
-                        scope.createContextRule(shared);
-                        scope.updateContextRule(shared);
-                        scope.deleteContextRule(context -> PrivacyDecision.Allow.INSTANCE);
+                        ContextPrivacyRule<ReadOnlyEntClient> lambda = context -> PrivacyDecision.Allow.INSTANCE;
                         PrivacyRule<ReadOnlyEntClient, User> scalar = (context, item) -> PrivacyDecision.Allow.INSTANCE;
-                        scope.load(scalar);
+                        BatchPrivacyRule<ReadOnlyEntClient, User> batch = (context, items) ->
+                            items.decideEach(item -> PrivacyDecision.Allow.INSTANCE);
+                        scope.load(shared, scalar, batch, lambda);
+                        scope.create(shared, lambda);
+                        scope.update(shared, lambda);
+                        scope.delete(shared, lambda);
                     }
                 }
                 """.trimIndent(),

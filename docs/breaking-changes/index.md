@@ -29,6 +29,14 @@ above it.
 
 ## Unreleased
 
+- **Register context-only privacy rules through the shared methods** (`runtime`)
+  `ContextPrivacyRule` now implements `PrivacyRule`, so context-only, scalar,
+  and batch rules can be mixed in the same vararg call.
+  _Migration:_ Java callers replace `loadContextRule`, `createContextRule`,
+  `updateContextRule`, and `deleteContextRule` with `load`, `create`, `update`,
+  and `delete`. Existing Kotlin rule instances still register directly; wrap
+  inline context-only lambdas in `ContextPrivacyRule { context -> ... }`.
+
 ## 0.1.0-alpha.3
 
 Upgrade the plugin and every EntKt dependency together, then regenerate code.
