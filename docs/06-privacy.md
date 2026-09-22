@@ -226,8 +226,34 @@ privacy {
 }
 ```
 
+For a uniform decision across the supplied batch, use `batch.allowAll()` or
+`batch.denyAll(reason)`:
+
+```kotlin
+import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.allowAll
+import entkt.runtime.privacy.batchPrivacyRule
+import entkt.runtime.privacy.denyAll
+
+val requireAuthenticated: PostLoadBatchPrivacyRule = batchPrivacyRule { context, batch ->
+    if (context.viewerContext.viewer is Viewer.Anonymous) {
+        batch.denyAll("authentication required")
+    } else {
+        batch.allowAll()
+    }
+}
+```
+
+These helpers are equivalent to `batch.decideEach { PrivacyDecision.Allow }`
+and `batch.decideEach { PrivacyDecision.Deny(reason) }`. They return read-only
+decisions tied to the exact supplied batch, preserve duplicate entries, and
+return empty decisions for an empty batch. When returned from a rule, both finalize
+the supplied items; later rules do not evaluate them. Previously finalized items are not
+part of the batch and are unaffected. The existing `load(allowAll)` stock rule
+remains available; `batch.allowAll()` returns decisions, not a rule.
+
 `RuleBatch` is an immutable, read-only `List`, so a rule can inspect, group, or
-sort its items while preparing a set-based read. It must build its result with
+sort its items while preparing a set-based read. For item-specific decisions, use
 `batch.decideEach { ... }` or
 `batch.decideEachIndexed { index, item -> ... }`.
 Those methods return read-only `RuleDecisions` tied to that exact batch and

@@ -151,6 +151,47 @@ class BatchLifecycleCodegenCompileTest {
     }
 
     @Test
+    fun `batch privacy helpers retain inferred lifecycle types and the stock allowAll rule`() {
+        val result = compile(
+            SourceFile.kotlin(
+                "BatchPrivacyHelpersSnippet.kt",
+                """
+                package com.example.app
+
+                import com.example.ent.Car
+                import com.example.ent.CarLoadBatchPrivacyRule
+                import com.example.ent.CarPolicyScope
+                import entkt.runtime.privacy.EntityPolicy
+                import entkt.runtime.privacy.Viewer
+                import entkt.runtime.privacy.allowAll
+                import entkt.runtime.privacy.batchPrivacyRule
+                import entkt.runtime.privacy.denyAll
+
+                private val authenticated: CarLoadBatchPrivacyRule = batchPrivacyRule { context, batch ->
+                    if (context.viewerContext.viewer is Viewer.Anonymous) {
+                        batch.denyAll("authentication required")
+                    } else {
+                        batch.allowAll()
+                    }
+                }
+
+                object BatchPrivacyHelpersPolicy : EntityPolicy<Car, CarPolicyScope> {
+                    override fun configure(scope: CarPolicyScope) = scope.privacy {
+                        load(authenticated)
+                        load(allowAll)
+                        create(batchPrivacyRule { _, batch -> batch.allowAll() })
+                        update(batchPrivacyRule { _, batch -> batch.denyAll("updates disabled") })
+                        delete(batchPrivacyRule { _, batch -> batch.denyAll("deletes disabled") })
+                    }
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+    }
+
+    @Test
     fun `entity names do not collide with action or transforming hook contracts`() {
         val schemas = listOf(
             ActionHook(),

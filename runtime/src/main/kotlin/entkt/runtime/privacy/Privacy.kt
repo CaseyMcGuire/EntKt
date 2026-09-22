@@ -139,8 +139,9 @@ class PrivacyDeniedException(
 /**
  * A privacy rule that can evaluate an ordered batch of operation items.
  *
- * Implementations return decisions through [RuleBatch.decideEach] or
- * [RuleBatch.decideEachIndexed]. Those operations preserve correlation with
+ * Implementations return decisions through [RuleBatch.decideEach],
+ * [RuleBatch.decideEachIndexed], or the privacy-specific `batch.allowAll()` and
+ * `batch.denyAll(reason)` helpers. Those operations preserve correlation with
  * the supplied items; callers cannot construct or reorder the result directly.
  * Generated lifecycle evaluators never invoke a rule with an empty batch.
  */
@@ -191,6 +192,26 @@ fun <Client : EntRuleClient, Item> batchPrivacyRule(
         batch: RuleBatch<Item>,
     ): RuleDecisions<PrivacyDecision> = block(context, batch)
 }
+
+/**
+ * Allow every item in this batch, including duplicate or equal items.
+ *
+ * Equivalent to `decideEach { PrivacyDecision.Allow }`: the read-only result
+ * remains tied to this exact batch, and an empty batch produces empty decisions.
+ * Returning these decisions from a rule finalizes each supplied item; later rules skip it.
+ */
+fun RuleBatch<*>.allowAll(): RuleDecisions<PrivacyDecision> =
+    decideEach { PrivacyDecision.Allow }
+
+/**
+ * Deny every item in this batch with [reason], including duplicate or equal items.
+ *
+ * Equivalent to `decideEach { PrivacyDecision.Deny(reason) }`: the read-only result
+ * remains tied to this exact batch, and an empty batch produces empty decisions.
+ * Returning these decisions from a rule finalizes each supplied item; later rules skip it.
+ */
+fun RuleBatch<*>.denyAll(reason: String): RuleDecisions<PrivacyDecision> =
+    decideEach { PrivacyDecision.Deny(reason) }
 
 /**
  * Evaluate ordered privacy rules across [items], retaining positional
