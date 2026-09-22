@@ -98,6 +98,30 @@ and generates no member of its own:
 val byEmail = index("idx_user_email", email).unique()
 ```
 
+## Schema comments
+
+Use the optional `comment` constructor argument to document an entity as a whole:
+
+```kotlin
+class User : EntSchema(
+    "users",
+    clientName = "users",
+    comment = "People who can sign in to the application.",
+) {
+    override fun id() = EntId.long()
+    val name by string("name").comment("The user's display name.")
+}
+```
+
+The schema comment defaults to `null` and is preserved verbatim in generated
+`User.SCHEMA.comment`. [Ent Viewer](11-ent-viewer.md#routes) displays it beneath
+the schema heading; field comments appear beneath their column names. Comments
+are plain text, not HTML or Markdown, and absent or blank comments are hidden.
+
+Regenerate code after changing a comment. Comments are documentation metadata
+only: they do not change database structure, generate migrations, or emit SQL
+table comments.
+
 ## ID Strategies
 
 Every schema has a primary key. The `id()` method controls how it's

@@ -9,7 +9,7 @@ import kotlinx.html.h2
 import kotlinx.html.p
 import kotlinx.html.span
 
-/** One entity's full schema: columns, edges (cross-linked), indexes. */
+/** One entity's full schema: documentation, columns, edges (cross-linked), indexes. */
 internal fun schemaDetailPage(
     entity: EntViewerEntity<*>,
     columns: List<EntViewerColumn>,
@@ -17,6 +17,10 @@ internal fun schemaDetailPage(
     urls: ViewerUrls,
 ): EntViewerResponse = pageShell(200, "${entity.displayName} schema", urls) {
     h1 { +"${entity.displayName} " ; span("muted") { +"(${entity.schema.table})" } }
+    val comment = entity.schema.comment
+    if (!comment.isNullOrBlank()) {
+        p("muted") { +comment }
+    }
     p {
         a(href = urls.entityList(entity.routeName)) { +"Browse rows" }
         span("muted") { +"  ·  " }

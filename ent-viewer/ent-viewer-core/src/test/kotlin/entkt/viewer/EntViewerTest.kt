@@ -27,6 +27,7 @@ class EntViewerTest {
         table: String = routeName + "s",
         override val edges: List<EntViewerEdge> = emptyList(),
         private val rows: MutableMap<String, EntViewerRow> = mutableMapOf(),
+        comment: String? = null,
     ) : EntViewerEntity<FakeClient> {
         var lastListRequest: EntViewerListRequest? = null
         var lastViewerContext: ViewerContext? = null
@@ -43,6 +44,7 @@ class EntViewerTest {
                 ColumnMetadata("secret", FieldType.STRING, nullable = false, sensitive = true),
             ),
             edges = emptyMap(),
+            comment = comment,
         )
 
         override val columns = listOf(
@@ -166,6 +168,64 @@ class EntViewerTest {
         val body = viewer.handle(get("/_ent")).body
         assertTrue("User" in body)
         assertFalse("Session" in body)
+    }
+
+    @Test
+    fun `schema comments render beneath the heading without loading rows`() {
+        val comment = "People who can sign in to the application."
+        val entity = FakeEntity("user", "User", comment = comment)
+
+        val response = viewer(entity).handle(get("/_ent/schema/user"))
+
+        assertEquals(200, response.status)
+        assertTrue("<p class=\"muted\">$comment</p>" in response.body)
+        assertTrue(response.body.indexOf("</h1>") < response.body.indexOf(comment))
+        assertTrue(response.body.indexOf(comment) < response.body.indexOf("Browse rows"))
+        assertNull(entity.lastListRequest)
+        assertNull(entity.lastViewerContext)
+    }
+
+    @Test
+    fun `absent and blank schema comments leave the page unchanged`() {
+        val baseline = viewer(FakeEntity("user", "User")).handle(get("/_ent/schema/user"))
+
+        for (comment in listOf(null, "", " \n\t")) {
+            val entity = FakeEntity("user", "User", comment = comment)
+            val response = viewer(entity).handle(get("/_ent/schema/user"))
+
+            assertEquals(200, response.status)
+            assertEquals(baseline.body, response.body)
+        }
+    }
+
+    @Test
+    fun `schema comments render HTML as escaped text`() {
+        val entity = FakeEntity("user", "User", comment = "<script>alert(1)</script> & <b>Accounts</b>")
+
+        val response = viewer(entity).handle(get("/_ent/schema/user"))
+
+        assertEquals(200, response.status)
+        assertTrue("&lt;script&gt;alert(1)&lt;/script&gt; &amp; &lt;b&gt;Accounts&lt;/b&gt;" in response.body)
+        assertFalse("<script>" in response.body)
+        assertFalse("<b>Accounts</b>" in response.body)
+    }
+
+    @Test
+    fun `schema comments are not disclosed without authorization or for excluded entities`() {
+        val comment = "Internal account documentation."
+        val entity = FakeEntity("user", "User", comment = comment)
+        val unauthorized = viewer(entity, configure = {})
+        val excluded = viewer(entity, configure = {
+            authorize { true }
+            entities { exclude("user") }
+        })
+
+        for (viewer in listOf(unauthorized, excluded)) {
+            val response = viewer.handle(get("/_ent/schema/user"))
+
+            assertEquals(404, response.status)
+            assertFalse(comment in response.body)
+        }
     }
 
     // ---------- list behavior ----------

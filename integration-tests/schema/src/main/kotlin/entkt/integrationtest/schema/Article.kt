@@ -21,7 +21,11 @@ data class HighlightRect(
     val h: Double,
 )
 
-class Article : EntSchema("articles", clientName = "articles") {
+class Article : EntSchema(
+    "articles",
+    clientName = "articles",
+    comment = "Articles with author attribution and structured metadata.",
+) {
     override fun id() = EntId.long()
 
     val title by string("title")
