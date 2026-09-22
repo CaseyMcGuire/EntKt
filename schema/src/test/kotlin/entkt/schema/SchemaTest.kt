@@ -207,6 +207,26 @@ class SchemaTest {
     }
 
     @Test
+    fun `schema comment defaults to null`() {
+        assertNull(user.comment)
+    }
+
+    @Test
+    fun `schema comments are preserved verbatim through finalization`() {
+        for (comment in listOf("", " \n\t", "People who can sign in.\nIncludes administrators.")) {
+            val schema = object : EntSchema("accounts", clientName = "accounts", comment = comment) {
+                override fun id() = EntId.long()
+                val name by string("name")
+            }
+
+            buildRegistry(schema)
+
+            assertEquals(comment, schema.comment)
+            assertEquals(listOf("name"), schema.fields().map { it.name })
+        }
+    }
+
+    @Test
     fun `fields are defined with correct types`() {
         val fields = user.fields()
         assertEquals(6, fields.size)

@@ -210,6 +210,7 @@ private fun buildEntitySchema(
                 with = idx.with,
             )
         },
+        comment = schema.comment,
     )
 }
 

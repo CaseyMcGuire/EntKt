@@ -654,6 +654,9 @@ internal fun entitySchemaCodeBlock(
             }
             add("  ),\n")
         }
+        if (schema.comment != null) {
+            add("  comment = %S,\n", schema.comment)
+        }
         add(")")
     }
 }

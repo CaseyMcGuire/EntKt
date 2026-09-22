@@ -47,6 +47,8 @@ data class EntitySchema(
     val indexes: List<IndexMetadata> = emptyList(),
     /** Required inverse to-one relationships, enforced at transaction commit. */
     val requiredOneConstraints: List<RequiredOneConstraint> = emptyList(),
+    /** Plain-text schema documentation, if any. Does not affect storage or migrations. */
+    val comment: String? = null,
 )
 
 /**

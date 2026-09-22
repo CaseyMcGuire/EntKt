@@ -106,6 +106,27 @@ class NormalizedSchemaTest {
     }
 
     @Test
+    fun `schema comment changes do not produce migrations`() {
+        val schema = EntitySchema(
+            table = "users",
+            idColumn = "id",
+            idStrategy = IdStrategy.AUTO_LONG,
+            columns = listOf(ColumnMetadata("id", FieldType.LONG, nullable = false, primaryKey = true)),
+            edges = emptyMap(),
+        )
+        val original = NormalizedSchema.fromEntitySchemas(listOf(schema), typeMapper)
+
+        for (comment in listOf("User accounts.", "Updated documentation.", "", " \n\t", null)) {
+            val desired = NormalizedSchema.fromEntitySchemas(listOf(schema.copy(comment = comment)), typeMapper)
+            val diff = SchemaDiffer().diff(desired, original)
+
+            assertEquals(original, desired)
+            assertTrue(diff.ops.isEmpty())
+            assertTrue(diff.manual.isEmpty())
+        }
+    }
+
+    @Test
     fun `single-column unique is normalized into index list`() {
         val schema = EntitySchema(
             table = "users",

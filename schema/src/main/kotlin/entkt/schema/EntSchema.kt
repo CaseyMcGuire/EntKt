@@ -40,8 +40,15 @@ import kotlin.reflect.typeOf
  *   is never pluralized, singularized, or otherwise transformed, so an
  *   irregular or intentionally singular term (`people`, `news`, `audit`)
  *   is spelled out here rather than inferred.
+ * @param comment optional plain-text documentation for the schema as a whole.
+ *   Preserved verbatim in runtime metadata; it does not affect database
+ *   structure or produce SQL table comments.
  */
-abstract class EntSchema(val tableName: String, val clientName: String) {
+abstract class EntSchema(
+    val tableName: String,
+    val clientName: String,
+    val comment: String? = null,
+) {
 
     init {
         validateName(tableName, "Table")
