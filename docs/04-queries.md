@@ -22,8 +22,7 @@ val users = client.users.query {
 }.all(viewerContext).getOrThrow()
 ```
 
-`.all(viewerContext)` returns `ReadResult<List<User>>` — the canonical exhaustive
-result of every read terminal. Use `.firstOrNull(viewerContext)`
+`.all(viewerContext)` returns `ReadCollectionResult<User>`. Use `.firstOrNull(viewerContext)`
 (`ReadResult<User?>`) for single results. Counts, existence checks, and
 aggregates are ordinary Kotlin collection operations over those entity reads;
 use an explicit privacy-bypass context when the calculation must include rows
@@ -33,7 +32,7 @@ A `ReadResult` is either `Success(value)` or `Failed(exception)`.
 `Success(null)` on a singular lookup is authoritative absence;
 privacy denial and operational failure are `Failed` carrying a typed
 exception (`EntPrivacyDeniedException`, `EntQueryRejectedException`,
-or the original driver exception). Two runtime projections cover the
+or the original driver exception). Runtime projections cover the
 common handling styles without another database call:
 
 - `.getOrThrow()` — return the successful value (absence stays
@@ -41,6 +40,43 @@ common handling styles without another database call:
 - `.visibleOrNull()` — on a singular result, map *root* LOAD denial
   to `Success(null)`; every other state is unchanged. Privacy as
   absence, made explicit.
+
+Collection reads return `Completed(entries)` or `Failed(exception)`:
+
+- `Completed` contains one `ReadResult<User>` per selected root, in query order.
+  A readable root is `Success(user)`; a denied root is `Failed` with its keyed
+  root-denial diagnostic, never the denied entity. No matching rows means
+  `Completed(emptyList())`. On `Completed`, `entities()` returns these outcomes
+  unchanged, without throwing or unwrapping them.
+- `Failed` means the query could not produce a reliable collection—for example,
+  a database or rule exception, query rejection, or required selected-edge denial.
+  It exposes no partially completed entries.
+
+`getOrThrow()` is strict: it returns `List<User>` or throws. Root denials are
+aggregated in encounter order using `EntPrivacyDeniedException`.
+To retain visible roots and represent denied roots as null entries:
+
+```kotlin
+import entkt.runtime.result.deniedAsNull
+
+val users: List<User?> = client.users.query {
+    orderBy(User.id.asc())
+}.all(viewerContext).deniedAsNull().getOrThrow()
+```
+
+For selected roots `[A, denied B, C]`, this returns `[A, null, C]`, not a
+filtered list. An empty selection returns `[]`; three denied roots return
+`[null, null, null]`. Whole-query failures remain failures. Projections perform
+no I/O, additional privacy evaluation, or pagination refilling.
+
+Null slots reveal hidden rows' existence and positions. This is an explicit
+application choice, not automatically safe for untrusted clients; denial
+diagnostics likewise require an application boundary policy.
+
+Selected edges are loaded only for authorized roots, even when other roots
+are denied. Calling strict `getOrThrow()` afterward does not undo that work.
+A required-edge denial or operational failure during graph loading fails the
+whole collection. Existing `filterVisible()` edge policies are unchanged.
 
 Materializing collection terminals evaluate LOAD privacy over the complete
 ordered root result. The first explicit batch privacy rule is invoked once with
@@ -91,7 +127,7 @@ Construction and derivation perform no database I/O. New mutable predicate and
 ordering operands are detached when a fluent method returns or a configuration
 block finishes. Invalid bounds and oversized predicate inputs throw during
 construction; execution-time interceptor and driver failures still produce
-`ReadResult.Failed`.
+`ReadResult.Failed` for singular reads or `ReadCollectionResult.Failed` for collections.
 
 ### Full-Client And Rule-Client Query Types
 
@@ -479,12 +515,12 @@ users." Three details worth pinning:
 
 Traversal does not apply source LOAD privacy: source rows only
 define the target query and are not returned. Target rows keep the
-normal strict read semantics — `all()` returns
-`Failed(EntPrivacyDeniedException)` when any target row in the
-selected window is denied. Callers that need source LOAD privacy to
+normal collection semantics — `all()` retains one outcome per target row;
+`getOrThrow()` throws when any target in the selected window is denied.
+Callers that need source LOAD privacy to
 decide which rows are traversed should materialize the source query
-first with `all()` (under the strict model a denied source row fails
-that read rather than being skipped), then query the target by id.
+first with `all(viewerContext).getOrThrow()` (a denied source row throws rather than being
+skipped), then query the target by id.
 
 ### `has` / `hasWhere` -- edge predicates
 
@@ -901,7 +937,7 @@ val user = client.withTransaction { tx ->
 ```
 
 `forUpdate()` returns `ForUpdateQuery<Entity>`, which exposes
-`all(viewerContext): ReadResult<List<Entity>>` and
+`all(viewerContext): ReadCollectionResult<Entity>` and
 `firstOrNull(viewerContext): ReadResult<Entity?>`, plus the immutable
 `skipLocked()` option described below. Finish filtering, ordering,
 pagination, traversal, and eager selection before calling it. Construction
@@ -909,7 +945,7 @@ performs no I/O; each terminal runs a fresh read on the original client binding.
 Later query branches cannot change that captured description.
 
 The terminal requires an active transaction and a supporting driver. Otherwise
-it returns `ReadResult.Failed` with `TransactionRequiredException` or
+it returns the terminal's `Failed` variant with `TransactionRequiredException` or
 `UnsupportedDriverCapabilityException`, before interceptors or SQL. A root-client
 query is not automatically rebound to an active transaction; use the `tx`
 repositories. An escaped transaction-bound locking query cannot execute after
@@ -917,15 +953,15 @@ the transaction ends.
 
 Read interceptors and LOAD privacy run normally. PostgreSQL acquires locks
 before LOAD evaluation, and keeps them until commit or rollback—even if LOAD
-denies the result or `visibleOrNull()` projects that denial to null. Read failures
+denies roots or `visibleOrNull()` / `deniedAsNull()` projects those denials to null. Read failures
 do not automatically mark the transaction rollback-only; use `orRollback()` when
 failure should stop the transaction. A database statement failure can still
 abort it. Singular absence remains a successful null, not a locked target.
 
 Recognized PostgreSQL deadlocks and serialization failures return
-`ReadResult.Failed(EntDatabaseConflictException(...))`, retaining the SQLSTATE
+the terminal's `Failed(EntDatabaseConflictException(...))`, retaining the SQLSTATE
 as `code` and the original driver exception as `cause`. This also applies to
-ordinary root and eager reads. `visibleOrNull()` does not hide these failures.
+ordinary root and eager reads. Neither null projection hides these failures.
 Use `orRollback()` to stop immediately and preserve the conflict at the transaction
 boundary; ignoring an aborted read can instead lead to a later transaction-aborted
 error. See [Conflicts and transaction outcomes](#conflicts-and-transaction-outcomes).
@@ -961,7 +997,7 @@ client.withTransaction { tx ->
 change the original wrapper's waiting behavior. It is available only on that
 wrapper, not on ordinary queries, rule-client queries, or query configuration
 scopes. A supporting driver and an active transaction are still required.
-Unsupported drivers return `ReadResult.Failed(UnsupportedDriverCapabilityException)`
+Unsupported drivers return the terminal's `Failed(UnsupportedDriverCapabilityException)`
 before interceptors or SQL, never silently falling back to waiting.
 
 PostgreSQL executes `FOR UPDATE OF <root alias> SKIP LOCKED`. Skipped root rows

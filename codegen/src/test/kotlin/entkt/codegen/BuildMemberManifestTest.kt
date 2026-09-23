@@ -80,7 +80,7 @@ class BuildMemberManifestTest {
                 "limit" to GeneratedMemberKind.FUNCTION,
                 "offset" to GeneratedMemberKind.FUNCTION,
                 "orderBy" to GeneratedMemberKind.FUNCTION,
-                "readRootQuery" to GeneratedMemberKind.FUNCTION,
+                "readOne" to GeneratedMemberKind.FUNCTION,
                 "newQuery" to GeneratedMemberKind.FUNCTION,
                 "traversalQuery" to GeneratedMemberKind.FUNCTION,
                 "whereAllForInternalUse" to GeneratedMemberKind.FUNCTION,

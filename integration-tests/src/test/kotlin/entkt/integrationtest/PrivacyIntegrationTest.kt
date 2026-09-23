@@ -24,6 +24,7 @@ import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.result.TransactionResult
 import org.postgresql.ds.PGSimpleDataSource
@@ -33,6 +34,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 import javax.sql.DataSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -221,8 +223,7 @@ class PrivacyIntegrationTest {
         // Anonymous can see published but not drafts. Strict all()
         // evaluates the full selected window and reports every denied
         // root row — one keyed denial per draft, no hydrated data.
-        val failed = assertIs<ReadResult.Failed>(client.articles.query().all(viewerContext))
-        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        val ex = assertFailsWith<EntPrivacyDeniedException> { client.articles.query().all(viewerContext).getOrThrow() }
         assertEquals(LoadDenialOrigin.Root, ex.origin)
         assertEquals(2, ex.denials.size)
         assertTrue(ex.denials.all { it.entityType == "Article" })
@@ -561,8 +562,7 @@ class PrivacyIntegrationTest {
         seedData(client)
 
         // Anonymous: drafts are denied — strict all() fails.
-        val before = assertIs<ReadResult.Failed>(client.articles.query().all(viewerContext))
-        assertIs<EntPrivacyDeniedException>(before.exception)
+        assertFailsWith<EntPrivacyDeniedException> { client.articles.query().all(viewerContext).getOrThrow() }
 
         // Elevate to the bypass within a block
         val all = run {
@@ -573,8 +573,7 @@ class PrivacyIntegrationTest {
         assertEquals(4, all.size)
 
         // Back to anonymous: still denied
-        val after = assertIs<ReadResult.Failed>(client.articles.query().all(viewerContext))
-        assertIs<EntPrivacyDeniedException>(after.exception)
+        assertFailsWith<EntPrivacyDeniedException> { client.articles.query().all(viewerContext).getOrThrow() }
     }
 
     // ---- Eager loading + privacy ----
@@ -618,7 +617,7 @@ class PrivacyIntegrationTest {
             // published (allowed), but eager-loading Bob as the author is denied
             // because RestrictiveUserPolicy only allows viewing yourself — the
             // Denial carries the SelectedEdgePath origin naming the offending edge path.
-            val failed = assertIs<ReadResult.Failed>(
+            val failed = assertIs<ReadCollectionResult.Failed>(
                 scoped.articles.query {
                     where(Article.published eq true)
                     loadAuthor()
@@ -989,7 +988,6 @@ class PrivacyIntegrationTest {
             val u = sys.users.create { name = "U"; email = "u2@test.com" }.saveAndLoad(viewerContext).getOrThrow()
             sys.articles.create { title = "Draft"; published = false; authorId = u.id }.save(viewerContext).getOrThrow()
         }
-        val readFailed = assertIs<ReadResult.Failed>(client.articles.query().all(viewerContext))
-        assertIs<EntPrivacyDeniedException>(readFailed.exception)
+        assertFailsWith<EntPrivacyDeniedException> { client.articles.query().all(viewerContext).getOrThrow() }
     }
 }

@@ -25,6 +25,8 @@ import entkt.runtime.result.EntConflictFailure
 import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
+import entkt.runtime.result.deniedAsNull
 import entkt.runtime.result.visibleOrNull
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
@@ -208,13 +210,13 @@ class ForUpdateQueryTest {
         assertFalse(NoopDriver.supportsQuerySkipLocked)
         val outside = Fixture().apply { transactional = false }
         assertIs<TransactionRequiredException>(
-            assertIs<ReadResult.Failed>(outside.locking().skipLocked().all(outside.viewer)).exception,
+            assertIs<ReadCollectionResult.Failed>(outside.locking().skipLocked().all(outside.viewer)).exception,
         )
         assertEquals(listOf("guard"), outside.events)
 
         val noLocking = Fixture().apply { supported = false }
         assertIs<UnsupportedDriverCapabilityException>(
-            assertIs<ReadResult.Failed>(noLocking.locking().skipLocked().all(noLocking.viewer)).exception,
+            assertIs<ReadCollectionResult.Failed>(noLocking.locking().skipLocked().all(noLocking.viewer)).exception,
         )
         assertEquals(listOf("guard"), noLocking.events)
 
@@ -245,7 +247,11 @@ class ForUpdateQueryTest {
 
         fixture.rows = listOf(listOf(mapOf("id" to 1L)))
         fixture.denied = setOf(1L)
-        assertIs<EntPrivacyDeniedException>(assertIs<ReadResult.Failed>(query.all(fixture.viewer)).exception)
+        val result = assertIs<ReadCollectionResult.Completed<Item>>(query.all(fixture.viewer))
+        assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }
+        val events = fixture.events.toList()
+        assertEquals(listOf(null), result.deniedAsNull().getOrThrow())
+        assertEquals(events, fixture.events)
         assertIs<EntPrivacyDeniedException>(assertIs<ReadResult.Failed>(query.firstOrNull(fixture.viewer)).exception)
         assertEquals(4, fixture.calls.size, "Privacy denials must not trigger replacement reads")
     }
@@ -263,8 +269,9 @@ class ForUpdateQueryTest {
             edges = listOf(EdgeSelection(Parent, EntityQuery(Items), EdgeVisibility.REQUIRE_VISIBLE)),
         )
         val result = fixture.locking(query).skipLocked().all(fixture.viewer)
-        val denial = assertIs<EntPrivacyDeniedException>(assertIs<ReadResult.Failed>(result).exception)
+        val denial = assertIs<EntPrivacyDeniedException>(assertIs<ReadCollectionResult.Failed>(result).exception)
         assertIs<LoadDenialOrigin.SelectedEdgePath>(denial.origin)
+        assertSame(result, result.deniedAsNull())
         assertEquals(listOf(QueryLockMode.ForUpdateSkipLocked, QueryLockMode.None), fixture.calls.map { it.lockMode })
         assertEquals(
             listOf(QueryLockMode.None, QueryLockMode.ForUpdateSkipLocked, QueryLockMode.None, QueryLockMode.None),
@@ -275,7 +282,7 @@ class ForUpdateQueryTest {
     @Test
     fun `preflight rejects root clients unsupported drivers and expired clients before interceptors or SQL`() {
         val outside = Fixture().apply { transactional = false }
-        assertIs<TransactionRequiredException>(assertIs<ReadResult.Failed>(outside.locking().all(outside.viewer)).exception)
+        assertIs<TransactionRequiredException>(assertIs<ReadCollectionResult.Failed>(outside.locking().all(outside.viewer)).exception)
         assertEquals(listOf("guard"), outside.events)
 
         val unsupported = Fixture().apply { supported = false; mutationLockSupported = true }
@@ -288,11 +295,11 @@ class ForUpdateQueryTest {
         val captured = expired.locking()
         val closed = IllegalStateException("transaction ended")
         expired.closed = closed
-        assertSame(closed, assertIs<ReadResult.Failed>(captured.all(expired.viewer)).exception)
+        assertSame(closed, assertIs<ReadCollectionResult.Failed>(captured.all(expired.viewer)).exception)
         assertEquals(listOf("guard"), expired.events)
 
         assertIs<IllegalStateException>(
-            assertIs<ReadResult.Failed>(ForUpdateQuery(EntityQuery(Items), null).all(expired.viewer)).exception,
+            assertIs<ReadCollectionResult.Failed>(ForUpdateQuery(EntityQuery(Items), null).all(expired.viewer)).exception,
         )
     }
 
@@ -357,13 +364,13 @@ class ForUpdateQueryTest {
     @Test
     fun `interceptor rejection and operational failures preserve read failure propagation`() {
         val rejected = Fixture().apply { intercept = { scope, _ -> scope.reject("blocked") } }
-        assertIs<EntQueryRejectedException>(assertIs<ReadResult.Failed>(rejected.locking().all(rejected.viewer)).exception)
+        assertIs<EntQueryRejectedException>(assertIs<ReadCollectionResult.Failed>(rejected.locking().all(rejected.viewer)).exception)
         assertTrue(rejected.calls.isEmpty())
 
         val operational = Fixture()
         val failure = IllegalStateException("database failed")
         operational.failure = failure
-        assertSame(failure, assertIs<ReadResult.Failed>(operational.locking().all(operational.viewer)).exception)
+        assertSame(failure, assertIs<ReadCollectionResult.Failed>(operational.locking().all(operational.viewer)).exception)
         assertTrue(operational.events.none { it.startsWith("privacy") })
 
         for (uncaptured in listOf(CancellationException("cancelled"), AssertionError("fatal"))) {
@@ -381,21 +388,28 @@ class ForUpdateQueryTest {
                 classify = { EntDatabaseConflictException("40P01", "deadlock", it) }
             }
             val query = fixture.locking()
-            val result = if (first) query.firstOrNull(fixture.viewer) else query.all(fixture.viewer)
-            val conflict = assertIs<EntDatabaseConflictException>(assertIs<ReadResult.Failed>(result).exception)
+            val exception = if (first) {
+                val result = assertIs<ReadResult.Failed>(query.firstOrNull(fixture.viewer))
+                assertSame(result.exception, assertFailsWith<EntDatabaseConflictException> { result.getOrThrow() })
+                result.exception
+            } else {
+                val result = assertIs<ReadCollectionResult.Failed>(query.all(fixture.viewer))
+                assertSame(result.exception, assertFailsWith<EntDatabaseConflictException> { result.getOrThrow() })
+                result.exception
+            }
+            val conflict = assertIs<EntDatabaseConflictException>(exception)
 
             assertIs<EntConflictFailure>(conflict)
             assertSame(cause, conflict.cause)
             assertEquals(listOf(cause), fixture.classifiedExceptions)
             assertTrue(fixture.events.none { it.startsWith("privacy") })
-            assertSame(conflict, assertFailsWith<EntDatabaseConflictException> { result.getOrThrow() })
         }
     }
 
     @Test
     fun `ordinary reads require neither transaction nor locking capability`() {
         val fixture = Fixture().apply { transactional = false; supported = false }
-        fixture.executor.readRootQuery(fixture.viewer, { EntityQuery(Items) }, ReadOperation.ALL, null).getOrThrow()
+        fixture.executor.readMany(fixture.viewer, { EntityQuery(Items) }).getOrThrow()
         assertEquals(QueryLockMode.None, fixture.calls.single().lockMode)
         assertEquals(QueryLockMode.None, fixture.contexts.single().lockMode)
     }

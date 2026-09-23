@@ -54,10 +54,9 @@ internal fun buildFindById(
         parameter("id", idType)
         body {
             add("val query = %T(driver, %L)\n", queryClass, clientRef)
-            add("return when (val result = query.readRootQuery(\n")
+            add("return query.readOne(\n")
             add("  viewerContext = viewerContext,\n")
             add("  operation = %T.BY_ID,\n", READ_OPERATION)
-            add("  maximumRows = 1,\n")
             add(
                 "  structuralPredicates = listOf(%T.Leaf<%T>(%S, %T.EQ, id)),\n",
                 PREDICATE,
@@ -65,10 +64,7 @@ internal fun buildFindById(
                 "id",
                 OP,
             )
-            add(")) {\n")
-            add("  is %T.Success -> %T.Success(result.value.firstOrNull())\n", READ_RESULT, READ_RESULT)
-            add("  is %T.Failed -> result\n", READ_RESULT)
-            add("}\n")
+            add(")\n")
         }
     }
 }

@@ -11,6 +11,7 @@ import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -82,8 +83,8 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
         seedPosts(client, listOf("keep", "drop"))
 
         val result = client.posts.query().all(testViewerContext)
-        val success = assertIs<ReadResult.Success<List<Post>>>(result)
-        assertEquals(1, success.value.size)
+        val completed = assertIs<ReadCollectionResult.Completed<Post>>(result)
+        assertEquals(1, completed.getOrThrow().size)
     }
 
     @Test
@@ -154,7 +155,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
             }
         }
         val result = client.posts.query().all(testViewerContext)
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("no broad scans", ex.reason)
         assertEquals("broad_scan_denied", ex.code)
@@ -177,7 +178,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
             }
         }
         val result = client.posts.query().all(testViewerContext)
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val thrown = assertFailsWith<EntQueryRejectedException> { result.getOrThrow() }
         assertSame(failed.exception, thrown)
         assertEquals("test_code", thrown.code)
@@ -313,7 +314,7 @@ class ReadInterceptorTerminalsIntegrationTest : PostgresTestBase() {
             }
         }
         // No limit set → effective limit is null → exceeds 10.
-        val failed = assertIs<ReadResult.Failed>(client.posts.query().all(testViewerContext))
+        val failed = assertIs<ReadCollectionResult.Failed>(client.posts.query().all(testViewerContext))
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("max_limit_exceeded", ex.code)
         assertEquals("max-limit", ex.interceptor)

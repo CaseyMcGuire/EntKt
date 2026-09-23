@@ -149,6 +149,19 @@ class TransactionScope internal constructor(
     }
 
     /**
+     * Return every collection value, or roll back on a whole-query failure or any failed entry.
+     * Apply [deniedAsNull] first when denied roots should be successful null entries instead.
+     */
+    fun <T> ReadCollectionResult<T>.orRollback(): List<T> = try {
+        getOrThrow()
+    } catch (e: java.util.concurrent.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        coordinator.recordFailure(e)
+        throw AbortEntTransaction(e)
+    }
+
+    /**
      * Return a successful mutation value, or use the stored exception
      * to stop the block so the current transaction boundary rolls
      * back. This is the ordinary composition style: it stops dependent

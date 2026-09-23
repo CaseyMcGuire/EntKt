@@ -21,7 +21,7 @@ import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntQueryRejectedException
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -37,7 +37,7 @@ import kotlin.test.assertTrue
  * surfaced as a SQL syntax error on Postgres — one layer removed from
  * the caller. Now each is `require`-rejected at the builder boundary
  * so the caller sees the bad input immediately (builder argument
- * validation throws; it never becomes a `ReadResult.Failed`).
+ * validation throws; it never becomes a `ReadCollectionResult.Failed`).
  *
  * Also pins that `limit(0)` is honored consistently by every terminal
  * that reads rows, and by eager-load windows of every cardinality.
@@ -519,7 +519,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
         val result = query().all(testViewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("no_eager", ex.code)
     }

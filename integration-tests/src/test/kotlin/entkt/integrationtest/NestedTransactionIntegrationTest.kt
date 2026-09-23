@@ -7,7 +7,7 @@ import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.NestedTransactionUnsupportedException
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import entkt.runtime.result.RootOperationInsideTransactionException
 import entkt.runtime.result.TransactionResult
 import kotlin.test.Test
@@ -62,7 +62,7 @@ class NestedTransactionIntegrationTest : PostgresTestBase() {
         var nestedRan = false
 
         val result = client.withTransaction {
-            val read = assertIs<ReadResult.Failed>(client.users.query().all(testViewerContext))
+            val read = assertIs<ReadCollectionResult.Failed>(client.users.query().all(testViewerContext))
             assertIs<RootOperationInsideTransactionException>(read.exception)
 
             assertFailsWith<NestedTransactionUnsupportedException> {

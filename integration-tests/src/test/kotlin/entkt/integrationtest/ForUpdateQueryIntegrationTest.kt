@@ -34,6 +34,8 @@ import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
+import entkt.runtime.result.deniedAsNull
 import entkt.runtime.result.RootOperationInsideTransactionException
 import entkt.runtime.result.TransactionFailureState
 import entkt.runtime.result.TransactionResult
@@ -65,13 +67,13 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
 
         val rootLock = client.users.query().forUpdate()
         assertTrue(recording.calls.isEmpty())
-        assertIs<TransactionRequiredException>(assertIs<ReadResult.Failed>(rootLock.all(testViewerContext)).exception)
+        assertIs<TransactionRequiredException>(assertIs<ReadCollectionResult.Failed>(rootLock.all(testViewerContext)).exception)
         assertTrue(recording.calls.isEmpty())
 
         var escaped: ForUpdateQuery<User>? = null
         client.withTransaction { tx ->
             assertIs<RootOperationInsideTransactionException>(
-                assertIs<ReadResult.Failed>(rootLock.all(testViewerContext)).exception,
+                assertIs<ReadCollectionResult.Failed>(rootLock.all(testViewerContext)).exception,
             )
             var scope: UserQueryScope? = null
             val ids = mutableListOf(first.id)
@@ -92,7 +94,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
 
         recording.reset()
         assertIs<IllegalStateException>(
-            assertIs<ReadResult.Failed>(assertNotNull(escaped).all(testViewerContext)).exception,
+            assertIs<ReadCollectionResult.Failed>(assertNotNull(escaped).all(testViewerContext)).exception,
         )
         assertTrue(recording.calls.isEmpty())
     }
@@ -436,6 +438,19 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
         assertEquals(1, loadCalls)
         assertTrue(canLock(User.TABLE, selected.id))
 
+        recording.reset()
+        client.withTransaction { tx ->
+            val result = tx.users.query { where(User.id eq selected.id) }.forUpdate().all(viewer)
+            assertIs<ReadCollectionResult.Completed<User>>(result)
+            assertFalse(canLock(User.TABLE, selected.id))
+            val calls = recording.calls.toList()
+            assertEquals(listOf(null), result.deniedAsNull().orRollback())
+            assertFalse(canLock(User.TABLE, selected.id), "Null projection must not release locks")
+            assertEquals(calls, recording.calls)
+        }.getOrThrow()
+        assertEquals(2, loadCalls)
+        assertTrue(canLock(User.TABLE, selected.id))
+
         val rolledBack = client.withTransaction { tx ->
             tx.users.query { where(User.id eq selected.id) }.forUpdate().firstOrNull(viewer).orRollback()
         }
@@ -484,7 +499,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
         }
         client.withTransaction { tx ->
             val result = tx.users.query().forUpdate().all(testViewerContext)
-            assertIs<UnsupportedDriverCapabilityException>(assertIs<ReadResult.Failed>(result).exception)
+            assertIs<UnsupportedDriverCapabilityException>(assertIs<ReadCollectionResult.Failed>(result).exception)
         }.getOrThrow()
         assertEquals(listOf("withTransaction"), recording.calls)
         assertEquals(0, interceptorCalls)

@@ -126,8 +126,8 @@ sealed interface PrivacyDecision {
 
 /**
  * Legacy standalone representation of a denied privacy decision. Generated
- * data terminals do not throw this type: reads return
- * `ReadResult.Failed(EntPrivacyDeniedException)`, while mutations return
+ * data terminals do not throw this type: singular reads and individual collection
+ * entries use `ReadResult.Failed(EntPrivacyDeniedException)`, while mutations return
  * `MutationResult.Failed(EntMutationPrivacyDeniedException)`.
  */
 class PrivacyDeniedException(

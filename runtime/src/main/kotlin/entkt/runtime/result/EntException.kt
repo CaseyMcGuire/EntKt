@@ -308,10 +308,10 @@ class EntQueryConfigurationException(
 /**
  * LOAD privacy denied a read. [origin] identifies whether the
  * terminal's root selection ([LoadDenialOrigin.Root]) or a selected-edge target
- * ([LoadDenialOrigin.SelectedEdgePath]) produced the denial; root privacy completes before
- * selected edges are loaded, so one exception
- * never mixes both. [denials] is never empty: a singular read carries
- * exactly one keyed denial, a strict collection read carries one per
+ * ([LoadDenialOrigin.SelectedEdgePath]) produced the denial. One exception never
+ * mixes both: collection root denials are retained per entry, while selected-edge
+ * denial fails the entire graph. [denials] is never empty: a singular read carries
+ * exactly one keyed denial, a strict collection projection carries one per
  * denied root row in encountered query order, and a strict selected-edge denial carries exactly
  * the first denied target.
  *

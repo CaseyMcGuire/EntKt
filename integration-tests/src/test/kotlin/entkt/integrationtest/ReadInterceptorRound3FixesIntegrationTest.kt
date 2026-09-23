@@ -27,6 +27,7 @@ import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -149,7 +150,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // when all() runs its source-step inside the capture boundary.
         val target = client.users.query().queryArticles()
         val result = target.all(testViewerContext)
-        val failed = assertIs<ReadResult.Failed>(result, "expected Failed, got $result")
+        val failed = assertIs<ReadCollectionResult.Failed>(result, "expected Failed, got $result")
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("src_rej", ex.code)
         assertEquals("user-rejector", ex.interceptor)
@@ -179,7 +180,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
             }
         }
         val result = client.users.query().queryArticles().all(testViewerContext)
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val thrown = assertFailsWith<EntQueryRejectedException> { result.getOrThrow() }
         assertSame(failed.exception, thrown)
         assertEquals("src", thrown.code)
@@ -242,7 +243,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // StackOverflowError) is a terminal-level failure — captured
         // in the result, not thrown.
         val result = client.users.query().all(testViewerContext)
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<IllegalStateException>(failed.exception)
         assertTrue(
             ex.message!!.contains("edge-predicate interceptor recursion exceeded depth"),

@@ -29,6 +29,18 @@ above it.
 
 ## Unreleased
 
+- **Use cardinality-specific collection read results** (`runtime`, `codegen`)
+  `all()` now returns `ReadCollectionResult<T>`, including traversal, read-only,
+  indexed, and locking queries. Completed collections retain each root's success
+  or privacy denial; whole-query failures expose no entries. Authorized roots'
+  selected edges load even when another root is denied.
+  _Migration:_ regenerate code and replace explicit `ReadResult<List<T>>` types
+  with `ReadCollectionResult<T>`. Match `Completed` / `Failed` instead of
+  `Success` / `Failed`; `Completed.entities()` returns the individual outcomes.
+  Existing `.getOrThrow()` and transaction `.orRollback()` calls remain strict.
+  Opt into `.deniedAsNull()` before either projection for `List<T?>` null slots.
+  Singular reads and `visibleOrNull()` are unchanged.
+
 - **Register context-only privacy rules through the shared methods** (`runtime`)
   `ContextPrivacyRule` now implements `PrivacyRule`, so context-only, scalar,
   and batch rules can be mixed in the same vararg call.

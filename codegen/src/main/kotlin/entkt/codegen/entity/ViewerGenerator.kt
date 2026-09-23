@@ -42,7 +42,6 @@ private val VIEWER_BAD_REQUEST = ClassName("entkt.viewer", "EntViewerBadRequestE
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val ORDER_FIELD = ClassName("entkt.query", "OrderField")
 private val ORDER_DIRECTION = ClassName("entkt.query", "OrderDirection")
-private val READ_RESULT = ClassName("entkt.runtime.result", "ReadResult")
 private val ENT_PRIVACY_DENIED = ClassName("entkt.runtime.result", "EntPrivacyDeniedException")
 private val LOAD_DENIAL_ORIGIN = ClassName("entkt.runtime.result", "LoadDenialOrigin")
 private val VISIBLE_OR_NULL = com.squareup.kotlinpoet.MemberName("entkt.runtime.result", "visibleOrNull")
@@ -231,7 +230,7 @@ internal class ViewerGenerator(private val packageName: String) {
     ): FunSpec {
         // Canonical strict pagination: the window is fetched with a
         // pageSize+1 probe for an exact hasNext — sound because the
-        // canonical all() is all-or-nothing, so a successful page was
+        // strict getOrThrow() projection is all-or-nothing, so a successful page was
         // never filtered. A LOAD-denied row anywhere in the probed
         // window fails the whole read; the viewer reports that as an
         // explicitly privacy-filtered empty page rather than showing a
@@ -261,18 +260,16 @@ internal class ViewerGenerator(private val packageName: String) {
             statement("offset(request.offset)")
             endControlFlow()
             statement(".all(viewerContext)")
-            beginControlFlow("val rows = when (result)")
-            statement("is %T.Success -> result.value", READ_RESULT)
-            beginControlFlow("is %T.Failed ->", READ_RESULT)
-            statement("val e = result.exception")
-            beginControlFlow("if (e is %T && e.origin is %T.Root)", ENT_PRIVACY_DENIED, LOAD_DENIAL_ORIGIN)
+            beginControlFlow("val rows = try")
+            statement("result.getOrThrow()")
+            nextControlFlow("catch (e: %T)", ENT_PRIVACY_DENIED)
+            beginControlFlow("if (e.origin is %T.Root)", LOAD_DENIAL_ORIGIN)
             statement(
                 "return %T(emptyList(), hasNext = null, privacyFiltered = true)",
                 VIEWER_LIST_RESULT,
             )
             endControlFlow()
             statement("throw e")
-            endControlFlow()
             endControlFlow()
             statement(
                 "return %T(rows.take(request.pageSize).map { toRow(it) }, hasNext = rows.size > request.pageSize)",

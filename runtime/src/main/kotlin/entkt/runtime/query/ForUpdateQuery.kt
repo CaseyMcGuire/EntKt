@@ -7,6 +7,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 
 /**
  * A completed query whose terminals lock root rows until transaction commit or rollback.
@@ -35,29 +36,26 @@ class ForUpdateQuery<Entity : EntEntity<*>> private constructor(
     fun skipLocked(): ForUpdateQuery<Entity> =
         ForUpdateQuery(query, executor, QueryLockMode.ForUpdateSkipLocked)
 
-    fun all(viewerContext: ViewerContext): ReadResult<List<Entity>> =
-        read(viewerContext, ReadOperation.ALL, maximumRows = null)
-
-    fun firstOrNull(viewerContext: ViewerContext): ReadResult<Entity?> =
-        when (val result = read(viewerContext, ReadOperation.FIRST, maximumRows = 1)) {
-            is ReadResult.Success -> ReadResult.Success(result.value.firstOrNull())
-            is ReadResult.Failed -> result
-        }
-
-    private fun read(
-        viewerContext: ViewerContext,
-        operation: ReadOperation,
-        maximumRows: Int?,
-    ): ReadResult<List<Entity>> {
-        val boundExecutor = executor ?: return ReadResult.failedForInternalUse(
-            IllegalStateException("${query.entity.entityName} query requires a client for privacy enforcement"),
-        )
-        return boundExecutor.readRootQuery(
+    fun all(viewerContext: ViewerContext): ReadCollectionResult<Entity> {
+        val boundExecutor = executor
+            ?: return ReadCollectionResult.failedForInternalUse(missingExecutionHostException())
+        return boundExecutor.readMany(
             viewerContext = viewerContext,
             captureQuery = { query },
-            operation = operation,
-            maximumRows = maximumRows,
             lockMode = lockMode,
         )
     }
+
+    fun firstOrNull(viewerContext: ViewerContext): ReadResult<Entity?> {
+        val boundExecutor = executor
+            ?: return ReadResult.failedForInternalUse(missingExecutionHostException())
+        return boundExecutor.readOne(
+            viewerContext = viewerContext,
+            captureQuery = { query },
+            lockMode = lockMode,
+        )
+    }
+
+    private fun missingExecutionHostException(): IllegalStateException =
+        IllegalStateException("${query.entity.entityName} query requires a client for privacy enforcement")
 }

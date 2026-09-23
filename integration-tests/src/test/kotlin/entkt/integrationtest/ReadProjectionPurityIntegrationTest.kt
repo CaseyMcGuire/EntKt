@@ -16,10 +16,13 @@ import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
+import entkt.runtime.result.deniedAsNull
 import entkt.runtime.result.TransactionResult
 import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -135,6 +138,33 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
             assertSame(failed.exception, e)
         }
         assertEquals(0, recording.callCount(), "getOrThrow must not touch the driver; saw ${recording.calls}")
+    }
+
+    @Test
+    fun `collection projections perform no IO or privacy re-evaluation`() {
+        var evaluations = 0
+        val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
+            override fun configure(scope: ArticlePolicyScope) = scope.run {
+                privacy {
+                    load(ArticleLoadPrivacyRule { _, _ ->
+                        evaluations++
+                        PrivacyDecision.Deny("hidden")
+                    })
+                }
+            }
+        }
+        val (client, recording) = recordingClient(Viewer.User(1L), policy)
+        seedArticle(client)
+        val result = assertIs<ReadCollectionResult.Completed<Article>>(client.articles.query().all(viewerContext))
+
+        recording.reset()
+        assertEquals(1, evaluations)
+        assertIs<ReadResult.Failed>(result.entities().single())
+        assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }
+        assertEquals(listOf(null), result.deniedAsNull().getOrThrow())
+        assertEquals(result.deniedAsNull(), result.deniedAsNull().deniedAsNull())
+        assertEquals(1, evaluations)
+        assertEquals(0, recording.callCount())
     }
 
     @Test

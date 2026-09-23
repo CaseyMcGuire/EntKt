@@ -25,9 +25,10 @@ import entkt.runtime.query.EdgeState
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 
@@ -211,7 +212,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
             loadTags { loadPosts() }.filterVisible()
         }.all(viewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals(listOf("tags", "posts"), origin.steps.map { it.edgeName })
@@ -245,8 +246,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
 
         val result = client.notes.query { loadAuthor().filterVisible() }.all(viewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
-        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        val ex = assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }
         assertIs<LoadDenialOrigin.Root>(ex.origin)
     }
 
@@ -274,7 +274,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
             loadTags().filterVisible()
         }.all(viewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         assertSame(boom, failed.exception)
     }
 

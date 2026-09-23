@@ -29,7 +29,7 @@ import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.SelectedEdgeStep
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -570,7 +570,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
         // The descendant rejection under articles fails the terminal
         // before the directories sibling runs any callback or query.
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("nested_rej", ex.code)
         assertEquals("nested-author-rejector", ex.interceptor)
@@ -618,7 +618,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
             }
         }.all(testViewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("nested_articles_rej", ex.code)
         assertEquals("Article", ex.entityType)
@@ -664,7 +664,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
         // Association discovery completes before the target
         // interceptor pass, so the junction I/O failure is the
         // observed error — the rejecting interceptor never ran.
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         assertSame(boom, failed.exception)
         assertEquals(0, userInterceptorFires, "the target interceptor must not run after a junction failure")
     }
@@ -905,7 +905,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
         val result = client.groups.query { loadUsers { loadArticles() } }.all(viewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals(

@@ -12,6 +12,7 @@ import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.QueryLockMode
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.StorageQuerySpec
+import entkt.runtime.result.ReadCollectionResult
 import entkt.runtime.result.ReadResult
 import java.util.concurrent.CancellationException
 
@@ -37,29 +38,53 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
         loadPrivacyDispatcher = executionHost,
     )
 
-    /** Load root entities, authorize them, and recursively load their selected edges. */
-    fun readRootQuery(
+    /** Load at most one authorized root and its selected graph, preserving absence as null. */
+    fun readOne(
         viewerContext: ViewerContext,
         captureQuery: () -> EntityQuery<Entity>,
-        operation: ReadOperation,
-        maximumRows: Int?,
+        operation: ReadOperation = ReadOperation.FIRST,
         lockMode: QueryLockMode = QueryLockMode.None,
-    ): ReadResult<List<Entity>> {
-        require(maximumRows == null || maximumRows >= 0) {
-            "Root query maximum rows must be non-negative"
-        }
-        return captureFailure {
-            val query = captureQuery()
-            executionHost.checkReadExecution()
-            checkLockRequirements(query, operation, lockMode)
-            entityGraphLoader.load(
+    ): ReadResult<Entity?> = try {
+        val query = prepareQuery(captureQuery, operation, lockMode)
+        ReadResult.Success(
+            entityGraphLoader.loadOne(
                 query = query,
                 operation = operation,
-                maximumRows = maximumRows,
                 viewerContext = viewerContext,
                 lockMode = lockMode,
-            )
-        }
+            ),
+        )
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        ReadResult.failedForInternalUse(e)
+    }
+
+    /** Load a root collection, retaining denials and loading only authorized roots' graphs. */
+    fun readMany(
+        viewerContext: ViewerContext,
+        captureQuery: () -> EntityQuery<Entity>,
+        lockMode: QueryLockMode = QueryLockMode.None,
+    ): ReadCollectionResult<Entity> = try {
+        val query = prepareQuery(captureQuery, ReadOperation.ALL, lockMode)
+        ReadCollectionResult.Completed(
+            entityGraphLoader.loadMany(query, viewerContext, lockMode = lockMode),
+        )
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        ReadCollectionResult.failedForInternalUse(e)
+    }
+
+    private fun prepareQuery(
+        captureQuery: () -> EntityQuery<Entity>,
+        operation: ReadOperation,
+        lockMode: QueryLockMode,
+    ): EntityQuery<Entity> {
+        val query = captureQuery()
+        executionHost.checkReadExecution()
+        checkLockRequirements(query, operation, lockMode)
+        return query
     }
 
     private fun checkLockRequirements(
@@ -96,13 +121,5 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
     ): StorageQuerySpec<Entity> {
         executionHost.checkReadExecution()
         return queryCompiler.compile(query, operation, viewerContext)
-    }
-
-    private inline fun <Value> captureFailure(block: () -> Value): ReadResult<Value> = try {
-        ReadResult.Success(block())
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        ReadResult.failedForInternalUse(e)
     }
 }

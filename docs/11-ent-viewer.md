@@ -150,7 +150,7 @@ unbounded scan.
 Pagination is privacy-coherent and all-or-nothing per window. A page whose
 fetched window contains no denied rows shows the full window with exact
 next-page detection (a `size + 1` probe). If **any** row in the window is
-denied by LOAD privacy, the strict read fails and the viewer renders an
+denied by LOAD privacy, the viewer's strict `getOrThrow()` projection fails and it renders an
 explicitly privacy-filtered *empty* page with a banner — it never shows a
 partial window, and further navigation is offered unconditionally, since
 deriving next-link presence from visible rows would let it disclose

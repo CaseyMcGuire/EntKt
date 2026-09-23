@@ -22,12 +22,16 @@ entities, applications should use an application-owned storage query with a
 documented authorization boundary when a large aggregate cannot reasonably be
 calculated in memory.
 
-## Strict Read Model
+## Collection Outcomes And Strict Projection
 
-`query.all(viewerContext)` returns `Failed(EntPrivacyDeniedException(Root, ...))` if
-any matching entity in the selected window is denied by LOAD privacy,
-with one keyed `PrivacyDenial` per denied row — never a partial list.
-Eager-loaded edges fail the same way with a `SelectedEdgePath(steps)` origin —
+`query.all(viewerContext)` returns `ReadCollectionResult.Completed` with one
+success or root-denial outcome per selected row. `getOrThrow()` throws on any
+denial, aggregating keyed diagnostics in query order. `deniedAsNull()` instead
+turns denied root entries into successful nulls, preserving order and length.
+Those null slots disclose hidden rows' existence and positions; applications
+must deliberately choose whether that representation is appropriate.
+Whole-query failures remain failures, with no partial entries exposed.
+Eager-loaded edges fail with a `SelectedEdgePath(steps)` origin —
 if any eagerly loaded related entity is denied, the entire query fails
 (unless that edge opts into `filterVisible()`).
 
@@ -39,9 +43,9 @@ maps that root denial to absence.
 Privacy is evaluated after `limit` and `offset` select the result window, so
 `limit(10).all(viewerContext)` evaluates privacy on at most ten rows; choosing a result
 projection never turns a bounded query into a scan. If any of those rows are
-denied, the read fails rather than returning a partial result. Callers should
-narrow results to entities the viewer may see or handle the `Failed` state
-explicitly.
+denied, strict projection throws; null projection keeps their slots without
+replacement reads. Selected graphs are loaded for authorized roots even if
+other roots are denied. Strict projection afterward cannot undo those reads.
 
 ## Predicate-Based Inference
 

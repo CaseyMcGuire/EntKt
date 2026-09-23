@@ -195,9 +195,8 @@ class ReadClientGeneratorTest {
             "findById should retain its nullable ReadResult surface\n$readSpan"
         }
         assert(
-            readSpan.contains("query.readRootQuery(") &&
-                readSpan.contains("operation = ReadOperation.BY_ID,") &&
-                readSpan.contains("maximumRows = 1,"),
+            readSpan.contains("query.readOne(") &&
+                readSpan.contains("operation = ReadOperation.BY_ID,"),
         ) {
             "findById should delegate BY_ID execution to ReadQueryExecutor\n$readSpan"
         }

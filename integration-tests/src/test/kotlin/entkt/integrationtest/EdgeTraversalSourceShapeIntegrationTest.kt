@@ -22,9 +22,10 @@ import entkt.runtime.query.ReadOperation
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.result.LoadDenialOrigin
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -314,7 +315,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
 
         val result = client.users.query().queryArticles().all(testViewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val rejected = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("no traversal", rejected.reason)
         assertEquals("no_trav", rejected.code)
@@ -341,8 +342,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
 
         // Sanity: the viewer cannot LOAD users directly...
         val direct = client.users.query { limit(1) }.all(viewerContext)
-        val failed = assertIs<ReadResult.Failed>(direct)
-        assertIs<EntPrivacyDeniedException>(failed.exception)
+        assertFailsWith<EntPrivacyDeniedException> { direct.getOrThrow() }
 
         // ...but traversal only uses users to define the article
         // query — no User entity is returned, so no User LOAD
@@ -377,8 +377,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
         // fails on the denied draft, keying exactly that row — the
         // published article alone would have been visible.
         val result = client.users.query().queryArticles().all(viewerContext)
-        val failed = assertIs<ReadResult.Failed>(result)
-        val denied = assertIs<EntPrivacyDeniedException>(failed.exception)
+        val denied = assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }
         assertIs<LoadDenialOrigin.Root>(denied.origin)
         assertEquals(listOf(draft.id), denied.denials.map { it.entityKey.value })
     }

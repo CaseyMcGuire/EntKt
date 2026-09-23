@@ -62,6 +62,6 @@ internal class LoadedRelationship<
     val targets: List<Target>,
     private val attachTargets: (List<Target>) -> List<Source>,
 ) {
-    /** Attach targets after their privacy and selected children have been evaluated. */
+    /** Attach evaluated targets, preserving the sources' order and cardinality. */
     fun attach(evaluatedTargets: List<Target>): List<Source> = attachTargets(evaluatedTargets)
 }

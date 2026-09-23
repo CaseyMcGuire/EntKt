@@ -162,7 +162,7 @@ fun main() {
         active = true
     }.saveAndLoad(viewerContext).getOrThrow()
 
-    // Query — all(viewerContext) returns ReadResult<List<User>>
+    // Query — all(viewerContext) returns ReadCollectionResult<User>
     val adults = client.users.query {
         where(User.age gte 18)
         orderBy(User.age.desc())

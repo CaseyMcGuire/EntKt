@@ -51,11 +51,11 @@ data class SelectedEdgeStep(
  * Where a LOAD denial arose: the terminal's root selection, or a related entity reached through
  * selected edges.
  *
- * Root privacy completes before selected edges are loaded, so one
- * [EntPrivacyDeniedException] never mixes both origins. The split is
- * what lets [visibleOrNull] map only *root* denial to singular
- * absence — selecting an edge can never turn a visible root into
- * apparent absence.
+ * Collection root denials are retained per entry; selected-edge denial fails
+ * the entire graph. One [EntPrivacyDeniedException] never mixes both origins.
+ * This lets [visibleOrNull] map only root denial to singular absence and
+ * [deniedAsNull] map only denied root entries to null slots. Selecting an edge
+ * can never turn a visible root into apparent absence.
  */
 sealed interface LoadDenialOrigin {
     /** The denied row is the terminal's own selected root. */

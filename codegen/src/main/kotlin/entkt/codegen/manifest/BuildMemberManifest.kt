@@ -243,7 +243,7 @@ private val FIXED_QUERY_FUNCTIONS: List<String> = listOf(
     "limit",
     "offset",
     "orderBy",
-    "readRootQuery",
+    "readOne",
     "newQuery",
     "traversalQuery",
     "whereAllForInternalUse",

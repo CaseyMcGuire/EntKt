@@ -111,14 +111,14 @@ class ViewerCodegenTest {
     fun `reads go through the generated repo terminals`() {
         val adapter = gen(viewer = true).getValue("ViewerUserViewerEntity")
         assertTrue("client.viewerUsers.query" in adapter, adapter)
-        // list: the strict all() terminal over an overfetch-by-one page.
+        // list: strict projection of all() over an overfetch-by-one page.
         assertTrue(".all(viewerContext)" in adapter, adapter)
         assertTrue("val fetchLimit = request.pageSize + 1" in adapter, adapter)
-        assertTrue("is ReadResult.Success -> result.value" in adapter, adapter)
+        assertTrue("result.getOrThrow()" in adapter, adapter)
         // A Root LOAD denial renders as an empty privacy-filtered page
         // (hasNext unknown); any other read failure propagates.
         assertTrue(
-            "if (e is EntPrivacyDeniedException && e.origin is LoadDenialOrigin.Root) " +
+            "if (e.origin is LoadDenialOrigin.Root) " +
                 "{ return EntViewerListResult(emptyList(), hasNext = null, privacyFiltered = true) } throw e" in adapter,
             adapter,
         )

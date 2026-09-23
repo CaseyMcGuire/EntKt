@@ -79,7 +79,7 @@ class NamedIndexHelperCompileTest {
                     val readFound: ReadResult<TestCase?> = read.find(viewer)
                     val query: TestCaseQuery = full.query { where(TestCase.status.eq("ready")) }
                     val readQuery: TestCaseReadQuery = read.query()
-                    val rows: ReadResult<List<TestCase>> = client.testCases.indexes.byStatus("ready").query().all(viewer)
+                    val rows: entkt.runtime.result.ReadCollectionResult<TestCase> = client.testCases.indexes.byStatus("ready").query().all(viewer)
                     val nullable: TestCaseReadQuery = rules.testCases.indexes.byNickname("name").query()
                     val drivers: TestCaseQuery = client.testCases.indexes.byDrivers(driver = 1L, driverValue = 2L).query()
                     client.withTransaction { tx ->

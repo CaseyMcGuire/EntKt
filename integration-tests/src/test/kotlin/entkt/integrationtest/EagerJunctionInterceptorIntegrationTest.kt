@@ -14,7 +14,7 @@ import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntQueryRejectedException
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -186,7 +186,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
 
         val result = client.groups.query { loadUsers() }.all(testViewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("junction_rej", ex.code)
         assertEquals("Membership", ex.entityType)

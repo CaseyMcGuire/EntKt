@@ -3,13 +3,11 @@ package entkt.runtime.result
 import entkt.query.EntktInternal
 
 /**
- * The canonical exhaustive result of a generated read terminal.
+ * The exhaustive result of a singular read or one entry in a collection read.
  *
- * The success payload carries the operation's cardinality:
- *  - a singular entity lookup declares `ReadResult<Entity?>`, where
- *    `Success(null)` is authoritative absence;
- *  - a collection read declares `ReadResult<List<Entity>>`, where the
- *    list may be empty but is never null.
+ * A singular entity lookup declares `ReadResult<Entity?>`, where
+ * `Success(null)` is authoritative absence. Collection terminals return
+ * [ReadCollectionResult], which retains a [ReadResult] for each selected root.
  *
  * [Failed] means the read produced neither a value nor an
  * authoritative absence. LOAD denial is
@@ -86,8 +84,8 @@ sealed interface ReadResult<out T> {
  * apparent absence. The denial details are intentionally discarded;
  * callers that need them must inspect the original [ReadResult.Failed].
  *
- * Defined for nullable singular results only: collection reads have no
- * nullable success state and never silently discard denied root rows.
+ * Defined for nullable singular results only. Collection reads use
+ * [deniedAsNull] to preserve denied roots as null entries without dropping rows.
  */
 fun <T : Any> ReadResult<T?>.visibleOrNull(): ReadResult<T?> = when (this) {
     is ReadResult.Success -> this

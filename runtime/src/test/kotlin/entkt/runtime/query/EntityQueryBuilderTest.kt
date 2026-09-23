@@ -16,6 +16,7 @@ import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -200,11 +201,11 @@ class EntityQueryBuilderTest {
         val driver = RecordingDriver()
         val host = RecordingHost()
 
-        val result = assertIs<ReadResult.Success<List<Item>>>(
+        val result = assertIs<ReadCollectionResult.Completed<Item>>(
             ItemQuery(driver, host).all(vc),
         )
 
-        assertEquals(listOf(Item(1L), Item(2L)), result.value)
+        assertEquals(listOf(Item(1L), Item(2L)), result.getOrThrow())
         assertEquals(1, driver.queryCalls)
         assertEquals(1, host.guardCalls)
         assertEquals(ReadOperation.ALL, host.interceptorContexts.single().operation)
@@ -245,7 +246,7 @@ class EntityQueryBuilderTest {
     fun `terminal without an execution host returns the existing client-required failure`() {
         val result = ItemQuery(NoopDriver, executionHost = null).all(vc)
 
-        val failure = assertIs<ReadResult.Failed>(result)
+        val failure = assertIs<ReadCollectionResult.Failed>(result)
         val exception = assertIs<IllegalStateException>(failure.exception)
         assertEquals("Item query requires a client for privacy enforcement", exception.message)
     }

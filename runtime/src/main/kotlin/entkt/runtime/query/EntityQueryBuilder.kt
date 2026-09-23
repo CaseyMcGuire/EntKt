@@ -12,6 +12,7 @@ import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 
 /**
  * Immutable configuration and reusable execution behavior for generated entity queries.
@@ -109,21 +110,19 @@ abstract class EntityQueryBuilder<
         )
     }
 
-    /** Execute a framework-owned root read over this builder's captured shape. */
+    /** Execute a framework-owned singular read over this builder's captured shape. */
     @EntktInternal
-    fun readRootQuery(
+    fun readOne(
         viewerContext: ViewerContext,
         operation: ReadOperation,
-        maximumRows: Int?,
         structuralPredicates: List<Predicate<Entity>> = emptyList(),
-    ): ReadResult<List<Entity>> {
+    ): ReadResult<Entity?> {
         val executor = readQueryExecutor
             ?: return ReadResult.failedForInternalUse(missingExecutionHostException())
-        return executor.readRootQuery(
+        return executor.readOne(
             viewerContext = viewerContext,
             captureQuery = { captureEntityQuery(structuralPredicates) },
             operation = operation,
-            maximumRows = maximumRows,
         )
     }
 
@@ -138,22 +137,16 @@ abstract class EntityQueryBuilder<
         operation = operation,
     )
 
-    /** Execute this query and return every selected root row. */
-    fun all(viewerContext: ViewerContext): ReadResult<List<Entity>> =
-        readRootQuery(viewerContext, ReadOperation.ALL, maximumRows = null)
+    /** Execute this query, retaining each selected root's value or privacy denial. */
+    fun all(viewerContext: ViewerContext): ReadCollectionResult<Entity> {
+        val executor = readQueryExecutor
+            ?: return ReadCollectionResult.failedForInternalUse(missingExecutionHostException())
+        return executor.readMany(viewerContext, captureQuery = { captureEntityQuery() })
+    }
 
     /** Execute at most one root row, preserving absence as a successful `null`. */
     fun firstOrNull(viewerContext: ViewerContext): ReadResult<Entity?> =
-        when (
-            val result = readRootQuery(
-                viewerContext,
-                ReadOperation.FIRST,
-                maximumRows = 1,
-            )
-        ) {
-            is ReadResult.Success -> ReadResult.Success(result.value.firstOrNull())
-            is ReadResult.Failed -> result
-        }
+        readOne(viewerContext, ReadOperation.FIRST)
 
     private fun requireReadQueryExecutor(): ReadQueryExecutor<Entity> = readQueryExecutor
         ?: throw missingExecutionHostException()

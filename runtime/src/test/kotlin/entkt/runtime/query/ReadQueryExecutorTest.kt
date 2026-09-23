@@ -15,7 +15,7 @@ import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.PrivacyDenial
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -87,15 +87,13 @@ class ReadQueryExecutorTest {
             },
         )
 
-        val entities = assertIs<ReadResult.Success<List<Item>>>(
-            executor.readRootQuery(
+        val entities = assertIs<ReadCollectionResult.Completed<Item>>(
+            executor.readMany(
                 viewerContext = viewerContext,
                 captureQuery = ::query,
-                operation = ReadOperation.ALL,
-                maximumRows = null,
             ),
         )
-        assertEquals(listOf(Item(1L)), entities.value)
+        assertEquals(listOf(Item(1L)), entities.getOrThrow())
         assertEquals(1, interceptorRuns)
         assertEquals(1, driver.queryCalls)
     }

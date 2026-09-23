@@ -27,13 +27,17 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.privacy.batchPrivacyRule
+import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.SelectedEdgeStep
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
+import entkt.runtime.result.deniedAsNull
 import entkt.runtime.result.visibleOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -96,7 +100,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
 
         val result = client.notes.query { loadAuthor() }.all(viewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals(listOf(SelectedEdgeStep("Note", "author", "User")), origin.steps)
@@ -147,7 +151,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
             loadTags { orderBy(Tag.name.asc()) }
         }.all(viewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals(listOf(SelectedEdgeStep("Post", "tags", "Tag")), origin.steps)
@@ -208,7 +212,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
             listOf(listOf("a-first-shared", "b-left", "c-right")),
             invocations,
         )
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals(1, ex.denials.size)
@@ -254,7 +258,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
             loadTags { loadPosts() }
         }.all(viewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals(
@@ -315,7 +319,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
             loadGroups()
         }.all(viewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
         val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(ex.origin)
         assertEquals("articles", origin.steps.single().edgeName)
@@ -353,13 +357,106 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
 
         val result = client.notes.query { loadAuthor() }.all(viewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
-        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        val completed = assertIs<ReadCollectionResult.Completed<Note>>(result)
+        assertEquals(listOf(null), completed.deniedAsNull().getOrThrow())
+        val ex = assertFailsWith<EntPrivacyDeniedException> { completed.getOrThrow() }
         assertIs<LoadDenialOrigin.Root>(ex.origin)
         assertTrue(ex.denials.all { it.entityType == "Note" }, "root denial must not mix in eager denials")
     }
 
     // ---- visibleOrNull never maps eager denial ----
+
+    @Test
+    fun `mixed roots load graphs only for authorized roots before strict projection`() {
+        val authors = mutableListOf<String>()
+        val client = mixedNotesClient(UserLoadPrivacyRule { _, author ->
+            authors += author.name
+            PrivacyDecision.Allow
+        })
+
+        val result = client.notes.query { orderBy(Note.body.asc()); loadAuthor() }.all(viewerContext)
+        val notes = result.deniedAsNull().getOrThrow()
+
+        assertEquals(listOf(null, "visible"), notes.map { it?.body })
+        assertEquals("visible", notes[1]?.edges?.author?.requireLoaded()?.name)
+        assertEquals(listOf("visible"), authors)
+        assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }
+        assertEquals(listOf("visible"), authors, "Strict projection must not rerun graph privacy")
+    }
+
+    @Test
+    fun `required-edge failures discard mixed root outcomes and cannot be nulled`() {
+        val boom = IllegalStateException("author rule failed")
+        for (operational in listOf(false, true)) {
+            val authors = mutableListOf<String>()
+            val client = mixedNotesClient(UserLoadPrivacyRule { _, author ->
+                authors += author.name
+                if (operational) {
+                    throw boom
+                }
+                PrivacyDecision.Deny("author hidden")
+            })
+
+            val result = client.notes.query { orderBy(Note.body.asc()); loadAuthor() }.all(viewerContext)
+            val failed = assertIs<ReadCollectionResult.Failed>(result)
+
+            assertEquals(listOf("visible"), authors)
+            assertSame(result, result.deniedAsNull())
+            assertSame(failed.exception, assertFailsWith<Exception> { result.deniedAsNull().getOrThrow() })
+            if (operational) {
+                assertSame(boom, failed.exception)
+            } else {
+                val denial = assertIs<EntPrivacyDeniedException>(failed.exception)
+                assertIs<LoadDenialOrigin.SelectedEdgePath>(denial.origin)
+                assertEquals(listOf("User"), denial.denials.map { it.entityType })
+            }
+        }
+    }
+
+    @Test
+    fun `edge filtering and root null projection remain independent`() {
+        val client = mixedNotesClient(UserLoadPrivacyRule { _, _ -> PrivacyDecision.Deny("author hidden") })
+
+        val notes = client.notes.query {
+            orderBy(Note.body.asc())
+            loadAuthor().filterVisible()
+        }.all(viewerContext).deniedAsNull().getOrThrow()
+
+        assertEquals(listOf(null, "visible"), notes.map { it?.body })
+        assertEquals(null, notes[1]?.edges?.author?.requireLoaded())
+    }
+
+    private fun mixedNotesClient(authorRule: UserLoadPrivacyRule): EntClient {
+        val client = EntClient(resetAndDriver()) {
+            policies {
+                notes(object : EntityPolicy<Note, NotePolicyScope> {
+                    override fun configure(scope: NotePolicyScope) = scope.run {
+                        privacy {
+                            load(NoteLoadPrivacyRule { _, note ->
+                                if (note.body == "hidden") {
+                                    PrivacyDecision.Deny("note hidden")
+                                } else {
+                                    PrivacyDecision.Allow
+                                }
+                            })
+                        }
+                    }
+                })
+                users(object : EntityPolicy<User, UserPolicyScope> {
+                    override fun configure(scope: UserPolicyScope) = scope.run {
+                        privacy { load(authorRule) }
+                    }
+                })
+            }
+        }
+        val bypass = testBypassContext("seed mixed roots")
+        for (name in listOf("hidden", "visible")) {
+            val author = client.users.create { this.name = name; email = "$name@example.com" }
+                .saveAndLoad(bypass).getOrThrow()
+            client.notes.create { body = name; writer = author.id }.save(bypass).getOrThrow()
+        }
+        return client
+    }
 
     @Test
     fun `visibleOrNull propagates a SelectedEdgePath denial unchanged`() {

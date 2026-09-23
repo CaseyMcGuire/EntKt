@@ -104,16 +104,11 @@ abstract class EntityRepository<
     fun query(): Query = newQuery()
 
     fun findById(viewerContext: ViewerContext, id: ID): ReadResult<Entity?> {
-        val result = newQuery().readRootQuery(
+        return newQuery().readOne(
             viewerContext = viewerContext,
             operation = ReadOperation.BY_ID,
-            maximumRows = 1,
             structuralPredicates = listOf(Predicate.Leaf<Entity>(entity.idColumn, Op.EQ, id)),
         )
-        return when (result) {
-            is ReadResult.Success -> ReadResult.Success(result.value.firstOrNull())
-            is ReadResult.Failed -> result
-        }
     }
 
     fun update(

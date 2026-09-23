@@ -22,6 +22,8 @@ import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.NestedTransactionUnsupportedException
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
+import entkt.runtime.result.deniedAsNull
 import entkt.runtime.result.SelectedEdgeStep
 import entkt.runtime.result.TransactionCoordinator
 import entkt.runtime.result.TransactionFailureState
@@ -322,6 +324,49 @@ class ResultAlgebraTest {
         val failed = assertIs<TransactionResult.Failed>(result)
         assertSame(denial, failed.exception)
         assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+    }
+
+    @Test
+    fun `collection orRollback aggregates entry denials and stops dependent work`() {
+        val denial = rootDenial()
+        val read = ReadCollectionResult.Completed(
+            listOf(ReadResult.Success("visible"), ReadResult.failedForInternalUse(denial)),
+        )
+        val result = runEntTransaction(FakeDriver(), { _, _ -> Unit }) {
+            read.orRollback()
+            error("unreachable")
+        }
+
+        val failed = assertIs<TransactionResult.Failed>(result)
+        assertEquals(denial.denials, assertIs<EntPrivacyDeniedException>(failed.exception).denials)
+        assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+    }
+
+    @Test
+    fun `collection null projection can commit without marking the scope rollback-only`() {
+        val read = ReadCollectionResult.Completed(
+            listOf(ReadResult.Success("visible"), ReadResult.failedForInternalUse(rootDenial())),
+        )
+        val result = runEntTransaction(FakeDriver(), { _, _ -> Unit }) {
+            read.deniedAsNull().orRollback()
+        }
+
+        assertEquals(listOf("visible", null), assertIs<TransactionResult.Success<List<String?>>>(result).value)
+    }
+
+    @Test
+    fun `collection whole-query failures roll back unchanged even after null projection`() {
+        for (exception in listOf(IllegalStateException("database failure"), selectedEdgeDenial(), rootDenial())) {
+            val read: ReadCollectionResult<String> = ReadCollectionResult.failedForInternalUse(exception)
+            val result = runEntTransaction(FakeDriver(), { _, _ -> Unit }) {
+                read.deniedAsNull().orRollback()
+                error("unreachable")
+            }
+
+            val failed = assertIs<TransactionResult.Failed>(result)
+            assertSame(exception, failed.exception)
+            assertEquals(TransactionFailureState.NotCommitted, failed.transactionState)
+        }
     }
 
     @Test

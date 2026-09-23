@@ -17,11 +17,10 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.result.EntPrivacyDeniedException
-import entkt.runtime.result.ReadResult
 import entkt.runtime.validation.ValidationDecision
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
+import kotlin.test.assertFailsWith
 
 class ClientConfigurationSnapshotIntegrationTest : PostgresTestBase() {
 
@@ -73,8 +72,7 @@ class ClientConfigurationSnapshotIntegrationTest : PostgresTestBase() {
         assertEquals("Ada", created.name)
 
         val anonymousContext = ViewerContext(Viewer.Anonymous)
-        val rootRead = assertIs<ReadResult.Failed>(client.users.query().all(anonymousContext))
-        assertIs<EntPrivacyDeniedException>(rootRead.exception)
+        assertFailsWith<EntPrivacyDeniedException> { client.users.query().all(anonymousContext).getOrThrow() }
 
         val transactionRead = client.withTransaction { transaction ->
             run {
@@ -83,7 +81,6 @@ class ClientConfigurationSnapshotIntegrationTest : PostgresTestBase() {
                 scoped.users.query().all(testViewerContext)
             }
         }.getOrThrow()
-        val transactionFailure = assertIs<ReadResult.Failed>(transactionRead)
-        assertIs<EntPrivacyDeniedException>(transactionFailure.exception)
+        assertFailsWith<EntPrivacyDeniedException> { transactionRead.getOrThrow() }
     }
 }

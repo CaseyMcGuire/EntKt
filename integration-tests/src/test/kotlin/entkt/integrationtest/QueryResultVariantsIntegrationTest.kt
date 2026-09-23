@@ -16,8 +16,11 @@ import entkt.runtime.privacy.allowAll
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
+import entkt.runtime.result.deniedAsNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -27,9 +30,9 @@ import kotlin.test.assertTrue
 /**
  * End-to-end coverage for the canonical query terminals:
  *
- *   all(): ReadResult<List<E>>  — strict: evaluates the full selected
- *       window; ANY denied root row fails the terminal with an
- *       ordered, keyed denial list (no hydrated data, no partial list).
+ *   all(): ReadCollectionResult<E> — evaluates the full selected window;
+ *       each root retains its success or keyed denial without denied entity data.
+ *       getOrThrow aggregates root denials; deniedAsNull preserves their slots.
  *   firstOrNull(): ReadResult<E?> — one-row SQL window; a denied
  *       selected first row is Failed(Root, one denial) and no second
  *       row is ever consulted.
@@ -103,7 +106,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         }
     }
 
-    // ---- all(): Success ----
+    // ---- all(): Completed ----
 
     @Test
     fun `all returns every matching row when LOAD allows`() {
@@ -111,19 +114,19 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         seedThree(client)
 
         val result = client.articles.query().all(viewerContext)
-        val success = assertIs<ReadResult.Success<List<Article>>>(result)
-        assertEquals(3, success.value.size)
+        val completed = assertIs<ReadCollectionResult.Completed<Article>>(result)
+        assertEquals(3, completed.getOrThrow().size)
     }
 
     @Test
-    fun `all returns Success(emptyList()) for no rows`() {
+    fun `all returns Completed(emptyList()) for no rows`() {
         val client = freshClient()
 
         assertEquals(emptyList(), client.articles.query().all(viewerContext).getOrThrow())
     }
 
     @Test
-    fun `all with limit(0) returns Success(emptyList())`() {
+    fun `all with limit(0) returns Completed(emptyList())`() {
         val client = freshClient()
         seedThree(client)
 
@@ -135,11 +138,17 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
     @Test
     fun `all lists every denied root row in encountered order with keys but no hydrated data`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
-        val (first, _, third) = seedThree(client)
+        val (first, second, third) = seedThree(client)
 
         val result = client.articles.query { orderBy(Article.id.asc()) }.all(viewerContext)
-        val failed = assertIs<ReadResult.Failed>(result)
-        val ex = assertIs<EntPrivacyDeniedException>(failed.exception)
+        val completed = assertIs<ReadCollectionResult.Completed<Article>>(result)
+        val entries = completed.entities()
+        assertEquals(3, entries.size)
+        assertIs<ReadResult.Failed>(entries[0])
+        assertEquals(second.id, assertIs<ReadResult.Success<Article>>(entries[1]).value.id)
+        assertIs<ReadResult.Failed>(entries[2])
+        assertEquals(listOf(null, second.id, null), result.deniedAsNull().getOrThrow().map { it?.id })
+        val ex = assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }
         assertIs<LoadDenialOrigin.Root>(ex.origin)
         // Both denied rows are listed, in the query's encountered order.
         assertEquals(2, ex.denials.size)
@@ -152,13 +161,11 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `all never returns a partial list after denial`() {
+    fun `strict unwrapping never returns a partial list after denial`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
         seedThree(client)
 
-        // Strictness: the one visible row is NOT returned — the terminal
-        // is Failed, not a filtered Success.
-        assertIs<ReadResult.Failed>(client.articles.query().all(viewerContext))
+        assertFailsWith<EntPrivacyDeniedException> { client.articles.query().all(viewerContext).getOrThrow() }
     }
 
     @Test
@@ -169,8 +176,8 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         // Window = first row only (by id); the denied Second/Third rows
         // are outside the window, so the read succeeds.
         val result = client.articles.query { orderBy(Article.id.asc()); limit(1) }.all(viewerContext)
-        val success = assertIs<ReadResult.Success<List<Article>>>(result)
-        assertEquals(listOf("First"), success.value.map { it.title })
+        val completed = assertIs<ReadCollectionResult.Completed<Article>>(result)
+        assertEquals(listOf("First"), completed.getOrThrow().map { it.title })
     }
 
     @Test
@@ -193,10 +200,34 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
         // First is denied, Second's rule throws: the ordinary exception is
         // the stored failure — never a partial EntPrivacyDeniedException.
-        val failed = assertIs<ReadResult.Failed>(
+        val failed = assertIs<ReadCollectionResult.Failed>(
             client.articles.query { orderBy(Article.id.asc()) }.all(viewerContext),
         )
         assertSame(boom, failed.exception)
+        assertSame(failed, failed.deniedAsNull())
+        assertSame(boom, assertFailsWith<IllegalStateException> { failed.deniedAsNull().getOrThrow() })
+    }
+
+    @Test
+    fun `all denied roots project to null slots while empty results remain empty`() {
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
+        assertEquals(emptyList(), client.articles.query().all(viewerContext).deniedAsNull().getOrThrow())
+        seedThree(client)
+
+        val result = client.articles.query { orderBy(Article.id.asc()) }.all(viewerContext)
+
+        assertEquals(listOf(null, null, null), result.deniedAsNull().getOrThrow())
+        assertEquals(3, assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }.denials.size)
+    }
+
+    @Test
+    fun `null projection preserves the selected offset window without refilling`() {
+        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
+        val (_, second, _) = seedThree(client)
+
+        val result = client.articles.query { orderBy(Article.id.asc()); offset(1); limit(2) }.all(viewerContext)
+
+        assertEquals(listOf(second.id, null), result.deniedAsNull().getOrThrow().map { it?.id })
     }
 
     // ---- firstOrNull ----

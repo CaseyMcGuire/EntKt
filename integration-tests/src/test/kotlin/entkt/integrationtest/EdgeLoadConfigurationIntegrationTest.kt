@@ -22,7 +22,7 @@ import entkt.runtime.query.isLoaded
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntQueryConfigurationException
 import entkt.runtime.result.EntPrivacyDeniedException
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -230,12 +230,12 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         val query = base.configure { handle = loadArticles() }
 
         retained = assertNotNull(handle)
-        val first = assertIs<ReadResult.Failed>(query.all(viewer))
+        val first = assertIs<ReadCollectionResult.Failed>(query.all(viewer))
         assertIs<EntPrivacyDeniedException>(first.exception)
 
         retained = null
         assertNotNull(handle).filterVisible()
-        val second = assertIs<ReadResult.Failed>(query.all(viewer))
+        val second = assertIs<ReadCollectionResult.Failed>(query.all(viewer))
         assertIs<EntPrivacyDeniedException>(second.exception)
 
         val filtered = base.configure { loadArticles().filterVisible() }

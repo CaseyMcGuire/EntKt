@@ -8,7 +8,7 @@ import entkt.runtime.query.QueryInterceptor
 import entkt.query.Op
 import entkt.query.Predicate
 import entkt.integrationtest.ent.User
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -148,7 +148,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
         // and nothing reaches the driver.
         val result = client.users.query().all(testViewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<PostgresBindLimitException>(failed.exception)
         assertContains(ex.message!!, "10,000,000")
         assertEquals(0, virtual.reads, "the interceptor's operand must never be iterated or copied")
@@ -254,7 +254,7 @@ class BindLimitPostgresIntegrationTest : PostgresTestBase() {
 
         val result = client.users.query().all(testViewerContext)
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<PostgresBindLimitException>(failed.exception)
         val thrown = assertFailsWith<PostgresBindLimitException> { result.getOrThrow() }
         assertSame(ex, thrown)

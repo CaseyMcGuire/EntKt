@@ -58,7 +58,7 @@ class ImmutableQueryCompileTest {
                 val ruleIndexed: UserReadQuery = rules.users.indexes.email("a@example.com").query { limit(1) }
                 val traversed: CarQuery = base.queryCars { where(Car.year.gte(2020)); loadUser() }
                 val predicate: Predicate<User> = User.cars.has { where(Car.year.gte(2020)); where(Car.year.lte(2026)) }
-                val rows: ReadResult<List<User>> = refined.all(context)
+                val rows: entkt.runtime.result.ReadCollectionResult<User> = refined.all(context)
                 val one: ReadResult<Car?> = traversed.firstOrNull(context)
                 client.withTransaction { tx -> tx.users.query { limit(1) }.all(context) }
             }

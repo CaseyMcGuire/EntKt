@@ -166,7 +166,7 @@ class RepoGeneratorTest {
         assert(output.contains("protected override fun newQuery(): CarQuery = CarQuery(driver, client)")) {
             "The base should construct each query with this repository's driver and client\n$output"
         }
-        assert(!output.contains("readRootQuery(") && !output.contains("driver.byId(") &&
+        assert(!output.contains("readOne(") && !output.contains("driver.byId(") &&
             !output.contains("ReadResult.Success") && !output.contains("loadDenialOrNull")) {
             "Read execution, result mapping, and LOAD enforcement belong to runtime\n$output"
         }

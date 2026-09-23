@@ -32,6 +32,8 @@ import entkt.runtime.result.EntityKey
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
+import entkt.runtime.result.deniedAsNull
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -161,12 +163,9 @@ class ReadQueryExecutorRootTest {
     private fun read(
         adapter: Adapter,
         query: EntityQuery<Item>,
-        operation: ReadOperation = ReadOperation.ALL,
-    ): ReadResult<List<Item>> = queryExecutor(adapter).readRootQuery(
+    ): ReadCollectionResult<Item> = queryExecutor(adapter).readMany(
         viewerContext = adapter.viewerContext,
         captureQuery = { query },
-        operation = operation,
-        maximumRows = null,
     )
 
     private fun queryExecutor(adapter: Adapter): ReadQueryExecutor<Item> = ReadQueryExecutor(
@@ -204,26 +203,18 @@ class ReadQueryExecutorRootTest {
         },
     )
 
-    private fun readAll(adapter: Adapter): ReadResult<List<Item>> =
-        queryExecutor(adapter).readRootQuery(
+    private fun readAll(adapter: Adapter): ReadCollectionResult<Item> =
+        queryExecutor(adapter).readMany(
             viewerContext = adapter.viewerContext,
             captureQuery = { rootQuery(adapter) },
-            operation = ReadOperation.ALL,
-            maximumRows = null,
         )
 
     private fun readFirstOrNull(adapter: Adapter): ReadResult<Item?> =
-        when (
-            val result = queryExecutor(adapter).readRootQuery(
-                viewerContext = adapter.viewerContext,
-                captureQuery = { rootQuery(adapter) },
-                operation = ReadOperation.FIRST,
-                maximumRows = 1,
-            )
-        ) {
-            is ReadResult.Success -> ReadResult.Success(result.value.firstOrNull())
-            is ReadResult.Failed -> result
-        }
+        queryExecutor(adapter).readOne(
+            viewerContext = adapter.viewerContext,
+            captureQuery = { rootQuery(adapter) },
+            operation = ReadOperation.FIRST,
+        )
 
     @Test
     fun `root reads classify database conflicts without running decoding or privacy`() {
@@ -235,12 +226,14 @@ class ReadQueryExecutorRootTest {
         }
         val adapter = Adapter(events, driver)
 
-        val result = assertIs<ReadResult.Failed>(readAll(adapter))
+        val result = assertIs<ReadCollectionResult.Failed>(readAll(adapter))
 
         assertSame(conflict, result.exception)
         assertSame(conflict, assertFailsWith<EntDatabaseConflictException> { result.getOrThrow() })
         assertEquals(listOf(cause), driver.classifiedExceptions)
         assertEquals(listOf("read-guard", "root-interceptors", "driver"), events)
+
+        assertSame(conflict, assertIs<ReadResult.Failed>(readFirstOrNull(adapter)).exception)
     }
 
     @Test
@@ -259,9 +252,12 @@ class ReadQueryExecutorRootTest {
                 }
             }
 
-            val result = assertIs<ReadResult.Failed>(readAll(adapter))
+            val result = assertIs<ReadCollectionResult.Failed>(readAll(adapter))
 
             assertSame(cause, result.exception)
+            assertEquals(emptyList(), driver.classifiedExceptions)
+
+            assertSame(cause, assertIs<ReadResult.Failed>(readFirstOrNull(adapter)).exception)
             assertEquals(emptyList(), driver.classifiedExceptions)
         }
     }
@@ -275,22 +271,27 @@ class ReadQueryExecutorRootTest {
             }
 
             assertSame(failure, assertFailsWith<Throwable> { readAll(Adapter(events, driver)) })
+            assertSame(failure, assertFailsWith<Throwable> { readFirstOrNull(Adapter(events, driver)) })
             assertEquals(emptyList(), driver.classifiedExceptions)
         }
     }
 
     @Test
-    fun `read query executor rejects a negative terminal bound`() {
-        val adapter = Adapter(mutableListOf())
+    fun `singular BY_ID reads use a one-row bound and retain their interceptor operation`() {
+        val events = mutableListOf<String>()
+        val driver = QueryDriver(listOf(mapOf("id" to 1L), mapOf("id" to 2L)), events)
+        val adapter = Adapter(events, driver)
 
-        assertFailsWith<IllegalArgumentException> {
-            queryExecutor(adapter).readRootQuery(
-                viewerContext = adapter.viewerContext,
-                captureQuery = { rootQuery(adapter) },
-                operation = ReadOperation.ALL,
-                maximumRows = -1,
-            )
-        }
+        val result = queryExecutor(adapter).readOne(
+            viewerContext = adapter.viewerContext,
+            captureQuery = { rootQuery(adapter) },
+            operation = ReadOperation.BY_ID,
+        )
+
+        assertEquals(Item(1L), assertIs<ReadResult.Success<Item?>>(result).value)
+        assertEquals(1, driver.limit)
+        assertEquals(ReadOperation.BY_ID, adapter.interceptorContexts.single().operation)
+        assertEquals(listOf("decode:1"), events.filter { it.startsWith("decode:") })
     }
 
     @Test
@@ -299,15 +300,20 @@ class ReadQueryExecutorRootTest {
         val adapter = Adapter(events)
         val failure = IllegalStateException("capture failed")
 
-        val result = queryExecutor(adapter).readRootQuery(
+        val result = queryExecutor(adapter).readMany(
             viewerContext = adapter.viewerContext,
             captureQuery = { throw failure },
-            operation = ReadOperation.ALL,
-            maximumRows = null,
         )
 
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         assertSame(failure, failed.exception)
+        assertEquals(emptyList(), events)
+
+        val singular = queryExecutor(adapter).readOne(
+            viewerContext = adapter.viewerContext,
+            captureQuery = { throw failure },
+        )
+        assertSame(failure, assertIs<ReadResult.Failed>(singular).exception)
         assertEquals(emptyList(), events)
     }
 
@@ -328,7 +334,7 @@ class ReadQueryExecutorRootTest {
 
         assertEquals(
             listOf(Item(2L), Item(1L)),
-            assertIs<ReadResult.Success<List<Item>>>(result).value,
+            assertIs<ReadCollectionResult.Completed<Item>>(result).getOrThrow(),
         )
         assertEquals("items", driver.table)
         assertEquals(order, driver.orderBy)
@@ -388,7 +394,7 @@ class ReadQueryExecutorRootTest {
             edges = emptyList(),
         )
 
-        assertIs<ReadResult.Success<List<Item>>>(read(adapter, targetQuery))
+        assertIs<ReadCollectionResult.Completed<Item>>(read(adapter, targetQuery))
 
         val predicates = checkNotNull(driver.predicates)
         assertEquals(3, predicates.size)
@@ -446,7 +452,7 @@ class ReadQueryExecutorRootTest {
             edges = emptyList(),
         )
 
-        assertIs<ReadResult.Success<List<Item>>>(read(adapter, query))
+        assertIs<ReadCollectionResult.Completed<Item>>(read(adapter, query))
 
         val rewritten = assertIs<Predicate.HasEdgeWith<Item, Item>>(
             checkNotNull(driver.predicates).single(),
@@ -466,7 +472,7 @@ class ReadQueryExecutorRootTest {
     }
 
     @Test
-    fun `all aggregates root denials and does not load selected edges`() {
+    fun `all preserves root denials and aggregates them only when unwrapped`() {
         val events = mutableListOf<String>()
         val first = PrivacyDenial("Item", EntityKey("id", 1L), "one")
         val second = PrivacyDenial("Item", EntityKey("id", 2L), "two")
@@ -479,11 +485,12 @@ class ReadQueryExecutorRootTest {
         )
         adapter.driver = driver
 
-        val failed = assertIs<ReadResult.Failed>(readAll(adapter))
-        val exception = assertIs<EntPrivacyDeniedException>(failed.exception)
+        val result = assertIs<ReadCollectionResult.Completed<Item>>(readAll(adapter))
+        val exception = assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }
 
         assertSame(LoadDenialOrigin.Root, exception.origin)
         assertEquals(listOf(first, second), exception.denials)
+        assertEquals(listOf(null, Item(9L), null), result.deniedAsNull().getOrThrow())
         assertEquals(false, events.any { it.startsWith("interceptors:EAGER_LOAD") })
     }
 
@@ -542,10 +549,28 @@ class ReadQueryExecutorRootTest {
         val driver = QueryDriver(emptyList(), events, marker)
         val adapter = Adapter(events, driver)
 
-        val failed = assertIs<ReadResult.Failed>(readAll(adapter))
+        val failed = assertIs<ReadCollectionResult.Failed>(readAll(adapter))
 
         assertSame(marker, failed.exception)
         assertEquals("driver", events.last())
+    }
+
+    @Test
+    fun `a root denial exception thrown by a rule remains an outer failure`() {
+        val events = mutableListOf<String>()
+        val exception = EntPrivacyDeniedException(
+            LoadDenialOrigin.Root,
+            listOf(PrivacyDenial("Item", EntityKey("id", 7L), "nested query denied")),
+        )
+        val adapter = Adapter(events, QueryDriver(listOf(mapOf("id" to 1L)), events)).apply {
+            privacyFailure = exception
+        }
+
+        val result = assertIs<ReadCollectionResult.Failed>(readAll(adapter))
+
+        assertSame(exception, result.exception)
+        assertSame(result, result.deniedAsNull())
+        assertSame(exception, assertFailsWith<EntPrivacyDeniedException> { result.deniedAsNull().getOrThrow() })
     }
 
     @Test
@@ -558,6 +583,7 @@ class ReadQueryExecutorRootTest {
             readAll(cancellationAdapter)
         }
         assertSame(cancellation, thrownCancellation)
+        assertSame(cancellation, assertFailsWith<CancellationException> { readFirstOrNull(cancellationAdapter) })
         assertEquals("read-guard", cancellationEvents.last())
 
         val errorEvents = mutableListOf<String>()
@@ -569,6 +595,7 @@ class ReadQueryExecutorRootTest {
             readAll(errorAdapter)
         }
         assertSame(error, thrownError)
+        assertSame(error, assertFailsWith<AssertionError> { readFirstOrNull(errorAdapter) })
         assertEquals("driver", errorEvents.last())
     }
 }

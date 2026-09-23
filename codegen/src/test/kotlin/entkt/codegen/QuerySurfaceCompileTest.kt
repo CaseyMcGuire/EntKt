@@ -50,6 +50,8 @@ class QuerySurfaceCompileTest {
             import entkt.runtime.privacy.*
             import entkt.runtime.query.*
             import entkt.runtime.result.ReadResult
+            import entkt.runtime.result.ReadCollectionResult
+            import entkt.runtime.result.deniedAsNull
             import entkt.runtime.validation.ValidationDecision
             import java.time.Instant
 
@@ -83,20 +85,29 @@ class QuerySurfaceCompileTest {
                 val skipping: ForUpdateQuery<User> = locking.skipLocked()
                 val skippingIndex: ForUpdateQuery<User> = fullRange.forUpdate().skipLocked()
                 val skippingTraversal: ForUpdateQuery<Car> = fullIndexedTraversal.forUpdate().skipLocked()
-                val availableRows: ReadResult<List<User>> = skipping.all(ctx)
+                val availableRows: ReadCollectionResult<User> = skipping.all(ctx)
                 val availableOne: ReadResult<User?> = skipping.firstOrNull(ctx)
-                val lockedRows: ReadResult<List<User>> = locking.all(ctx)
+                val lockedRows: ReadCollectionResult<User> = locking.all(ctx)
                 val lockedOne: ReadResult<User?> = locking.firstOrNull(ctx)
                 val found: ReadResult<User?> = rules.users.indexes.email("a@b.c").find(ctx)
-                val rows: ReadResult<List<User>> = read.all(ctx)
+                val rows: ReadCollectionResult<User> = read.all(ctx)
+                val nullableRows: ReadCollectionResult<User?> = rows.deniedAsNull()
+                val values: List<User?> = nullableRows.getOrThrow()
+                when (rows) {
+                    is ReadCollectionResult.Completed -> {
+                        val entities: List<ReadResult<User>> = rows.entities()
+                    }
+                    is ReadCollectionResult.Failed -> rows.exception
+                }
                 val one: ReadResult<User?> = read.firstOrNull(ctx)
-                val bypass: ReadResult<List<User>> = read.all(ViewerContext.privacyBypass_DANGEROUS("test"))
+                val bypass: ReadCollectionResult<User> = read.all(ViewerContext.privacyBypass_DANGEROUS("test"))
                 client.withTransaction { tx ->
                     val txQuery: UserQuery = tx.users.query { loadCars() }
                     val txIndex: UserQuery = tx.users.indexes.email("a@b.c").query()
                     val txTraversal: CarQuery = txIndex.queryCars()
                     val txLock: ForUpdateQuery<Car> = txTraversal.forUpdate()
                     val txSkipping: ForUpdateQuery<Car> = txLock.skipLocked()
+                    val values: List<Car?> = txSkipping.all(ctx).deniedAsNull().orRollback()
                 }
             }
 
@@ -112,6 +123,27 @@ class QuerySurfaceCompileTest {
             }
         """.trimIndent()))
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+    }
+
+    @Test
+    fun `collection results require their own result type and completion before entities access`() {
+        val result = compile(
+            source("CollectionType", """
+                fun misuse(client: EntClient, ctx: ViewerContext): ReadResult<List<User>> =
+                    client.users.query().all(ctx)
+            """.trimIndent()),
+            source("CollectionEntities", """
+                fun misuse(result: ReadCollectionResult<User>) = result.entities()
+            """.trimIndent()),
+        )
+
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
+        assertTrue(result.messages.lineSequence().any {
+            it.contains("CollectionType.kt:") && it.contains("ReadCollectionResult") && it.contains("ReadResult")
+        }, result.messages)
+        assertTrue(result.messages.lineSequence().any {
+            it.contains("CollectionEntities.kt:") && it.contains("Unresolved reference") && it.contains("entities")
+        }, result.messages)
     }
 
     @Test

@@ -91,7 +91,7 @@ class QueryGeneratorTest {
             "override fun combinedPredicate(",
             "fun all(",
             "fun firstOrNull(",
-            "fun readRootQuery(",
+            "fun readOne(",
             "fun compileEntityQuery(",
             "_readQueryExecutor",
             "requireClient(",

@@ -480,9 +480,9 @@ result:
 - `repo.findById(viewerContext, id)` -- `Failed(EntPrivacyDeniedException(Root, ...))`
   when the row exists but is denied; `Success(null)` only for
   authoritative absence
-- `query.all(viewerContext)` -- `Failed(EntPrivacyDeniedException(Root, ...))` if any
-  entity in the selected window is denied, with one keyed
-  `PrivacyDenial` per denied row; never a partial list
+- `query.all(viewerContext)` -- `ReadCollectionResult.Completed` retains each
+  selected root's success or keyed privacy denial. Strict `getOrThrow()` throws
+  an aggregate root-denial exception; `deniedAsNull()` preserves denied slots as nulls
 - `query.firstOrNull(viewerContext)` -- `Failed(EntPrivacyDeniedException(Root, ...))`
   if the fetched row is denied; `Success(null)` only when no matching
   row exists
@@ -493,7 +493,10 @@ result:
   [Queries → Eager Privacy](04-queries.md#eager-privacy-and-filtervisible))
 
 Collection terminals pass the ordered materialized root list to LOAD rules as
-one batch. Each eager query does the same for its ordered, deduplicated targets
+one batch. Selected graphs are then loaded only for authorized roots, even if
+other roots are denied. Required-edge or operational failures become an outer
+`ReadCollectionResult.Failed`, without partially completed entries.
+Each eager query does the same for its ordered, deduplicated targets
 that remain in at least one parent's requested window, in effective target
 order (the caller's ordering plus the framework's primary-key tie-breaker).
 Strict loading projects the first eager denial after that batch evaluation;
@@ -838,10 +841,11 @@ and do not implement it.
 All read terminals (`all(viewerContext)`, `firstOrNull(viewerContext)`,
 `findById(viewerContext, id)`) and all
 write operations (`create`, `update`, `delete`) surface denial this
-way. The strict read model ensures unreadable entities never silently
-disappear from results — callers handle the `Failed` state explicitly
+way. Unreadable entities never silently disappear from results — callers
+handle failures explicitly
 (exhaustive `when`, or `.getOrThrow()` to rethrow), opt into
-privacy-as-absence for singular reads with `.visibleOrNull()`, or
+privacy-as-absence for singular reads with `.visibleOrNull()`, preserve denied
+collection slots with `.deniedAsNull()`, or
 ensure their queries only match entities the viewer is allowed to see.
 
 The denial payloads — entity keys and rule-supplied reasons — are
@@ -877,41 +881,35 @@ fun findNote(id: Long): Note? =
 thrown by privacy-rule code, or eager-edge privacy failures. It performs no
 additional query or privacy evaluation.
 
-### Collections remain strict
+### Collections: strict values or explicit null slots
 
-`all()` returns `ReadResult<List<T>>`, so `visibleOrNull()` is deliberately not
-available. If any root in the selected window is denied, the result is
-`Failed(EntPrivacyDeniedException)` rather than a partial list. A caller that
-maps such a failure to an empty list is discarding the entire selected window,
-including any rows that were visible; that coarse policy must be explicit:
+`all()` returns `ReadCollectionResult<T>`. Its `getOrThrow()` remains strict:
+any failed entry throws, aggregating root denials in encounter order. To keep
+the visible rows while preserving denied positions, opt into `deniedAsNull()`:
 
 ```kotlin
-fun notesForUser(userId: Long): List<Note> {
-    val result = client.notes.query {
-        where(Note.userId eq userId)
-    }.all(viewerContext)
+import entkt.runtime.result.deniedAsNull
 
-    return when (result) {
-        is ReadResult.Success -> result.value
-        is ReadResult.Failed -> {
-            val failure = result.exception
-            if (
-                failure is EntPrivacyDeniedException &&
-                failure.origin is LoadDenialOrigin.Root
-            ) {
-                emptyList()
-            } else {
-                throw failure
-            }
-        }
-    }
-}
+fun notesForUser(userId: Long): List<Note?> =
+    client.notes.query {
+        where(Note.userId eq userId)
+    }.all(viewerContext).deniedAsNull().getOrThrow()
 ```
 
-Most viewer-scoped collection endpoints should instead construct predicates
-whose selected roots are all visible and let an unexpected denial fail loudly.
-`filterVisible()` is a separate opt-in for one eagerly loaded edge; it does not
-filter the roots returned by `all()`.
+The projection preserves order and length and performs no I/O or rule evaluation.
+It never filters, scans for replacements, or refills a page. An outer `Failed`
+remains failed, including rule-thrown exceptions and required selected-edge
+denials; `getOrThrow()` still throws those failures.
+
+For per-root diagnostics, match `Completed` and call its non-throwing `entities()`
+accessor, which returns `List<ReadResult<T>>` unchanged. Match outer `Failed`
+separately: a whole-query failure has no entity-result list.
+
+Null slots reveal that hidden rows exist and where they occur. Only use this
+representation at an application boundary that explicitly permits that disclosure.
+Selected edges of authorized roots are loaded even when another root is denied;
+strict projection afterward cannot restore the previous short-circuit behavior.
+`filterVisible()` remains a separate opt-in for one eagerly loaded edge, not roots.
 
 ### Direct mutations: interpret `writeState`
 

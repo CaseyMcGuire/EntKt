@@ -22,7 +22,7 @@ import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntQueryRejectedException
-import entkt.runtime.result.ReadResult
+import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -38,7 +38,7 @@ import kotlin.test.assertTrue
  *    interceptors with `EDGE_TRAVERSAL`; target terminal sees
  *    `sourceEntity`, `edgeName`, `path` set by multi-step chain rules;
  *    source rejection is captured as
- *    `ReadResult.Failed(EntQueryRejectedException)`
+ *    `ReadCollectionResult.Failed(EntQueryRejectedException)`
  *  - 5b eager-load: `load{Edge}` fires target interceptors with
  *    `EAGER_LOAD` (`context.isEagerSubquery == true`); interceptor
  *    predicates flow into the eager subquery
@@ -150,7 +150,7 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
             }
         }
         val result = client.users.query().queryArticles().all(testViewerContext)
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         // Rejection comes from the source step (User EDGE_TRAVERSAL).
         assertEquals("src_rej", ex.code)
@@ -369,7 +369,7 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
         val result = client.users.query {
             where(User.articles.has { where(Article.published eq true) })
         }.all(testViewerContext)
-        val failed = assertIs<ReadResult.Failed>(result)
+        val failed = assertIs<ReadCollectionResult.Failed>(result)
         val ex = assertIs<EntQueryRejectedException>(failed.exception)
         assertEquals("edge_pred_rej", ex.code)
         assertEquals("article-rejector", ex.interceptor)

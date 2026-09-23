@@ -19,6 +19,7 @@ import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.ReadResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -197,8 +198,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
         val s = seed(client)
 
         val result = client.articles.indexes.authorId(s.authorA).query().all(viewerContext)
-        val failed = assertIs<ReadResult.Failed>(result)
-        val denied = assertIs<EntPrivacyDeniedException>(failed.exception)
+        val denied = assertFailsWith<EntPrivacyDeniedException> { result.getOrThrow() }
         assertIs<LoadDenialOrigin.Root>(denied.origin)
     }
 

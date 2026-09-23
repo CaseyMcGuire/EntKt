@@ -17,6 +17,7 @@ import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntityKey
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.PrivacyDenial
+import entkt.runtime.result.ReadResult
 import entkt.runtime.result.SelectedEdgeStep
 import kotlin.reflect.KClass
 
@@ -26,9 +27,9 @@ import kotlin.reflect.KClass
  * The algorithm is:
  *
  * 1. Load the root entities as one batch.
- * 2. Evaluate root LOAD privacy; any denial fails the root read.
+ * 2. Evaluate root LOAD privacy, retaining an outcome for each selected root.
  * 3. Visit each selected relationship in schema-declaration order.
- * 4. Ask [GraphStorage] to load and correlate that relationship for the complete source
+ * 4. Ask [GraphStorage] to load and correlate that relationship for the authorized source
  *    batch. Direct relationships use one target read; many-to-many relationships discover
  *    junction rows before loading the resulting target set.
  * 5. Evaluate LOAD privacy for the retained target batch, filtering or failing according
@@ -43,14 +44,31 @@ internal class EntityGraphLoader(
     private val storage: GraphStorage,
     private val loadPrivacyDispatcher: LoadPrivacyDispatcher,
 ) {
-    /** Load the root batch, then evaluate its recursively selected graph. */
-    fun <Entity : EntEntity<*>> load(
+    /** Reuse batch graph loading with a one-row cap, unwrapping absence or the selected outcome. */
+    fun <Entity : EntEntity<*>> loadOne(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
-        maximumRows: Int?,
         viewerContext: ViewerContext,
         lockMode: QueryLockMode = QueryLockMode.None,
-    ): List<Entity> {
+    ): Entity? {
+        val entries = loadMany(
+            query = query,
+            operation = operation,
+            maximumRows = 1,
+            viewerContext = viewerContext,
+            lockMode = lockMode,
+        )
+        return entries.firstOrNull()?.getOrThrow()
+    }
+
+    /** Load the root batch, retaining each root's outcome while evaluating authorized graphs. */
+    fun <Entity : EntEntity<*>> loadMany(
+        query: EntityQuery<Entity>,
+        viewerContext: ViewerContext,
+        operation: ReadOperation = ReadOperation.ALL,
+        maximumRows: Int? = null,
+        lockMode: QueryLockMode = QueryLockMode.None,
+    ): List<ReadResult<Entity>> {
         val rootEntities = storage.loadRoot(
             query = query,
             operation = operation,
@@ -58,12 +76,58 @@ internal class EntityGraphLoader(
             viewerContext = viewerContext,
             lockMode = lockMode,
         )
-        return evaluateEntityBatch(
+        val entries = evaluateRootPrivacy(query.entity, rootEntities, viewerContext)
+        if (query.edges.isEmpty()) {
+            return entries
+        }
+        val authorizedRoots = entries.mapNotNull { entry ->
+            when (entry) {
+                is ReadResult.Success -> entry.value
+                is ReadResult.Failed -> null
+            }
+        }
+        // Denied roots never enter the selected graph. A genuinely empty root still
+        // visits selected paths for their existing empty-batch interceptor lifecycle.
+        if (entries.isNotEmpty() && authorizedRoots.isEmpty()) {
+            return entries
+        }
+        val loadedRoots = evaluateSelectedRelationships(
             query = query,
-            entities = rootEntities,
-            denialPolicy = LoadDenialPolicy.FailRoot,
+            entities = authorizedRoots,
             context = rootContext(query, viewerContext),
         )
+        // Relationship attachment preserves source order and cardinality. Correlate
+        // by occurrence, not ID, so repeated roots retain their original slots.
+        val loaded = loadedRoots.iterator()
+        return entries.map { entry ->
+            when (entry) {
+                is ReadResult.Success -> ReadResult.Success(loaded.next())
+                is ReadResult.Failed -> entry
+            }
+        }
+    }
+
+    private fun <Entity : EntEntity<*>> evaluateRootPrivacy(
+        entity: EntityMapping<Entity>,
+        entities: List<Entity>,
+        viewerContext: ViewerContext,
+    ): List<ReadResult<Entity>> {
+        if (entities.isEmpty() || !loadPrivacyDispatcher.isConfigured(entity)) {
+            return entities.map { ReadResult.Success(it) }
+        }
+        return loadPrivacyDispatcher.evaluate(entity, viewerContext, entities).map { outcome ->
+            when (outcome) {
+                is PrivacyOutcome.Allowed -> ReadResult.Success(outcome.subject)
+                is PrivacyOutcome.Denied -> {
+                    val denial = PrivacyDenial(
+                        entity.entityName,
+                        EntityKey("id", outcome.subject.id),
+                        outcome.reason,
+                    )
+                    ReadResult.failedForInternalUse(EntPrivacyDeniedException(LoadDenialOrigin.Root, listOf(denial)))
+                }
+            }
+        }
     }
 
     /** Apply LOAD privacy and recursively evaluate every selected child relationship. */
@@ -141,19 +205,13 @@ internal class EntityGraphLoader(
         return loadedRelationship.attach(evaluatedTargets)
     }
 
-    /** Apply the root or selected-edge LOAD-privacy outcome to one entity batch. */
+    /** Apply selected-edge LOAD privacy to one entity batch. */
     private fun <Node : EntEntity<*>> evaluateLoadPrivacy(
         entity: EntityMapping<Node>,
         entities: List<Node>,
         denialPolicy: LoadDenialPolicy,
         viewerContext: ViewerContext,
     ): List<Node> {
-        // An empty root completes the read; selected edges still evaluate so their lifecycle does
-        // not depend on whether storage happened to return any targets.
-        if (denialPolicy == LoadDenialPolicy.FailRoot && entities.isEmpty()) {
-            return entities
-        }
-
         if (!loadPrivacyDispatcher.isConfigured(entity)) {
             return entities
         }
@@ -167,14 +225,6 @@ internal class EntityGraphLoader(
             )
 
         return when (denialPolicy) {
-            LoadDenialPolicy.FailRoot -> {
-                val rejected = evaluation.deniedOutcomes().map(::denial)
-                if (rejected.isNotEmpty()) {
-                    throw EntPrivacyDeniedException(LoadDenialOrigin.Root, rejected)
-                }
-                evaluation.allowedSubjects()
-            }
-
             is LoadDenialPolicy.FailEdge -> {
                 val firstDenied = evaluation.firstDeniedOrNull()
                 if (firstDenied != null) {
@@ -194,9 +244,6 @@ internal class EntityGraphLoader(
 
 /** Determines how an entity batch handles LOAD-privacy denials during graph evaluation. */
 private sealed interface LoadDenialPolicy {
-    /** Any denied root entity fails the complete query. */
-    data object FailRoot : LoadDenialPolicy
-
     /** Any denied target fails the query and identifies the selected edge that caused it. */
     data class FailEdge(val origin: LoadDenialOrigin.SelectedEdgePath) : LoadDenialPolicy
 
