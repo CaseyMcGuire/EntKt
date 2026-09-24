@@ -1,7 +1,6 @@
 package entkt.codegen.client
 
 import com.squareup.kotlinpoet.AnnotationSpec
-import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.INT
@@ -63,7 +62,7 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  * public interface does not extend `EntReadRuntime`; that framework-internal
  * contract stays on the implementation. LOAD-privacy behavior is delegated
  * to the host client's repos (typed as the narrow read surfaces), so
- * `hasLoadPrivacy` / `evaluateLoadPrivacy` behave identically through
+ * `evaluateLoadPrivacy` behaves identically through
  * the read-only client.
  *
  * Construction is framework-internal: each `EntClient` constructs one stable
@@ -149,10 +148,6 @@ internal class ReadClientGenerator(
             ) {
                 addModifiers(KModifier.INTERNAL, KModifier.LATEINIT)
                 mutable(true)
-            }
-            function("hasLoadPrivacy", returnType = BOOLEAN) {
-                addModifiers(KModifier.OVERRIDE)
-                statement("return host.hasLoadPrivacy()")
             }
             function(
                 "evaluateLoadPrivacy",

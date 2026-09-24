@@ -78,8 +78,6 @@ class EntityQueryBuilderTest {
             guardCalls++
         }
 
-        override fun isConfigured(entity: EntityMapping<*>): Boolean = true
-
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
             viewerContext: ViewerContext,

@@ -283,11 +283,11 @@ class EntityRepositoryTest {
     fun `load privacy remains fail closed and exposes no execution dependencies`() {
         val fixture = Fixture()
         val repo = fixture.generated
-        assertTrue(repo.hasLoadPrivacy())
         assertFalse(repo.evaluateLoadPrivacy(viewerContext, listOf(Widget(1L, "one"))).deniedOutcomes().isEmpty())
 
         // JVM bridges are synthetic, not callable Kotlin API; the compile tests check source access.
         val names = repo.javaClass.methods.filterNot { it.isSynthetic }.map { it.name }.toSet()
+        assertFalse("hasLoadPrivacy" in names)
         assertTrue(names.none {
             it in setOf("getRuleClient", "getSelf", "getMutationExecutor", "getReadQueryExecutor", "withTransaction")
         })
@@ -423,7 +423,6 @@ class EntityRepositoryTest {
 
     /** Matches the generated per-entity read surface, implemented by inherited final methods. */
     private interface WidgetReadSurface {
-        fun hasLoadPrivacy(): Boolean
         fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Widget>): PrivacyEvaluation<Widget>
     }
 
@@ -531,8 +530,6 @@ class EntityRepositoryTest {
         override fun checkReadExecution() {
             readFailure?.let { throw it }
         }
-
-        override fun isConfigured(entity: EntityMapping<*>): Boolean = true
 
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>, viewerContext: ViewerContext, entities: List<Entity>,

@@ -989,5 +989,6 @@ class PrivacyIntegrationTest {
             sys.articles.create { title = "Draft"; published = false; authorId = u.id }.save(viewerContext).getOrThrow()
         }
         assertFailsWith<EntPrivacyDeniedException> { client.articles.query().all(viewerContext).getOrThrow() }
+        assertFailsWith<EntPrivacyDeniedException> { client.articles.query().firstOrNull(viewerContext).getOrThrow() }
     }
 }

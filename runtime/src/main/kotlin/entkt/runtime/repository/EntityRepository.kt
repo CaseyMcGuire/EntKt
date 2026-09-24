@@ -149,9 +149,6 @@ abstract class EntityRepository<
         )
 
     @EntktInternal
-    fun hasLoadPrivacy(): Boolean = true
-
-    @EntktInternal
     fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Entity>): PrivacyEvaluation<Entity> =
         loadPrivacyEvaluator.evaluate(PrivacyRuleContext(viewerContext, ruleClient), entities)
 

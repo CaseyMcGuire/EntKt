@@ -113,6 +113,40 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
         assertEquals("author hidden", denial.reason)
     }
 
+    @Test
+    fun `an eager target with no LOAD rules is denied unless privacy is explicitly bypassed`() {
+        val client = EntClient(resetAndDriver()) {
+            policies {
+                notes(openNotes())
+            }
+        }
+        val bypass = testBypassContext("seed an author without a LOAD policy")
+        val author = client.users.create {
+            name = "Hidden author"
+            email = "hidden@example.com"
+        }.saveAndLoad(bypass).getOrThrow()
+        client.notes.create {
+            body = "Visible note"
+            writer = author.id
+        }.save(bypass).getOrThrow()
+        val query = client.notes.query { loadAuthor() }
+
+        val collection = assertIs<ReadCollectionResult.Failed>(query.all(viewerContext))
+        val collectionDenial = assertIs<EntPrivacyDeniedException>(collection.exception)
+        val origin = assertIs<LoadDenialOrigin.SelectedEdgePath>(collectionDenial.origin)
+        assertEquals(listOf(SelectedEdgeStep("Note", "author", "User")), origin.steps)
+        assertEquals(author.id, collectionDenial.denials.single().entityKey.value)
+        assertEquals("no load rule allowed access", collectionDenial.denials.single().reason)
+
+        val singular = assertIs<ReadResult.Failed>(query.firstOrNull(viewerContext))
+        val singularDenial = assertIs<EntPrivacyDeniedException>(singular.exception)
+        assertEquals(collectionDenial.origin, singularDenial.origin)
+        assertEquals(collectionDenial.denials, singularDenial.denials)
+
+        val loaded = query.all(bypass).getOrThrow().single()
+        assertEquals(author.id, loaded.edges.author.requireLoaded()?.id)
+    }
+
     // ---- to-many eager denial: exactly one keyed denial after batch evaluation ----
 
     @Test

@@ -98,7 +98,6 @@ class ReadQueryExecutorRootTest {
         ),
     ) : EntityMapping<Item> {
         val viewerContext = ViewerContext(Viewer.User(7L))
-        var privacyEnabled = true
         var denials: List<PrivacyDenial?> = emptyList()
         var preparationFailure: Throwable? = null
         var decodingFailure: Throwable? = null
@@ -175,12 +174,6 @@ class ReadQueryExecutorRootTest {
 
             override fun checkReadExecution() {
                 adapter.events += "read-guard"
-            }
-
-            override fun isConfigured(entity: EntityMapping<*>): Boolean {
-                assertSame(adapter as Any, entity as Any)
-                adapter.events += "has-privacy"
-                return adapter.privacyEnabled
             }
 
             override fun <Entity : EntEntity<*>> evaluate(
@@ -347,7 +340,6 @@ class ReadQueryExecutorRootTest {
                 "driver",
                 "decode:2",
                 "decode:1",
-                "has-privacy",
                 "load-privacy:2, 1",
             ),
             events,

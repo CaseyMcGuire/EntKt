@@ -130,7 +130,7 @@ class ReadClientGeneratorTest {
 
         assert(
             runtimeOutput.contains(
-                "public interface CarReadSurface { public fun hasLoadPrivacy(): Boolean public fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Car>): PrivacyEvaluation<Car>",
+                "public interface CarReadSurface { public fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Car>): PrivacyEvaluation<Car>",
             ),
         ) {
             "CarReadSurface should expose the correlated LOAD evaluation contract\n$runtimeOutput"
@@ -142,6 +142,8 @@ class ReadClientGeneratorTest {
         ) {
             "CarReadRepo should delegate the complete LOAD evaluation to its host surface\n$clientOutput"
         }
+        assertFalse(runtimeOutput.contains("hasLoadPrivacy"))
+        assertFalse(clientOutput.contains("hasLoadPrivacy"))
     }
 
     @Test
@@ -159,13 +161,7 @@ class ReadClientGeneratorTest {
             "the generated runtime should inherit the reusable execution-host contract\n$output"
         }
         assert(!output.contains("currentViewerContext") && !output.contains("ViewerContextProvider"))
-        assert(
-            output.contains(
-                "CarDescriptor -> this.cars.hasLoadPrivacy()",
-            ),
-        ) {
-            "LOAD configuration should dispatch through generated descriptor identity\n$output"
-        }
+        assertFalse(output.contains("isConfigured"))
         assert(
             output.contains(
                 "CarDescriptor -> this.cars.evaluateLoadPrivacy( " +

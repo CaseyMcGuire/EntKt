@@ -100,7 +100,7 @@ internal class RepoGenerator(
                 add("    ")
             })
             // The repo is the entity's read surface: query terminals reach
-            // `hasLoadPrivacy()` / `evaluateLoadPrivacy(...)` through the
+            // `evaluateLoadPrivacy(...)` through the
             // EntReadRuntime contract's `${prop}: ${Entity}ReadSurface`
             // accessor, which EntClient overrides with this repo.
             addSuperinterface(ClassName(packageName, "${schemaName}ReadSurface"))

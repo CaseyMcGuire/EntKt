@@ -183,9 +183,6 @@ class DeleteMutationOperationTest {
                 readExecutionFailure?.let { throw it }
             }
 
-            override fun isConfigured(entity: EntityMapping<*>): Boolean =
-                error("DELETE candidate selection never evaluates LOAD privacy")
-
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
                 viewerContext: ViewerContext,
@@ -260,8 +257,6 @@ class DeleteMutationOperationTest {
                 events += "record-failure"
                 failures += exception
             }
-
-            override fun isConfigured(entity: EntityMapping<*>): Boolean = true
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,

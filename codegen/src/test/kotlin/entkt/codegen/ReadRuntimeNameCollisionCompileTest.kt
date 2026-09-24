@@ -77,10 +77,6 @@ class ReadRuntimeNameCollisionCompileTest {
                             })
                         }
                     }
-                    check(client.isConfigured(ItemDescriptor))
-                    check(client.isConfigured(RecordDescriptor))
-                    check(client.isConfigured(DocumentDescriptor))
-
                     val item = Item(1L)
                     val record = Record(2L)
                     val document = Document(3L)

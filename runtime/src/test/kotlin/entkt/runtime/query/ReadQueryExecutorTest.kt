@@ -9,12 +9,12 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
+import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
-import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.ReadCollectionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -67,6 +67,7 @@ class ReadQueryExecutorTest {
     fun `one read query executor owns entity query execution`() {
         val driver = RecordingDriver()
         var interceptorRuns = 0
+        var privacyRuns = 0
         val interceptors = EntInterceptorsConfig().apply {
             addEntity<Item>("items", "record") { _, _ -> interceptorRuns++ }
         }
@@ -77,13 +78,14 @@ class ReadQueryExecutorTest {
 
                 override fun checkReadExecution() = Unit
 
-                override fun isConfigured(entity: EntityMapping<*>): Boolean = false
-
                 override fun <Entity : EntEntity<*>> evaluate(
                     entity: EntityMapping<Entity>,
                     viewerContext: ViewerContext,
                     entities: List<Entity>,
-                ): PrivacyEvaluation<Entity> = error("LOAD privacy is not configured")
+                ): PrivacyEvaluation<Entity> {
+                    privacyRuns++
+                    return privacyEvaluation(entities)
+                }
             },
         )
 
@@ -95,6 +97,7 @@ class ReadQueryExecutorTest {
         )
         assertEquals(listOf(Item(1L)), entities.getOrThrow())
         assertEquals(1, interceptorRuns)
+        assertEquals(1, privacyRuns)
         assertEquals(1, driver.queryCalls)
     }
 }

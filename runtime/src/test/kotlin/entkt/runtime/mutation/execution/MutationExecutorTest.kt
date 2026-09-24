@@ -582,8 +582,6 @@ class MutationExecutorTest {
             failures += exception
         }
 
-        override fun isConfigured(entity: EntityMapping<*>): Boolean = error("privacy belongs to the operation")
-
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
             viewerContext: ViewerContext,

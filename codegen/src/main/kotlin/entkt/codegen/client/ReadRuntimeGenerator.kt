@@ -1,7 +1,6 @@
 package entkt.codegen.client
 
 import com.squareup.kotlinpoet.AnnotationSpec
-import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
@@ -18,7 +17,6 @@ import entkt.codegen.kotlinpoet.interfaceType
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.property
-import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.VIEWER_CONTEXT
 
 private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
@@ -35,12 +33,10 @@ private val READ_QUERY_EXECUTION_HOST =
  *
  * `EntReadRuntime` names exactly what generated queries need from their
  * host — the read-execution guard, the `@EntktInternal` interceptor
- * registry, and one accessor per entity
- * typed to that entity's read surface (`hasLoadPrivacy()` /
- * `evaluateLoadPrivacy(...)`, the only repo members query terminals
- * call). Both `EntClient` and `ReadOnlyEntClientImpl` implement it, so generated query and
- * index-stage constructors can accept the contract instead of the full
- * client.
+ * registry, and one accessor per entity typed to that entity's read surface
+ * (`evaluateLoadPrivacy(...)`, the only repo member query terminals call).
+ * Both `EntClient` and `ReadOnlyEntClientImpl` implement it, so generated query and
+ * index-stage constructors can accept the contract instead of the full client.
  *
  * Everything here is `public` + `@EntktInternal`, not Kotlin-`internal`:
  * the public query constructors cannot expose an internal parameter
@@ -81,9 +77,6 @@ internal class ReadRuntimeGenerator(
         val entityClass = ClassName(packageName, input.name)
         return interfaceType("${input.name}ReadSurface") {
             addAnnotation(ENTKT_INTERNAL)
-            function("hasLoadPrivacy", returnType = BOOLEAN) {
-                addModifiers(KModifier.ABSTRACT)
-            }
             function(
                 "evaluateLoadPrivacy",
                 returnType = PRIVACY_EVALUATION.parameterizedBy(entityClass),
@@ -99,7 +92,6 @@ internal class ReadRuntimeGenerator(
         return interfaceType("EntReadRuntime") {
             addAnnotation(ENTKT_INTERNAL)
             addSuperinterface(READ_QUERY_EXECUTION_HOST)
-            addFunction(buildIsLoadPrivacyConfigured(sorted))
             addFunction(buildEvaluateLoadPrivacy(sorted))
 
             for (input in sorted) {
@@ -107,29 +99,6 @@ internal class ReadRuntimeGenerator(
                     addModifiers(KModifier.ABSTRACT)
                 }
             }
-        }
-    }
-
-    private fun buildIsLoadPrivacyConfigured(sorted: List<SchemaInput>): FunSpec {
-        val body = codeBlock {
-            add("return when (entity) {\n")
-            for (input in sorted) {
-                add(
-                    "  %T -> this.%N.hasLoadPrivacy()\n",
-                    ClassName(packageName, "${input.name}Descriptor"),
-                    input.clientName,
-                )
-            }
-            add(
-                "  else -> error(%P)\n",
-                "No LOAD-privacy evaluator is registered for entity '${'$'}{entity.entityName}'",
-            )
-            add("}\n")
-        }
-        return function("isConfigured", returnType = BOOLEAN) {
-            addModifiers(KModifier.OVERRIDE)
-            parameter("entity", ENTITY_MAPPING.parameterizedBy(STAR))
-            addCode(body)
         }
     }
 

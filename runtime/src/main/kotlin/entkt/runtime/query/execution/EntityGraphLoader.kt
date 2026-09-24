@@ -112,8 +112,8 @@ internal class EntityGraphLoader(
         entities: List<Entity>,
         viewerContext: ViewerContext,
     ): List<ReadResult<Entity>> {
-        if (entities.isEmpty() || !loadPrivacyDispatcher.isConfigured(entity)) {
-            return entities.map { ReadResult.Success(it) }
+        if (entities.isEmpty()) {
+            return emptyList()
         }
         return loadPrivacyDispatcher.evaluate(entity, viewerContext, entities).map { outcome ->
             when (outcome) {
@@ -212,9 +212,6 @@ internal class EntityGraphLoader(
         denialPolicy: LoadDenialPolicy,
         viewerContext: ViewerContext,
     ): List<Node> {
-        if (!loadPrivacyDispatcher.isConfigured(entity)) {
-            return entities
-        }
         val evaluation = loadPrivacyDispatcher.evaluate(entity, viewerContext, entities)
 
         fun denial(outcome: PrivacyOutcome.Denied<Node>) =

@@ -109,10 +109,7 @@ class EntityGraphLoaderTest {
     private class RecordingPrivacy(
         private val events: MutableList<String>,
         private val deniedIds: Set<Long> = emptySet(),
-        private val configured: Boolean = true,
     ) : LoadPrivacyDispatcher {
-        override fun isConfigured(entity: EntityMapping<*>): Boolean = configured
-
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
             viewerContext: ViewerContext,
@@ -145,7 +142,7 @@ class EntityGraphLoaderTest {
         )
         val loader = EntityGraphLoader(
             storage = storage,
-            loadPrivacyDispatcher = RecordingPrivacy(events, configured = false),
+            loadPrivacyDispatcher = RecordingPrivacy(events),
         )
         val notes = ItemEdge("notes")
         val children = ItemEdge("children")
@@ -166,11 +163,15 @@ class EntityGraphLoaderTest {
         assertEquals(
             listOf(
                 "load:root",
+                "privacy:1",
                 "load:children",
+                "privacy:2",
                 "load:notes",
+                "privacy:3",
                 "attach:notes",
                 "attach:children",
                 "load:peers",
+                "privacy:4",
                 "attach:peers",
             ),
             events,
