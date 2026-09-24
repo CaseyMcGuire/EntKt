@@ -40,7 +40,7 @@ class ContextPrivacyRuleIntegrationTest : PostgresTestBase() {
         val user = client.users.create { name = "Before"; email = "user@example.com" }.saveAndLoad(viewer).getOrThrow()
         client.users.update(user.id) { name = "After" }.save(viewer).getOrThrow()
         assertEquals("After", client.users.findById(viewer, user.id).getOrThrow()?.name)
-        client.users.delete(viewer, user).getOrThrow()
+        client.users.deleteById(viewer, user.id).getOrThrow()
 
         assertEquals(5, seen.size, "CREATE, returned LOAD, UPDATE, explicit LOAD, DELETE")
         seen.forEach { context ->
@@ -80,7 +80,7 @@ class ContextPrivacyRuleIntegrationTest : PostgresTestBase() {
         val mutations = listOf(
             client.users.create { name = "Denied"; email = "denied@example.com" }.save(viewer),
             client.users.update(user.id) { name = "Denied" }.save(viewer),
-            client.users.delete(viewer, user),
+            client.users.deleteById(viewer, user.id),
         )
         for (result in mutations) {
             val failure = assertIs<EntMutationPrivacyDeniedException>(assertIs<MutationResult.Failed>(result).exception)

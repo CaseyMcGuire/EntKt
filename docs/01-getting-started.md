@@ -173,8 +173,8 @@ fun main() {
         age = 31
     }.save(viewerContext).getOrThrow()
 
-    // Delete — idempotent; MutationResult<Unit>
-    client.users.delete(viewerContext, alice).getOrThrow()
+    // Delete — MutationResult<Boolean>; false if already absent
+    client.users.deleteById(viewerContext, alice.id).getOrThrow()
 }
 ```
 

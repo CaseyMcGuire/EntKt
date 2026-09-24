@@ -132,9 +132,7 @@ abstract class EntityRepository<
         return PendingUpdateMutation(request, execution)
     }
 
-    fun delete(viewerContext: ViewerContext, entity: Entity): MutationResult<Unit> =
-        deleteById(viewerContext, entity.id).withoutValue()
-
+    /** Delete the current row by ID, returning false when it is already absent. */
     fun deleteById(viewerContext: ViewerContext, id: ID): MutationResult<Boolean> =
         mutationExecutor.execute(
             operation = deleteOperation,

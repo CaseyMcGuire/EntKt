@@ -29,13 +29,10 @@ import kotlin.test.assertTrue
 /**
  * End-to-end coverage for the canonical delete family:
  *
- *   delete(entity): MutationResult<Unit>   — the entity is an id
- *       handle; Success(Unit) whether this call deleted the freshly
- *       reloaded row or found it already absent (absence runs no
- *       callbacks and is never EntTargetAbsentException).
  *   deleteById(id): MutationResult<Boolean> — Success(true) only when
  *       this call's final delete removed the row; Success(false) when
- *       absent before or during the operation.
+ *       absent before or during the operation. Absence at reload runs
+ *       no callbacks and is never EntTargetAbsentException.
  *   deleteMany(predicates): MutationResult<Int> — one transaction
  *       across candidate selection, phase-major batch callbacks, and
  *       one logical set-based delete; one failing item leaves no
@@ -101,21 +98,21 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         }
     }
 
-    // ---- delete(entity) ----
+    // ---- deleteById ----
 
     @Test
-    fun `delete removes the row and returns Success(Unit)`() {
+    fun `deleteById removes the row and returns Success(true)`() {
         val client = freshClient()
         val article = seedArticle(client)
 
-        val result = client.articles.delete(viewerContext, article)
+        val result = client.articles.deleteById(viewerContext, article.id)
 
-        assertEquals(MutationResult.Success(Unit), result)
+        assertEquals(MutationResult.Success(true), result)
         assertEquals(0L, client.articles.query().all(viewerContext).getOrThrow().size.toLong())
     }
 
     @Test
-    fun `delete of an already-absent row is Success(Unit) and runs no callbacks`() {
+    fun `deleteById of an already-absent row is Success(false) and runs no callbacks`() {
         var beforeDeletes = 0
         var afterDeletes = 0
         val driver = resetAndDriver()
@@ -131,23 +128,23 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         }
         val article = seedArticle(client)
 
-        assertEquals(MutationResult.Success(Unit), client.articles.delete(viewerContext, article))
+        assertEquals(MutationResult.Success(true), client.articles.deleteById(viewerContext, article.id))
         assertEquals(1, beforeDeletes)
         assertEquals(1, afterDeletes)
 
-        // Second delete: the row is absent at reload — Success(Unit),
+        // Second delete: the row is absent at reload — Success(false),
         // and neither before- nor after-delete callbacks run.
-        assertEquals(MutationResult.Success(Unit), client.articles.delete(viewerContext, article))
+        assertEquals(MutationResult.Success(false), client.articles.deleteById(viewerContext, article.id))
         assertEquals(1, beforeDeletes)
         assertEquals(1, afterDeletes)
     }
 
     @Test
-    fun `delete returns Failed(EntMutationPrivacyDeniedException) when DELETE denies`() {
+    fun `deleteById returns Failed(EntMutationPrivacyDeniedException) when DELETE denies`() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
-        val result = client.articles.delete(viewerContext, article)
+        val result = client.articles.deleteById(viewerContext, article.id)
 
         val failed = assertIs<MutationResult.Failed>(result)
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -167,7 +164,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
-        val result = client.articles.delete(viewerContext, article)
+        val result = client.articles.deleteById(viewerContext, article.id)
         val failed = assertIs<MutationResult.Failed>(result)
         try {
             result.getOrThrow()
@@ -176,8 +173,6 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
             assertSame(failed.exception, e)
         }
     }
-
-    // ---- deleteById ----
 
     @Test
     fun `deleteById returns Success(true) when a row was deleted`() {

@@ -468,7 +468,7 @@ class ValidationIntegrationTest {
             authorId = author.id
         }.saveAndLoad(viewerContext).getOrThrow()
 
-        val failed = assertIs<MutationResult.Failed>(client.articles.delete(viewerContext, article))
+        val failed = assertIs<MutationResult.Failed>(client.articles.deleteById(viewerContext, article.id))
         val ex = assertIs<EntValidationException>(failed.exception)
         assertEquals(EntOperation.DELETE, ex.operation)
         assertTrue(ex.violations.any { it.message.contains("cannot delete a published") })
@@ -485,7 +485,7 @@ class ValidationIntegrationTest {
             authorId = author.id
         }.saveAndLoad(viewerContext).getOrThrow()
 
-        client.articles.delete(viewerContext, article).getOrThrow()
+        client.articles.deleteById(viewerContext, article.id).getOrThrow()
     }
 
     // ---- Privacy runs before validation ----
@@ -567,7 +567,7 @@ class ValidationIntegrationTest {
             authorId = author.id
         }.saveAndLoad(viewerContext).getOrThrow()
 
-        val failed = assertIs<MutationResult.Failed>(client.articles.delete(viewerContext, article))
+        val failed = assertIs<MutationResult.Failed>(client.articles.deleteById(viewerContext, article.id))
         assertIs<EntValidationException>(failed.exception)
     }
 

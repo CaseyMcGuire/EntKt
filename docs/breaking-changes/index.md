@@ -29,6 +29,12 @@ above it.
 
 ## Unreleased
 
+- **Delete individual entities by ID** (`runtime`)
+  Repositories no longer expose `delete(viewerContext, entity)`.
+  _Migration:_ use `deleteById(viewerContext, entity.id)`, which returns
+  `MutationResult<Boolean>`: `true` when this call deletes the row and `false`
+  when it is already absent. Privacy, validation, and hooks are unchanged.
+
 - **Use immutable `Bytes` for binary fields** (`schema`, `codegen`, `postgres`)
   `bytes(...)` now exposes `entkt.types.Bytes` instead of `ByteArray` in entities,
   drafts, hooks, rule inputs, predicates, and driver row maps. Values compare by

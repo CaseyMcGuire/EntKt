@@ -50,7 +50,7 @@ class GeneratedRepositoryCompileTest {
     fun `generated repositories preserve concrete inherited APIs on root and transaction clients`() {
         val result = compile(
             """
-            fun useRepositories(client: EntClientScope, viewer: ViewerContext, car: Car, predicate: Predicate<Car>) {
+            fun useRepositories(client: EntClientScope, viewer: ViewerContext, predicate: Predicate<Car>) {
                 val query: CarQuery = client.cars.query { where(predicate) }
                 val create: PendingCreateMutation<CarCreateDraft, Car> = client.cars.create { model = "new" }
                 val update: PendingUpdateMutation<CarUpdateDraft, Car> = client.cars.update(id = 1) { model = "changed" }
@@ -61,7 +61,6 @@ class GeneratedRepositoryCompileTest {
                 ) { year = 2026 }
                 val found: ReadResult<Car?> = client.cars.findById(viewer, 1)
                 val deleted: MutationResult<Boolean> = client.cars.deleteById(viewer, 1)
-                val removed: MutationResult<Unit> = client.cars.delete(viewer, car)
                 val created: MutationResult<List<Car>> = client.cars.createMany(viewer, { model = "one" }, { model = "two" })
                 val count: MutationResult<Int> = client.cars.deleteMany(viewer, predicate)
 
@@ -73,14 +72,33 @@ class GeneratedRepositoryCompileTest {
                 val explicitBulkDelete: MutationResult<Int> = client.sessions.deleteMany(viewer)
             }
 
-            fun useBoth(client: EntClient, viewer: ViewerContext, car: Car, predicate: Predicate<Car>) {
-                useRepositories(client, viewer, car, predicate)
-                client.withTransaction { tx -> useRepositories(tx, viewer, car, predicate) }
+            fun useBoth(client: EntClient, viewer: ViewerContext, predicate: Predicate<Car>) {
+                useRepositories(client, viewer, predicate)
+                client.withTransaction { tx -> useRepositories(tx, viewer, predicate) }
             }
             """.trimIndent(),
         )
 
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+    }
+
+    @Test
+    fun `generated repositories do not expose delete by entity on root or transaction clients`() {
+        val result = compile(
+            """
+            fun invalid(client: EntClient, viewer: ViewerContext, car: Car, session: Session) {
+                client.cars.delete(viewer, car)
+                client.sessions.delete(viewer, session)
+                client.withTransaction { tx ->
+                    tx.cars.delete(viewer, car)
+                    tx.sessions.delete(viewer, session)
+                }
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
+        assertEquals(4, result.messages.lineSequence().count { it.contains("Unresolved reference 'delete'") }, result.messages)
     }
 
     @Test

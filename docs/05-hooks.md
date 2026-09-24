@@ -304,13 +304,11 @@ UPDATE privacy, entity validation), but skips persistence and
 `saveAndLoad()` returns the current entity under the ordinary LOAD
 contract.
 
-For a **delete** (`delete(entity)` treats the supplied entity as an ID
-handle; `deleteById(id)` runs the same pipeline):
+For a **delete** (`deleteById(id)`):
 
 1. Enforce the configured transaction requirement.
-2. Reload the current row by id. An absent row is a success —
-   `delete` returns `Success(Unit)`, `deleteById` returns
-   `Success(false)` — and none of the later steps run.
+2. Reload the current row by id. An absent row returns `Success(false)`,
+   and none of the later steps run.
 3. Run DELETE privacy and entity validation against the reloaded row.
 4. Run `beforeDelete`.
 5. Delete the entity.

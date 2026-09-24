@@ -373,7 +373,7 @@ class PrivacyIntegrationTest {
             where(Article.authorId eq alice.id)
         }.all(viewerContext).getOrThrow().first()
 
-        client.articles.delete(viewerContext, article).getOrThrow()
+        client.articles.deleteById(viewerContext, article.id).getOrThrow()
     }
 
     // ---- Explicit bypass reads ----
@@ -473,7 +473,7 @@ class PrivacyIntegrationTest {
             }.firstOrNull(viewerContext).getOrThrow()
             assertNotNull(article)
 
-            val failed = assertIs<MutationResult.Failed>(scoped.articles.delete(viewerContext, article))
+            val failed = assertIs<MutationResult.Failed>(scoped.articles.deleteById(viewerContext, article.id))
             article to assertIs<EntMutationPrivacyDeniedException>(failed.exception)
         }
         assertEquals(EntOperation.DELETE, ex.operation)
@@ -490,7 +490,7 @@ class PrivacyIntegrationTest {
     }
 
     @Test
-    fun `delete authorizes against the current row, not the caller's entity`() {
+    fun `deleteById authorizes against current ownership after it changes`() {
         val client = freshClient(Viewer.User(0L))
         val (alice, bob) = seedData(client)
 
@@ -504,16 +504,15 @@ class PrivacyIntegrationTest {
         }
         assertNotNull(aliceArticle)
 
+        client.articles.update(aliceArticle.id) {
+            authorId = bob.id
+        }.save(testBypassContext("transfer article ownership")).getOrThrow()
+
         val ex = run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(bob.id))
-            // Entities are public data classes, so Bob can hand delete
-            // a copy claiming HE is the author of Alice's article. The
-            // delete pipeline must treat the entity as an id handle and
-            // authorize against the reloaded row — where the author is
-            // still Alice — not against these fabricated fields.
-            val forged = aliceArticle.copy(authorId = bob.id)
-            val failed = assertIs<MutationResult.Failed>(scoped.articles.delete(viewerContext, forged))
+            val viewerContext = ViewerContext(Viewer.User(alice.id))
+            // Alice held the entity before the transfer, but only Bob can delete the current row.
+            val failed = assertIs<MutationResult.Failed>(scoped.articles.deleteById(viewerContext, aliceArticle.id))
             assertIs<EntMutationPrivacyDeniedException>(failed.exception)
         }
         assertEquals(EntOperation.DELETE, ex.operation)
@@ -526,6 +525,7 @@ class PrivacyIntegrationTest {
             sys.articles.findById(viewerContext, aliceArticle.id).getOrThrow()
         }
         assertNotNull(still)
+        assertEquals(bob.id, still.authorId)
     }
 
     @Test
@@ -542,7 +542,7 @@ class PrivacyIntegrationTest {
             }.firstOrNull(viewerContext).getOrThrow()
             assertNotNull(article)
 
-            scoped.articles.delete(viewerContext, article).getOrThrow()
+            scoped.articles.deleteById(viewerContext, article.id).getOrThrow()
             article.id
         }
 
@@ -757,7 +757,7 @@ class PrivacyIntegrationTest {
         }
         assertNotNull(article)
 
-        val failed = assertIs<MutationResult.Failed>(client.articles.delete(viewerContext, article))
+        val failed = assertIs<MutationResult.Failed>(client.articles.deleteById(viewerContext, article.id))
         val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
         assertEquals(EntOperation.DELETE, ex.operation)
         assertEquals("authentication required", ex.reason)
@@ -778,7 +778,7 @@ class PrivacyIntegrationTest {
             }.firstOrNull(viewerContext).getOrThrow()
             assertNotNull(article)
 
-            scoped.articles.delete(viewerContext, article).getOrThrow()
+            scoped.articles.deleteById(viewerContext, article.id).getOrThrow()
         }
     }
 

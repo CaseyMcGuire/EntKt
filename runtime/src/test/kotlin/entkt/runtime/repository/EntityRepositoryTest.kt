@@ -217,11 +217,11 @@ class EntityRepositoryTest {
     }
 
     @Test
-    fun `delete uses the handle ID and deleteById preserves absence`() {
+    fun `deleteById passes the ID and preserves absence for both repository types`() {
         val fixture = Fixture()
         fixture.deleted = false
 
-        assertEquals(MutationResult.Success(Unit), fixture.generated.delete(viewerContext, Widget(3L, "old")))
+        assertEquals(MutationResult.Success(false), fixture.generated.deleteById(viewerContext, 3L))
         assertEquals(MutationResult.Success(false), fixture.explicit.deleteById(viewerContext, 4L))
         assertEquals(listOf(3L, 4L), fixture.calls.map { assertIs<DeleteMutationInput>(it.input).id })
         assertEquals(0, fixture.driver.transactions)

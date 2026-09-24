@@ -171,14 +171,14 @@ class SoftDeleteConventionIntegrationTest : PostgresTestBase() {
     // ---- Generated delete* keeps its physical-delete meaning ----
 
     @Test
-    fun `delete physically removes the row — not a soft delete`() {
+    fun `deleteById physically removes the row — not a soft delete`() {
         val driver = resetAndDriver()
         val filtered = filteredClient(driver)
         val unfiltered = unfilteredClient(driver)
 
         val memo = filtered.memos.create { body = "for-real" }.saveAndLoad(testViewerContext).getOrThrow()
 
-        filtered.memos.delete(testViewerContext, memo).getOrThrow()
+        filtered.memos.deleteById(testViewerContext, memo.id).getOrThrow()
 
         // Both clients see zero rows — physical removal, not a
         // soft delete masquerading.

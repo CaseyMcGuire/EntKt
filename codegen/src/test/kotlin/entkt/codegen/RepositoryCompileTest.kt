@@ -66,30 +66,35 @@ class RepositoryCompileTest {
     fun `inherited entry points retain concrete types and need no internal opt-in`() {
         val result = compile(
             """
-            fun generated(repo: GeneratedRepo, viewer: ViewerContext, widget: Widget, predicate: Predicate<Widget>) {
+            fun generated(repo: GeneratedRepo, viewer: ViewerContext, predicate: Predicate<Widget>) {
                 val query: WidgetQuery = repo.query().where(predicate)
                 val create: PendingCreateMutation<CreateDraft, Widget> = repo.create { name = "new" }
                 val update: PendingUpdateMutation<UpdateDraft, Widget> = repo.update(1L) { name = "changed" }
                 val found: ReadResult<Widget?> = repo.findById(viewer, 1L)
                 val deleted: MutationResult<Boolean> = repo.deleteById(viewer, 1L)
-                val removed: MutationResult<Unit> = repo.delete(viewer, widget)
                 val created: MutationResult<List<Widget>> = repo.createMany(viewer, { name = "one" }, { name = "two" })
                 val count: MutationResult<Int> = repo.deleteMany(viewer, predicate)
             }
 
-            fun explicit(repo: ExplicitRepo, viewer: ViewerContext, widget: Widget) {
+            fun explicit(repo: ExplicitRepo, viewer: ViewerContext) {
                 val query: WidgetQuery = repo.query()
                 val create: PendingCreateMutation<CreateDraft, Widget> = repo.create(1L) { name = "new" }
                 val update: PendingUpdateMutation<UpdateDraft, Widget> = repo.update(1L) { name = "changed" }
                 val found: ReadResult<Widget?> = repo.findById(viewer, 1L)
                 val deleted: MutationResult<Boolean> = repo.deleteById(viewer, 1L)
-                val removed: MutationResult<Unit> = repo.delete(viewer, widget)
                 val count: MutationResult<Int> = repo.deleteMany(viewer)
             }
             """.trimIndent(),
         )
 
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+    }
+
+    @Test
+    fun `repositories do not expose delete by entity`() {
+        for (repo in listOf("GeneratedRepo", "ExplicitRepo")) {
+            assertRejected(repo, "repo.delete(viewer, Widget(1L))", "Unresolved reference 'delete'")
+        }
     }
 
     @Test

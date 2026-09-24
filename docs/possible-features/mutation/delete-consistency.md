@@ -8,11 +8,10 @@ optimistic delete preconditions remain unimplemented.
 
 ## Implemented Baseline
 
-Scalar `delete(viewerContext, entity)` and `deleteById(viewerContext, id)` reload
-the current row through `DatabaseDriver.byId`, then evaluate DELETE privacy,
-validation, and before-delete hooks before issuing the ID-based delete. The
-reload prevents authorization against a caller-supplied entity copy; it does
-not lock the row through persistence.
+Scalar `deleteById(viewerContext, id)` reloads the current row through
+`DatabaseDriver.byId`, then evaluates DELETE privacy, validation, and
+before-delete hooks before issuing the ID-based delete. Authorization uses
+the current stored row; the reload does not lock it through persistence.
 
 `deleteMany(viewerContext, predicates...)` selects candidates through read
 interceptors, then runs phase-major privacy, validation, and hooks. It sends

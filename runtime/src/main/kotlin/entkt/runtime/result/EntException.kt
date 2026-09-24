@@ -156,9 +156,8 @@ sealed class EntMutationException(
  * pipelines when the target is absent at load time or vanished before
  * the write. Always [MutationWriteState.NotPersisted] by construction.
  *
- * Idempotent deletes never produce this: `delete(entity)` succeeds
- * when the row is already absent and `deleteById(id)` reports
- * `Success(false)`.
+ * Idempotent deletes never produce this: `deleteById(id)` reports
+ * `Success(false)` when the row is already absent.
  */
 class EntTargetAbsentException(
     val entityType: String,

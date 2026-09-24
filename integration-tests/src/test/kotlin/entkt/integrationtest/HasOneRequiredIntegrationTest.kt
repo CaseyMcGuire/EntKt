@@ -133,7 +133,7 @@ class HasOneRequiredIntegrationTest : PostgresTestBase() {
         val client = EntClient(requiredDriver())
         val (user, original) = createPair(client)
         val replacement = client.withTransaction { tx ->
-            tx.profiles.delete(testViewerContext, original).orRollback()
+            tx.profiles.deleteById(testViewerContext, original.id).orRollback()
             tx.profiles.create { ownerId = user.id; bio = "Replacement" }
                 .saveAndLoad(testViewerContext).orRollback()
         }.getOrThrow()
@@ -149,7 +149,7 @@ class HasOneRequiredIntegrationTest : PostgresTestBase() {
         val (firstUser, firstProfile) = createPair(client, "First")
         val (_, secondProfile) = createPair(client, "Second")
         val result = client.withTransaction { tx ->
-            tx.profiles.delete(testViewerContext, firstProfile).orRollback()
+            tx.profiles.deleteById(testViewerContext, firstProfile.id).orRollback()
             tx.profiles.update(secondProfile.id) { ownerId = firstUser.id }
                 .save(testViewerContext).orRollback()
         }
@@ -164,8 +164,8 @@ class HasOneRequiredIntegrationTest : PostgresTestBase() {
         val client = EntClient(requiredDriver())
         val (user, profile) = createPair(client)
         client.withTransaction { tx ->
-            tx.profiles.delete(testViewerContext, profile).orRollback()
-            tx.users.delete(testViewerContext, user).orRollback()
+            tx.profiles.deleteById(testViewerContext, profile.id).orRollback()
+            tx.users.deleteById(testViewerContext, user.id).orRollback()
         }.getOrThrow()
 
         assertNull(client.users.findById(testViewerContext, user.id).getOrThrow())

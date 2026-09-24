@@ -61,8 +61,8 @@ when (val result = client.users.findById(viewerContext, alice.id)) {
     is ReadResult.Failed -> result.exception   // typed: privacy denial, rejection, driver failure
 }
 
-// Delete (idempotent: success means the row is absent afterward)
-client.users.delete(viewerContext, alice).getOrThrow()  // or client.users.deleteById(viewerContext, alice.id).getOrThrow()
+// Delete by ID (true if this call deleted the row, false if already absent)
+client.users.deleteById(viewerContext, alice.id).getOrThrow()
 
 // Transactions
 client.withTransaction { tx ->

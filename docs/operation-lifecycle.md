@@ -195,7 +195,7 @@ Important behavior:
 
 ## Delete
 
-`delete(entity)` and `deleteById(id)` use this order:
+`deleteById(id)` uses this order:
 
 ```mermaid
 flowchart TD
@@ -209,8 +209,8 @@ flowchart TD
 
 Important behavior:
 
-- Delete is idempotent. If the row is already absent, the operation succeeds
-  without running privacy, validation, or hooks.
+- Delete is idempotent. If the row is already absent, the operation returns
+  `Success(false)` without running privacy, validation, or hooks.
 - The internal current-row load does not run LOAD privacy. DELETE privacy is
   the authority for whether the viewer may remove the row.
 - `beforeDelete` runs after privacy and entity validation. It can perform
