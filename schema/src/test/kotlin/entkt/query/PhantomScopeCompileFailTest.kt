@@ -106,14 +106,14 @@ class PhantomScopeCompileFailTest {
     // ---- Ordering guard for non-comparable column types ----
 
     @Test
-    fun `Column over ByteArray (BYTES) does not expose asc`() {
-        // `Column<E, ByteArray>` is what FieldType.BYTES emits; it
+    fun `Column over Bytes (BYTES) does not expose asc`() {
+        // `Column<E, Bytes>` is what FieldType.BYTES emits; it
         // extends only Column<E, T> (no ComparableColumn / EnumColumn
         // ancestry), so asc() / desc() are unreachable — the in-memory
         // comparator carveout for non-comparable types is preserved at
         // the type system layer.
         val result = compile("""
-            val bytes: Column<User, ByteArray> = Column("data")
+            val bytes: Column<User, entkt.types.Bytes> = Column("data")
             fun bad() = bytes.asc()
         """.trimIndent())
         assertCompileError(result, "Unresolved reference")

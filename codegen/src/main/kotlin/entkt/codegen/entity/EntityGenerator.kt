@@ -106,11 +106,6 @@ internal class EntityGenerator(
                 addType(edgesClass)
             }
             buildToString(className, schema, edgeFks, edgesClass != null)?.let(::addFunction)
-            // Kotlin's data-class equals/hashCode compare ByteArray properties by reference.
-            if (allFields.any { it.type == FieldType.BYTES }) {
-                addFunction(buildEquals(entityClass, allFields, edgeFks, edgesClass != null))
-                addFunction(buildHashCode(allFields, edgeFks, edgesClass != null))
-            }
             companionObject {
                 addProperty(tableProperty)
                 addProperty(schemaProperty)
@@ -306,78 +301,6 @@ internal class EntityGenerator(
         return function("toString", String::class.asTypeName()) {
             addModifiers(KModifier.OVERRIDE)
             statement("return %P", template)
-        }
-    }
-
-    /**
-     * Explicit structural `equals` for entities with BYTES fields:
-     * ByteArray properties compare via `contentEquals` (nullable-safe);
-     * every other property keeps `==`, matching what the data-class
-     * default would do. Component order mirrors the constructor.
-     */
-    private fun buildEquals(
-        entityClass: ClassName,
-        fields: List<Field>,
-        edgeFks: List<EdgeFk>,
-        hasEdges: Boolean,
-    ): FunSpec {
-        val body = codeBlock {
-            statement("if (this === other) return true")
-            statement("if (other !is %T) return false", entityClass)
-            statement("if (id != other.id) return false")
-            for (field in fields) {
-                val prop = field.apiName
-                if (field.type == FieldType.BYTES) {
-                    statement("if (!(%L contentEquals other.%L)) return false", prop, prop)
-                } else {
-                    statement("if (%L != other.%L) return false", prop, prop)
-                }
-            }
-            for (fk in edgeFks) {
-                statement("if (%L != other.%L) return false", fk.propertyName, fk.propertyName)
-            }
-            if (hasEdges) statement("if (edges != other.edges) return false")
-            statement("return true")
-        }
-        return function("equals", Boolean::class.asTypeName()) {
-            addModifiers(KModifier.OVERRIDE)
-            parameter("other", ANY_NULLABLE)
-            addCode(body)
-        }
-    }
-
-    /** Companion to [buildEquals]: ByteArray properties hash via `contentHashCode`. */
-    private fun buildHashCode(
-        fields: List<Field>,
-        edgeFks: List<EdgeFk>,
-        hasEdges: Boolean,
-    ): FunSpec {
-        val body = codeBlock {
-            statement("var result = id.hashCode()")
-            for (field in fields) {
-                val prop = field.apiName
-                val expr = when {
-                    field.type == FieldType.BYTES && field.nullable -> "($prop?.contentHashCode() ?: 0)"
-                    field.type == FieldType.BYTES -> "$prop.contentHashCode()"
-                    field.nullable -> "($prop?.hashCode() ?: 0)"
-                    else -> "$prop.hashCode()"
-                }
-                statement("result = 31 * result + %L", expr)
-            }
-            for (fk in edgeFks) {
-                val expr = if (fk.required) {
-                    "${fk.propertyName}.hashCode()"
-                } else {
-                    "(${fk.propertyName}?.hashCode() ?: 0)"
-                }
-                statement("result = 31 * result + %L", expr)
-            }
-            if (hasEdges) statement("result = 31 * result + edges.hashCode()")
-            statement("return result")
-        }
-        return function("hashCode", Int::class.asTypeName()) {
-            addModifiers(KModifier.OVERRIDE)
-            addCode(body)
         }
     }
 

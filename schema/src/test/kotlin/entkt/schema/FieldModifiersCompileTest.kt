@@ -58,6 +58,8 @@ class FieldModifiersCompileTest {
                     .nullable().immutable().sensitive().comment("Embedding")
                 val audit = include(::AuditFields)
             }
+
+            fun binaryHandle(document: Document): FieldHandle<entkt.types.Bytes> = document.payload
             """.trimIndent(),
         )
 

@@ -6,6 +6,7 @@ import entkt.runtime.driver.JsonColumnCodec
 import entkt.runtime.driver.JsonColumnMetadata
 import entkt.runtime.driver.JsonMapperIds
 import entkt.schema.FieldType
+import entkt.types.Bytes
 import java.lang.reflect.Proxy
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -15,8 +16,10 @@ import java.sql.Types
 import java.time.LocalDate
 import kotlin.reflect.typeOf
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.serialization.Serializable
 
@@ -26,6 +29,50 @@ private data class SnapshotDocument(val tags: List<String>)
 class PostgresValueCodecTest {
 
     private val codec = PostgresValueCodec(KotlinxJsonCodec())
+
+    @Test
+    fun `binary binds export an independent array and preserve SQL null`() {
+        val value = Bytes.of(byteArrayOf(-128, -1, 0, 127))
+        val bound = bind(FieldType.BYTES, value)
+        val array = assertIs<ByteArray>(bound.value)
+
+        assertEquals("setBytes", bound.method)
+        assertEquals(1, bound.index)
+        assertContentEquals(byteArrayOf(-128, -1, 0, 127), array)
+        array[0] = 0
+        assertEquals((-128).toByte(), value[0])
+        assertContentEquals(byteArrayOf(), bind(FieldType.BYTES, Bytes.of(byteArrayOf())).value as ByteArray)
+        assertEquals(Bound("setNull", 1, Types.BINARY), bind(FieldType.BYTES, null))
+    }
+
+    @Test
+    fun `binary decode returns immutable Bytes and distinguishes empty from SQL null`() {
+        for (array in listOf(byteArrayOf(-128, -1, 0, 127), byteArrayOf(), null)) {
+            val expected = array?.let(Bytes::of)
+            var getBytesCalled = false
+            val resultSet = Proxy.newProxyInstance(
+                ResultSet::class.java.classLoader,
+                arrayOf(ResultSet::class.java),
+            ) { _, method, args ->
+                assertEquals("getBytes", method.name)
+                assertEquals(listOf("payload"), args.toList())
+                getBytesCalled = true
+                array
+            } as ResultSet
+
+            val decoded = codec.decodeColumn(
+                resultSet,
+                "attachments",
+                ColumnMetadata("payload", FieldType.BYTES, nullable = true),
+            )
+            if (array != null && array.isNotEmpty()) {
+                array[0] = 9
+            }
+
+            assertTrue(getBytesCalled)
+            assertEquals(expected, decoded)
+        }
+    }
 
     @Test
     fun `JSON snapshots use the codec copy contract even when decode is cached`() {
@@ -162,7 +209,7 @@ class PostgresValueCodecTest {
             PreparedStatement::class.java.classLoader,
             arrayOf(PreparedStatement::class.java),
         ) { _, method, args ->
-            if (method.name in setOf("setInt", "setLong", "setFloat", "setDouble", "setObject", "setNull")) {
+            if (method.name in setOf("setInt", "setLong", "setFloat", "setDouble", "setObject", "setBytes", "setNull")) {
                 bound = Bound(method.name, args[0] as Int, args[1])
             }
             null

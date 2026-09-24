@@ -142,7 +142,7 @@ internal class ViewerGenerator(private val packageName: String) {
         FieldType.INSTANT -> "Instant"
         FieldType.DATE -> "LocalDate"
         FieldType.UUID -> "UUID"
-        FieldType.BYTES -> "ByteArray"
+        FieldType.BYTES -> "Bytes"
         FieldType.ENUM -> field?.enumClass?.simpleName ?: "enum"
         FieldType.JSON -> field?.jsonType?.let { simpleTypeName(it) } ?: "json"
         FieldType.PGVECTOR -> "PgVector"

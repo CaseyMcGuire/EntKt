@@ -172,7 +172,7 @@ class Ticket : EntSchema("tickets", clientName = "tickets") {
 | `instant()` | `INSTANT` | `Instant` | `timestamptz` |
 | `date()` | `DATE` | `java.time.LocalDate` | `date` |
 | `uuid()` | `UUID` | `UUID` | `uuid` |
-| `bytes()` | `BYTES` | `ByteArray` | `bytea` |
+| `bytes()` | `BYTES` | `entkt.types.Bytes` | `bytea` |
 | `enum<E>()` | `ENUM` | `E` | `text` |
 
 Postgres-specific native types (e.g. `pgvector`) are import-gated and not on the
@@ -180,6 +180,35 @@ base DSL -- see [Native Column Types (Postgres pgvector)](#native-column-types-p
 Typed JSON columns (a `@Serializable` type — including generic shapes like
 `List<Rect>` — stored as `jsonb`) are declared with `json(...)` -- see
 [Typed JSON Fields](#typed-json-fields-postgres-jsonb).
+
+### Binary values
+
+`bytes("payload")` generates properties of type `entkt.types.Bytes` (or `Bytes?`
+with `.nullable()`). `Bytes` is an immutable binary value with content-based
+equality and hashing, so entities and patches use ordinary Kotlin data-class
+equality without array-specific overrides.
+
+```kotlin
+import entkt.types.Bytes
+
+val payload = Bytes.of(byteArrayOf(1, 2, 3))
+val first: Byte = payload[0]
+val length: Int = payload.size
+val array: ByteArray = payload.toByteArray()
+```
+
+Construction and `toByteArray()` copy the array. Changing an input or exported
+array cannot change the value. EntKt can therefore share the same `Bytes`
+instance across hooks, rules, and mutation preparation. Its `toString()` reports
+only its size, not its contents.
+
+For JSON API responses, explicitly map `Bytes` to your chosen wire format (for
+example, Base64) or configure a serializer for it; it is not a `ByteArray` alias.
+
+The PostgreSQL codec converts between `Bytes` and JDBC byte arrays; the database
+column remains `bytea`. Binary columns retain equality and membership predicates,
+but do not expose ordering or grouping. `json<ByteArray>(...)` is a separate JSON
+field type and is unchanged.
 
 ### Common Modifiers
 

@@ -25,6 +25,7 @@ import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.TransactionResult
 import entkt.runtime.validation.ValidationDecision
+import entkt.types.Bytes
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
@@ -87,61 +88,73 @@ private val RequireAuthForCreate = ArticleCreatePrivacyRule { context, _ ->
     else PrivacyDecision.Allow
 }
 
-private fun firstPayloadByte(patch: FieldPatch<ByteArray?>): Byte? =
-    (patch as? FieldPatch.Set)?.value?.firstOrNull()
+private fun firstPayloadByte(patch: FieldPatch<Bytes?>): Byte? =
+    (patch as? FieldPatch.Set)?.value?.get(0)
 
 private val MutateCreatePayloadPrivacyCopy = ArticleCreatePrivacyRule { _, item ->
-    item.payload?.copyOf()?.set(0, 99)
+    item.payload?.toByteArray()?.set(0, 99)
     PrivacyDecision.Continue
 }
 
 private val AllowIfCreatePayloadPrivacySnapshotIsStable = ArticleCreatePrivacyRule { _, item ->
-    if (item.payload?.firstOrNull() == 1.toByte()) PrivacyDecision.Allow
-    else PrivacyDecision.Deny("CREATE payload snapshot leaked across rules")
+    if (item.payload?.get(0) == 1.toByte()) {
+        PrivacyDecision.Allow
+    } else {
+        PrivacyDecision.Deny("CREATE payload snapshot leaked across rules")
+    }
 }
 
 private val MutateUpdatePayloadPrivacyCopy = ArticleUpdatePrivacyRule { _, item ->
-    item.before.payload?.copyOf()?.set(0, 99)
-    item.candidate.payload?.copyOf()?.set(0, 99)
-    (item.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.copyOf()?.set(0, 99)
-    (item.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.copyOf()?.set(0, 99)
+    item.before.payload?.toByteArray()?.set(0, 99)
+    item.candidate.payload?.toByteArray()?.set(0, 99)
+    (item.requestedPatch.payload as? FieldPatch.Set<Bytes?>)?.value?.toByteArray()?.set(0, 99)
+    (item.effectivePatch.payload as? FieldPatch.Set<Bytes?>)?.value?.toByteArray()?.set(0, 99)
     PrivacyDecision.Continue
 }
 
 private val AllowIfUpdatePayloadPrivacySnapshotIsStable = ArticleUpdatePrivacyRule { _, item ->
-    val stable = item.before.payload?.firstOrNull() == 1.toByte() &&
-        item.candidate.payload?.firstOrNull() == 2.toByte() &&
+    val stable = item.before.payload?.get(0) == 1.toByte() &&
+        item.candidate.payload?.get(0) == 2.toByte() &&
         firstPayloadByte(item.requestedPatch.payload) == 2.toByte() &&
         firstPayloadByte(item.effectivePatch.payload) == 2.toByte()
-    if (stable) PrivacyDecision.Allow
-    else PrivacyDecision.Deny("UPDATE payload snapshot leaked across rules")
+    if (stable) {
+        PrivacyDecision.Allow
+    } else {
+        PrivacyDecision.Deny("UPDATE payload snapshot leaked across rules")
+    }
 }
 
 private val MutateCreatePayloadValidationCopy = ArticleCreateValidationRule { _, item ->
-    item.payload?.copyOf()?.set(0, 99)
+    item.payload?.toByteArray()?.set(0, 99)
     ValidationDecision.Valid
 }
 
 private val ValidateCreatePayloadSnapshotIsStable = ArticleCreateValidationRule { _, item ->
-    if (item.payload?.firstOrNull() == 1.toByte()) ValidationDecision.Valid
-    else ValidationDecision.Invalid("CREATE payload snapshot leaked across rules")
+    if (item.payload?.get(0) == 1.toByte()) {
+        ValidationDecision.Valid
+    } else {
+        ValidationDecision.Invalid("CREATE payload snapshot leaked across rules")
+    }
 }
 
 private val MutateUpdatePayloadValidationCopy = ArticleUpdateValidationRule { _, item ->
-    item.before.payload?.copyOf()?.set(0, 99)
-    item.candidate.payload?.copyOf()?.set(0, 99)
-    (item.requestedPatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.copyOf()?.set(0, 99)
-    (item.effectivePatch.payload as? FieldPatch.Set<ByteArray?>)?.value?.copyOf()?.set(0, 99)
+    item.before.payload?.toByteArray()?.set(0, 99)
+    item.candidate.payload?.toByteArray()?.set(0, 99)
+    (item.requestedPatch.payload as? FieldPatch.Set<Bytes?>)?.value?.toByteArray()?.set(0, 99)
+    (item.effectivePatch.payload as? FieldPatch.Set<Bytes?>)?.value?.toByteArray()?.set(0, 99)
     ValidationDecision.Valid
 }
 
 private val ValidateUpdatePayloadSnapshotIsStable = ArticleUpdateValidationRule { _, item ->
-    val stable = item.before.payload?.firstOrNull() == 1.toByte() &&
-        item.candidate.payload?.firstOrNull() == 2.toByte() &&
+    val stable = item.before.payload?.get(0) == 1.toByte() &&
+        item.candidate.payload?.get(0) == 2.toByte() &&
         firstPayloadByte(item.requestedPatch.payload) == 2.toByte() &&
         firstPayloadByte(item.effectivePatch.payload) == 2.toByte()
-    if (stable) ValidationDecision.Valid
-    else ValidationDecision.Invalid("UPDATE payload snapshot leaked across rules")
+    if (stable) {
+        ValidationDecision.Valid
+    } else {
+        ValidationDecision.Invalid("UPDATE payload snapshot leaked across rules")
+    }
 }
 
 // ---- Policies ----
@@ -218,7 +231,7 @@ object OpenUserPolicy : EntityPolicy<User, UserPolicyScope> {
     }
 }
 
-private object ByteArraySnapshotArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
+private object ImmutableBytesArticlePolicy : EntityPolicy<Article, ArticlePolicyScope> {
     override fun configure(scope: ArticlePolicyScope) = scope.run {
         privacy {
             load(AllowAllLoads)
@@ -305,7 +318,7 @@ class ValidationIntegrationTest {
     fun `rules can mutate their own byte array copies without changing shared inputs or persistence`() {
         val client = freshClient(
             viewer = Viewer.User(7L),
-            articlePolicy = ByteArraySnapshotArticlePolicy,
+            articlePolicy = ImmutableBytesArticlePolicy,
         )
         val author = seedAuthor(client)
 
@@ -313,22 +326,22 @@ class ValidationIntegrationTest {
         val created = client.articles.create {
             title = "Byte snapshots"
             published = true
-            payload = createPayload
+            payload = Bytes.of(createPayload)
             authorId = author.id
         }.saveAndLoad(viewerContext).getOrThrow()
 
         assertContentEquals(byteArrayOf(1, 10), createPayload)
-        assertContentEquals(byteArrayOf(1, 10), created.payload)
+        assertEquals(Bytes.of(byteArrayOf(1, 10)), created.payload)
 
         val updatePayload = byteArrayOf(2, 20)
         val updated = client.articles.update(created.id) {
-            payload = updatePayload
+            payload = Bytes.of(updatePayload)
         }.saveAndLoad(viewerContext).getOrThrow()
 
         assertContentEquals(byteArrayOf(2, 20), updatePayload)
-        assertContentEquals(byteArrayOf(2, 20), updated.payload)
-        assertContentEquals(
-            byteArrayOf(2, 20),
+        assertEquals(Bytes.of(byteArrayOf(2, 20)), updated.payload)
+        assertEquals(
+            Bytes.of(byteArrayOf(2, 20)),
             client.articles.findById(viewerContext, created.id).getOrThrow()?.payload,
         )
     }

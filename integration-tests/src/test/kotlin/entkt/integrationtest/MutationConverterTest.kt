@@ -16,8 +16,8 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.mutation.FieldPatch
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
+import entkt.types.Bytes
 import kotlin.test.Test
-import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
@@ -66,7 +66,7 @@ class MutationConverterTest {
     }
 
     @Test
-    fun `preparation uses the injected codec and retains mutable field isolation`() {
+    fun `preparation shares immutable bytes and uses the codec for mutable JSON`() {
         val codecCalls = mutableListOf<Pair<String, String>>()
         val driver = object : DatabaseDriver by NoopDriver {
             override fun <T> copyJsonValue(table: String, column: String, value: T): T {
@@ -76,11 +76,12 @@ class MutationConverterTest {
         }
         val converter = ArticleCreateConverter(driver, client.hookClientScopeForInternalUse)
         val bytes = byteArrayOf(1, 2)
+        val payload = Bytes.of(bytes)
         val draft = ArticleCreateDraft().apply {
             title = "article"
             published = false
             authorId = 7L
-            payload = bytes
+            this.payload = payload
         }
 
         val state = converter.toBeforeCreateState(viewerContext, draft, converter.toBeforeSaveState(draft))
@@ -88,7 +89,8 @@ class MutationConverterTest {
         val prepared = converter.resolve(draft, state)
         bytes[0] = 9
 
-        assertContentEquals(byteArrayOf(1, 2), prepared.candidate.payload)
+        assertEquals(Bytes.of(byteArrayOf(1, 2)), prepared.candidate.payload)
+        assertSame(payload, prepared.candidate.payload)
         assertSame(prepared.candidate.payload, prepared.values["payload"])
         assertEquals(listOf("articles" to "metadata", "articles" to "rects"), codecCalls)
     }

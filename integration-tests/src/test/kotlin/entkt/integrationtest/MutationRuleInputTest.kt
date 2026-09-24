@@ -32,6 +32,7 @@ import entkt.runtime.privacy.allowAll
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
+import entkt.types.Bytes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotSame
@@ -48,7 +49,7 @@ class MutationRuleInputTest {
             val driver = RecordingDriver()
             val probe = RuleProbe()
             val client = EntClient(driver) { policies { articles(probe) } }
-            val payload = byteArrayOf(1, 2)
+            val payload = Bytes.of(byteArrayOf(1, 2))
             val metadata = ArticleMeta("test", mutableListOf("original"))
             val drafts = listOf<ArticleCreateDraft.() -> Unit>(
                 {
@@ -79,7 +80,7 @@ class MutationRuleInputTest {
                 assertSame(row["metadata"], candidate.metadata)
                 assertSame(row["rects"], candidate.rects)
             }
-            assertNotSame(payload, probe.createPrivacy.first().payload)
+            assertSame(payload, probe.createPrivacy.first().payload)
             assertNotSame(metadata, probe.createPrivacy.first().metadata)
             assertNotSame(metadata.tags, probe.createPrivacy.first().metadata!!.tags)
             assertEquals(List(count) { listOf("metadata", "rects") }.flatten(), driver.jsonCopies)
@@ -93,10 +94,11 @@ class MutationRuleInputTest {
             val id = driver.seed()
             val probe = RuleProbe()
             val client = EntClient(driver) { policies { articles(probe) } }
+            val payload = Bytes.of(byteArrayOf(3, 4))
 
             client.articles.update(id) {
                 if (hasChanges) {
-                    payload = byteArrayOf(3, 4)
+                    this.payload = payload
                     metadata = ArticleMeta("updated", mutableListOf("updated"))
                     rects = mutableListOf(HighlightRect(2, 1.0, 1.0, 20.0, 30.0))
                 }
@@ -105,6 +107,11 @@ class MutationRuleInputTest {
             assertEquals(2, probe.updatePrivacy.size)
             assertEquals(2, probe.updateValidation.size)
             val first = probe.updatePrivacy.first()
+            if (hasChanges) {
+                assertSame(payload, first.candidate.payload)
+                assertSame(payload, (first.requestedPatch.payload as FieldPatch.Set).value)
+                assertSame(payload, (first.effectivePatch.payload as FieldPatch.Set).value)
+            }
             (probe.updatePrivacy + probe.updateValidation).forEach { input ->
                 assertSame(first.before, input.before)
                 assertSame(first.requestedPatch, input.requestedPatch)
@@ -318,7 +325,7 @@ class MutationRuleInputTest {
             Article.TABLE,
             mapOf(
                 "title" to "existing", "published" to false, "author_id" to 7L,
-                "payload" to byteArrayOf(1, 2),
+                "payload" to Bytes.of(byteArrayOf(1, 2)),
                 "metadata" to ArticleMeta("original", mutableListOf("original")),
                 "rects" to mutableListOf(HighlightRect(1, 0.0, 0.0, 10.0, 20.0)),
             ),

@@ -18,7 +18,7 @@ interface ColumnReference<E : Any> {
  * Carries the column [name] and a [decodeKey] that turns the driver's raw group
  * value into the typed key [K] — identity for most columns, enum-name → enum for
  * [EnumColumn]. Implemented by string/text, numeric, time, bool, UUID, and enum
- * columns; NOT by `Column<E, ByteArray>` (BYTES) or the pgvector column, so
+ * columns; NOT by `Column<E, Bytes>` (BYTES) or the pgvector column, so
  * grouping by those is rejected at compile time.
  */
 interface GroupableColumn<E : Any, K> {
@@ -47,8 +47,8 @@ interface NullableGroupableColumn<E : Any, K> : GroupableColumn<E, K>
  *
  * Ordering helpers (`asc()` / `desc()`) deliberately do NOT live on the
  * base `Column`. They live on [ComparableColumn] / [EnumColumn] so that
- * non-comparable columns (notably a `Column<E, ByteArray>` for
- * `FieldType.BYTES` — `ByteArray` does not implement `Comparable`)
+ * non-comparable columns (notably a `Column<E, Bytes>` for
+ * `FieldType.BYTES` — `Bytes` does not implement `Comparable`)
  * reject `orderBy(col.asc())` at compile time instead of crashing
  * inside the in-memory comparator at runtime.
  */

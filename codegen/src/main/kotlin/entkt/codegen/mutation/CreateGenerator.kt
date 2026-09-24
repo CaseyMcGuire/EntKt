@@ -457,27 +457,21 @@ internal class CreateGenerator(
         // Detach mutable caller-owned values once at the preparation boundary.
         // Both the driver row and the WriteCandidate share this prepared value.
         // Privacy and validation rules must treat it as read-only.
-        // A callback that retained the caller's original array / JSON graph
+        // A callback that retained the caller's original JSON graph
         // therefore cannot change a later rule's input or the pending write.
         val entityClass = ClassName(packageName, schemaName)
         for (field in allFields) {
-            if (field.type != FieldType.BYTES && field.type != FieldType.JSON) continue
-            val prop = field.apiName
-            val prepared = preparedValueNames.getValue(field)
-            if (field.type == FieldType.BYTES) {
-                val nullableAccess = if (field.nullable) "?" else ""
-                builder.addStatement(
-                    "val %L = %L$nullableAccess.copyOf()", prepared, preparationLocal(prop),
-                )
-            } else {
-                builder.addStatement(
-                    "val %L = driver.copyJsonValue(%T.TABLE, %S, %L)",
-                    prepared,
-                    entityClass,
-                    field.columnName,
-                    preparationLocal(prop),
-                )
+            if (field.type != FieldType.JSON) {
+                continue
             }
+            val prepared = preparedValueNames.getValue(field)
+            builder.addStatement(
+                "val %L = driver.copyJsonValue(%T.TABLE, %S, %L)",
+                prepared,
+                entityClass,
+                field.columnName,
+                preparationLocal(field.apiName),
+            )
         }
 
         // ---- Build the row map. ----
@@ -606,7 +600,7 @@ internal class CreateGenerator(
 
         return allFields.associateWith { field ->
             val property = field.apiName
-            if (field.type != FieldType.BYTES && field.type != FieldType.JSON) {
+            if (field.type != FieldType.JSON) {
                 preparationLocal(property)
             } else {
                 var generated = "_entktPrepared${property.replaceFirstChar { it.uppercaseChar() }}"

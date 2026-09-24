@@ -7,6 +7,7 @@ import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.SourceFile
 import entkt.schema.EntId
 import entkt.schema.EntSchema
+import entkt.types.Bytes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -19,14 +20,29 @@ private class Attachment : EntSchema("attachments", clientName = "attachments") 
     val label by string("label")
 }
 
+private object BinaryNameFixture {
+    class Bytes : EntSchema("bytes", clientName = "binaryRecords") {
+        override fun id() = EntId.long()
+        val payload by bytes("payload")
+    }
+}
+
 /**
  * Compiles and executes the generated entity for a BYTES schema to pin
- * content-based equality: Kotlin's data-class equals compares ByteArray
- * properties by reference, so the generator overrides equals/hashCode
- * with contentEquals/contentHashCode. Two separately constructed
- * entities holding equal bytes must compare equal and hash alike.
+ * content-based equality through the shared Bytes value. Ordinary Kotlin
+ * data-class equality must work for two separately constructed entities.
  */
 class BytesEqualityCompileTest {
+
+    @Test
+    fun `an entity named Bytes does not shadow the binary value type`() {
+        val schema = BinaryNameFixture.Bytes()
+        schema.finalize(mapOf(schema::class to schema))
+        val generated = EntGenerator("com.example.ent").generate(listOf(SchemaInput(schema)))
+        val result = compileSources(generated.toCompileTestSources())
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+    }
 
     private fun compile(): JvmCompilationResult {
         val schema = Attachment()
@@ -34,7 +50,48 @@ class BytesEqualityCompileTest {
         val sources = EntGenerator("com.example.ent")
             .generate(listOf(SchemaInput(schema)))
             .toCompileTestSources()
-        return compileSources(sources)
+        val probe = SourceFile.kotlin(
+            "BinaryValueProbe.kt",
+            """
+            import com.example.ent.*
+            import entkt.runtime.mutation.FieldPatch
+            import entkt.runtime.privacy.ViewerContext
+            import entkt.types.Bytes
+
+            fun checkBinaryApis(client: EntClient, context: ViewerContext) {
+                val value = Bytes.of(byteArrayOf(1, 2))
+                val created = client.attachments.create {
+                    payload = value
+                    thumb = null
+                    label = "doc"
+                }.saveAndLoad(context).getOrThrow()
+                val payload: Bytes = created.payload
+                val thumb: Bytes? = created.thumb
+                client.attachments.update(created.id) {
+                    this.payload = payload
+                    this.thumb = value
+                }.save(context).getOrThrow()
+                client.attachments.query {
+                    where(Attachment.payload eq value)
+                    where(Attachment.thumb `in` listOf(value))
+                }.all(context).getOrThrow()
+            }
+
+            fun checkBinaryValueEquality() {
+                val first = AttachmentWriteCandidate(Bytes.of(byteArrayOf(1, 2)), null, "doc")
+                val second = AttachmentWriteCandidate(Bytes.of(byteArrayOf(1, 2)), null, "doc")
+                check(first == second)
+                check(first.hashCode() == second.hashCode())
+                val firstPatch = AttachmentUpdatePatch(payload = FieldPatch.Set(first.payload))
+                val secondPatch = AttachmentUpdatePatch(payload = FieldPatch.Set(second.payload))
+                check(firstPatch == secondPatch)
+                check(firstPatch.hashCode() == secondPatch.hashCode())
+                check(firstPatch != AttachmentUpdatePatch(payload = FieldPatch.Set(Bytes.of(byteArrayOf(3)))))
+                check(AttachmentUpdatePatch() != AttachmentUpdatePatch(thumb = FieldPatch.Set(null)))
+            }
+            """.trimIndent(),
+        )
+        return compileSources(sources + probe)
     }
 
     @Test
@@ -49,10 +106,10 @@ class BytesEqualityCompileTest {
         val cls = result.classLoader.loadClass("com.example.ent.Attachment")
         // Kotlin emits a synthetic defaults-overload constructor alongside
         // the primary; select the primary by its exact parameter count.
-        // (id: Long, payload: ByteArray, thumb: ByteArray?, label: String)
+        // (id: Long, payload: Bytes, thumb: Bytes?, label: String)
         val ctor = cls.constructors.single { it.parameterCount == 4 }
         fun make(payload: ByteArray, thumb: ByteArray?) =
-            ctor.newInstance(1L, payload, thumb, "doc")
+            ctor.newInstance(1L, Bytes.of(payload), thumb?.let(Bytes::of), "doc")
 
         val a = make(byteArrayOf(1, 2, 3), byteArrayOf(9))
         val b = make(byteArrayOf(1, 2, 3), byteArrayOf(9))
@@ -66,5 +123,12 @@ class BytesEqualityCompileTest {
         val nullThumbB = make(byteArrayOf(1), null)
         assertTrue(nullThumbA == nullThumbB, "Null bytes fields should compare equal")
         assertFalse(nullThumbA == a, "Null vs non-null bytes fields should not be equal")
+
+        val differentThumb = make(byteArrayOf(1, 2, 3), byteArrayOf(8))
+        assertFalse(a == differentThumb, "Nullable byte content participates in equality")
+        assertEquals(nullThumbA.hashCode(), nullThumbB.hashCode())
+        result.classLoader.loadClass("BinaryValueProbeKt")
+            .getMethod("checkBinaryValueEquality")
+            .invoke(null)
     }
 }

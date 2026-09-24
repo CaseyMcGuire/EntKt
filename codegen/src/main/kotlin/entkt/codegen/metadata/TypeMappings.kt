@@ -22,7 +22,7 @@ fun FieldType.toTypeName(): TypeName = when (this) {
     FieldType.INSTANT -> ClassName("java.time", "Instant")
     FieldType.DATE -> ClassName("java.time", "LocalDate")
     FieldType.UUID -> ClassName("java.util", "UUID")
-    FieldType.BYTES -> ByteArray::class.asTypeName()
+    FieldType.BYTES -> ClassName("entkt.types", "Bytes")
     FieldType.ENUM -> String::class.asTypeName()
     // The generated entity property + fromRow cast use the PgVector value type;
     // the driver owns decode (returns PgVector), so no per-field conversion.

@@ -29,6 +29,17 @@ above it.
 
 ## Unreleased
 
+- **Use immutable `Bytes` for binary fields** (`schema`, `codegen`, `postgres`)
+  `bytes(...)` now exposes `entkt.types.Bytes` instead of `ByteArray` in entities,
+  drafts, hooks, rule inputs, predicates, and driver row maps. Values compare by
+  content and cannot be changed through a retained array.
+  _Migration:_ regenerate code, wrap array inputs with `Bytes.of(array)`, and use
+  `value.toByteArray()` when calling array-based APIs. Replace explicit binary
+  field types with `Bytes` or `Bytes?`, and adapt any entity serialization that
+  relied on built-in byte-array handling. PostgreSQL `bytea` storage is unchanged;
+  no database migration is needed. JSON fields declared as `json<ByteArray>(...)`
+  are unchanged.
+
 - **Use cardinality-specific collection read results** (`runtime`, `codegen`)
   `all()` now returns `ReadCollectionResult<T>`, including traversal, read-only,
   indexed, and locking queries. Completed collections retain each root's success

@@ -17,6 +17,7 @@ import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.MutationWriteState
+import entkt.types.Bytes
 import kotlin.Unit
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -84,7 +85,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
     private fun seedArticle(
         client: EntClient,
         title: String = "Hello",
-        payload: ByteArray? = null,
+        payload: Bytes? = null,
     ): Article {
         return run {
             val sys = client
@@ -227,20 +228,21 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `deleteMany reasserts a frozen mutable predicate operand`() {
-        val operand = byteArrayOf(1)
+    fun `deleteMany binary predicate is unaffected by changes to its original array`() {
+        val original = byteArrayOf(1)
+        val operand = Bytes.of(original)
         var beforeDeletes = 0
         val client = freshClient {
             hooks {
                 articles {
                     beforeDelete {
                         beforeDeletes++
-                        operand[0] = 2
+                        original[0] = 2
                     }
                 }
             }
         }
-        seedArticle(client, title = "Frozen", payload = byteArrayOf(1))
+        seedArticle(client, title = "Frozen", payload = Bytes.of(byteArrayOf(1)))
 
         val result = client.articles.deleteMany(viewerContext, Article.payload eq operand)
 

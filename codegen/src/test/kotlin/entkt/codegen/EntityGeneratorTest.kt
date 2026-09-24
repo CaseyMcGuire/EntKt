@@ -641,17 +641,16 @@ class EntityGeneratorTest {
     }
 
     @Test
-    fun `bytes fields generate content-based equals and hashCode`() {
+    fun `bytes fields use the shared value type and normal data-class equality`() {
         val blob = BlobSchema()
         finalize(blob)
         val output = generator.generate("Blob", blob).toString()
 
-        assert(output.contains("override fun equals(other: Any?)")) { "Should override equals\n$output" }
-        assert(output.contains("payload contentEquals other.payload")) { "payload should compare by content\n$output" }
-        assert(output.contains("thumb contentEquals other.thumb")) { "nullable bytes should compare by content\n$output" }
-        assert(output.contains("if (label != other.label) return false")) { "non-bytes fields should keep ==\n$output" }
-        assert(output.contains("payload.contentHashCode()")) { "payload should hash by content\n$output" }
-        assert(output.contains("thumb?.contentHashCode() ?: 0")) { "nullable bytes should hash by content\n$output" }
+        assert(output.contains("import entkt.types.Bytes")) { output }
+        assert(output.contains("val payload: Bytes")) { output }
+        assert(output.contains("val thumb: Bytes?")) { output }
+        assert(!output.contains("override fun equals")) { "Bytes owns content equality\n$output" }
+        assert(!output.contains("override fun hashCode")) { "Bytes owns content hashing\n$output" }
     }
 
     @Test

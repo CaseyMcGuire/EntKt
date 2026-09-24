@@ -404,6 +404,11 @@ error rather than a silent no-op.
 ID strategies `AUTO_INT` and `AUTO_LONG` map to `serial` and `bigserial`
 respectively.
 
+`BYTES` values in driver inputs and decoded row maps use `entkt.types.Bytes`,
+not `ByteArray`. The PostgreSQL codec converts to and from JDBC byte arrays;
+other drivers must expose the same immutable value type. See
+[Schema -> Binary values](02-schema.md#binary-values).
+
 `PGVECTOR` is a native-storage column type carried by `ColumnStorage.Native`
 rather than a portable `FieldType`. A driver advertises native support via
 `supportsNativeStorage(codec)` (PostgresDriver returns `true` for

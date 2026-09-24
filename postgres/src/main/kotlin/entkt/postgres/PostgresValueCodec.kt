@@ -4,6 +4,7 @@ import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EntitySchema
 import entkt.schema.ColumnStorage
 import entkt.schema.FieldType
+import entkt.types.Bytes
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.sql.PreparedStatement
@@ -121,7 +122,7 @@ internal class PostgresValueCodec(
             }
             FieldType.DATE -> stmt.setObject(idx, value as LocalDate)
             FieldType.UUID -> stmt.setObject(idx, value as UUID)
-            FieldType.BYTES -> stmt.setBytes(idx, value as ByteArray)
+            FieldType.BYTES -> stmt.setBytes(idx, (value as Bytes).toByteArray())
             // pgvector: bind as a PGobject of type "vector" with the canonical
             // "[f0,f1,...]" text. Postgres rejects a wrong-dimension literal
             // against a vector(n) column, so this is the defensive backstop to
@@ -293,7 +294,7 @@ internal class PostgresValueCodec(
                 rs.getObject(col.name, OffsetDateTime::class.java)?.toInstant()
             FieldType.DATE -> rs.getObject(col.name, LocalDate::class.java)
             FieldType.UUID -> rs.getObject(col.name, UUID::class.java)
-            FieldType.BYTES -> rs.getBytes(col.name)
+            FieldType.BYTES -> rs.getBytes(col.name)?.let(Bytes::of)
             // pgvector decodes to its "[f0,f1,...]" text; parse back to PgVector.
             FieldType.PGVECTOR -> rs.getString(col.name)?.let { parsePgVector(it) }
             // JSON: SQL NULL bypasses decode; otherwise decode the jsonb text

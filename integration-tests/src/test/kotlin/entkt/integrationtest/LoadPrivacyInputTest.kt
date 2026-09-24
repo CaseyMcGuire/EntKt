@@ -16,6 +16,7 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.batchPrivacyRule
+import entkt.types.Bytes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -45,7 +46,7 @@ class LoadPrivacyInputTest {
             id = 1L,
             title = "shared input",
             published = true,
-            payload = byteArrayOf(1, 2),
+            payload = Bytes.of(byteArrayOf(1, 2)),
             metadata = ArticleMeta("test", mutableListOf("original")),
             rects = mutableListOf(HighlightRect(1, 0.0, 0.0, 10.0, 20.0)),
             authorId = 7L,
