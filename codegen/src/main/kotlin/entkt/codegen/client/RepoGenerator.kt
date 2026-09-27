@@ -13,6 +13,8 @@ import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeVariableName
+import com.squareup.kotlinpoet.UNIT
+import entkt.codegen.apiName
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
@@ -23,7 +25,10 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
+import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.idStrategyName
+import entkt.codegen.metadata.resolvedTypeName
+import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
@@ -42,6 +47,7 @@ private val GENERATED_ID_REPOSITORY = ClassName("entkt.runtime.repository", "Gen
 private val EXPLICIT_ID_REPOSITORY = ClassName("entkt.runtime.repository", "ExplicitIdRepository")
 private val TRANSACTION_SCOPE = ClassName("entkt.runtime.result", "TransactionScope")
 private val TRANSACTION_RESULT = ClassName("entkt.runtime.result", "TransactionResult")
+private val PENDING_CREATE_MUTATION = ClassName("entkt.runtime.mutation", "PendingCreateMutation")
 
 /**
  * Wires a schema's objects into its ID-specific runtime repository base.
@@ -151,6 +157,7 @@ internal class RepoGenerator(
                     statement("return %T(id = id)", createDraftClass)
                 }
             }
+            addFunction(buildRequiredCreateEntry(schemaName, schema, schemaNames))
             addFunction(buildWithTransaction(repositoryBase, schemaName, schema.clientName))
         }
 
@@ -164,6 +171,63 @@ internal class RepoGenerator(
                 addMember("%T::class", ClassName("entkt.query", "EntktInternal"))
             })
             addType(typeSpec)
+        }
+    }
+
+    /** Supply schema-required values, then delegate draft construction and execution binding. */
+    private fun buildRequiredCreateEntry(
+        schemaName: String,
+        schema: EntSchema,
+        schemaNames: Map<EntSchema, String>,
+    ): FunSpec {
+        val entityClass = ClassName(packageName, schemaName)
+        val draftClass = ClassName(packageName, "${schemaName}CreateDraft")
+        val explicitId = idStrategyName(schema) == "EXPLICIT"
+        val requiredFields = scalarFields(schema)
+            .filter { !it.nullable && it.default == null }
+            .map { parameter(it.apiName, it.resolvedTypeName()) } +
+            computeEdgeFks(schema, schemaNames)
+                .filter { it.required && it.default == null }
+                .map { parameter(it.propertyName, it.idType.toTypeName()) }
+
+        return function("create", PENDING_CREATE_MUTATION.parameterizedBy(draftClass, entityClass)) {
+            addKdoc(
+                "Start a pending creation with every non-null field that has no schema default.\n" +
+                    "Defaults, hooks, privacy, and validation run when the mutation is saved.\n",
+            )
+            if (explicitId) {
+                parameter("id", schema.id().type.toTypeName())
+            }
+            addParameters(requiredFields)
+
+            if (requiredFields.isEmpty()) {
+                // Keep the inherited block overload; another one would have the same signature.
+                if (explicitId) {
+                    statement("return super.create(id = id, block = {})")
+                } else {
+                    statement("return super.create(block = {})")
+                }
+            } else {
+                val names = NameAllocator()
+                names.newName("id")
+                requiredFields.forEach { names.newName(it.name) }
+                val blockName = names.newName("block")
+                parameter(blockName, LambdaTypeName.get(receiver = draftClass, returnType = UNIT)) {
+                    defaultValue("{}")
+                }
+                addKdoc("Required values are assigned before [%N] configures the draft.\n", blockName)
+
+                if (explicitId) {
+                    beginControlFlow("return super.create(id)")
+                } else {
+                    beginControlFlow("return super.create")
+                }
+                for (field in requiredFields) {
+                    statement("this.%N = %N", field, field)
+                }
+                statement("%N()", blockName)
+                endControlFlow()
+            }
         }
     }
 

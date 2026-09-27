@@ -113,7 +113,9 @@ class GeneratedRepositoryCompileTest {
         )
 
         assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
-        assertTrue(result.messages.contains("No value passed for parameter 'id'"), result.messages)
+        assertTrue(result.messages.contains("None of the following candidates is applicable"), result.messages)
+        assertTrue(result.messages.contains("create(id: String, token: String,"), result.messages)
+        assertTrue(result.messages.contains("create(id: String, block:"), result.messages)
         assertTrue(result.messages.contains("Unresolved reference 'createMany'"), result.messages)
     }
 

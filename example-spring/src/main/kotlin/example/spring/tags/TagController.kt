@@ -43,10 +43,10 @@ class TagController(
     @PostMapping
     fun create(@RequestBody req: CreateTagRequest): TagResponse {
         val viewerContext = auth.viewerContext()
-        val tag = client.tags.create {
-            name = req.name
-            category = req.category
-        }.saveAndLoad(viewerContext).getOrThrow()
+        val tag = client.tags.create(
+            name = req.name,
+            category = req.category,
+        ).saveAndLoad(viewerContext).getOrThrow()
         return tag.toResponse()
     }
 

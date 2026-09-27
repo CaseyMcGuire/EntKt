@@ -137,9 +137,11 @@ class RepoGeneratorTest {
         assert(output.contains("GeneratedIdRepository<Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, ReadOnlyEntClient>")) {
             "The base should retain concrete entity, ID, drafts, query, and rule client types\n$output"
         }
-        for (method in listOf("create", "update", "findById", "delete", "deleteById", "createMany", "deleteMany")) {
+        for (method in listOf("update", "findById", "delete", "deleteById", "createMany", "deleteMany")) {
             assert(!output.contains("fun $method(")) { "$method should be inherited, not generated\n$output" }
         }
+        assert(output.contains("fun create(")) { "Required create parameters are schema-specific\n$output" }
+        assert(output.contains("super.create {")) { "The overload should delegate to the inherited create path\n$output" }
         assert(!output.contains("CreateMutationRepository") && !output.contains("UpdateMutationRepository")) {
             "Pending-mutation execution binding belongs to the runtime base\n$output"
         }
@@ -205,7 +207,7 @@ class RepoGeneratorTest {
 
         assert(output.contains("protected override fun newCreateDraft(): CarCreateDraft = CarCreateDraft()"))
         assert(output.contains("protected override fun newUpdateDraft(): CarUpdateDraft = CarUpdateDraft()"))
-        assert(!output.contains("PendingCreateMutation") && !output.contains("PendingUpdateMutation") &&
+        assert(!output.contains("PendingCreateMutation(") && !output.contains("PendingUpdateMutation") &&
             !output.contains("UpdateMutationRequest") && !output.contains(".apply(block)")) {
             "Draft configuration, request construction, and pending handles belong to runtime\n$output"
         }
@@ -571,7 +573,8 @@ class RepoGeneratorTest {
         val output = generator.generate("Session", session).toString().replace("\\s+".toRegex(), " ")
 
         assert(output.contains("ExplicitIdRepository<Session, String, SessionCreateDraft, SessionUpdateDraft, SessionQuery, ReadOnlyEntClient>"))
-        assert(!output.contains("GeneratedIdRepository") && !output.contains("fun create("))
+        assert(!output.contains("GeneratedIdRepository"))
+        assert(output.contains("super.create(id) {")) { "Required create parameters must preserve the explicit ID\n$output" }
         assert(output.contains("client.withTransaction { tx -> block(tx.sessions) }"))
     }
 

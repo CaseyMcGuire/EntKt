@@ -208,6 +208,34 @@ must distinguish an omitted value from an explicit `age = null`. The first
 later configuration or save attempts throw
 `EntMutationAlreadyConsumedException`.
 
+### Required create parameters
+
+Each repository also generates a `create(...)` overload whose required arguments
+are the non-nullable fields without schema defaults. Missing arguments or `null`
+values are compile errors for this overload:
+
+```kotlin
+val alice = client.users.create(name = "Alice", email = "alice@example.com")
+    .saveAndLoad(viewerContext).getOrThrow()
+
+// An optional trailing block configures nullable or defaulted fields.
+val bob = client.users.create(name = "Bob", email = "bob@example.com") {
+    age = 30
+}.saveAndLoad(viewerContext).getOrThrow()
+```
+
+Required foreign-key IDs are parameters too. Field-backed relationships use the
+backing field's Kotlin name. Caller-assigned IDs remain required; generated IDs
+are not parameters. When no fields require an argument, use `create()` (or
+`create(id = ...)` for a caller-assigned ID).
+
+The overload assigns its arguments before running the block and returns the same
+pending mutation as `create { ... }`. Defaults remain unset until the normal save
+lifecycle resolves them; explicitly assigning `null` to a nullable defaulted field
+still suppresses its default. Runtime validation remains necessary because the
+block, later `configure`, or hooks can change required values before saving.
+Existing `create { ... }` calls and `createMany` are unchanged.
+
 Every data operation returns an exhaustive result — `ReadResult<T>` for
 reads, `MutationResult<T>` for writes — that callers either match with
 `when` (`Success` / `Failed`) or project with `.getOrThrow()`, which

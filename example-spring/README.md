@@ -165,7 +165,8 @@ Each controller injects the long-lived `EntClient`, derives a `ViewerContext`
 from the request-scoped `AuthContext`, and passes it explicitly to generated
 execution terminals:
 
-- `client.users.create { ... }.saveAndLoad(viewerContext).getOrThrow()` -- type-safe builders
+- `client.users.create { ... }.saveAndLoad(viewerContext).getOrThrow()` -- draft-based creation
+- `client.tags.create(name = "Kotlin", category = TagCategory.LANGUAGE).saveAndLoad(viewerContext).getOrThrow()` -- required fields checked at compilation (see [`TagController`](src/main/kotlin/example/spring/tags/TagController.kt))
 - `client.users.query { where(...) }.all(viewerContext).getOrThrow()` -- type-safe queries
 - `client.users.findById(viewerContext, id).getOrThrow()` -- primary key lookup
 - `client.users.update(id) { ... }.saveAndLoad(viewerContext).getOrThrow()` -- partial updates
