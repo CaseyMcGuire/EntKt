@@ -5,7 +5,6 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.LIST
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
@@ -79,7 +78,6 @@ internal class UpdateSaveEmitter(
                 add(buildRelationshipRequirementsFunction())
             }
             add(buildCapturePendingEdgesFunction())
-            add(buildRequiredHookStateViolationsFunction())
             add(buildRequestedPatchFunction())
             add(buildPrepareFunction())
             add(buildRelationshipFunction())
@@ -141,41 +139,6 @@ internal class UpdateSaveEmitter(
         statement("return draft._buildPendingEdgeOps()")
     }
 
-    /** Validate required assignments after every immutable hook transformation. */
-    private fun buildRequiredHookStateViolationsFunction(): FunSpec = function(
-        "requiredHookStateViolations",
-        LIST.parameterizedBy(MUTATION_VALIDATION_VIOLATION),
-    ) {
-        addModifiers(KModifier.PRIVATE)
-        parameter("state", beforeUpdateStateClass)
-        mutableFields.filterNot { it.nullable }.forEach { field ->
-            val property = field.apiName
-            statement(
-                "if (state.%L is %T.Set && state.%L.value == null) " +
-                    "return·listOf(%T(%S, field = %S))",
-                property,
-                FIELD_PATCH,
-                property,
-                MUTATION_VALIDATION_VIOLATION,
-                "$property is required",
-                property,
-            )
-        }
-        edgeFks.filter { it.required }.forEach { fk ->
-            statement(
-                "if (state.%L is %T.Set && state.%L.value == null) " +
-                    "return·listOf(%T(%S, field = %S))",
-                fk.propertyName,
-                FIELD_PATCH,
-                fk.propertyName,
-                MUTATION_VALIDATION_VIOLATION,
-                "${fk.propertyName} is required",
-                fk.propertyName,
-            )
-        }
-        statement("return emptyList()")
-    }
-
     /** Lower the final hook state into the canonical typed update patch. */
     private fun buildRequestedPatchFunction(): FunSpec = function(
         "buildRequestedPatch",
@@ -187,36 +150,10 @@ internal class UpdateSaveEmitter(
             add("val patch = %T(\n", patchClass)
             indent()
             mutableFields.forEach { field ->
-                if (field.nullable) {
-                    add("%L = state.%L,\n", field.apiName, field.apiName)
-                } else {
-                    add(
-                        "%L = when (val entry = state.%L) { " +
-                            "%T.Unset -> %T.Unset; is %T.Set -> %T.Set(checkNotNull(entry.value)) },\n",
-                        field.apiName,
-                        field.apiName,
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                    )
-                }
+                add("%L = state.%L,\n", field.apiName, field.apiName)
             }
             edgeFks.forEach { fk ->
-                if (fk.required) {
-                    add(
-                        "%L = when (val entry = state.%L) { " +
-                            "%T.Unset -> %T.Unset; is %T.Set -> %T.Set(checkNotNull(entry.value)) },\n",
-                        fk.propertyName,
-                        fk.propertyName,
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                        FIELD_PATCH,
-                    )
-                } else {
-                    add("%L = state.%L,\n", fk.propertyName, fk.propertyName)
-                }
+                add("%L = state.%L,\n", fk.propertyName, fk.propertyName)
             }
             unindent()
             add(")\n")
@@ -237,11 +174,6 @@ internal class UpdateSaveEmitter(
         parameter("pendingEdges", pendingEdgesClass)
         parameter("hookState", beforeUpdateStateClass)
         parameter("scope", UPDATE_PREPARATION_SCOPE)
-        statement("val requiredViolations = requiredHookStateViolations(hookState)")
-        statement(
-            "if (requiredViolations.isNotEmpty()) return·%T.Invalid(requiredViolations)",
-            UPDATE_PREPARATION,
-        )
         statement("val requestedPatch = buildRequestedPatch(hookState)")
         val hasAssignments = codeBlock {
             val properties = buildList {

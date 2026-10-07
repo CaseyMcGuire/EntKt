@@ -54,7 +54,7 @@ class UpdateHookStateIntegrationTest : PostgresTestBase() {
         }.save(testViewerContext).getOrThrow()
 
         val state = captured ?: error("hook did not run")
-        assertEquals(FieldPatch.Set<String?>("Updated"), state.title)
+        assertEquals(FieldPatch.Set("Updated"), state.title)
         assertEquals(FieldPatch.Set<String?>("a draft note"), state.notes)
         assertEquals(FieldPatch.Unset, state.published)
         assertEquals("Original", state.before.title)
@@ -120,19 +120,22 @@ class UpdateHookStateIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `hook can repair an invalid required-field null`() {
+    fun `hook can replace a required-field assignment`() {
         val client = newClient { state ->
-            val title = state.title as? FieldPatch.Set<String?>
-            if (title?.value == null) state.unsetTitle() else state
+            val title = state.title as? FieldPatch.Set<String>
+            if (title?.value == "") {
+                state.setTitle("Repaired")
+            } else {
+                state
+            }
         }
         val (_, article) = seedArticle(client)
 
-        @Suppress("CAST_NEVER_SUCCEEDS")
         val current = client.articles.update(article.id) {
-            title = null as String?
+            title = ""
         }.saveAndLoad(testViewerContext).getOrThrow()
 
-        assertEquals("Original", current.title)
+        assertEquals("Repaired", current.title)
     }
 
     @Test
@@ -172,8 +175,8 @@ class UpdateHookStateIntegrationTest : PostgresTestBase() {
         }.getOrThrow()
 
         val state = checkNotNull(captured)
-        assertEquals(FieldPatch.Set<String?>("before save"), state.title)
-        assertEquals(FieldPatch.Set<Long?>(author.id), state.authorId)
+        assertEquals(FieldPatch.Set("before save"), state.title)
+        assertEquals(FieldPatch.Set(author.id), state.authorId)
         assertEquals("Original", state.before.title)
         assertEquals("before update", updated.title)
         assertEquals(author.id, updated.authorId)

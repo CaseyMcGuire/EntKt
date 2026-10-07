@@ -400,10 +400,8 @@ that name unknown / forbidden target ids by inspecting
 `item.edgeChanges.tags.requestedRemoves` — the literal call log surfaces
 the id even when the database effect is a no-op.
 
-By the time validation runs, the post-hook required-not-null check has
-already fired, so a dirty + null required field would have failed the
-save with `MutationResult.Failed(EntValidationException)` before
-reaching entity validation. Validators can treat
+Drafts and before-hook setters reject null assignments to required fields
+at compile time. Validators can treat
 `FieldPatch.Set(value)` for required fields as having a non-null value
 and `FieldPatch.Unset` as "not in this update".
 
@@ -505,7 +503,7 @@ all checks.
 ```
 1. current-entity load (absent target → Failed(EntTargetAbsentException))
 2. beforeSave and beforeUpdate hooks
-3. required-field checks, update defaults, and storage-shape checks
+3. update defaults and storage-shape checks
 4. UPDATE privacy
 5. UPDATE entity validation
 6. persistence

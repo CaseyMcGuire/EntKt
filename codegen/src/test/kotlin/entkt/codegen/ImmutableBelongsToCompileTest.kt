@@ -58,7 +58,9 @@ class ImmutableBelongsToCompileTest {
             .flatMap { it.members.filterIsInstance<TypeSpec>() }
             .associateBy { it.name }
         for (name in immutableProperties) {
-            assertContains(types.getValue("RecordCreateDraft").toString(), "var $name: kotlin.Long?")
+            val property = types.getValue("RecordCreateDraft").propertySpecs.single { it.name == name }
+            assertEquals(!fks.getValue(name).required, property.type.isNullable, name)
+            assertEquals("kotlin.Long", property.type.copy(nullable = false).toString(), name)
             assertContains(types.getValue("RecordBeforeCreateState").toString(), "$name: entkt.runtime.mutation.FieldPatch")
             assertContains(types.getValue("RecordUpdateAdapter").toString(), "$name = before.$name")
             for (artifact in listOf("RecordUpdateDraft", "RecordUpdatePatch", "RecordBeforeSaveState", "RecordBeforeUpdateState")) {
@@ -117,7 +119,7 @@ class ImmutableBelongsToCompileTest {
                     check(replaced.candidate.ownerId == 9L)
                     check(replaced.candidate.reviewerId == 10L)
                     check(replaced.candidate.writer == 11L)
-                    check(converter.requiredInputViolations(beforeCreate.setOwnerId(null)).single().field == "ownerId")
+                    check(converter.requiredInputViolations(beforeCreate.unsetOwnerId()).single().field == "ownerId")
 
                     // Other relationships and scalar fields remain writable on update.
                     client.records.update("record-id") { title = "updated"; editorId = 12L }

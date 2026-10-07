@@ -82,20 +82,18 @@ class DateFieldIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `required dates reject omission and explicit null even when a default exists`() {
+    fun `required dates reject omission unless a default exists`() {
         val client = EntClient(resetAndDriver())
         val missing = client.calendarEvents.create { name = "Missing date" }.save(testViewerContext)
         val missingError = assertIs<EntValidationException>(assertIs<MutationResult.Failed>(missing).exception)
         assertEquals("startsOn", missingError.violations.single().field)
 
-        val nullDefault = client.calendarEvents.create {
-            name = "Null default"
+        val defaulted = client.calendarEvents.create {
+            name = "Default date"
             startsOn = leapDay
-            dueOn = null
-        }.save(testViewerContext)
-        val nullError = assertIs<EntValidationException>(assertIs<MutationResult.Failed>(nullDefault).exception)
-        assertEquals("dueOn", nullError.violations.single().field)
-        assertEquals(0, client.calendarEvents.query().all(testViewerContext).getOrThrow().size)
+        }.saveAndLoad(testViewerContext).getOrThrow()
+        assertEquals(LocalDate.of(2026, 1, 1), defaulted.dueOn)
+        assertEquals(1, client.calendarEvents.query().all(testViewerContext).getOrThrow().size)
     }
 
     @Test

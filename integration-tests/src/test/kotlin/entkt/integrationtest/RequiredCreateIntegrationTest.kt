@@ -22,6 +22,7 @@ import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -119,10 +120,11 @@ class RequiredCreateIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `clearing a required argument still fails runtime validation`() {
-        val client = EntClient(resetAndDriver())
+    fun `unsetting a required argument in a hook still fails runtime validation`() {
+        val client = EntClient(resetAndDriver()) {
+            hooks { users { beforeCreate { it.unsetName() } } }
+        }
         val pending = client.users.create(name = "Initially present", email = "user@example.com")
-        pending.configure { name = null }
 
         val failure = assertIs<MutationResult.Failed>(pending.save(testViewerContext))
         val exception = assertIs<EntValidationException>(failure.exception)
@@ -139,7 +141,7 @@ class RequiredCreateIntegrationTest : PostgresTestBase() {
         val defaulted = client.calendarEvents.create(name = "Defaults", startsOn = start) {
             assertFalse(isSet(CalendarEvent.dueOn))
             assertFalse(isSet(CalendarEvent.reviewOn))
-            assertNull(dueOn)
+            assertFailsWith<IllegalStateException> { dueOn }
             assertNull(reviewOn)
         }.saveAndLoad(testViewerContext).getOrThrow()
         val overridden = client.calendarEvents.create(name = "Overrides", startsOn = start.plusDays(1)) {

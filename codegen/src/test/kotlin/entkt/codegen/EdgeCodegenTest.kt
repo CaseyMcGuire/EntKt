@@ -877,16 +877,16 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create draft required FK getter returns null until assigned`() {
+    fun `create draft required FK getter throws until assigned`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("var ownerId: Long? = null")) {
-            "Required create-draft FKs remain nullable while the draft is incomplete\n$output"
+        assert(output.contains("var ownerId: Long ")) {
+            "Required create-draft FKs use non-null public types\n$output"
         }
-        assert(!output.contains("throw IllegalStateException")) { output }
+        assert(output.contains("checkNotNull(_ownerIdStaging) { \"ownerId is not set in this create\" }")) { output }
     }
 
     @Test
@@ -1008,7 +1008,7 @@ class EdgeCodegenTest {
         val createOutput = CreateGenerator("com.example.ent")
             .generate("ImmutableFkChild", child, names).toString()
         // Create still exposes the FK so callers can set it on insert.
-        assert(createOutput.contains("var ownerId: Long? = null")) {
+        assert(createOutput.contains("var ownerId: Long\n")) {
             "Create should still expose the immutable FK on its draft\n$createOutput"
         }
 
@@ -1183,8 +1183,8 @@ class EdgeCodegenTest {
 
         // TeamMember has `val teamId = int("team_id"); val team =
         // belongsTo<Team>("team_id").field(teamId)`. A
-        assert(output.contains("var teamId: Int? = null")) {
-            "Required field-backed FKs should use the same incomplete draft shape\n$output"
+        assert(output.contains("var teamId: Int\n")) {
+            "Required field-backed FKs should use non-null public types\n$output"
         }
         assert(output.contains("assignedFields.mark(TeamMember.teamId)")) { output }
     }
@@ -1227,13 +1227,13 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create draft required FK property is nullable while incomplete`() {
+    fun `create draft required FK property is non-null typed`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
-        assert(output.contains("var ownerId: Long? = null")) {
-            "Required create-draft FK should be nullable until resolution\n$output"
+        assert(output.contains("var ownerId: Long\n")) {
+            "Required create-draft FK should reject null assignments\n$output"
         }
     }
 
@@ -1252,14 +1252,14 @@ class EdgeCodegenTest {
     }
 
     @Test
-    fun `create draft required FK setter records explicit null`() {
+    fun `create draft required FK setter records assignment`() {
         val (_, names, byName) = createAllSchemas()
         val output = CreateGenerator("com.example.ent")
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
         assert(output.contains("assignedFields.mark(RequiredPet.ownerId)")) {
-            "Required FK assignment should preserve explicit-null state for resolution\n$output"
+            "Required FK assignment should be recorded for resolution\n$output"
         }
         assert(!output.contains("requireNotNull(value)")) { output }
     }

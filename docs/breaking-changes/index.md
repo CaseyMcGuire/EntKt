@@ -29,6 +29,16 @@ above it.
 
 ## Unreleased
 
+- **Match mutation inputs to schema nullability** (`codegen`)
+  Create/update draft properties and before-hook setters now reject `null` at
+  compile time for non-nullable fields and required relationship IDs. Hook states
+  expose `FieldPatch<T>` for those fields and `FieldPatch<T?>` for nullable fields.
+  Reading an unset non-nullable create property throws `IllegalStateException`.
+  _Migration:_ regenerate code, supply non-null values, and use `isSet(Entity.field)`
+  before reading an incomplete create draft. Leave fields unassigned to use defaults
+  or preserve existing update values; hooks can use `unsetField()` to remove an
+  assignment. Nullable fields still accept explicit `null`.
+
 - **Delete individual entities by ID** (`runtime`)
   Repositories no longer expose `delete(viewerContext, entity)`.
   _Migration:_ use `deleteById(viewerContext, entity.id)`, which returns

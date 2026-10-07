@@ -52,10 +52,10 @@ class HookStateCopyCompileTest {
             object HookStateCopyProbe {
                 @JvmStatic
                 fun run(): String {
-                    val name = FieldPatch.Set<String?>("original")
+                    val name = FieldPatch.Set("original")
                     val description = FieldPatch.Set<String?>("description")
-                    val ownerId = FieldPatch.Set<Long?>(1L)
-                    val createdAt = FieldPatch.Set<Instant?>(Instant.parse("2000-01-01T00:00:00Z"))
+                    val ownerId = FieldPatch.Set(1L)
+                    val createdAt = FieldPatch.Set(Instant.parse("2000-01-01T00:00:00Z"))
                     val client = EntClientScope()
                     val viewerContext = ViewerContext(Viewer.User(7L))
                     val before = Record(1L)
@@ -70,7 +70,7 @@ class HookStateCopyCompileTest {
                     check(clearedSave.name === FieldPatch.Unset)
                     check(clearedSave.description == FieldPatch.Set<String?>(null))
                     check(clearedSave.ownerId === FieldPatch.Unset)
-                    check(save.setName(null).name == FieldPatch.Set<String?>(null))
+                    check(save.unsetName().name === FieldPatch.Unset)
                     check(save.name === name && save.description === description && save.ownerId === ownerId)
                     check(save.setName("changed").description === description)
                     check(save.unsetName().ownerId === ownerId)
@@ -78,9 +78,9 @@ class HookStateCopyCompileTest {
                     val create = RecordBeforeCreateState(
                         client, viewerContext, name, description, createdAt, ownerId,
                     )
-                    val changedCreate = create.setName("created").setCreatedAt(null).unsetOwnerId()
+                    val changedCreate = create.setName("created").setCreatedAt(Instant.EPOCH).unsetOwnerId()
                     check(changedCreate.name == FieldPatch.Set("created"))
-                    check(changedCreate.createdAt == FieldPatch.Set<Instant?>(null))
+                    check(changedCreate.createdAt == FieldPatch.Set(Instant.EPOCH))
                     check(changedCreate.ownerId === FieldPatch.Unset)
                     check(changedCreate.description === description)
                     check(changedCreate.client === client && changedCreate.viewerContext === viewerContext)

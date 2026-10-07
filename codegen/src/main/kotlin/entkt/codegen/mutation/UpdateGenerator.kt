@@ -114,6 +114,13 @@ internal class UpdateGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("mutableSetOf()")
             }
+            mutableFields.filterNot { it.nullable }.forEach { field ->
+                property(stagingFieldName(field.apiName), field.resolvedTypeName().copy(nullable = true)) {
+                    addModifiers(KModifier.PRIVATE)
+                    mutable(true)
+                    initializer("null")
+                }
+            }
             addProperties(mutableFields.map { buildProperty(it) })
             run {
                 for (fk in edgeFks) {
@@ -229,10 +236,12 @@ internal class UpdateGenerator(
 
     private fun buildProperty(field: Field): PropertySpec {
         val prop = field.apiName
-        val typeName = field.resolvedTypeName().copy(nullable = true)
+        val typeName = field.resolvedTypeName().copy(nullable = field.nullable)
         return property(prop, typeName) {
             mutable(true)
-            initializer("null")
+            if (field.nullable) {
+                initializer("null")
+            }
             // Reading an untouched update field must throw (by contract). The
             // draft has no current-state value before save(); for nullable
             // fields, a default-null getter would also collapse Unset and
@@ -244,11 +253,15 @@ internal class UpdateGenerator(
                         prop,
                         "$prop is not set in this update",
                 )
-                statement("return field")
+                if (field.nullable) {
+                    statement("return field")
+                } else {
+                    statement("return checkNotNull(%L)", stagingFieldName(prop))
+                }
             }
             setter {
                 parameter("value", typeName)
-                statement("field = value")
+                statement("%L = value", if (field.nullable) "field" else stagingFieldName(prop))
                 statement("dirtyFields.add(%S)", prop)
             }
             field.comment?.let { addKdoc("%L", it) }
@@ -347,13 +360,12 @@ internal class UpdateGenerator(
                     )
                 }
                 edgeFks.forEach { fk ->
-                    val value = if (fk.required) stagingFieldName(fk.propertyName) else fk.propertyName
                     add(
                         "%L = if (%S in dirtyFields) %T.Set(this.%L) else %T.Unset,\n",
                         fk.propertyName,
                         fk.propertyName,
                         FIELD_PATCH,
-                        value,
+                        fk.propertyName,
                         FIELD_PATCH,
                     )
                 }

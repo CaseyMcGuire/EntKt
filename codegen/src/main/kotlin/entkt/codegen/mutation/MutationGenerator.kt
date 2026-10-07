@@ -44,7 +44,7 @@ internal class MutationGenerator(
                 add(
                     Assignment(
                         name = field.apiName,
-                        valueType = field.resolvedTypeName().copy(nullable = true),
+                        valueType = field.resolvedTypeName().copy(nullable = field.nullable),
                         comment = field.comment,
                     ),
                 )
@@ -53,7 +53,7 @@ internal class MutationGenerator(
                 add(
                     Assignment(
                         name = fk.propertyName,
-                        valueType = fk.idType.toTypeName().copy(nullable = true),
+                        valueType = fk.idType.toTypeName().copy(nullable = !fk.required),
                         comment = fk.comment,
                     ),
                 )
@@ -64,7 +64,7 @@ internal class MutationGenerator(
                 add(
                     Assignment(
                         name = field.apiName,
-                        valueType = field.resolvedTypeName().copy(nullable = true),
+                        valueType = field.resolvedTypeName().copy(nullable = field.nullable),
                         comment = field.comment,
                     ),
                 )
@@ -73,7 +73,7 @@ internal class MutationGenerator(
                 add(
                     Assignment(
                         name = fk.propertyName,
-                        valueType = fk.idType.toTypeName().copy(nullable = true),
+                        valueType = fk.idType.toTypeName().copy(nullable = !fk.required),
                         comment = fk.comment,
                     ),
                 )

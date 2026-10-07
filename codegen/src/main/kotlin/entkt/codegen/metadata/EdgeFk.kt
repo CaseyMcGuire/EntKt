@@ -72,7 +72,7 @@ data class EdgeFk(
 
 /**
  * Private nullable staging field name used by builders to hold required
- * FK values before the public non-null getter is read. The leading
+ * field or FK values before the public non-null getter is read. The leading
  * underscore + `Staging` suffix keeps the name out of the public API and
  * distinct from any user-declared property.
  */

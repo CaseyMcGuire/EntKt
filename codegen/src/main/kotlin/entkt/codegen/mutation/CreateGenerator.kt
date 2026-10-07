@@ -17,6 +17,7 @@ import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
 import entkt.codegen.kotlinpoet.function
+import entkt.codegen.kotlinpoet.getter
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
@@ -28,6 +29,7 @@ import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
+import entkt.codegen.metadata.stagingFieldName
 import entkt.codegen.metadata.toTypeName
 import entkt.schema.EntSchema
 import entkt.schema.Field
@@ -181,6 +183,20 @@ internal class CreateGenerator(
                     initializer("id")
                 }
             }
+            allFields.filterNot { it.nullable }.forEach { field ->
+                property(stagingFieldName(field.apiName), field.resolvedTypeName().copy(nullable = true)) {
+                    addModifiers(KModifier.PRIVATE)
+                    mutable(true)
+                    initializer("null")
+                }
+            }
+            edgeFks.filter { it.required }.forEach { fk ->
+                property(stagingFieldName(fk.propertyName), fk.idType.toTypeName().copy(nullable = true)) {
+                    addModifiers(KModifier.PRIVATE)
+                    mutable(true)
+                    initializer("null")
+                }
+            }
             addProperties(allFields.map { buildDraftProperty(entityClass, it) })
             addProperties(edgeFks.map { buildDraftEdgeFkProperty(entityClass, it) })
             addFunction(buildIsSetFunction(entityClass))
@@ -193,13 +209,23 @@ internal class CreateGenerator(
     }
 
     private fun buildDraftProperty(entityClass: ClassName, field: Field): PropertySpec {
-        val type = field.resolvedTypeName().copy(nullable = true)
+        val type = field.resolvedTypeName().copy(nullable = field.nullable)
         return property(field.apiName, type) {
             mutable(true)
-            initializer("null")
+            if (field.nullable) {
+                initializer("null")
+            } else {
+                getter {
+                    statement(
+                        "return checkNotNull(%L) { %S }",
+                        stagingFieldName(field.apiName),
+                        "${field.apiName} is not set in this create",
+                    )
+                }
+            }
             setter {
                 parameter("value", type)
-                statement("field = value")
+                statement("%L = value", if (field.nullable) "field" else stagingFieldName(field.apiName))
                 statement("assignedFields.mark(%T.%L)", entityClass, field.apiName)
             }
             field.comment?.let { addKdoc("%L", it) }
@@ -207,14 +233,24 @@ internal class CreateGenerator(
     }
 
     private fun buildDraftEdgeFkProperty(entityClass: ClassName, fk: EdgeFk): PropertySpec {
-        val type = fk.idType.toTypeName().copy(nullable = true)
+        val type = fk.idType.toTypeName().copy(nullable = !fk.required)
         return property(fk.propertyName, type) {
             mutable(true)
-            initializer("null")
+            if (fk.required) {
+                getter {
+                    statement(
+                        "return checkNotNull(%L) { %S }",
+                        stagingFieldName(fk.propertyName),
+                        "${fk.propertyName} is not set in this create",
+                    )
+                }
+            } else {
+                initializer("null")
+            }
             fk.comment?.let { addKdoc("%L", it) }
             setter {
                 parameter("value", type)
-                statement("field = value")
+                statement("%L = value", if (fk.required) stagingFieldName(fk.propertyName) else "field")
                 statement("assignedFields.mark(%T.%L)", entityClass, fk.propertyName)
             }
         }
@@ -245,18 +281,11 @@ internal class CreateGenerator(
             addModifiers(KModifier.OVERRIDE)
             parameter("state", stateClass)
             for (field in allFields) {
-                if (field.nullable) continue
-                val prop = field.apiName
-                val condition = if (field.default == null) {
-                    CodeBlock.of("state.%L.%M(null) == null", prop, PATCH_OR_ELSE)
-                } else {
-                    CodeBlock.of(
-                        "state.%L is %T.Set && state.%L.value == null",
-                        prop,
-                        FIELD_PATCH,
-                        prop,
-                    )
+                if (field.nullable || field.default != null) {
+                    continue
                 }
+                val prop = field.apiName
+                val condition = CodeBlock.of("state.%L.%M(null) == null", prop, PATCH_OR_ELSE)
                 addStatement(
                     "if (%L) return·listOf(%T(%S, field = %S))",
                     condition,
@@ -266,18 +295,11 @@ internal class CreateGenerator(
                 )
             }
             for (fk in edgeFks) {
-                if (!fk.required) continue
-                val prop = fk.propertyName
-                val condition = if (fk.default == null) {
-                    CodeBlock.of("state.%L.%M(null) == null", prop, PATCH_OR_ELSE)
-                } else {
-                    CodeBlock.of(
-                        "state.%L is %T.Set && state.%L.value == null",
-                        prop,
-                        FIELD_PATCH,
-                        prop,
-                    )
+                if (!fk.required || fk.default != null) {
+                    continue
                 }
+                val prop = fk.propertyName
+                val condition = CodeBlock.of("state.%L.%M(null) == null", prop, PATCH_OR_ELSE)
                 addStatement(
                     "if (%L) return·listOf(%T(%S, field = %S))",
                     condition,

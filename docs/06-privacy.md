@@ -670,10 +670,8 @@ for the mutator API and [Hooks → The Update Hook Context](05-hooks.md#the-upda
 for `ctx.pendingEdges` (the before-hook intent surface that the
 `edgeChanges` delta is computed from).
 
-By the time rules see the patches, the post-hook required-not-null check
-has already run, so a dirty + null required field would have failed the
-save with `MutationResult.Failed(EntValidationException)` before privacy
-fires. Rules can treat `FieldPatch.Set(value)` for required fields as
+Drafts and before-hook setters reject null assignments to required fields
+at compile time. Rules can treat `FieldPatch.Set(value)` for required fields as
 having a non-null value and `FieldPatch.Unset` as "not in this update".
 
 ### DeleteRuleInput

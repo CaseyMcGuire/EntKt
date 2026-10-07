@@ -54,7 +54,7 @@ class CreateGeneratorTest {
 
         assertTrue(output.contains("class CarCreateDraft"), output)
         assertTrue(output.contains("CreateMutationDraft<Car>"), output)
-        assertTrue(output.contains("var model: String? = null"), output)
+        assertTrue(output.contains("var model: String\n"), output)
         assertTrue(output.contains("assignedFields.mark(Car.model)"), output)
         assertTrue(output.contains("fun isSet(column: ColumnReference<Car>)"), output)
         assertTrue(output.contains("@EntktDsl"), output)

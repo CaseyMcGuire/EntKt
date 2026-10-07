@@ -86,10 +86,10 @@ class CreateConverterCompileTest {
                     check(cleared.candidate.reviewerId == null && cleared.values["reviewer_id"] == null)
                     check(cleared.candidate.createdAt == fixedTime)
 
-                    check(converter.requiredInputViolations(state.setPublished(null)).single().field == "published")
-                    check(converter.requiredInputViolations(state.setOwnerId(null)).single().field == "ownerId")
+                    check(converter.requiredInputViolations(state.unsetPublished()).isEmpty())
+                    check(converter.requiredInputViolations(state.unsetOwnerId()).isEmpty())
                     check(converter.requiredInputViolations(state.unsetTitle()).single().field == "title")
-                    check(converter.requiredInputViolations(state.setTitle(null)).single().field == "title")
+                    check(converter.requiredInputViolations(state.setTitle("replaced")).isEmpty())
 
                     // Immutable fields bypass beforeSave but still come from the original draft.
                     val unchanged = converter.resolve(draft, beforeCreate)

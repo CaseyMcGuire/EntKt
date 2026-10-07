@@ -105,7 +105,7 @@ class RequiredCreateCompileTest {
                     title = "DSL"
                     ownerId = 7L
                 }
-                client.records.create(block = { title = null })
+                client.records.create(block = { title = "Named block"; ownerId = 7L })
             }
 
             fun useBoth(client: EntClient, viewer: ViewerContext) {
@@ -163,7 +163,8 @@ class RequiredCreateCompileTest {
                 first.configure { check(title == "configured" && ownerId == 7L) }
                 second.configure { check(title == "second" && ownerId == 8L) }
                 client.defaults.create().configure {
-                    check(enabled == null && createdAt == null)
+                    check(runCatching { enabled }.exceptionOrNull() is IllegalStateException)
+                    check(runCatching { createdAt }.exceptionOrNull() is IllegalStateException)
                     check(!isSet(Defaults.enabled) && !isSet(Defaults.createdAt))
                 }
                 check(writes.isEmpty())

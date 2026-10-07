@@ -165,11 +165,9 @@ six fields:
   `FieldPatch<T>` (`Unset` or `Set(value)`). The snapshot is taken
   at hook entry; writes through `mutation` during this hook do not
   change the snapshot, but the next hook (and the canonical patch
-  built after the loop) sees them through fresh state. One caveat:
-  an explicit `name = null` for a *required* field shows as
-  `FieldPatch.Unset` in `patch` (the type can't carry `Set(null)`
-  for a non-nullable `T`); the bad value is observable via
-  `ctx.mutation.name` — see "Repairing invalid input in hooks" below.
+  built after the loop) sees them through fresh state. Required fields use
+  `FieldPatch<T>` and nullable fields use `FieldPatch<T?>`; only nullable
+  fields can carry `Set(null)`.
 - **`pendingEdges`** — a read-only `${Entity}PendingEdgeOps`
   value with one `PendingEdgeOps<TargetIdType>` field per
   helper-eligible `throughLink` M2M edge. Every hook for the save sees the
@@ -212,12 +210,10 @@ property getters on `ctx.mutation` *throw* on untouched fields,
 because a default-null getter would conflate `Unset` and explicit
 `Set(null)`. Use `mutation` for writing, `patch` for reading.
 
-`unset{Field}()` is hook-only and update-specific. It removes the
-entry from the patch entirely, distinct from `mutation.foo = null`
-(an explicit clear that survives as `FieldPatch.Set(null)` for
-nullable fields). The methods live on a private adapter that hooks
-reach through `ctx.mutation`; they are not callable from the public
-update DSL block:
+`unset{Field}()` is available on immutable before-hook states. It returns
+a new state with the assignment removed, distinct from `setFoo(null)`
+(an explicit clear for nullable fields). These methods are not callable
+from the public create or update draft:
 
 ```kotlin
 client.users.update(id) {
@@ -226,47 +222,35 @@ client.users.update(id) {
 }
 ```
 
-`unset{Field}()` is also absent from the shared `Mutation` interface
-that `beforeSave` receives — creates have no patch model to remove
-from. If a `beforeSave` hook needs to clear a pending update entry,
-move that work to a `beforeUpdate` hook.
+Return the replacement state from `beforeSave`, `beforeCreate`, or
+`beforeUpdate` to apply an unset.
 
-### Repairing invalid input in hooks
+### Field nullability in hooks
 
-A `beforeUpdate` hook can fix a builder assignment that would
-otherwise fail. For example, if the caller assigned `null` to a
-required field:
+Generated `BeforeSaveState`, `BeforeCreateState`, and `BeforeUpdateState`
+setters follow schema nullability. A required `name` field exposes
+`setName(value: String)` and a `FieldPatch<String>` property; `setName(null)`
+is a compile error. Nullable fields expose nullable setter arguments and
+can carry `FieldPatch.Set(null)` to explicitly clear the value.
 
-```kotlin
-client.users.update(id) {
-    name = null         // required field, would fail if left like this
-}.save(viewerContext)
-```
-
-A `beforeUpdate` hook can repair it before the post-hook required-not-null
-check runs:
+`unsetName()` removes the assignment and returns a new state. On create,
+this allows a schema default to apply, or triggers required-input validation
+when no default exists. On update, it preserves the stored value unless an
+update default applies. Hooks can still fill missing create inputs:
 
 ```kotlin
+import entkt.runtime.mutation.FieldPatch
+
 users {
-    beforeUpdate { ctx ->
-        // ctx.mutation.name is observable as null (the field IS in
-        // dirtyFields, the getter only throws on untouched).
-        if (ctx.mutation.name == null) {
-            ctx.mutation.unsetName()        // remove from patch, OR
-            // ctx.mutation.name = "Anonymous"  // assign a real value
+    beforeCreate { state ->
+        if (state.name === FieldPatch.Unset) {
+            state.setName("Anonymous")
+        } else {
+            state
         }
     }
 }
 ```
-
-`ctx.patch.name` shows `FieldPatch.Unset` in this scenario rather
-than the null — `FieldPatch<String>` for a required field can't
-represent `Set(null)` by construction. The actual null is observable
-through `ctx.mutation.name`. If no hook repairs the assignment, the
-post-hook required-not-null check fails the save with
-`MutationResult.Failed(EntValidationException)` carrying a
-field-named "name is required" violation, before privacy, entity
-validation, or persistence.
 
 ## Execution Order
 
@@ -290,7 +274,7 @@ For an **update**:
 3. Capture pending edge intent, then run `beforeSave` and `beforeUpdate`.
    Each `beforeUpdate` hook receives a fresh `patch` snapshot and the same
    read-only `pendingEdges` snapshot.
-4. Check required fields, apply update defaults, and check storage shape.
+4. Apply update defaults and check storage shape.
 5. Calculate `edgeChanges`, then run UPDATE privacy and entity validation.
 6. Persist scalar and edge changes.
 7. Run `afterUpdate`.
@@ -298,7 +282,7 @@ For an **update**:
 
 An assignment-free update — an empty request, or one whose hooks removed
 every change — is not an error. It still establishes that the target
-exists and runs every pre-write phase (hooks, required-field checks,
+exists and runs every pre-write phase (hooks, storage-shape checks,
 UPDATE privacy, entity validation), but skips persistence and
 `afterUpdate`, then completes as `Success`: `save()` returns `Unit`,
 `saveAndLoad()` returns the current entity under the ordinary LOAD

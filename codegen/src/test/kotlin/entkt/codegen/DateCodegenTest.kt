@@ -39,7 +39,7 @@ class DateCodegenTest {
     fun `fixed date defaults generate a typed constructor`() {
         val converter = files.getValue("CalendarEventCreateConverter")
         assertContains(converter, "LocalDate.of(2_024, 2, 29)")
-        assertContains(files.getValue("CalendarEventCreateDraft"), "var startsOn: LocalDate? = null")
+        assertContains(files.getValue("CalendarEventCreateDraft"), "var startsOn: LocalDate ")
         assertContains(files.getValue("CalendarEventUpdateDraft"), "var closedOn: LocalDate? = null")
     }
 

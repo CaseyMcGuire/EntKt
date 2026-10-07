@@ -201,9 +201,13 @@ if (renameAlice) {
 update.save(viewerContext).getOrThrow()
 ```
 
-Create-draft fields are nullable while the input is incomplete, so reading an
-unspecified field returns `null`. Use `isSet(User.age)` when application logic
-must distinguish an omitted value from an explicit `age = null`. The first
+Create and update draft properties follow schema nullability: assigning `null`
+to a non-nullable field or required relationship ID is a compile error, including
+fields with defaults. Reading an unspecified non-nullable create property throws
+`IllegalStateException`; check `isSet(User.name)` before reading it. Unspecified
+nullable create properties return `null`; use `isSet(User.age)` to distinguish
+omission from an explicit `age = null`. Defaults still apply when saving, and
+missing required inputs without defaults still fail save-time validation. The first
 `save(viewerContext)` or `saveAndLoad(viewerContext)` consumes the mutation;
 later configuration or save attempts throw
 `EntMutationAlreadyConsumedException`.

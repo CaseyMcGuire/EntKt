@@ -55,7 +55,7 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
 
         assert(output.contains("class UserUpdateDraft")) { "Should generate UserUpdateDraft class\n$output" }
-        assert(output.contains("var name: String?")) { "Should have name var\n$output" }
+        assert(output.contains("var name: String\n")) { "Should have name var\n$output" }
         assert(output.contains("var age: Int?")) { "Should have age var\n$output" }
     }
 
@@ -104,13 +104,13 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        // Hook state preserves an explicit null so a hook can repair it.
+        // Required assignments retain their non-null value in hook state.
         assert(
             output.contains(
                 "name = if (\"name\" in dirtyFields) FieldPatch.Set(this.name) else FieldPatch.Unset",
             ),
         ) {
-            "Required field should preserve explicit null in hook state\n$output"
+            "Required field should preserve its assignment in hook state\n$output"
         }
         // Nullable field: Set(this.age) — Set(null) is an explicit clear.
         assert(
@@ -125,7 +125,7 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `required null remains explicit through hooks and is validated before canonical patch`() {
+    fun `required assignments flow directly into the canonical typed patch`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -138,18 +138,19 @@ class UpdateGeneratorTest {
         )
         assert(
             output.contains(
-                "if (state.name is FieldPatch.Set && state.name.value == null) return listOf(ValidationViolation(\"name is required\", field = \"name\"))",
+                "name = state.name",
             ),
         )
         assert(
             output.contains(
-                "val requiredViolations = requiredHookStateViolations(hookState) if (requiredViolations.isNotEmpty()) return UpdatePreparation.Invalid(requiredViolations) val requestedPatch = buildRequestedPatch(hookState)",
+                "val requestedPatch = buildRequestedPatch(hookState)",
             ),
         )
+        assert(!output.contains("requiredHookStateViolations")) { output }
     }
 
     @Test
-    fun `generated beforeUpdate values let hooks repair required-null assignments`() {
+    fun `generated beforeUpdate values retain typed assignments without nullable conversion`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
@@ -165,16 +166,9 @@ class UpdateGeneratorTest {
         )
         assert(output.contains("name = beforeSaveState.name"))
 
-        val checkCallSite = output.indexOf("val requiredViolations = requiredHookStateViolations(hookState)")
-        val canonicalPatchPos = output.indexOf("val requestedPatch = buildRequestedPatch(hookState)")
-        assert(checkCallSite != -1 && canonicalPatchPos != -1) {
-            "Expected required-null check call site and canonical patch construction\n$output"
-        }
-        assert(checkCallSite < canonicalPatchPos) {
-            "_checkRequiredNotNull() must be called before the canonical requestedPatch is built\n$output"
-        }
-
-        assert(output.contains("is FieldPatch.Set -> FieldPatch.Set(checkNotNull(entry.value))"))
+        assert(output.contains("val requestedPatch = buildRequestedPatch(hookState)"))
+        assert(output.contains("name = state.name"))
+        assert(!output.contains("checkNotNull(entry.value)")) { output }
     }
 
     @Test
@@ -202,7 +196,7 @@ class UpdateGeneratorTest {
         // should read pending state from `ctx.patch` instead.
         assert(
             output.contains(
-                "get() { if (\"name\" !in dirtyFields) throw IllegalStateException(\"name is not set in this update\") return field }",
+                "get() { if (\"name\" !in dirtyFields) throw IllegalStateException(\"name is not set in this update\") return checkNotNull(_nameStaging) }",
             ),
         ) {
             "Mutable field getter must throw when the property is not in dirtyFields\n$output"
@@ -470,12 +464,12 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `save retains structural checks without emitting policy field rules`() {
+    fun `save uses typed hook state without emitting policy field rules`() {
         val schema = ValidatedEntity()
         finalize(schema)
         val output = generator.generate("ValidatedEntity", schema).toString()
 
-        assert(output.contains("requiredHookStateViolations")) { output }
+        assert(output.contains("buildRequestedPatch(hookState)")) { output }
         assert(!output.contains("name_v") && !output.contains("nickname_v")) { output }
         assert(!output.contains("Regex(") && !output.contains("value must")) { output }
     }
@@ -486,7 +480,7 @@ class UpdateGeneratorTest {
         finalize(ticket)
         val output = generator.generate("Ticket", ticket).toString()
 
-        assert(output.contains("var priority: Priority?")) {
+        assert(output.contains("var priority: Priority\n")) {
             "Should use the Kotlin enum type on the update property\n$output"
         }
     }
