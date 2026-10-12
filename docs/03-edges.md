@@ -68,7 +68,7 @@ and its mutation inputs:
 data class Post(
     val id: Long,
     val title: String,
-    val authorId: UUID,      // ← synthesized from the edge
+    val authorId: Long,      // ← synthesized from the edge; matches User's ID type
     // ...
 )
 
@@ -291,12 +291,12 @@ scalar / FK fields reflecting the saved owner row. The M2M edge
 itself is returned in the normal unloaded state — to inspect the
 new link set, requery with eager loading (`load{Edge}`).
 
-**Hook visibility.** Before hooks see the captured pending edge
-ops via `ctx.pendingEdges.tags` (a read-only `PendingEdgeOps<ID>`).
+**Hook visibility.** `beforeUpdate` hooks see the captured pending edge
+ops via `state.pendingEdges.tags` (a read-only `PendingEdgeOps<ID>`).
 Privacy and validation rules see the full intent + computed
-database delta via `ctx.edgeChanges.tags` (an `EdgeChanges<ID>`
+database delta via `item.edgeChanges.tags` (an `EdgeChanges<ID>`
 with `added` / `removed` deltas). See
-[Hooks → The Update Hook Context](05-hooks.md#the-update-hook-context).
+[Hooks → Before-Update State](05-hooks.md#before-update-state).
 
 ### Self-referential M2M
 

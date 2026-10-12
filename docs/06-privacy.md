@@ -135,7 +135,7 @@ fun interface PrivacyRule<in Client : EntRuleClient, in Item> :
 }
 ```
 
-Each operation gets its own item type (see [Operation Items](#operation-items)
+Each operation gets its own item type (see [Rule Inputs](#rule-inputs)
 below), so rules are type-safe for the operation they guard. The same item type
 is used by scalar and batch rules.
 
@@ -666,8 +666,8 @@ so the item shape is uniform. Rule patterns:
   — a `remove(unknownId)` shows up here even though `removed` may be empty.
 
 See [Edges → Link-table M2M mutators](03-edges.md#link-table-m2m-mutators)
-for the mutator API and [Hooks → The Update Hook Context](05-hooks.md#the-update-hook-context)
-for `ctx.pendingEdges` (the before-hook intent surface that the
+for the mutator API and [Hooks → Before-Update State](05-hooks.md#before-update-state)
+for `state.pendingEdges` (the before-hook intent surface that the
 `edgeChanges` delta is computed from).
 
 Drafts and before-hook setters reject null assignments to required fields

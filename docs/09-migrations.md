@@ -47,8 +47,9 @@ completed.
 
 Plain SQL, up-only. Named `V{N}__{description}.sql`.
 
-- **No `IF NOT EXISTS`** in generated files -- versioned migrations should
-  fail loudly on drift
+- Tables and indexes are created without `IF NOT EXISTS` so versioned
+  migrations fail on drift. Extension installation deliberately uses
+  `CREATE EXTENSION IF NOT EXISTS` because an extension may already be installed.
 - Description is slugified (non-alphanumeric characters replaced with `_`)
 - Versions are sequential (`V1`, `V2`, `V3`, ...), derived from the
   highest migration version already present in the output directory
@@ -70,13 +71,17 @@ Your committed Flyway migration directory is the authoritative baseline
 
 ### Setup
 
+First complete the [consumer setup](01-getting-started.md#using-the-gradle-plugin),
+including local publishing and `mavenLocal()` for this unpublished checkout.
+Keep the plugin and dependencies on the same version.
+
 Apply the `io.entkt.flyway` plugin (it auto-applies the base `io.entkt`
 plugin). It registers `generateFlywayMigration` and
 `validateFlywayMigrations` tasks:
 
 ```kotlin
 plugins {
-    id("io.entkt.flyway")
+    id("io.entkt.flyway") version "0.1.0-alpha.3"
 }
 
 entkt {
@@ -173,7 +178,7 @@ DO $$BEGIN RAISE EXCEPTION 'entkt: manual migration steps have not been complete
 Usage: FlywayMain <validate|generate|verify> <migrationsDir> [options]
 
 Options:
-  --image=<image>         Postgres Docker image (default: postgres:16-alpine)
+  --image=<image>         Postgres Docker image (default: pgvector/pgvector:pg16)
   --db=<name>             Database name (default: entkt_shadow)
   --user=<user>           Database user (default: postgres)
   --password=<pass>       Database password (default: postgres)
@@ -190,8 +195,19 @@ Docker settings can also be set via environment variables:
 
 If your database has tables not managed by entkt (e.g. created by other
 systems), exclude them so they don't appear as drift. Pass the
-`--exclude-tables` flag via environment variables or by customizing the
-task args in your build script.
+`--exclude-tables=<t1,t2,...>` CLI flag, or append it to both Gradle tasks'
+arguments in your build script:
+
+```kotlin
+tasks.named<JavaExec>("generateFlywayMigration") {
+    args("--exclude-tables=external_events,legacy_users")
+}
+tasks.named<JavaExec>("validateFlywayMigrations") {
+    args("--exclude-tables=external_events,legacy_users")
+}
+```
+
+Table exclusions have no environment-variable setting.
 
 The Flyway history table (`flyway_schema_history`) is always excluded
 automatically.

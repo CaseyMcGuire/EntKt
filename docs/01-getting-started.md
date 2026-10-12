@@ -19,14 +19,24 @@ generation into your build automatically.
 
 The plugin ID is `"io.entkt"`:
 
-The examples target `0.1.0-alpha.3`. Keep the plugin and all EntKt dependencies
-on the same version. Released versions resolve from Maven Central; to try an
-unpublished checkout, follow [local preparation](publishing.md#local-preparation).
+These docs describe the current checkout, version `0.1.0-alpha.3`, which is
+not yet published. From the EntKt checkout, publish it locally first:
+
+```bash
+./gradlew publishToMavenLocal
+```
+
+Keep the plugin and all EntKt dependencies on the same version. The consumer
+configuration below resolves this checkout from Maven local. Published releases
+resolve from Maven Central without `mavenLocal()`; use the documentation from
+the corresponding release because alpha APIs can change. For an isolated local
+repository, see [local preparation](publishing.md#local-preparation).
 
 ```kotlin
 // settings.gradle.kts
 pluginManagement {
     repositories {
+        mavenLocal() // The current unpublished checkout.
         mavenCentral() // EntKt plugin markers are published here.
         gradlePluginPortal()
     }
@@ -41,6 +51,7 @@ plugins {
 }
 
 repositories {
+    mavenLocal()
     mavenCentral()
 }
 
@@ -137,12 +148,27 @@ a unique `email`, a nullable `age`, and a boolean `active` that defaults to
 ## Using the Generated Code
 
 After code generation, you get typed entity classes, mutation drafts, and
-an `EntClient`:
+an `EntClient`. Privacy is fail-closed, so register a policy before using an
+ordinary viewer. This standalone demo explicitly allows each operation;
+replace these rules with your application's [privacy policy](06-privacy.md).
 
 ```kotlin
 import com.example.ent.*
 import entkt.postgres.PostgresDriver
+import entkt.query.*
+import entkt.runtime.privacy.*
 import org.postgresql.ds.PGSimpleDataSource
+
+object UserPolicy : EntityPolicy<User, UserPolicyScope> {
+    override fun configure(scope: UserPolicyScope) = scope.run {
+        privacy {
+            load(allowAll)
+            create(allowAll)
+            update(allowAll)
+            delete(allowAll)
+        }
+    }
+}
 
 fun main() {
     // Create a client with any DatabaseDriver implementation
@@ -151,8 +177,10 @@ fun main() {
         user = "myuser"
         password = "mypassword"
     }
-    val client = EntClient(PostgresDriver(dataSource))
-    val viewerContext = ViewerContext(Viewer.User(currentUserId()))
+    val client = EntClient(PostgresDriver(dataSource)) {
+        policies { users(UserPolicy) }
+    }
+    val viewerContext = ViewerContext(Viewer.Anonymous)
 
     // Create — saveAndLoad(viewerContext) returns MutationResult<User>
     val alice = client.users.create {
@@ -240,10 +268,12 @@ still suppresses its default. Runtime validation remains necessary because the
 block, later `configure`, or hooks can change required values before saving.
 Existing `create { ... }` calls and `createMany` are unchanged.
 
-Every data operation returns an exhaustive result — `ReadResult<T>` for
-reads, `MutationResult<T>` for writes — that callers either match with
-`when` (`Success` / `Failed`) or project with `.getOrThrow()`, which
-throws the stored typed exception. See [Queries](04-queries.md) and
+Every data operation returns an exhaustive result: `ReadResult<T>` for singular
+reads and `MutationResult<T>` for writes use `Success` / `Failed`;
+`ReadCollectionResult<T>` for collection reads uses `Completed` / `Failed`,
+with a `ReadResult<T>` for each selected root in `Completed`. Match these with
+`when` or use the strict `.getOrThrow()` projection, which throws on failure
+or any denied root. See [Queries](04-queries.md) and
 [Privacy](06-privacy.md) for the full contract.
 
 For a full working example wired up with Postgres, Flyway-applied
@@ -265,7 +295,7 @@ to read and write users:
 | `UserQuery` | Filtering, ordering, pagination, traversal, edge loading, and result-bearing read terminals |
 | `UserRepo` | Entry points such as `create`, `update`, `query`, `findById`, and the delete methods |
 | `UserIndexes` | Typed exact and range helpers generated when `User` declares an eligible index |
-| Lifecycle types | `UserMutation`, hook contexts, privacy/validation items, candidates, patches, rule aliases, and configuration scopes |
+| Lifecycle types | `UserBeforeSaveState`, `UserBeforeCreateState`, `UserBeforeUpdateState`, privacy/validation rule inputs, candidates, patches, rule aliases, and configuration scopes |
 | `EntClient` | The application entry point containing every generated repository |
 
 The generator also emits schema-set configuration, transaction, hook,

@@ -24,7 +24,7 @@ entkt never pluralizes, singularizes, or otherwise transforms them.
 | What you write | What it names |
 |---|---|
 | The schema class name (`User`) | Generated types: `User`, `UserQuery`, `UserRepo`, `UserCreateDraft`, `UserUpdateDraft` |
-| `clientName = "users"` | Generated client and configuration properties: `client.users`, `privacy.users { }`, `validation.users { }`, `hooks.users { }` |
+| `clientName = "users"` | Generated client and configuration entries: `client.users`, `policies { users(UserPolicy) }`, `hooks { users { ... } }` |
 | The delegated `val` (`val email by …`) | Every generated field or edge API: `User.email`, `user.email`, `create.email` |
 | A storage-name argument (`string("email")`, `belongsTo<User>("author_id")`, `index("idx_email", email)`) | Physical columns, tables, or indexes |
 
@@ -53,7 +53,7 @@ class Article : EntSchema("legacy_article_tbl", clientName = "stories") {
 }
 ```
 
-This generates `Article.publicTitle`, `article.writer`,
+This generates `Article.publicTitle`, `article.writerId`,
 `queryWriter()`, and `client.stories` — never `legacyTitleTxt` or
 `primaryAuthor`.
 

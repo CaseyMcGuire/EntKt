@@ -864,7 +864,10 @@ limits, change ordering, swap the table, or change lock intent. That property �
 
 | Terminal shape | On rejection |
 |---|---|
-| Result-bearing reads (`findById`, `firstOrNull`, `all`, `find`) | `ReadResult.Failed(EntQueryRejectedException)` — never collapsed to `null` or an empty list; `.getOrThrow()` throws it, `.visibleOrNull()` leaves it unchanged |
+| Singular reads (`findById`, `firstOrNull`, `find`) | `ReadResult.Failed(EntQueryRejectedException)` — `.getOrThrow()` throws it; `.visibleOrNull()` leaves it unchanged |
+| Collection reads (`all`) | `ReadCollectionResult.Failed(EntQueryRejectedException)` — `.getOrThrow()` throws it; `.deniedAsNull()` leaves it unchanged |
+
+Rejections are never collapsed to `null` or an empty list.
 
 `EntQueryRejectedException` exposes direct properties — `entityType`,
 `reason`, optional `code`, and the rejecting interceptor's
@@ -1089,7 +1092,8 @@ Order](05-hooks.md#execution-order) and
 Conflicts retain the result type of the operation that encountered them:
 
 - A recognized database conflict during a read uses `EntDatabaseConflictException`
-  inside `ReadResult.Failed`.
+  inside `ReadResult.Failed` for singular reads or `ReadCollectionResult.Failed`
+  for collection reads.
 - A recognized mutation-statement conflict uses `EntConflictException` inside
   `MutationResult.Failed`, preserving its entity, operation, and mutation write state.
 - A recognized conflict during transaction commit uses `EntDatabaseConflictException`

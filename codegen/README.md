@@ -16,21 +16,25 @@ example; `{Entity}` is replaced by each schema class name.
 |---|---|
 | `User.kt` / `User` | Immutable entity data class. Its companion exposes typed query columns and schema metadata, and its nested `Edges` class stores eager-loaded relationships as `EdgeState` values. |
 | `UserCreateDraft.kt` / `UserCreateDraft` | Mutable, potentially incomplete create input. It tracks which fields were assigned. Application code receives it as the `create { ... }` or `PendingCreateMutation.configure { ... }` DSL receiver rather than constructing it directly. |
-| `UserUpdateDraft.kt` / `UserUpdateDraft` | Mutable update patch. It records assignments, unsets, and relationship changes without executing them. Application code receives it through `update(id) { ... }` or `PendingUpdateMutation.configure { ... }`. |
-| `UserMutation.kt` / `UserMutation` | Mutable field interface received by `beforeSave`. `UserCreateMutationView` and `UserUpdateMutationView` are the operation-specific mutation views exposed by hook contexts. These are hook contracts, not executable mutation objects. |
+| `UserUpdateDraft.kt` / `UserUpdateDraft` | Mutable update patch. It records assignments and relationship changes without executing them. Application code receives it through `update(id) { ... }` or `PendingUpdateMutation.configure { ... }`. |
+| `UserBeforeSaveState.kt` / `UserBeforeSaveState` | Immutable `FieldPatch` properties shared by create and update hooks. Setters and unsetters return replacement states. |
+| `UserBeforeCreateState.kt` / `UserBeforeCreateState` | Immutable create-hook state, including immutable schema fields, `client`, and `viewerContext`. |
+| `UserBeforeUpdateState.kt` / `UserBeforeUpdateState` | Immutable update-hook state with pending field assignments, the stored `before` entity, `client`, `viewerContext`, and read-only `pendingEdges`. |
 | `UserQuery.kt` / `UserQuery` | Immutable query value returned by full-client repositories. Fluent predicates, ordering, pagination, and `configure { ... }` return new queries. Traversal returns a target query; `all(viewerContext)` and `firstOrNull(viewerContext)` execute reads. `forUpdate()` constructs the runtime's terminal-only locking wrapper. |
 | `UserReadQuery.kt` / `UserReadQuery` | Read-only query type returned by rule-client repositories, without `forUpdate()`. Shares runtime execution with `UserQuery`; refinement and traversal retain the read-only query family. |
 | `UserQueryScope.kt` / `UserQueryScope` | Temporary mutable receiver shared by both query families for configuration blocks. Adds typed eager-edge methods and delegates state management to the runtime; exposes no terminals or traversal methods. |
 | `UserRepo.kt` / `UserRepo` | Entity entry points exposed as `client.users`: `create`, `update`, `query`, `findById`, deletes, and supported bulk operations. `create` and `update` return runtime mutation operations; delete methods execute immediately. |
 | `UserIndexes.kt` / `UserIndexes` | Generated only when the schema has an eligible index. Exact indexes expose `find(viewerContext)` and `query { ... }`; range-capable indexes also expose a range DSL. Access them through `client.users.indexes`. |
 | `UserReadIndexes.kt` / `UserReadIndexes` | Corresponding index helpers on read-only repositories. All stages return `UserReadQuery` from `query { ... }`. Generated under the same eligibility rules as `UserIndexes`. |
-| `UserPrivacy.kt` | Typed privacy aliases, operation items, `UserWriteCandidate`, `UserUpdatePatch`, edge-change views, hook contexts, and the privacy/policy configuration scopes. See [Privacy](../docs/06-privacy.md) and [Hooks](../docs/05-hooks.md). |
-| `UserValidation.kt` | Typed validation aliases, operation items, and validation configuration scopes. Validation reuses `UserWriteCandidate` from the privacy/lifecycle model. See [Validation](../docs/07-validation.md). |
+| `UserPrivacy.kt` | Typed privacy aliases, `UserWriteCandidate`, `UserUpdatePatch`, edge-change and pending-edge views, and the privacy/policy configuration scopes. See [Privacy](../docs/06-privacy.md). |
+| `UserUpdateRuleInput.kt` / `UserUpdateRuleInput` | Update privacy/validation input containing the stored entity, candidate, requested and effective patches, and computed edge changes. |
+| `UserDeleteRuleInput.kt` / `UserDeleteRuleInput` | Delete privacy/validation input containing the entity to delete. |
+| `UserValidation.kt` | Typed validation aliases and validation configuration scopes. Validation reuses `UserWriteCandidate` and the rule inputs above. See [Validation](../docs/07-validation.md). |
 
-`UserCreateDraft` does not implement `UserMutation`. Create hooks receive
-generated mutation-view adapters so lifecycle code sees only the intended hook
-contract. `UserUpdateDraft` implements `UserMutation`, but persistence still
-happens only through the `PendingUpdateMutation` returned by the repository.
+Create and update drafts are mutable caller inputs. Before hooks receive
+separate immutable states and return replacements; they cannot execute the
+mutation. Persistence happens through the pending operation returned by the
+repository.
 
 `PendingCreateMutation<Draft, Entity>` and
 `PendingUpdateMutation<Draft, Entity>` are runtime classes, not generated
@@ -83,7 +87,8 @@ are framework integration details. See [Ent Viewer](../docs/11-ent-viewer.md).
 
 The generated surface also refers to ordinary runtime types including
 `PendingMutation`, `PendingCreateMutation`, `PendingUpdateMutation`,
-`MutationDraft`, `ReadResult`, `MutationResult`, `ForUpdateQuery`, `QueryLockMode`, `ViewerContext`, `EntityHooks`,
+`MutationDraft`, `FieldPatch`, `MutationBatch`, `ReadResult`, `ReadCollectionResult`,
+`MutationResult`, `ForUpdateQuery`, `QueryLockMode`, `ViewerContext`, `EntityHooks`,
 and the privacy/validation rule interfaces. They are shared implementations
 and are therefore not regenerated per schema.
 
@@ -91,14 +96,15 @@ and are therefore not regenerated per schema.
 
 Hooks are registered once at client construction time via a structured DSL and
 automatically inherited by transactional clients. They receive the actual
-generated entity/builder types — not raw maps.
+generated entity and hook-state types. Register privacy policies alongside
+hooks to authorize operations; see [Privacy](../docs/06-privacy.md).
 
 | Hook | Signature | When |
 |------|-----------|------|
-| `beforeSave` | `(UserMutation) -> Unit` | Both create & update, before validation |
-| `beforeCreate` | `(UserCreateHookContext) -> Unit` | Create only, after beforeSave |
+| `beforeSave` | `(UserBeforeSaveState) -> UserBeforeSaveState` | Both create & update, before validation |
+| `beforeCreate` | `(UserBeforeCreateState) -> UserBeforeCreateState` | Create only, after beforeSave |
 | `afterCreate` | `(User) -> Unit` | After successful insert |
-| `beforeUpdate` | `(UserUpdateHookContext) -> Unit` | Update only, after beforeSave |
+| `beforeUpdate` | `(UserBeforeUpdateState) -> UserBeforeUpdateState` | Update only, after beforeSave |
 | `afterUpdate` | `(User) -> Unit` | After successful update |
 | `beforeDelete` | `(User) -> Unit` | Before driver delete |
 | `afterDelete` | `(User) -> Unit` | After successful delete |
@@ -107,23 +113,25 @@ generated entity/builder types — not raw maps.
 val client = EntClient(driver) {
     hooks {
         users {
-            beforeSave { it.updatedAt = Instant.now() }
-            beforeCreate { it.mutation.createdAt = Instant.now() }
-            beforeUpdate { ctx ->
-                println("Updating ${ctx.before.name}")
+            beforeSave { it.setUpdatedAt(Instant.now()) }
+            beforeCreate { it.setCreatedAt(Instant.now()) }
+            beforeUpdate { state ->
+                println("Updating ${state.before.name}")
+                state
             }
             afterCreate { user -> println("Created: ${user.name}") }
             beforeDelete { user -> println("Deleting: ${user.name}") }
         }
         posts {
-            beforeSave { it.updatedAt = Instant.now() }
+            beforeSave { it.setUpdatedAt(Instant.now()) }
         }
     }
 }
 ```
 
-`beforeSave` accepts the shared `{Entity}Mutation` interface so the same
-hook works for both creates and updates. Hooks are declared once and
+`beforeSave` accepts `{Entity}BeforeSaveState`, containing patches for mutable
+fields, so the same hook works for both creates and updates. Hooks return the
+state to pass to the next hook. Hooks are declared once and
 automatically apply within transactions — no re-registration needed.
 
 Scalar privacy rules, validators, and hooks automatically implement their
@@ -131,10 +139,8 @@ runtime batch contract by visiting values in encounter order. Explicit batch
 callbacks use `batchPrivacyRule`, `batchValidationRule`, `batchActionHook`,
 and `batchTransformingHook`; the
 generated DSL registers them under the same `load` / `create` / `beforeCreate`
-names in Kotlin, not parallel `*Batch` methods. Their generated JVM names use
-`*BatchRule` / `*BatchHook` suffixes so Java lambda overload resolution remains
-unambiguous. Privacy and validation evaluate rule-major, and hooks evaluate
-hook-major. Privacy and validation callbacks receive phase-wide state
+names in Kotlin, not parallel `*Batch` methods. Privacy and validation evaluate
+rule-major, and hooks evaluate hook-major. Privacy and validation callbacks receive phase-wide state
 separately from an immutable `RuleBatch` of item-only generated values. Scalar
 callbacks use `{ context, item -> ... }`; batch callbacks use
 `{ context, batch -> ... }`. The shared context holds the captured read client
@@ -145,8 +151,9 @@ entity/candidate/patch state. Batch rules return read-only decisions through
 originating batch and removes the free positional-list return. Application
 code remains responsible for computing the right decision for each supplied
 item.
-Hooks keep their `List` input because they return `Unit` and have no result to
-correlate.
+Batch action hooks receive a read-only `List` and return `Unit`. Batch
+transforming hooks receive and return `MutationBatch<State>`; use `mapStates`
+or `mapStatesIndexed` to preserve the batch's identity, size, and order.
 
 **Bulk operations are phase-major and transactional.** `createMany` completes
 all before hooks, preparation, CREATE privacy, and validation before one

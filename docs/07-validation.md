@@ -431,11 +431,11 @@ performed inside `withTransaction` sees earlier writes from the same transaction
 `PrivacyRuleContext` exposes `ReadOnlyEntClient` and `viewerContext`
 instead; nested terminals normally pass that caller context explicitly. Both
 rule contexts expose the same stable client type. The context passed to a
-terminal—not the client type—determines LOAD privacy. Raw terminals always skip
-LOAD privacy and entity materialization. Helpers that require bypassed
+terminal—not the client type—determines LOAD privacy. Generated queries expose
+only entity terminals. Helpers that require bypassed
 materialization should take an explicit `ViewerContext` and callers should pass
 `context.readViewerContext`.
-See [Privacy → Operation Items](06-privacy.md#operation-items).
+See [Privacy → Rule Inputs](06-privacy.md#rule-inputs).
 
 ### WriteCandidate
 

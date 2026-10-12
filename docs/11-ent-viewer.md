@@ -8,7 +8,10 @@ path — never a privileged backdoor around it.
 
 ## Install
 
-Enable adapter generation and add the viewer module:
+First complete [consumer setup](01-getting-started.md#using-the-gradle-plugin),
+including local publishing and `mavenLocal()` for this unpublished checkout.
+Keep viewer dependencies aligned with the plugin and runtime version. Then
+enable adapter generation and add the viewer module:
 
 ```kotlin
 // build.gradle.kts

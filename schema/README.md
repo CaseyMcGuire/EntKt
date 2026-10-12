@@ -55,15 +55,15 @@ into a schema with `include(...)`. Relationship edges stay on the host schema.
 
 ```kotlin
 class Timestamps(scope: EntMixin.Scope) : EntMixin(scope) {
-    val createdAt = instant("created_at").immutable()
-    val updatedAt = instant("updated_at")
+    val createdAt by instant("created_at").immutable()
+    val updatedAt by instant("updated_at")
 }
 
-class Post : EntSchema("posts") {
+class Post : EntSchema("posts", clientName = "posts") {
     override fun id() = EntId.long()
 
     val timestamps = include(::Timestamps)
-    val title = string("title")
+    val title by string("title")
 }
 ```
 

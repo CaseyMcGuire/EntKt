@@ -12,9 +12,11 @@ into your build.
 
 ## Setup
 
-The examples target `0.1.0-alpha.1`. Until its public release, run
-`./gradlew publishToMavenLocal` from the EntKt checkout first. After release,
-consumers can remove `mavenLocal()` and resolve EntKt from Maven Central.
+These examples target the current unpublished checkout, `0.1.0-alpha.3`.
+Run `./gradlew publishToMavenLocal` from the EntKt checkout first. Published
+releases resolve from Maven Central without `mavenLocal()`; use their matching
+documentation and keep all EntKt versions aligned. See
+[Getting Started](../docs/01-getting-started.md#using-the-gradle-plugin).
 
 ```kotlin
 // settings.gradle.kts
@@ -30,8 +32,8 @@ pluginManagement {
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("io.entkt") version "0.1.0-alpha.1"
-    id("io.entkt.flyway") version "0.1.0-alpha.1" // optional
+    id("io.entkt") version "0.1.0-alpha.3"
+    id("io.entkt.flyway") version "0.1.0-alpha.3" // optional
 }
 
 repositories {
@@ -51,14 +53,14 @@ dependencies {
     schemas(project(":schema"))  // your schema module
 
     // Codegen + migration tooling (runs in a separate JVM)
-    entktCodegen("io.entkt:codegen:0.1.0-alpha.1")
-    entktCodegen("io.entkt:postgres:0.1.0-alpha.1")
-    entktCodegen("io.entkt:flyway:0.1.0-alpha.1") // only if using io.entkt.flyway
+    entktCodegen("io.entkt:codegen:0.1.0-alpha.3")
+    entktCodegen("io.entkt:postgres:0.1.0-alpha.3")
+    entktCodegen("io.entkt:flyway:0.1.0-alpha.3") // only if using io.entkt.flyway
 
     // Runtime dependencies for your application
-    implementation("io.entkt:runtime:0.1.0-alpha.1")
-    implementation("io.entkt:postgres:0.1.0-alpha.1")
-    implementation("io.entkt:migrations:0.1.0-alpha.1")
+    implementation("io.entkt:runtime:0.1.0-alpha.3")
+    implementation("io.entkt:postgres:0.1.0-alpha.3")
+    implementation("io.entkt:migrations:0.1.0-alpha.3")
 }
 ```
 
@@ -72,13 +74,13 @@ circular dependency (`compileKotlin` -> `generateEntkt` -> `compileKotlin`).
 ### Base plugin (`io.entkt`)
 
 - **`generateEntkt`** -- Scans the `schemas` classpath for `EntSchema`
-  objects, generates entity classes into `build/generated/entkt/`, adds
+  classes, generates entity classes into `build/generated/entkt/`, adds
   them to the `main` source set, and runs automatically before
   `compileKotlin`.
 - **`validateEntSchemas`** -- Validates the schema graph (finalization,
   cross-schema constraints).
 - **`explainEntSchemas`** -- Prints the resolved relational shape of all
-  schemas. Supports `-Pformat=text|json` and `-Pfilter=<table>`.
+  schemas. Supports `-Pformat=text|json|sql` and `-Pfilter=<name-or-table>`.
 
 ### Flyway plugin (`io.entkt.flyway`)
 

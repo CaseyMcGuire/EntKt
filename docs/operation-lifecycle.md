@@ -31,12 +31,12 @@ race another transaction.
 ### Why Both `beforeSave` and Operation-Specific Hooks?
 
 `beforeSave` is a narrow convenience for assignments that must happen on both
-create and update. It receives the shared mutation interface and should normally
-be used for set-and-forget behavior:
+create and update. It receives an immutable `{Entity}BeforeSaveState` and
+returns the state to pass to the next hook:
 
 ```kotlin
-beforeSave { mutation ->
-    mutation.updatedAt = clock.now()
+beforeSave { state ->
+    state.setUpdatedAt(clock.now())
 }
 ```
 
@@ -46,19 +46,21 @@ needs operation-specific context:
 ```kotlin
 import entkt.runtime.mutation.FieldPatch
 
-beforeCreate { ctx ->
-    ctx.mutation.createdAt = clock.now()
+beforeCreate { state ->
+    state.setCreatedAt(clock.now())
 }
 
-beforeUpdate { ctx ->
-    if (ctx.patch.name is FieldPatch.Set) {
-        auditNameChange(ctx.before.id)
+beforeUpdate { state ->
+    if (state.name is FieldPatch.Set) {
+        auditNameChange(state.before.id)
     }
+    state
 }
 ```
 
 `beforeSave` runs first, so the operation-specific hook can refine or override
-its assignments.
+its assignments. State setters return replacements; a hook that only performs
+a side effect must return its input state.
 
 ### Structural Checks vs. Configured Validation
 
@@ -104,7 +106,7 @@ flowchart TD
     query --> materialize["Materialize entities"]
     materialize --> privacy["LOAD privacy"]
     privacy --> eager["Selected edge loads and their LOAD privacy"]
-    eager --> result["ReadResult"]
+    eager --> result["ReadResult (singular) / ReadCollectionResult (collection)"]
 ```
 
 Read interceptors shape what storage is asked to return. LOAD privacy decides
@@ -118,7 +120,12 @@ Important behavior:
 - Root LOAD privacy evaluates the materialized result as one ordered batch.
   Each edge-load query likewise evaluates its ordered, deduplicated, in-window
   targets as one batch before strict or `filterVisible()` projection.
-- LOAD denial is strict by default and returns a failed result.
+- Singular root LOAD denial returns `ReadResult.Failed`. Collection reads return
+  `ReadCollectionResult.Completed` with one `ReadResult` per selected root,
+  retaining denied entries in query order. Only authorized roots load edges.
+  `.getOrThrow()` throws if any root was denied; `.deniedAsNull()` preserves
+  denied positions as nulls. Query, driver, or required edge-load failures return
+  `ReadCollectionResult.Failed` for the whole collection.
 - `visibleOrNull()` converts only a singular root LOAD denial to successful
   absence. It does not hide query, driver, or edge-load failures.
 - A selected edge is strict unless its `EdgeLoad` handle opts into
@@ -195,7 +202,7 @@ Important behavior:
 
 ## Delete
 
-`deleteById(id)` uses this order:
+`deleteById(viewerContext, id)` uses this order:
 
 ```mermaid
 flowchart TD
@@ -284,7 +291,7 @@ privacy, and validation.
 
 ## Learn More
 
-- [Hooks](05-hooks.md) documents each hook context and the state it exposes.
+- [Hooks](05-hooks.md) documents each hook state and the values it exposes.
 - [Privacy](06-privacy.md) documents read, write, and returned-entity privacy.
 - [Validation](07-validation.md) covers field and entity validation APIs.
 - [Queries](04-queries.md) covers read interceptors, traversal, and edge loads.

@@ -10,8 +10,8 @@ current contract.
 Generated queries do not expose count, existence, or aggregate terminals.
 Callers read entities with `all(viewerContext)` and calculate over the returned
 collection in Kotlin; an existence check can use
-`firstOrNull(viewerContext) != null`. These reads materialize entities and run
-LOAD privacy under the supplied context.
+`firstOrNull(viewerContext).getOrThrow() != null`. These reads materialize
+entities and run LOAD privacy under the supplied context.
 
 An intentional storage-wide calculation therefore requires an explicit
 `ViewerContext.privacyBypass_DANGEROUS(reason)`. This is available inside

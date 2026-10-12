@@ -8,6 +8,11 @@ This project is under active development — see the module READMEs for
 details on each component, and [Roadmap](#roadmap) for what's missing.
 For guides, see the [documentation](docs/index.md).
 
+Released artifacts are available from Maven Central. These docs describe the
+current checkout (`0.1.0-alpha.3`); see [Getting Started](docs/01-getting-started.md#using-the-gradle-plugin)
+for local publishing and consumer setup. Use a release's matching documentation
+when depending on published artifacts.
+
 ## Overview
 
 ```kotlin
@@ -25,8 +30,35 @@ class User : EntSchema("users", clientName = "users") {
 ```
 
 ```kotlin
-// 2. Use the generated code
-val client = EntClient(PostgresDriver(dataSource))
+// 2. Register policies for the generated entities.
+// These permissive policies are for this demo; replace them with your app's rules.
+object UserPolicy : EntityPolicy<User, UserPolicyScope> {
+    override fun configure(scope: UserPolicyScope) = scope.run {
+        privacy {
+            load(allowAll)
+            create(allowAll)
+            update(allowAll)
+            delete(allowAll)
+        }
+    }
+}
+
+object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
+    override fun configure(scope: PostPolicyScope) = scope.run {
+        privacy {
+            load(allowAll)
+            create(allowAll)
+        }
+    }
+}
+
+// 3. Use the generated code
+val client = EntClient(PostgresDriver(dataSource)) {
+    policies {
+        users(UserPolicy)
+        posts(PostPolicy)
+    }
+}
 val viewerContext = ViewerContext(Viewer.User(currentUserId()))
 
 val alice = client.users.create {
@@ -71,6 +103,10 @@ client.withTransaction { tx ->
 }.getOrThrow()
 ```
 
+Privacy is fail-closed: ordinary viewers are denied unless a registered policy
+allows the operation. `EntityPolicy` and `allowAll` are in
+`entkt.runtime.privacy`; see [Privacy](docs/06-privacy.md) for application rules.
+
 Field invariants belong in client-registered validation policies, not schema
 declarations. Runtime helpers such as `minLength(UserWriteCandidate::name, 2)`
 register through the existing validation DSL; see [Field Validation Rules](docs/07-validation.md#field-validation-rules).
@@ -103,11 +139,6 @@ Things that are **not yet implemented**, roughly in order of severity:
 ### Schema & DDL
 - **Exotic column types.** Typed JSON/JSONB is supported; native SQL arrays,
   enums (as PG enum types), hstore, and composites are not yet implemented.
-
-### Tooling
-- **No published artifacts.** The plugin and runtime are not yet on any
-  Maven repository — consumers would currently need a composite build or
-  local publish.
 
 ## Building
 

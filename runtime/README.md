@@ -16,7 +16,7 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 | `entkt.runtime.rule` | Immutable `RuleBatch` inputs and read-only, same-batch `RuleDecisions` outputs for privacy and validation |
 | `entkt.runtime.query` | immutable query descriptions, `ForUpdateQuery`, `QueryLockMode`, interceptors (`QueryInterceptor`, `InterceptScope`, `ReadOperation`, …), aggregate types, `ExcludeDeleted` |
 | `entkt.runtime.mutation` | `FieldPatch`, edge ops (`PendingEdgeOps`, `EdgeChanges`), `UpdateConsistency`/`RelationshipLocking`, `TransactionRequirement` |
-| `entkt.runtime.result` | `ReadResult`/`MutationResult`/`TransactionResult` (+ `getOrThrow`/`visibleOrNull` projections), `TransactionScope`/`TransactionCoordinator`/`runEntTransaction`, `MutationWriteState`/`TransactionFailureState`, the denial payload types (`EntityKey`, `PrivacyDenial`, `LoadDenialOrigin`), and the `EntException`/`EntMutationException` typed-exception family |
+| `entkt.runtime.result` | `ReadResult`/`ReadCollectionResult`/`MutationResult`/`TransactionResult` (+ `getOrThrow`/`visibleOrNull`/`deniedAsNull` projections), `TransactionScope`/`TransactionCoordinator`/`runEntTransaction`, `MutationWriteState`/`TransactionFailureState`, the denial payload types (`EntityKey`, `PrivacyDenial`, `LoadDenialOrigin`), and the `EntException`/`EntMutationException` typed-exception family |
 
 ## DatabaseDriver interface
 

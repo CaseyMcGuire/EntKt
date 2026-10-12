@@ -5,18 +5,20 @@ the actual generated types (not raw maps), so you get full type safety.
 
 ## Registering Hooks
 
-Hooks are registered once at `EntClient` construction time:
+Hooks are registered once at `EntClient` construction time. The examples below
+assume the relevant [privacy policies](06-privacy.md#policies) are
+also registered; hooks do not authorize operations.
 
 ```kotlin
 val client = EntClient(driver) {
     hooks {
         users {
-            beforeSave { it.updatedAt = Instant.now() }
-            beforeCreate { it.mutation.createdAt = Instant.now() }
+            beforeSave { it.setUpdatedAt(Instant.now()) }
+            beforeCreate { it.setCreatedAt(Instant.now()) }
             afterCreate { user -> println("Created: ${user.name}") }
         }
         posts {
-            beforeSave { it.updatedAt = Instant.now() }
+            beforeSave { it.setUpdatedAt(Instant.now()) }
         }
     }
 }
@@ -26,10 +28,10 @@ val client = EntClient(driver) {
 
 | Hook | Receives | When | Use Case |
 |------|----------|------|----------|
-| `beforeSave` | `UserMutation` | Before both create and update, before validation | Timestamps, computed fields |
-| `beforeCreate` | `UserCreateHookContext` | Create only, after `beforeSave` | Set creation-only defaults, query related data |
+| `beforeSave` | `UserBeforeSaveState` | Before both create and update, before validation | Timestamps, computed fields |
+| `beforeCreate` | `UserBeforeCreateState` | Create only, after `beforeSave` | Set creation-only defaults, query related data |
 | `afterCreate` | `User` | After successful insert | Logging, notifications |
-| `beforeUpdate` | `UserUpdateHookContext` | Update only, after `beforeSave` | Audit trails, normalize patch |
+| `beforeUpdate` | `UserBeforeUpdateState` | Update only, after `beforeSave` | Audit trails, normalize patch |
 | `afterUpdate` | `User` | After successful update | Cache invalidation |
 | `beforeDelete` | `User` | Before deletion | Cleanup, cascading side effects |
 | `afterDelete` | `User` | After successful delete | Logging, cascading cleanup |
@@ -105,24 +107,28 @@ Transforming hooks receive a `MutationBatch`; `mapStates` and
 `mapStatesIndexed` preserve its identity, size, and order. Returning a batch
 from a different invocation is rejected.
 
-## The Mutation Interface
+## Shared Before-Save State
 
-`beforeSave` receives a `{Entity}Mutation` interface, which is shared
-between create and update drafts. This means a single hook works
-for both operations:
+`beforeSave` receives an immutable `{Entity}BeforeSaveState` containing
+`FieldPatch` properties for fields and foreign-key IDs that can change on both
+create and update. Immutable schema fields are available only in
+`{Entity}BeforeCreateState`. A shared hook works for both operations:
 
 ```kotlin
 users {
-    beforeSave { mutation ->
-        // Works for both create and update
-        mutation.updatedAt = Instant.now()
+    beforeSave { state ->
+        state.setUpdatedAt(Instant.now())
     }
 }
 ```
 
+Setters return a replacement state. Return that state from the hook to apply
+the change; return the input state when a hook only performs a side effect.
+Read pending values directly from the state's `FieldPatch` properties.
+
 ## Hook Client Access
 
-`beforeCreate` and `beforeUpdate` contexts expose `client: EntClientScope`.
+`beforeCreate` and `beforeUpdate` states expose `client: EntClientScope`.
 This is the generated repository surface shared by `EntClient` and
 `EntTransactionClient`, so helpers accepting it work in either context:
 
@@ -134,21 +140,17 @@ fun emailIsTaken(
 ): Boolean = client.users.indexes.email(email).find(viewerContext).getOrThrow() != null
 ```
 
-The scope exposes every generated repository. The hook context separately
+The scope exposes every generated repository. The hook state separately
 exposes `viewerContext`, so a nested read uses
-`emailIsTaken(ctx.client, ctx.viewerContext, email)`. The scope deliberately
+`emailIsTaken(state.client, state.viewerContext, email)`. The scope deliberately
 does not expose `withTransaction()` or client configuration.
 Consequently, a hook cannot start a transaction that would be independent
 outside a transaction and nested inside one. Repository operations issued
-through `ctx.client` still use the same driver and transaction as the save.
+through `state.client` still use the same driver and transaction as the save.
 
-`beforeCreate` also receives `viewerContext` and `mutation`, the restricted
-writable create view.
+## Before-Update State
 
-## The Update Hook Context
-
-The `beforeUpdate` hook receives a `${Entity}UpdateHookContext` with
-six fields:
+The `beforeUpdate` hook receives an immutable `{Entity}BeforeUpdateState` with:
 
 - **`client`** — the transaction-safe `EntClientScope` described above.
 - **`viewerContext`** — the exact context supplied to the update terminal; pass
@@ -160,12 +162,10 @@ six fields:
   prevents concurrent updates to the row until the transaction completes.
   See [Drivers — Transactions](10-drivers.md#transactions) for capability
   requirements.
-- **`patch`** — a snapshot of the requested patch as accumulated *up
-  to this hook*. It's a `${Entity}UpdatePatch` whose fields are
-  `FieldPatch<T>` (`Unset` or `Set(value)`). The snapshot is taken
-  at hook entry; writes through `mutation` during this hook do not
-  change the snapshot, but the next hook (and the canonical patch
-  built after the loop) sees them through fresh state. Required fields use
+- **Field properties** — the requested patch as accumulated *up to this hook*,
+  exposed directly as `FieldPatch<T>` (`Unset` or `Set(value)`). Calling
+  `setName(...)` or `unsetName()` returns a new state without changing the
+  input. The next hook receives the returned replacement. Required fields use
   `FieldPatch<T>` and nullable fields use `FieldPatch<T?>`; only nullable
   fields can carry `Set(null)`.
 - **`pendingEdges`** — a read-only `${Entity}PendingEdgeOps`
@@ -178,37 +178,31 @@ six fields:
   mixed-direction at the call site, so `add(x); remove(x)` throws
   before either set could receive `x`). Schemas without
   helper-eligible M2M edges still get an empty
-  `${Entity}PendingEdgeOps` so the context shape is uniform.
+  `${Entity}PendingEdgeOps` so the state shape is uniform.
   Privacy and validation rules see the post-junction-read
-  computed delta (added / removed) via `ctx.edgeChanges` — see
+  computed delta (added / removed) via `item.edgeChanges` on their rule input — see
   [Privacy](06-privacy.md) and [Validation](07-validation.md).
-- **`mutation`** — a restricted writable view (`${Entity}UpdateMutationView`).
-  Hooks call `mutation.foo = "x"` to set a value, `mutation.foo = null`
-  to explicitly clear a nullable field, or `mutation.unsetFoo()` to
-  remove the entry from the patch entirely. The view does not expose
-  `save()`, the loaded `before` row, the owner `id`, the public
-  `tags.add(...)` / `tags.remove(...)` / `tags.set(...)` M2M mutators.
-  The view's `mutation.pendingEdges`
-  property mirrors `ctx.pendingEdges` for convenience.
+
+The state exposes no `save()` terminal or relationship mutators such as
+`tags.add(...)`, `tags.remove(...)`, or `tags.set(...)`.
 
 ```kotlin
-import entkt.runtime.orElse  // folds FieldPatch.Unset → fallback, Set → value
+import entkt.runtime.mutation.orElse  // folds FieldPatch.Unset → fallback, Set → value
 
 users {
-    beforeUpdate { ctx ->
-        val current = ctx.before.name
-        val pending = ctx.patch.name.orElse(current)
+    beforeUpdate { state ->
+        val current = state.before.name
+        val pending = state.name.orElse(current)
         if (pending != current) {
             println("Name changing from $current to $pending")
         }
+        state
     }
 }
 ```
 
-Reading pending state always goes through `ctx.patch` — the
-property getters on `ctx.mutation` *throw* on untouched fields,
-because a default-null getter would conflate `Unset` and explicit
-`Set(null)`. Use `mutation` for writing, `patch` for reading.
+Untouched hook-state properties return `FieldPatch.Unset`. Nullable properties
+distinguish it from `FieldPatch.Set(null)`, which explicitly clears the field.
 
 `unset{Field}()` is available on immutable before-hook states. It returns
 a new state with the assignment removed, distinct from `setFoo(null)`
@@ -272,8 +266,9 @@ For an **update**:
    `MutationResult.Failed(EntTargetAbsentException)` (write state
    `NotPersisted`) from both `save()` and `saveAndLoad()`.
 3. Capture pending edge intent, then run `beforeSave` and `beforeUpdate`.
-   Each `beforeUpdate` hook receives a fresh `patch` snapshot and the same
-   read-only `pendingEdges` snapshot.
+   Each hook receives the state returned by the preceding hook in its phase;
+   `beforeUpdate` starts with the assignments returned by `beforeSave`. Every
+   `beforeUpdate` hook sees the same read-only `pendingEdges` snapshot.
 4. Apply update defaults and check storage shape.
 5. Calculate `edgeChanges`, then run UPDATE privacy and entity validation.
 6. Persist scalar and edge changes.
@@ -288,7 +283,7 @@ UPDATE privacy, entity validation), but skips persistence and
 `saveAndLoad()` returns the current entity under the ordinary LOAD
 contract.
 
-For a **delete** (`deleteById(id)`):
+For a **delete** (`deleteById(viewerContext, id)`):
 
 1. Enforce the configured transaction requirement.
 2. Reload the current row by id. An absent row returns `Success(false)`,
@@ -299,8 +294,8 @@ For a **delete** (`deleteById(id)`):
 6. Run `afterDelete` — only when the final delete actually removed the
    row (a row that disappears after reload skips it).
 
-Hooks are for side effects (setting timestamps, logging, notifications),
-not for authorization or invariant enforcement. Use
+Hooks transform pending state or perform trusted side effects (timestamps,
+logging, notifications). Use
 [privacy](06-privacy.md) for authorization and
 [validation](07-validation.md) for data model invariants.
 
@@ -311,9 +306,10 @@ Hooks are automatically inherited by transaction-scoped clients:
 ```kotlin
 val viewerContext = ViewerContext(Viewer.User(currentUserId()))
 val client = EntClient(driver) {
+    policies { users(UserPolicy) } // Your application's policy.
     hooks {
         users {
-            beforeSave { it.updatedAt = Instant.now() }
+            beforeSave { it.setUpdatedAt(Instant.now()) }
         }
     }
 }
@@ -333,15 +329,18 @@ adapter visits the items in encounter order.
 
 ```kotlin
 users {
-    beforeSave { it.updatedAt = Instant.now() }
-    beforeSave { println("Saving user: ${it.name}") }
-    // Both run, in order
+    beforeSave { it.setUpdatedAt(Instant.now()) }
+    beforeSave { state ->
+        println("Pending name: ${state.name}")
+        state
+    }
+    // Both run, in order.
 }
 ```
 
 For hooks `A` and `B` and items 1 and 2, the observable order is
 `A(1), A(2), B(1), B(2)`, not the complete hook chain for item 1 followed by
-item 2. Before-hook mutations made by `A` are visible to `B` and to later
+item 2. Before-hook states returned by `A` are passed to `B` and to later
 lifecycle phases. Hooks are not executed concurrently.
 
 ## Bulk Operations and Hooks
@@ -351,7 +350,11 @@ phase-major batches and run their database work in one transaction (the
 caller's, or an EntKt-owned one when the caller has none).
 
 ```kotlin
-client.users.createMany(viewerContext, { name = "Alice" }, { name = "Bob" })
+client.users.createMany(
+    viewerContext,
+    { name = "Alice"; email = "alice@example.com" },
+    { name = "Bob"; email = "bob@example.com" },
+).getOrThrow()
 // beforeSave(all), beforeCreate(all), insertMany, afterCreate(all)
 
 client.users.deleteMany(viewerContext, User.active eq false)

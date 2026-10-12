@@ -118,4 +118,5 @@ pluginManagement {
 }
 ```
 
-Before the public release, use the local staging repository above instead.
+For an unpublished checkout, use the local staging repository above or
+`publishToMavenLocal` with `mavenLocal()` in both plugin and dependency repositories.
