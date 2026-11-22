@@ -178,8 +178,8 @@ class EntityPrivacyScopeTest {
         items: List<Item>,
         rules: List<BatchPrivacyRule<TestRuleClient, Item>>,
         context: PrivacyRuleContext<TestRuleClient>,
-    ): List<PrivacyDecision> = evaluateBatchPrivacyRulesForInternalUse(
-        lifecycle = "test privacy",
+    ): List<PrivacyDecision> = evaluateLoadDecisions(
+        entityName = "test",
         items = items,
         rules = rules,
         context = context,

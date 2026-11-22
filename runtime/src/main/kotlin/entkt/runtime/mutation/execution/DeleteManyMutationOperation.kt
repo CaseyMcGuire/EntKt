@@ -8,8 +8,9 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.hook.BatchActionHook
 import entkt.runtime.hook.runActionHooks
+import entkt.runtime.mutation.DeleteRuleInput
 import entkt.runtime.mutation.WriteCandidate
-import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.DeletePrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.QuerySource
@@ -28,9 +29,9 @@ class DeleteManyMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity
     private val entity: EntityDescriptor<Entity, *>,
     private val converter: DeleteMutationConverter<Entity, Candidate>,
     private val privacyEvaluator:
-        MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
+        DeletePrivacyEvaluator<RuleClient, Candidate, DeleteRuleInput<Entity, Candidate>>,
     private val validationEvaluator:
-        MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
+        MutationValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
     private val readQueryExecutor: ReadQueryExecutor<Entity>,
     private val beforeDelete: List<BatchActionHook<Entity>>,
     private val afterDelete: List<BatchActionHook<Entity>>,
@@ -61,15 +62,15 @@ class DeleteManyMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity
         val entities = selection.entities.toList()
         if (entities.isEmpty()) return 0
 
-        val candidates = entities.map { entity ->
-            DeleteRuleCandidate(entity, converter.toCandidate(entity))
+        val ruleInputs = entities.map { entity ->
+            DeleteRuleInput(entity, converter.toCandidate(entity))
         }
         evaluateDeleteRules(
             execution = execution,
             ruleClient = ruleClient,
             entityName = entity.entityName,
             viewerContext = viewerContext,
-            candidates = candidates,
+            ruleInputs = ruleInputs,
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
         )

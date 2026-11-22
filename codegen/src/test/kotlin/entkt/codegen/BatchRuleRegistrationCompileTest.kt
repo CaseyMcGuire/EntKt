@@ -175,6 +175,7 @@ class BatchRuleRegistrationCompileTest {
             package com.example.app;
 
             import com.example.ent.*;
+            import entkt.runtime.mutation.DeleteRuleInput;
             import entkt.runtime.privacy.*;
             import entkt.runtime.validation.*;
 
@@ -184,7 +185,7 @@ class BatchRuleRegistrationCompileTest {
                     BatchPrivacyRule<ReadOnlyEntClient, Widget>[] load,
                     BatchPrivacyRule<ReadOnlyEntClient, WidgetWriteCandidate>[] create,
                     BatchPrivacyRule<ReadOnlyEntClient, WidgetUpdateRuleInput>[] update,
-                    BatchPrivacyRule<ReadOnlyEntClient, WidgetDeleteRuleInput>[] delete
+                    BatchPrivacyRule<ReadOnlyEntClient, DeleteRuleInput<Widget, WidgetWriteCandidate>>[] delete
                 ) {
                     scope.load();
                     scope.load(load[0]);
@@ -209,7 +210,7 @@ class BatchRuleRegistrationCompileTest {
                     WidgetValidationScope scope,
                     BatchValidationRule<ReadOnlyEntClient, WidgetWriteCandidate>[] create,
                     BatchValidationRule<ReadOnlyEntClient, WidgetUpdateRuleInput>[] update,
-                    BatchValidationRule<ReadOnlyEntClient, WidgetDeleteRuleInput>[] delete
+                    BatchValidationRule<ReadOnlyEntClient, DeleteRuleInput<Widget, WidgetWriteCandidate>>[] delete
                 ) {
                     scope.create();
                     scope.create(create[0]);

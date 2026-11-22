@@ -42,8 +42,8 @@ class RepoGeneratorTest {
         ) {
             "Operation factories should receive the resolved rule configuration\n$output"
         }
-        assert(output.contains("ruleInput = ::RepoBytesRecordDeleteRuleInput")) {
-            "DELETE should supply one typed conversion for privacy and validation\n$output"
+        assert(!output.contains("ruleInput =")) {
+            "The repository should not wire rule input construction\n$output"
         }
         assert(!output.contains("CreateRuleInput")) {
             "CREATE must not wrap its candidate\n$output"
@@ -245,7 +245,7 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `update delegates evaluator composition with one typed rule input conversion`() {
+    fun `update delegates rule input construction to its typed adapter`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString().replace("\\s+".toRegex(), " ")
@@ -255,11 +255,13 @@ class RepoGeneratorTest {
         assert(operation.contains("entity = UserDescriptor") && operation.contains("mutationRuntime = client")) {
             "The UPDATE factory should receive scoped runtime dependencies\n$output"
         }
-        val ruleInput = "UserUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )"
-        assert(Regex(Regex.escape(ruleInput)).findAll(operation).count() == 1) {
-            "Both UPDATE evaluators should share one conversion over all prepared rule values\n$output"
+        val ruleInput = "state = UserUpdateRuleInput( before = before, requestedPatch = requestedPatch, effectivePatch = effectivePatch, candidate = candidate, edgeChanges = edgeChanges, )"
+        val adapter = entkt.codegen.mutation.UpdateGenerator("com.example.ent")
+            .generate("User", user).toString().replace("\\s+".toRegex(), " ")
+        assert(adapter.contains(ruleInput)) {
+            "The adapter should prepare the rule input from all prepared values\n$adapter"
         }
-        assert(operation.contains("ruleInput = { state: UserUpdateAdapter.PreparedState ->"))
+        assert(!operation.contains("ruleInput ="))
         assert(!operation.contains("candidate =")) {
             "The prepared update should supply its candidate without a generated selector\n$output"
         }
@@ -499,8 +501,7 @@ class RepoGeneratorTest {
                 "classifyMutationException(",
                 "MutationExecutor",
                 "ReadQueryExecutor",
-                "LoadPrivacyEvaluator",
-                "MutationPrivacyEvaluator",
+                "PrivacyEvaluator",
                 "MutationValidationEvaluator",
                 "PrivacyRuleContext(",
                 "ValidationRuleContext(",
@@ -537,7 +538,7 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("buildDeleteMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter, privacy = configuredPrivacy, validation = configuredValidation, ruleInput = ::CarDeleteRuleInput,")) {
+        assert(output.contains("buildDeleteMutationOperation( entity = CarDescriptor, converter = CarDeleteConverter, privacy = configuredPrivacy, validation = configuredValidation,")) {
             "DELETE should supply only its configuration and typed input conversion\n$output"
         }
         assert(!output.contains("fallback =") && !output.contains("DerivesFromCreate")) {
@@ -635,7 +636,12 @@ class RepoGeneratorTest {
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
         assert(Regex("buildDeleteMutationOperation\\(").findAll(output).count() == 1)
-        assert(Regex("ruleInput = ::CarDeleteRuleInput").findAll(output).count() == 2)
+        assert(!output.contains("ruleInput ="))
+        val converter = entkt.codegen.mutation.DeleteConverterGenerator("com.example.ent")
+            .generate("Car", car).toString().replace("\\s+".toRegex(), " ")
+        assert(!converter.contains("RuleInput")) {
+            "The delete converter should only build candidates; runtime pairs them with the entity\n$converter"
+        }
         assert(Regex("buildDeleteManyMutationOperation\\(").findAll(output).count() == 1)
         assert(!output.contains("deleteRules") && !output.contains("privacyEvaluator ="))
     }

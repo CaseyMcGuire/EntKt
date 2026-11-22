@@ -7,7 +7,6 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.BeforeUpdateHookState
-import entkt.runtime.mutation.PreparedUpdateState
 import entkt.runtime.mutation.TransactionRequiredException
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
@@ -15,8 +14,9 @@ import entkt.runtime.mutation.UpdateConsistency
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.UpdateMutationRequest
 import entkt.runtime.mutation.UpdatePendingEdges
+import entkt.runtime.mutation.UpdateRuleInput
 import entkt.runtime.mutation.WriteCandidate
-import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.UpdatePrivacyEvaluator
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -40,17 +40,17 @@ class UpdateMutationOperation<
     Draft : UpdateMutationDraft<Entity>,
     Entity : EntEntity<*>,
     PendingEdges : UpdatePendingEdges<Entity>,
-    PreparedState : PreparedUpdateState<Entity>,
     Candidate : WriteCandidate<Entity>,
     BeforeSaveState : BeforeSaveHookState<Entity>,
     BeforeUpdateState : BeforeUpdateHookState<Entity>,
+    RuleInput : UpdateRuleInput<Entity>,
     >(
     private val entity: EntityMapping<Entity>,
     private val mutationRuntime: MutationRuntime,
-    private val privacyEvaluator: MutationPrivacyEvaluator<RuleClient, PreparedUpdate<PreparedState, Candidate>>,
-    private val validationEvaluator: MutationValidationEvaluator<RuleClient, PreparedUpdate<PreparedState, Candidate>>,
+    private val privacyEvaluator: UpdatePrivacyEvaluator<RuleClient, Candidate, RuleInput>,
+    private val validationEvaluator: MutationValidationEvaluator<RuleClient, PreparedUpdate<RuleInput, Candidate>>,
     private val adapter:
-        UpdateMutationAdapter<Draft, Entity, PendingEdges, PreparedState, Candidate, BeforeUpdateState>,
+        UpdateMutationAdapter<Draft, Entity, PendingEdges, Candidate, BeforeUpdateState, RuleInput>,
     private val hooks:
         UpdateMutationHooks<
             Draft,
@@ -102,7 +102,7 @@ class UpdateMutationOperation<
         viewerContext: ViewerContext,
         request: UpdateMutationRequest<Draft>,
         before: Entity,
-    ): PreparedUpdate<PreparedState, Candidate> {
+    ): PreparedUpdate<RuleInput, Candidate> {
         val pendingEdges = adapter.capturePendingEdges(request.draft)
         val beforeUpdateState = hooks.runBefore(
             entity = entity,
@@ -239,9 +239,14 @@ class UpdateMutationOperation<
         attempt: MutationExecution,
         context: PrivacyRuleContext<RuleClient>,
         id: Any,
-        prepared: PreparedUpdate<PreparedState, Candidate>,
+        prepared: PreparedUpdate<RuleInput, Candidate>,
     ) {
-        privacyEvaluator.evaluate(context, listOf(prepared)).firstDeniedOrNull()?.let { denial ->
+        privacyEvaluator.evaluate(
+            context = context,
+            subjects = listOf(prepared),
+            toRuleInput = { it.state },
+            toCandidate = { it.candidate },
+        ).firstDeniedOrNull()?.let { denial ->
             attempt.reject(
                 EntMutationPrivacyDeniedException(
                     writeState = MutationWriteState.NotPersisted,
@@ -257,7 +262,7 @@ class UpdateMutationOperation<
     private fun evaluateValidation(
         attempt: MutationExecution,
         context: ValidationRuleContext<RuleClient>,
-        prepared: PreparedUpdate<PreparedState, Candidate>,
+        prepared: PreparedUpdate<RuleInput, Candidate>,
     ) {
         validationEvaluator.evaluate(context, listOf(prepared)).firstInvalidOrNull()?.let { invalid ->
             attempt.reject(
@@ -274,7 +279,7 @@ class UpdateMutationOperation<
         execution: MutationExecution,
         request: UpdateMutationRequest<Draft>,
         before: Entity,
-        prepared: PreparedUpdate<PreparedState, Candidate>,
+        prepared: PreparedUpdate<RuleInput, Candidate>,
     ): Entity {
         val updated = if (prepared.values.isEmpty()) {
             before
@@ -310,7 +315,7 @@ class UpdateMutationOperation<
     private fun persistRelationships(
         execution: MutationExecution,
         request: UpdateMutationRequest<Draft>,
-        prepared: PreparedUpdate<PreparedState, Candidate>,
+        prepared: PreparedUpdate<RuleInput, Candidate>,
     ) {
         val tracker = RelationshipWriteTracker()
         try {

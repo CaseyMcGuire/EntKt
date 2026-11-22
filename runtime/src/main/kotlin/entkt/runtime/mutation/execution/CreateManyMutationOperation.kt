@@ -15,7 +15,7 @@ import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.mutation.WriteCandidate
-import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.CreatePrivacyEvaluator
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -51,7 +51,7 @@ class CreateManyMutationOperation<
     private val mutationRuntime: MutationRuntime,
     private val entity: EntityMapping<Entity>,
     private val converter: CreateMutationConverter<Draft, Candidate, Entity, BeforeCreateState>,
-    private val privacyEvaluator: MutationPrivacyEvaluator<RuleClient, Candidate>,
+    private val privacyEvaluator: CreatePrivacyEvaluator<RuleClient, Candidate>,
     private val validationEvaluator: MutationValidationEvaluator<RuleClient, Candidate>,
     private val hookStateConverter:
         CreateMutationHookStateConverter<Draft, Entity, BeforeSaveState, BeforeCreateState>,
@@ -221,7 +221,7 @@ class CreateManyMutationOperation<
     ) {
         val denial = privacyEvaluator.evaluate(
             context = context,
-            states = prepared.map { it.candidate },
+            candidates = prepared.map { it.candidate },
         ).firstDeniedOrNull()
         denial?.let {
             attempt.reject(

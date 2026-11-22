@@ -28,7 +28,7 @@ example; `{Entity}` is replaced by each schema class name.
 | `UserReadIndexes.kt` / `UserReadIndexes` | Corresponding index helpers on read-only repositories. All stages return `UserReadQuery` from `query { ... }`. Generated under the same eligibility rules as `UserIndexes`. |
 | `UserPrivacy.kt` | Typed privacy aliases, `UserWriteCandidate`, `UserUpdatePatch`, edge-change and pending-edge views, and the privacy/policy configuration scopes. See [Privacy](../docs/06-privacy.md). |
 | `UserUpdateRuleInput.kt` / `UserUpdateRuleInput` | Update privacy/validation input containing the stored entity, candidate, requested and effective patches, and computed edge changes. |
-| `UserDeleteRuleInput.kt` / `UserDeleteRuleInput` | Delete privacy/validation input containing the entity to delete. |
+| `UserDeleteRuleInput.kt` / `UserDeleteRuleInput` | Alias of the runtime `DeleteRuleInput<User, UserWriteCandidate>`: the delete privacy/validation input containing the entity to delete and its candidate. |
 | `UserValidation.kt` | Typed validation aliases and validation configuration scopes. Validation reuses `UserWriteCandidate` and the rule inputs above. See [Validation](../docs/07-validation.md). |
 
 Create and update drafts are mutable caller inputs. Before hooks receive

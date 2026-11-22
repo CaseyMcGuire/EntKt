@@ -3,8 +3,9 @@
 package entkt.runtime.mutation.execution
 
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.mutation.DeleteRuleInput
 import entkt.runtime.mutation.WriteCandidate
-import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.DeletePrivacyEvaluator
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -23,11 +24,16 @@ internal fun <RuleClient : EntRuleClient, Entity : EntEntity<*>, Candidate : Wri
     ruleClient: RuleClient,
     entityName: String,
     viewerContext: ViewerContext,
-    candidates: List<DeleteRuleCandidate<Entity, Candidate>>,
-    privacyEvaluator: MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
-    validationEvaluator: MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
+    ruleInputs: List<DeleteRuleInput<Entity, Candidate>>,
+    privacyEvaluator: DeletePrivacyEvaluator<RuleClient, Candidate, DeleteRuleInput<Entity, Candidate>>,
+    validationEvaluator: MutationValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
 ) {
-    val denial = privacyEvaluator.evaluate(PrivacyRuleContext(viewerContext, ruleClient), candidates).firstDeniedOrNull()
+    val denial = privacyEvaluator.evaluate(
+        context = PrivacyRuleContext(viewerContext, ruleClient),
+        subjects = ruleInputs,
+        toRuleInput = { it },
+        toCandidate = { it.candidate },
+    ).firstDeniedOrNull()
     if (denial != null) {
         execution.reject(
             EntMutationPrivacyDeniedException(
@@ -39,7 +45,7 @@ internal fun <RuleClient : EntRuleClient, Entity : EntEntity<*>, Candidate : Wri
             ),
         )
     }
-    validationEvaluator.evaluate(ValidationRuleContext(ruleClient), candidates).firstInvalidOrNull()?.let { invalid ->
+    validationEvaluator.evaluate(ValidationRuleContext(ruleClient), ruleInputs).firstInvalidOrNull()?.let { invalid ->
         execution.reject(
             EntValidationException(
                 entityType = entityName,

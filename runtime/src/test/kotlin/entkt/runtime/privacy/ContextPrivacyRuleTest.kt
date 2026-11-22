@@ -113,15 +113,11 @@ class ContextPrivacyRuleTest {
     fun `a context rule that continues does not grant access`() {
         val rule = ContextPrivacyRule<TestRuleClient> { PrivacyDecision.Continue }
         val items = listOf(7)
-        val evaluation = correlatePrivacyEvaluationForInternalUse(
-            lifecycle = "test privacy",
-            subjects = items,
-            decisions = evaluate(items, listOf(rule)),
-            unresolvedReason = "no rule allowed access",
-        )
+        val evaluation = loadEvaluator("test", listOf<BatchPrivacyRule<TestRuleClient, Int>>(rule))
+            .evaluate(context, items)
 
         assertEquals(emptyList(), evaluation.allowedSubjects())
-        assertEquals("no rule allowed access", evaluation.deniedOutcomes().single().reason)
+        assertEquals("no load rule allowed access", evaluation.deniedOutcomes().single().reason)
     }
 
     @Test
@@ -137,8 +133,8 @@ class ContextPrivacyRuleTest {
     private fun evaluate(
         items: List<Int>,
         rules: List<BatchPrivacyRule<TestRuleClient, Int>>,
-    ): List<PrivacyDecision> = evaluateBatchPrivacyRulesForInternalUse(
-        lifecycle = "test privacy",
+    ): List<PrivacyDecision> = evaluateLoadDecisions(
+        entityName = "test",
         items = items,
         rules = rules,
         context = context,

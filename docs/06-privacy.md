@@ -677,9 +677,12 @@ having a non-null value and `FieldPatch.Unset` as "not in this update".
 ### DeleteRuleInput
 
 ```kotlin
-data class UserDeleteRuleInput(
-    val entity: User,                   // the entity being deleted
-    val candidate: UserWriteCandidate,  // snapshot of its writable fields
+typealias UserDeleteRuleInput = DeleteRuleInput<User, UserWriteCandidate>
+
+// entkt.runtime.mutation
+data class DeleteRuleInput<Entity, Candidate>(
+    val entity: Entity,        // the entity being deleted
+    val candidate: Candidate,  // snapshot of its writable fields
 )
 ```
 

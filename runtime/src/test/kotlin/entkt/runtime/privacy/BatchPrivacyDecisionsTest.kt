@@ -67,8 +67,8 @@ class BatchPrivacyDecisionsTest {
 
     @Test
     fun `allowAll finalizes only unresolved items without overriding an earlier denial`() {
-        val decisions = evaluateBatchPrivacyRulesForInternalUse(
-            lifecycle = "test privacy",
+        val decisions = evaluateLoadDecisions(
+            entityName = "test",
             items = listOf(0, 7, 7),
             rules = listOf<BatchPrivacyRule<TestRuleClient, Int>>(
                 denyIf("already denied") { _, item -> item == 0 },
@@ -90,8 +90,8 @@ class BatchPrivacyDecisionsTest {
 
     @Test
     fun `denyAll finalizes only unresolved items without overriding an earlier allowance`() {
-        val decisions = evaluateBatchPrivacyRulesForInternalUse(
-            lifecycle = "test privacy",
+        val decisions = evaluateLoadDecisions(
+            entityName = "test",
             items = listOf(0, 7, 7),
             rules = listOf<BatchPrivacyRule<TestRuleClient, Int>>(
                 allowIf { _, item -> item == 0 },

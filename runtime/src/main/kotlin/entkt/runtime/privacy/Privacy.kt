@@ -1,12 +1,8 @@
 package entkt.runtime.privacy
 
-import entkt.query.EntktInternal
 import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
-import entkt.runtime.rule.decisionsForInternalUse
-import entkt.runtime.rule.ruleBatchForInternalUse
-import entkt.runtime.result.EntBatchRuleContractException
 import java.util.UUID
 
 /**
@@ -212,65 +208,6 @@ fun RuleBatch<*>.allowAll(): RuleDecisions<PrivacyDecision> =
  */
 fun RuleBatch<*>.denyAll(reason: String): RuleDecisions<PrivacyDecision> =
     decideEach { PrivacyDecision.Deny(reason) }
-
-/**
- * Evaluate ordered privacy rules across [items], retaining positional
- * correlation while removing finalized items from later rule invocations.
- *
- * [freshItem] is invoked afresh for every item that reaches every rule.
- * Unresolved items remain [PrivacyDecision.Continue] so generated operations
- * can apply their operation-specific fail-closed denial.
- */
-@EntktInternal
-fun <I, Client : EntRuleClient, Item> evaluateBatchPrivacyRulesForInternalUse(
-    lifecycle: String,
-    items: List<I>,
-    rules: List<BatchPrivacyRule<Client, Item>>,
-    context: PrivacyRuleContext<Client>,
-    freshItem: (I) -> Item,
-): List<PrivacyDecision> {
-    if (items.isEmpty()) return emptyList()
-
-    val itemSnapshot = items.toList()
-    val ruleSnapshot = rules.toList()
-    val decisions = MutableList<PrivacyDecision>(itemSnapshot.size) { PrivacyDecision.Continue }
-    var activeIndexes = itemSnapshot.indices.toList()
-
-    for (rule in ruleSnapshot) {
-        if (activeIndexes.isEmpty()) break
-
-        val ruleItems = activeIndexes.map { freshItem(itemSnapshot[it]) }
-        val batch = ruleBatchForInternalUse(ruleItems)
-        val returnedDecisions: RuleDecisions<PrivacyDecision>? = rule.runBatch(context, batch)
-        val ruleDecisions: List<*> = returnedDecisions
-            ?.let { batch.decisionsForInternalUse(lifecycle, it) }
-            ?: throw EntBatchRuleContractException(lifecycle, ruleItems.size, actualSize = null)
-        if (ruleDecisions.size != ruleItems.size) {
-            throw EntBatchRuleContractException(lifecycle, ruleItems.size, ruleDecisions.size)
-        }
-
-        val remainingIndexes = ArrayList<Int>(activeIndexes.size)
-        activeIndexes.forEachIndexed { position, itemIndex ->
-            when (val decision = ruleDecisions[position]) {
-                PrivacyDecision.Allow -> decisions[itemIndex] = PrivacyDecision.Allow
-                is PrivacyDecision.Deny -> decisions[itemIndex] = decision
-                PrivacyDecision.Continue -> {
-                    decisions[itemIndex] = PrivacyDecision.Continue
-                    remainingIndexes += itemIndex
-                }
-                else -> throw EntBatchRuleContractException(
-                    lifecycle = lifecycle,
-                    expectedSize = ruleItems.size,
-                    actualSize = ruleDecisions.size,
-                    invalidDecisionIndex = position,
-                )
-            }
-        }
-        activeIndexes = remainingIndexes
-    }
-
-    return decisions.toList()
-}
 
 /**
  * A stock rule that allows any operation on any entity. Because [PrivacyRule]

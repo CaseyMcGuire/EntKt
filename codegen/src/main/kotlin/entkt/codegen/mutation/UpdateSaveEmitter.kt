@@ -7,8 +7,6 @@ import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.apiName
 import entkt.codegen.columnName
@@ -42,20 +40,11 @@ private val UPDATE_WRITE_TRACKER =
     ClassName("entkt.runtime.mutation.execution", "UpdateWriteTracker")
 private val UPDATE_RELATIONSHIP_REQUIREMENTS =
     ClassName("entkt.runtime.mutation.execution", "UpdateRelationshipRequirements")
-private val PREPARED_UPDATE_STATE =
-    ClassName("entkt.runtime.mutation", "PreparedUpdateState")
-
-/** Schema-specific artifacts around the reusable runtime UPDATE lifecycle. */
-internal data class UpdateSaveArtifacts(
-    val preparedStateType: TypeSpec,
-    val functions: List<FunSpec>,
-)
 
 /** Emits only schema-specific UPDATE adapters; runtime owns lifecycle sequencing. */
 internal class UpdateSaveEmitter(
     private val packageName: String,
     private val schemaName: String,
-    private val preparedStateClass: ClassName,
     private val allFields: List<Field>,
     private val edgeFks: List<EdgeFk>,
     private val allEdgeFks: List<EdgeFk>,
@@ -68,42 +57,17 @@ internal class UpdateSaveEmitter(
     private val pendingEdgesClass = ClassName(packageName, "${schemaName}PendingEdgeOps")
     private val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
     private val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
-    private val edgeChangesClass = ClassName(packageName, "${schemaName}EdgeChangesView")
+    private val ruleInputClass = ClassName(packageName, "${schemaName}UpdateRuleInput")
     private val mutableFields = allFields.filterNot { it.immutable }
 
-    fun build(): UpdateSaveArtifacts = UpdateSaveArtifacts(
-        preparedStateType = buildPreparedStateType(),
-        functions = buildList {
-            if (helperEligibleEdges.isNotEmpty()) {
-                add(buildRelationshipRequirementsFunction())
-            }
-            add(buildCapturePendingEdgesFunction())
-            add(buildRequestedPatchFunction())
-            add(buildPrepareFunction())
-            add(buildRelationshipFunction())
-        },
-    )
-
-    private fun buildPreparedStateType(): TypeSpec {
-        val parameters = listOf(
-            "before" to entityClass,
-            "requestedPatch" to patchClass,
-            "effectivePatch" to patchClass,
-            "candidate" to candidateClass,
-            "edgeChanges" to edgeChangesClass,
-        )
-        val constructor = FunSpec.constructorBuilder()
-        parameters.forEach { (name, type) -> constructor.addParameter(name, type) }
-        return TypeSpec.classBuilder(preparedStateClass.simpleName)
-            .addModifiers(KModifier.INTERNAL, KModifier.DATA)
-            .addSuperinterface(PREPARED_UPDATE_STATE.parameterizedBy(entityClass))
-            .primaryConstructor(constructor.build())
-            .addProperties(
-                parameters.map { (name, type) ->
-                    PropertySpec.builder(name, type).initializer(name).build()
-                },
-            )
-            .build()
+    fun build(): List<FunSpec> = buildList {
+        if (helperEligibleEdges.isNotEmpty()) {
+            add(buildRelationshipRequirementsFunction())
+        }
+        add(buildCapturePendingEdgesFunction())
+        add(buildRequestedPatchFunction())
+        add(buildPrepareFunction())
+        add(buildRelationshipFunction())
     }
 
     private fun buildRelationshipRequirementsFunction(): FunSpec = function(
@@ -166,7 +130,7 @@ internal class UpdateSaveEmitter(
 
     private fun buildPrepareFunction(): FunSpec = function(
         "prepare",
-        UPDATE_PREPARATION.parameterizedBy(preparedStateClass, candidateClass),
+        UPDATE_PREPARATION.parameterizedBy(ruleInputClass, candidateClass),
     ) {
         addModifiers(KModifier.OVERRIDE)
         parameter("request", UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass))
@@ -220,7 +184,7 @@ internal class UpdateSaveEmitter(
             indent()
             add("%T(\n", PREPARED_UPDATE)
             indent()
-            add("state = %T(\n", preparedStateClass)
+            add("state = %T(\n", ruleInputClass)
             indent()
             add("before = before,\n")
             add("requestedPatch = requestedPatch,\n")
@@ -295,7 +259,7 @@ internal class UpdateSaveEmitter(
     private fun buildRelationshipFunction(): FunSpec = function("persistRelationships") {
         addModifiers(KModifier.OVERRIDE)
         parameter("request", UPDATE_MUTATION_REQUEST.parameterizedBy(draftClass))
-        parameter("state", preparedStateClass)
+        parameter("state", ruleInputClass)
         parameter("writes", UPDATE_WRITE_TRACKER)
         if (helperEligibleEdges.isEmpty()) return@function
 

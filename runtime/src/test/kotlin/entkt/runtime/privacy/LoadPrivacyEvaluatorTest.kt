@@ -61,12 +61,10 @@ class LoadPrivacyEvaluatorTest {
             seenItems += item
             PrivacyDecision.Continue
         }
-        val configuredRules = mutableListOf<BatchPrivacyRule<TestRuleClient, Record>>(first, second)
-        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
-            entity = RecordDescriptor,
-            rules = configuredRules,
+        val evaluator = loadEvaluator<TestRuleClient, Record>(
+            entityName = RecordDescriptor.entityName,
+            rules = listOf(first, second),
         )
-        configuredRules.clear()
 
         val entities = listOf(Record(1L, "one"), Record(2L, "two"), Record(3L, "three"))
         val evaluation = evaluator.evaluate(ruleContext, entities)
@@ -91,8 +89,8 @@ class LoadPrivacyEvaluatorTest {
     @Test
     fun `duplicate entity instances keep independent correlated decisions`() {
         val entity = Record(1L, "shared")
-        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
-            entity = RecordDescriptor,
+        val evaluator = loadEvaluator<TestRuleClient, Record>(
+            entityName = RecordDescriptor.entityName,
             rules = listOf(batchPrivacyRule { _, batch ->
                 batch.decideEachIndexed { index, item ->
                     assertSame(entity, item)
@@ -114,8 +112,8 @@ class LoadPrivacyEvaluatorTest {
     @Test
     fun `empty and bypass batches never invoke rules`() {
         var ruleCalls = 0
-        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
-            entity = RecordDescriptor,
+        val evaluator = loadEvaluator<TestRuleClient, Record>(
+            entityName = RecordDescriptor.entityName,
             rules = listOf(
                 PrivacyRule<TestRuleClient, Record> { _, _ ->
                     ruleCalls++
@@ -138,8 +136,8 @@ class LoadPrivacyEvaluatorTest {
     @Test
     fun `rule exceptions escape unchanged`() {
         val failure = IllegalStateException("rule failed")
-        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
-            entity = RecordDescriptor,
+        val evaluator = loadEvaluator<TestRuleClient, Record>(
+            entityName = RecordDescriptor.entityName,
             rules = listOf(
                 PrivacyRule<TestRuleClient, Record> { _, _ -> throw failure },
             ),
@@ -154,8 +152,8 @@ class LoadPrivacyEvaluatorTest {
 
     @Test
     fun `no rules denies every entity with the built-in LOAD reason`() {
-        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
-            entity = RecordDescriptor,
+        val evaluator = loadEvaluator<TestRuleClient, Record>(
+            entityName = RecordDescriptor.entityName,
             rules = emptyList(),
         )
         val entities = listOf(Record(1L, "one"), Record(2L, "two"))
@@ -174,8 +172,8 @@ class LoadPrivacyEvaluatorTest {
     fun `rule contract failures identify the descriptor and LOAD operation`() {
         val foreignDecisions = ruleBatchForInternalUse(listOf(Record(1L, "one")))
             .decideEach { PrivacyDecision.Allow }
-        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
-            entity = RecordDescriptor,
+        val evaluator = loadEvaluator<TestRuleClient, Record>(
+            entityName = RecordDescriptor.entityName,
             rules = listOf(batchPrivacyRule { _, _ -> foreignDecisions }),
         )
 
@@ -192,10 +190,51 @@ class LoadPrivacyEvaluatorTest {
     }
 
     @Test
+    fun `a nested evaluation cannot replace the outer context subjects or decisions`() {
+        val nestedContext = PrivacyRuleContext(ViewerContext(Viewer.User(8L)), TestRuleClient())
+        val nestedRecord = Record(2L, "nested")
+        val outerRecords = listOf(Record(1L, "allowed"), Record(3L, "denied"))
+        lateinit var evaluator: LoadPrivacyEvaluator<TestRuleClient, Record>
+        evaluator = LoadPrivacyEvaluator(
+            entityName = RecordDescriptor.entityName,
+            rules = listOf(
+                batchPrivacyRule { context, batch ->
+                    if (context === ruleContext) {
+                        val nested = evaluator.evaluate(nestedContext, listOf(nestedRecord, nestedRecord))
+                        assertEquals(listOf(nestedRecord, nestedRecord), nested.allowedSubjects())
+                        assertEquals(outerRecords, batch)
+                        batch.decideEach { PrivacyDecision.Continue }
+                    } else {
+                        assertSame(nestedContext, context)
+                        batch.decideEach { PrivacyDecision.Allow }
+                    }
+                },
+                batchPrivacyRule { context, batch ->
+                    assertSame(ruleContext, context)
+                    assertEquals(outerRecords, batch)
+                    batch.decideEachIndexed { index, _ ->
+                        if (index == 0) {
+                            PrivacyDecision.Allow
+                        } else {
+                            PrivacyDecision.Deny("outer denial")
+                        }
+                    }
+                },
+            ),
+        )
+
+        val outer = evaluator.evaluate(ruleContext, outerRecords)
+
+        assertSame(outerRecords[0], outer.allowedSubjects().single())
+        assertSame(outerRecords[1], outer.deniedOutcomes().single().subject)
+        assertEquals("outer denial", outer.deniedOutcomes().single().reason)
+    }
+
+    @Test
     fun `each evaluation uses the supplied context without retaining a client or viewer`() {
         val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
-        val evaluator = LoadPrivacyEvaluator<TestRuleClient, Record>(
-            entity = RecordDescriptor,
+        val evaluator = loadEvaluator<TestRuleClient, Record>(
+            entityName = RecordDescriptor.entityName,
             rules = listOf(
                 PrivacyRule<TestRuleClient, Record> { context, _ ->
                     contexts += context

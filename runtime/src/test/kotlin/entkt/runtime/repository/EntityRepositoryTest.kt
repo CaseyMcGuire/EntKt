@@ -114,7 +114,6 @@ class EntityRepositoryTest {
 
                 assertEquals(0, fixture.clientResolutions)
                 assertTrue(contexts.isEmpty())
-                fixture.loadPrivacyRules.clear()
                 val ruleClient = RuleClient("current-${fixture.driver.scope}")
                 fixture.client = ruleClient
                 val visible = Widget(1L, "visible")

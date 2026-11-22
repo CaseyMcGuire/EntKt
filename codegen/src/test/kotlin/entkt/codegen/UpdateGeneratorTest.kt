@@ -60,13 +60,16 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `prepared update state implements its runtime marker`() {
+    fun `prepared update state is the rule input`() {
         val user = User()
         finalize(user, Car())
         val output = generator.generate("User", user).toString()
 
-        assert(output.contains(": PreparedUpdateState<User>")) {
-            "PreparedState should implement the prepared-update marker\n$output"
+        assert(output.contains("UpdatePreparation<UserUpdateRuleInput, UserWriteCandidate>")) {
+            "Preparation should produce the rule input as its state\n$output"
+        }
+        assert(!output.contains("PreparedState") && !output.contains("toRuleInput")) {
+            "The adapter should not declare a second state type or a conversion to the rule input\n$output"
         }
     }
 
@@ -314,10 +317,10 @@ class UpdateGeneratorTest {
         assert(emptyBlock.contains("val effectivePatch = requestedPatch")) {
             "Hook-cleared branch must use requested as effective (skip update defaults)\n$output"
         }
-        assert(emptyBlock.contains("state = PreparedState(") && emptyBlock.contains("values = emptyMap()")) {
+        assert(emptyBlock.contains("state = UserUpdateRuleInput(") && emptyBlock.contains("values = emptyMap()")) {
             "No-op preparation should retain the unchanged rule state without owner values\n$output"
         }
-        assert(!output.contains("MutationPrivacyEvaluator") &&
+        assert(!output.contains("PrivacyEvaluator") &&
             !output.contains("MutationValidationEvaluator")) {
             "The adapter should only prepare the no-op state; runtime owns rule evaluation\n$output"
         }
@@ -722,16 +725,19 @@ class UpdateGeneratorTest {
     @Test
     fun `update rule items share prepared values including edge changes`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = RepoGenerator("com.example.ent")
+        val output = generator
             .generate("M2MPost", post, names)
             .toString()
             .replace("\\s+".toRegex(), " ")
 
-        val input = "M2MPostUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )"
-        assert(Regex(Regex.escape(input)).findAll(output).count() == 1) {
-            "UPDATE privacy and validation should share one conversion over prepared values\n$output"
+        val input = "state = M2MPostUpdateRuleInput( before = before, requestedPatch = requestedPatch, effectivePatch = effectivePatch, candidate = candidate, edgeChanges = edgeChanges, )"
+        assert(Regex(Regex.escape(input)).findAll(output).count() == 2) {
+            "Both preparation branches should hand rules the prepared values directly\n$output"
         }
-        assert(!output.contains("snapshotEdgeChangesForInternalUse(state.edgeChanges")) {
+        assert(Regex(Regex.escape("M2MPostUpdateRuleInput(")).findAll(output).count() == 2) {
+            "The rule input should only be built by preparation\n$output"
+        }
+        assert(!output.contains("snapshotEdgeChangesForInternalUse(edgeChanges")) {
             "UPDATE rules should not recopy prepared edge changes\n$output"
         }
     }
@@ -856,13 +862,13 @@ class UpdateGeneratorTest {
         val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("UpdateMutationAdapter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostUpdateAdapter.PreparedState, M2MPostWriteCandidate, M2MPostBeforeUpdateState>") &&
+        assert(output.contains("UpdateMutationAdapter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostWriteCandidate, M2MPostBeforeUpdateState, M2MPostUpdateRuleInput>") &&
             output.contains("override fun capturePendingEdges(") &&
             output.contains("override fun prepare(")) {
             "The generated adapter should implement the typed runtime lifecycle contract\n$output"
         }
-        assert(output.contains("UpdatePreparation<PreparedState, M2MPostWriteCandidate>")) {
-            "Preparation should expose the typed candidate alongside schema-specific state\n$output"
+        assert(output.contains("UpdatePreparation<M2MPostUpdateRuleInput, M2MPostWriteCandidate>")) {
+            "Preparation should expose the typed candidate alongside the rule input\n$output"
         }
         val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
@@ -1301,17 +1307,16 @@ class UpdateGeneratorTest {
     }
 
     @Test
-    fun `privacy and validation adapters both receive edgeChanges`() {
+    fun `relationship writes use the edge changes that rules received`() {
         val (post, _, _, names) = makeLinkM2MSchemas()
-        val output = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
+        val output = generator.generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        val occurrences = output.split("state.edgeChanges,").size - 1
-        assert(occurrences == 1) {
-            "Expected one shared conversion with the prepared edge changes, got $occurrences\n$output"
+        assert(output.contains("state: M2MPostUpdateRuleInput, writes: UpdateWriteTracker")) {
+            "Relationship persistence should receive the prepared rule input\n$output"
         }
-        assert(Regex(Regex.escape("M2MPostUpdateRuleInput(")).findAll(output).count() == 1) {
-            "Both evaluators should receive the same typed input conversion from PreparedState\n$output"
+        assert(output.contains("val edgeChanges = state.edgeChanges")) {
+            "Relationship persistence should write the edge changes carried by the rule input\n$output"
         }
     }
 

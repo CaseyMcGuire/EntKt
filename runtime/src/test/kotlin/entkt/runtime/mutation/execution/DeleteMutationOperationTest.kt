@@ -14,6 +14,7 @@ import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.hook.ActionHook
 import entkt.runtime.hook.BatchActionHook
+import entkt.runtime.mutation.DeleteRuleInput
 import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
@@ -215,7 +216,7 @@ class DeleteMutationOperationTest {
             ),
             updateRules = emptyList<Nothing>(),
             deleteRules = listOf(
-                batchPrivacyRule<TestRuleClient, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
+                batchPrivacyRule<TestRuleClient, DeleteRuleInput<Widget, Candidate>> { context, batch ->
                     events += "privacy:${batch.joinToString { it.entity.id.toString() }}"
                     receivedViewerContexts += context.viewerContext
                     receivedRuleClients += context.client
@@ -236,7 +237,7 @@ class DeleteMutationOperationTest {
             ),
             updateRules = emptyList<Nothing>(),
             deleteRules = listOf(
-                batchValidationRule<TestRuleClient, DeleteRuleCandidate<Widget, Candidate>> { context, batch ->
+                batchValidationRule<TestRuleClient, DeleteRuleInput<Widget, Candidate>> { context, batch ->
                     events += "validation:${batch.joinToString { it.entity.id.toString() }}"
                     receivedRuleClients += context.client
                     batch.decideEachIndexed { index, _ ->
@@ -274,7 +275,6 @@ class DeleteMutationOperationTest {
             converter = converter,
             privacy = privacy,
             validation = validation,
-            ruleInput = ::DeleteRuleCandidate,
             beforeDelete = beforeDelete,
             afterDelete = afterDelete,
         )
@@ -284,7 +284,6 @@ class DeleteMutationOperationTest {
             converter = converter,
             privacy = privacy,
             validation = validation,
-            ruleInput = ::DeleteRuleCandidate,
             driver = driver,
             readExecutionHost = queryHost,
             beforeDelete = beforeDelete,

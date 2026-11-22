@@ -3,43 +3,25 @@
 package entkt.runtime.privacy
 
 import entkt.query.EntktInternal
-import entkt.runtime.entity.EntEntity
-import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.rule.EntRuleClient
 
-/**
- * Evaluates one entity type's bound LOAD-privacy policy with a per-call rule context.
- * Entity values are not defensively copied; rules must treat them and their nested state as read-only.
- */
+/** Evaluates LOAD privacy over entities, preserving order and duplicate occurrences. */
 @EntktInternal
-class LoadPrivacyEvaluator<RuleClient : EntRuleClient, Entity : EntEntity<*>>(
-    entity: EntityDescriptor<Entity, *>,
-    rules: List<BatchPrivacyRule<RuleClient, Entity>>,
+class LoadPrivacyEvaluator<Client : EntRuleClient, Entity>(
+    entityName: String,
+    private val rules: List<BatchPrivacyRule<Client, Entity>>,
 ) {
-    private val lifecycle = "${entity.entityName} LOAD privacy"
-    private val rules = rules.toList()
+    private val batchEvaluator = PrivacyBatchEvaluator(
+        entityName = entityName,
+        operation = PrivacyOperation.LOAD,
+    )
 
     fun evaluate(
-        context: PrivacyRuleContext<RuleClient>,
+        context: PrivacyRuleContext<Client>,
         entities: List<Entity>,
-    ): PrivacyEvaluation<Entity> {
-        val entitySnapshot = entities.toList()
-        val decisions = if (context.viewerContext.viewer is Viewer.PrivacyBypass) {
-            List(entitySnapshot.size) { PrivacyDecision.Allow }
-        } else {
-            evaluateBatchPrivacyRulesForInternalUse(
-                lifecycle = lifecycle,
-                items = entitySnapshot,
-                rules = rules,
-                context = context,
-                freshItem = { it },
-            )
-        }
-        return correlatePrivacyEvaluationForInternalUse(
-            lifecycle = lifecycle,
-            subjects = entitySnapshot,
-            decisions = decisions,
-            unresolvedReason = "no load rule allowed access",
-        )
-    }
+    ): PrivacyEvaluation<Entity> = batchEvaluator.evaluate(
+        context = context,
+        subjects = entities,
+        rules = rules,
+    )
 }

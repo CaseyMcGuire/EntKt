@@ -74,7 +74,10 @@ abstract class EntityRepository<
     }
 
     private val mutationExecutor = MutationExecutor(driver, mutationRuntime)
-    private val loadPrivacyEvaluator = LoadPrivacyEvaluator(entity, loadPrivacyRules)
+    private val loadPrivacyEvaluator = LoadPrivacyEvaluator(
+        entityName = entity.entityName,
+        rules = loadPrivacyRules,
+    )
 
     protected abstract val self: Self
 

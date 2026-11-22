@@ -2,27 +2,27 @@
 
 package entkt.runtime.privacy
 
-import entkt.runtime.result.EntBatchRuleContractException
+import entkt.runtime.rule.TestRuleClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 
 class PrivacyEvaluationTest {
     private data class Subject(val value: Int)
+    private val context = PrivacyRuleContext(ViewerContext(Viewer.User(7L)), TestRuleClient())
 
     @Test
-    fun `correlation attaches final decisions to the exact subjects`() {
+    fun `evaluation attaches final decisions to the exact subjects`() {
         val first = Subject(1)
         val equalButDistinct = Subject(1)
+        val evaluator = loadEvaluator("Subject", listOf(batchPrivacyRule<TestRuleClient, Subject> { _, batch ->
+            batch.decideEachIndexed { index, _ ->
+                if (index == 0) PrivacyDecision.Allow else PrivacyDecision.Deny("hidden")
+            }
+        }))
 
-        val evaluation = correlatePrivacyEvaluationForInternalUse(
-            lifecycle = "Subject CREATE privacy",
-            subjects = listOf(first, equalButDistinct),
-            decisions = listOf(PrivacyDecision.Allow, PrivacyDecision.Deny("hidden")),
-            unresolvedReason = "no create rule allowed access",
-        )
+        val evaluation = evaluator.evaluate(context, listOf(first, equalButDistinct))
 
         assertEquals(2, evaluation.size)
         assertSame(first, evaluation.allowedSubjects().single())
@@ -33,35 +33,15 @@ class PrivacyEvaluationTest {
     }
 
     @Test
-    fun `correlation finalizes unresolved privacy as a denial`() {
+    fun `evaluation finalizes unresolved privacy as a denial`() {
         val subject = Subject(1)
+        val evaluator = loadEvaluator("Subject", listOf(PrivacyRule<TestRuleClient, Subject> { _, _ -> PrivacyDecision.Continue }))
 
-        val evaluation = correlatePrivacyEvaluationForInternalUse(
-            lifecycle = "Subject UPDATE privacy",
-            subjects = listOf(subject),
-            decisions = listOf(PrivacyDecision.Continue),
-            unresolvedReason = "no update rule allowed access",
-        )
+        val evaluation = evaluator.evaluate(context, listOf(subject))
 
         val denied = evaluation.firstDeniedOrNull()
         assertIs<PrivacyOutcome.Denied<Subject>>(denied)
         assertSame(subject, denied.subject)
-        assertEquals("no update rule allowed access", denied.reason)
-    }
-
-    @Test
-    fun `correlation rejects a result count that does not match its subjects`() {
-        val exception = assertFailsWith<EntBatchRuleContractException> {
-            correlatePrivacyEvaluationForInternalUse(
-                lifecycle = "Subject DELETE privacy",
-                subjects = listOf(Subject(1), Subject(2)),
-                decisions = listOf(PrivacyDecision.Allow),
-                unresolvedReason = "no delete rule allowed access",
-            )
-        }
-
-        assertEquals("Subject DELETE privacy", exception.lifecycle)
-        assertEquals(2, exception.expectedSize)
-        assertEquals(1, exception.actualSize)
+        assertEquals("no load rule allowed access", denied.reason)
     }
 }

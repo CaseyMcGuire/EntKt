@@ -29,6 +29,36 @@ above it.
 
 ## Unreleased
 
+- **Alias DELETE rule inputs to the runtime `DeleteRuleInput`** (`runtime`, `codegen`)
+  `${Entity}DeleteRuleInput` is now a type alias for
+  `DeleteRuleInput<${Entity}, ${Entity}WriteCandidate>` instead of a generated
+  data class. Rules still read `item.entity` and `item.candidate`.
+  `${Entity}UpdateRuleInput` stays a generated class and implements the new
+  `UpdateRuleInput<${Entity}>` marker.
+  _Migration:_ regenerate code. Kotlin rules are unchanged; Java rules and class
+  literals must name `DeleteRuleInput` instead of the per-entity class.
+  Handwritten internal wiring should use `DeleteRuleInput` where it used
+  `DeleteRuleCandidate`, and return the UPDATE rule input from
+  `UpdateMutationAdapter.prepare` as the prepared state: the adapter and
+  `UpdateMutationOperation` replace their state type parameter with one bounded
+  by `UpdateRuleInput<Entity>`, and `PreparedUpdateState` is removed. The
+  UPDATE and DELETE operation factories no longer take a `ruleInput` conversion.
+
+- **Use operation-specific runtime privacy evaluators** (`runtime`, `codegen`)
+  `LoadPrivacyEvaluator`, `CreatePrivacyEvaluator`, `UpdatePrivacyEvaluator`, and
+  `DeletePrivacyEvaluator` accept only their operation's rules and settings.
+  UPDATE and DELETE decide whether CREATE rules participate.
+  `MutationPrivacyEvaluator`, `PrivacyDecisionEvaluator`, and the standalone
+  batch-evaluation and correlation functions are removed. Privacy rules and
+  policy DSL behavior are unchanged.
+  _Migration:_ internal integrations should construct the appropriate evaluator
+  with the entity name and rule lists, then call `evaluate`. Pass CREATE rules
+  and the derivation flag to UPDATE/DELETE instead of a fallback evaluator.
+  Custom mutation-operation wiring receives the evaluator directly. The
+  evaluators and `EntityRepository` use the rule lists they are given without
+  copying them, so pass lists that do not change afterwards; the resolved
+  configuration's lists already qualify. Regenerate code to update the bindings.
+
 - **Match mutation inputs to schema nullability** (`codegen`)
   Create/update draft properties and before-hook setters now reject `null` at
   compile time for non-nullable fields and required relationship IDs. Hook states

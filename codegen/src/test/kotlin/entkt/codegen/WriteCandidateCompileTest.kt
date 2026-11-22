@@ -21,16 +21,30 @@ class WriteCandidateCompileTest {
         override fun id() = EntId.int()
     }
 
+    private class UpdateRuleInput : EntSchema("update_rule_inputs", clientName = "updateRuleInputs") {
+        override fun id() = EntId.int()
+    }
+
+    private class DeleteRuleInput : EntSchema("delete_rule_inputs", clientName = "deleteRuleInputs") {
+        override fun id() = EntId.int()
+    }
+
     private fun mutationTypes(candidate: String): List<String> = listOf(
         "CreateMutationConverter<WidgetDraft, $candidate, Widget, BeforeCreate>",
         "CreateMutationOperation<EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
         "CreateManyMutationOperation<EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
-        "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, $candidate, BeforeUpdate>",
-        "UpdateMutationOperation<EntRuleClient, WidgetUpdateDraft, Widget, PendingEdges, WidgetState, $candidate, BeforeSave, BeforeUpdate>",
         "DeleteMutationConverter<Widget, $candidate>",
         "DeleteMutationOperation<EntRuleClient, Widget, $candidate>",
         "DeleteManyMutationOperation<EntRuleClient, Widget, $candidate>",
-        "DeleteRuleCandidate<Widget, $candidate>",
+        "DeleteRuleInput<Widget, $candidate>",
+    ) + updateRuleInputTypes(candidate = candidate)
+
+    private fun updateRuleInputTypes(
+        updateInput: String = "UpdateInput",
+        candidate: String = "WidgetCandidate",
+    ): List<String> = listOf(
+        "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, $candidate, BeforeUpdate, $updateInput>",
+        "UpdateMutationOperation<EntRuleClient, WidgetUpdateDraft, Widget, PendingEdges, $candidate, BeforeSave, BeforeUpdate, $updateInput>",
     )
 
     private fun compileTypes(types: List<String>): JvmCompilationResult = compileSources(
@@ -46,10 +60,11 @@ class WriteCandidateCompileTest {
                 import entkt.runtime.mutation.BeforeSaveHookState
                 import entkt.runtime.mutation.BeforeUpdateHookState
                 import entkt.runtime.mutation.CreateMutationDraft
+                import entkt.runtime.mutation.DeleteRuleInput
                 import entkt.runtime.mutation.PreparedCreate
-                import entkt.runtime.mutation.PreparedUpdateState
                 import entkt.runtime.mutation.UpdateMutationDraft
                 import entkt.runtime.mutation.UpdatePendingEdges
+                import entkt.runtime.mutation.UpdateRuleInput
                 import entkt.runtime.mutation.WriteCandidate
                 import entkt.runtime.mutation.execution.*
                 import entkt.runtime.rule.EntRuleClient
@@ -58,10 +73,11 @@ class WriteCandidateCompileTest {
                 data class Other(override val id: Int) : EntEntity.IntId
                 class WidgetDraft : CreateMutationDraft<Widget>
                 class WidgetUpdateDraft : UpdateMutationDraft<Widget>
-                class WidgetState : PreparedUpdateState<Widget>
                 class PendingEdges : UpdatePendingEdges<Widget>
                 class WidgetCandidate : WriteCandidate<Widget>
                 class OtherCandidate : WriteCandidate<Other>
+                class UpdateInput : UpdateRuleInput<Widget>
+                class OtherUpdateInput : UpdateRuleInput<Other>
                 class BeforeSave : BeforeSaveHookState<Widget>
                 class BeforeCreate : BeforeCreateHookState<Widget>
                 class BeforeUpdate : BeforeUpdateHookState<Widget>
@@ -77,8 +93,8 @@ class WriteCandidateCompileTest {
         val result = compileTypes(
             mutationTypes("WidgetCandidate") + listOf(
                 "PreparedCreate<WidgetCandidate>",
-                "PreparedUpdate<WidgetState, WidgetCandidate>",
-                "UpdatePreparation<WidgetState, WidgetCandidate>",
+                "PreparedUpdate<UpdateInput, WidgetCandidate>",
+                "UpdatePreparation<UpdateInput, WidgetCandidate>",
             ),
         )
 
@@ -96,8 +112,8 @@ class WriteCandidateCompileTest {
     fun `each mutation type rejects candidates that do not implement the marker`() {
         val types = mutationTypes("String") + listOf(
             "PreparedCreate<String>",
-            "PreparedUpdate<WidgetState, String>",
-            "UpdatePreparation<WidgetState, String>",
+            "PreparedUpdate<UpdateInput, String>",
+            "UpdatePreparation<UpdateInput, String>",
         )
         for (type in types) {
             assertCandidateBoundFailure(type)
@@ -118,10 +134,38 @@ class WriteCandidateCompileTest {
         )
     }
 
+    @Test
+    fun `update types reject rule inputs for a different entity`() {
+        for (type in updateRuleInputTypes(updateInput = "OtherUpdateInput")) {
+            assertUpdateRuleInputBoundFailure(type)
+        }
+    }
+
+    @Test
+    fun `update types reject rule inputs that do not implement the marker`() {
+        val unmarked = listOf("String", "DeleteRuleInput<Widget, WidgetCandidate>")
+        for (type in unmarked.flatMap { updateRuleInputTypes(updateInput = it) }) {
+            assertUpdateRuleInputBoundFailure(type)
+        }
+    }
+
+    private fun assertUpdateRuleInputBoundFailure(type: String) {
+        val result = compileTypes(listOf(type))
+
+        assertEquals(
+            KotlinCompilation.ExitCode.COMPILATION_ERROR,
+            result.exitCode,
+            "Expected $type to reject the rule input:\n${result.messages}",
+        )
+        assertTrue(
+            result.messages.contains("bound", ignoreCase = true) && result.messages.contains("UpdateRuleInput"),
+            "Expected an UpdateRuleInput bound diagnostic for $type:\n${result.messages}",
+        )
+    }
+
     private fun compileOperationFactory(
         factory: String,
         mappingEntity: String = "Widget",
-        ruleInputState: String = "WidgetState",
         updateAdapterType: String = "CombinedUpdateAdapter",
     ): JvmCompilationResult {
         val call = when (factory) {
@@ -134,7 +178,6 @@ class WriteCandidateCompileTest {
             "update" -> """
                 buildUpdateOperation(
                     entity, runtime, privacy, validation,
-                    ruleInput = { _: $ruleInputState -> Unit },
                     adapter = updateAdapter,
                     beforeSave = emptyList(), beforeUpdate = emptyList(), afterUpdate = emptyList(),
                 )
@@ -148,14 +191,12 @@ class WriteCandidateCompileTest {
             "delete" -> """
                 buildDeleteMutationOperation(
                     entity, deleteConverter, privacy, validation,
-                    ruleInput = { _, _ -> Unit },
                     beforeDelete = emptyList(), afterDelete = emptyList(),
                 )
             """.trimIndent()
             "deleteMany" -> """
                 buildDeleteManyMutationOperation(
                     entity, deleteConverter, privacy, validation,
-                    ruleInput = { _, _ -> Unit },
                     driver = driver, readExecutionHost = readHost,
                     beforeDelete = emptyList(), afterDelete = emptyList(),
                 )
@@ -194,8 +235,7 @@ class WriteCandidateCompileTest {
                     data class Widget(override val id: Int) : EntEntity.IntId
                     data class Other(override val id: Int) : EntEntity.IntId
                     class WidgetCandidate : WriteCandidate<Widget>
-                    class WidgetState : PreparedUpdateState<Widget>
-                    class OtherState : PreparedUpdateState<Other>
+                    class UpdateInput : UpdateRuleInput<Widget>
                     class WidgetCreateDraft : CreateMutationDraft<Widget>
                     class WidgetUpdateDraft : UpdateMutationDraft<Widget>
                     class PendingEdges : UpdatePendingEdges<Widget>
@@ -208,18 +248,20 @@ class WriteCandidateCompileTest {
                         CreateMutationHookStateConverter<WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>
 
                     abstract class CombinedUpdateAdapter :
-                        UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeUpdate>,
+                        UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetCandidate, BeforeUpdate, UpdateInput>,
                         UpdateMutationHookStateConverter<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>
 
                     fun bind(
                         entity: EntityDescriptor<$mappingEntity, *>,
                         privacy: ResolvedEntityPrivacyConfig<
                             Nothing, BatchPrivacyRule<EntRuleClient, WidgetCandidate>,
-                            BatchPrivacyRule<EntRuleClient, Unit>, BatchPrivacyRule<EntRuleClient, Unit>,
+                            BatchPrivacyRule<EntRuleClient, UpdateInput>,
+                            BatchPrivacyRule<EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,
                         >,
                         validation: ResolvedEntityValidationConfig<
                             BatchValidationRule<EntRuleClient, WidgetCandidate>,
-                            BatchValidationRule<EntRuleClient, Unit>, BatchValidationRule<EntRuleClient, Unit>,
+                            BatchValidationRule<EntRuleClient, UpdateInput>,
+                            BatchValidationRule<EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,
                         >,
                         runtime: MutationRuntime,
                         combinedCreateConverter: CombinedCreateConverter,
@@ -239,7 +281,7 @@ class WriteCandidateCompileTest {
     @Test
     fun `update factory requires one adapter implementing preparation and hook conversion`() {
         val incompleteAdapters = mapOf(
-            "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetState, WidgetCandidate, BeforeUpdate>" to
+            "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetCandidate, BeforeUpdate, UpdateInput>" to
                 "UpdateMutationHookStateConverter",
             "UpdateMutationHookStateConverter<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>" to
                 "UpdateMutationAdapter",
@@ -272,14 +314,6 @@ class WriteCandidateCompileTest {
     }
 
     @Test
-    fun `update operation factory rejects rule input conversion for another entity state`() {
-        val result = compileOperationFactory("update", ruleInputState = "OtherState")
-
-        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
-        assertTrue(result.messages.contains("type mismatch", ignoreCase = true), result.messages)
-    }
-
-    @Test
     fun `generated candidates implement the marker including id-only and colliding entity names`() {
         val schemas = listOf(Widget(), WriteCandidate())
         val registry = schemas.associateBy { it::class }
@@ -301,6 +335,45 @@ class WriteCandidateCompileTest {
 
                 fun widget(value: WidgetWriteCandidate): Candidate<Widget> = value
                 fun idOnly(value: WriteCandidateWriteCandidate): Candidate<WriteCandidate> = value
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+    }
+
+    @Test
+    fun `generated rule inputs match their runtime types including colliding entity names`() {
+        val schemas = listOf(Widget(), UpdateRuleInput(), DeleteRuleInput())
+        val registry = schemas.associateBy { it::class }
+        schemas.forEach { it.finalize(registry) }
+        val generated = EntGenerator("com.example.ent")
+            .generate(schemas.map { SchemaInput(it) })
+            .toCompileTestSources()
+        val result = compileSources(
+            generated + SourceFile.kotlin(
+                "GeneratedRuleInputBounds.kt",
+                """
+                package com.example.app
+
+                import com.example.ent.DeleteRuleInput
+                import com.example.ent.DeleteRuleInputDeleteRuleInput
+                import com.example.ent.DeleteRuleInputWriteCandidate
+                import com.example.ent.UpdateRuleInput
+                import com.example.ent.UpdateRuleInputUpdateRuleInput
+                import com.example.ent.Widget
+                import com.example.ent.WidgetDeleteRuleInput
+                import com.example.ent.WidgetUpdateRuleInput
+                import com.example.ent.WidgetWriteCandidate
+                import entkt.runtime.mutation.DeleteRuleInput as DeleteInput
+                import entkt.runtime.mutation.UpdateRuleInput as UpdateInput
+
+                fun update(value: WidgetUpdateRuleInput): UpdateInput<Widget> = value
+                fun delete(value: WidgetDeleteRuleInput): DeleteInput<Widget, WidgetWriteCandidate> = value
+                fun collidingUpdate(value: UpdateRuleInputUpdateRuleInput): UpdateInput<UpdateRuleInput> = value
+                fun collidingDelete(
+                    value: DeleteRuleInputDeleteRuleInput,
+                ): DeleteInput<DeleteRuleInput, DeleteRuleInputWriteCandidate> = value
                 """.trimIndent(),
             ),
         )

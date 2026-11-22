@@ -7,8 +7,9 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.hook.BatchActionHook
 import entkt.runtime.hook.runActionHooks
+import entkt.runtime.mutation.DeleteRuleInput
 import entkt.runtime.mutation.WriteCandidate
-import entkt.runtime.privacy.MutationPrivacyEvaluator
+import entkt.runtime.privacy.DeletePrivacyEvaluator
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntUnexpectedMutationException
@@ -23,9 +24,9 @@ class DeleteMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity<*>,
     private val entity: EntityDescriptor<Entity, *>,
     private val converter: DeleteMutationConverter<Entity, Candidate>,
     private val privacyEvaluator:
-        MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
+        DeletePrivacyEvaluator<RuleClient, Candidate, DeleteRuleInput<Entity, Candidate>>,
     private val validationEvaluator:
-        MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>>,
+        MutationValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
     private val beforeDelete: List<BatchActionHook<Entity>>,
     private val afterDelete: List<BatchActionHook<Entity>>,
 ) : MutationOperation<RuleClient, DeleteMutationInput, Boolean> {
@@ -70,13 +71,13 @@ class DeleteMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity<*>,
         viewerContext: ViewerContext,
         target: Entity,
     ): Boolean {
-        val candidate = DeleteRuleCandidate(target, converter.toCandidate(target))
+        val ruleInput = DeleteRuleInput(target, converter.toCandidate(target))
         evaluateDeleteRules(
             execution = execution,
             ruleClient = ruleClient,
             entityName = entity.entityName,
             viewerContext = viewerContext,
-            candidates = listOf(candidate),
+            ruleInputs = listOf(ruleInput),
             privacyEvaluator = privacyEvaluator,
             validationEvaluator = validationEvaluator,
         )

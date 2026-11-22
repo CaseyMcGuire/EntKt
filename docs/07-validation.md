@@ -408,9 +408,12 @@ and `FieldPatch.Unset` as "not in this update".
 ### DeleteRuleInput
 
 ```kotlin
-data class PostDeleteRuleInput(
-    val entity: Post,
-    val candidate: PostWriteCandidate,
+typealias PostDeleteRuleInput = DeleteRuleInput<Post, PostWriteCandidate>
+
+// entkt.runtime.mutation
+data class DeleteRuleInput<Entity, Candidate>(
+    val entity: Entity,
+    val candidate: Candidate,
 )
 ```
 

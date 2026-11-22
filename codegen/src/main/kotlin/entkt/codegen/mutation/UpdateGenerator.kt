@@ -82,19 +82,18 @@ internal class UpdateGenerator(
         val entityClass = ClassName(packageName, schemaName)
         val draftClass = ClassName(packageName, className)
         val adapterClass = ClassName(packageName, "${schemaName}UpdateAdapter")
-        val preparedStateClass = adapterClass.nestedClass("PreparedState")
         val beforeSaveStateClass = ClassName(packageName, "${schemaName}BeforeSaveState")
         val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
+        val ruleInputClass = ClassName(packageName, "${schemaName}UpdateRuleInput")
         val clientScopeClass = ClassName(packageName, "EntClientScope")
 
         // Helper-eligible link-table M2M edges. Each gets a nested mutator
         // class on the update draft. Before-update hook states expose the
         // captured operations through their read-only pendingEdges property.
         val helperEligibleEdges = helperEligibleM2MEdges(schema, schemaNames)
-        val saveArtifacts = UpdateSaveEmitter(
+        val saveFunctions = UpdateSaveEmitter(
             packageName = packageName,
             schemaName = schemaName,
-            preparedStateClass = preparedStateClass,
             allFields = allFields,
             edgeFks = edgeFks,
             allEdgeFks = allEdgeFks,
@@ -159,9 +158,9 @@ internal class UpdateGenerator(
                     draftClass,
                     entityClass,
                     pendingEdgeOpsClass,
-                    preparedStateClass,
                     ClassName(packageName, "${schemaName}WriteCandidate"),
                     beforeUpdateStateClass,
+                    ruleInputClass,
                 ),
             )
             primaryConstructor {
@@ -192,8 +191,7 @@ internal class UpdateGenerator(
             }
             addFunction(buildToBeforeUpdateStateFunction(schemaName, mutableFields, edgeFks))
             addFunction(buildBuildEdgeChangesFunction(schemaName, helperEligibleEdges))
-            saveArtifacts.functions.forEach(::addFunction)
-            addType(saveArtifacts.preparedStateType)
+            saveFunctions.forEach(::addFunction)
         }
 
         return kotlinFile(packageName, className) {

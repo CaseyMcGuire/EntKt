@@ -10,7 +10,6 @@ import entkt.runtime.hook.ActionHook
 import entkt.runtime.hook.TransformingHook
 import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.BeforeUpdateHookState
-import entkt.runtime.mutation.PreparedUpdateState
 import entkt.runtime.mutation.RelationshipLocking
 import entkt.runtime.mutation.RelationshipLockKey
 import entkt.runtime.mutation.TransactionRequiredException
@@ -19,6 +18,7 @@ import entkt.runtime.mutation.UpdateConsistency
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.UpdateMutationRequest
 import entkt.runtime.mutation.UpdatePendingEdges
+import entkt.runtime.mutation.UpdateRuleInput
 import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyDecision
@@ -61,7 +61,7 @@ class UpdateMutationOperationTest {
 
     private data class Candidate(val name: String) : WriteCandidate<Widget>
 
-    private data class State(val name: String) : PreparedUpdateState<Widget>
+    private data class State(val name: String) : UpdateRuleInput<Widget>
 
     private data class PendingEdges(val description: String) : UpdatePendingEdges<Widget>
 
@@ -238,7 +238,7 @@ class UpdateMutationOperationTest {
         )
 
         private val adapter = object :
-            UpdateMutationAdapter<Draft, Widget, PendingEdges, State, Candidate, BeforeUpdateState>,
+            UpdateMutationAdapter<Draft, Widget, PendingEdges, Candidate, BeforeUpdateState, State>,
             UpdateMutationHookStateConverter<Draft, Widget, PendingEdges, BeforeSaveState, BeforeUpdateState> {
             override fun toBeforeSaveState(draft: Draft): BeforeSaveState =
                 BeforeSaveState("before-save:before")
@@ -316,7 +316,6 @@ class UpdateMutationOperationTest {
             mutationRuntime = mutationRuntime,
             privacy = privacy,
             validation = validation,
-            ruleInput = { state: State -> state },
             adapter = adapter,
             beforeSave = listOf(
                 TransformingHook { value: BeforeSaveState ->

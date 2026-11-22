@@ -13,14 +13,15 @@ import entkt.runtime.mutation.BeforeCreateHookState
 import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.BeforeUpdateHookState
 import entkt.runtime.mutation.CreateMutationDraft
-import entkt.runtime.mutation.PreparedUpdateState
+import entkt.runtime.mutation.DeleteRuleInput
 import entkt.runtime.mutation.UpdateMutationDraft
 import entkt.runtime.mutation.UpdatePendingEdges
+import entkt.runtime.mutation.UpdateRuleInput
 import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacy.BatchPrivacyRule
-import entkt.runtime.privacy.MutationPrivacyEvaluator
-import entkt.runtime.privacy.PrivacyDecisionEvaluator
-import entkt.runtime.privacy.PrivacyOperation
+import entkt.runtime.privacy.CreatePrivacyEvaluator
+import entkt.runtime.privacy.DeletePrivacyEvaluator
+import entkt.runtime.privacy.UpdatePrivacyEvaluator
 import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
@@ -89,9 +90,8 @@ fun <
     beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
     afterCreate: List<BatchActionHook<Entity>>,
 ): CreateManyMutationOperation<RuleClient, Draft, Candidate, Entity, BeforeSaveState, BeforeCreateState> {
-    val privacyEvaluator = MutationPrivacyEvaluator(
-        entity = entity,
-        operation = PrivacyOperation.CREATE,
+    val privacyEvaluator = CreatePrivacyEvaluator(
+        entityName = entity.entityName,
         rules = privacy.createRules,
     )
 
@@ -120,11 +120,10 @@ fun <
     Draft : UpdateMutationDraft<Entity>,
     Entity : EntEntity<*>,
     PendingEdges : UpdatePendingEdges<Entity>,
-    State : PreparedUpdateState<Entity>,
     Candidate : WriteCandidate<Entity>,
     BeforeSaveState : BeforeSaveHookState<Entity>,
     BeforeUpdateState : BeforeUpdateHookState<Entity>,
-    RuleInput,
+    RuleInput : UpdateRuleInput<Entity>,
     Adapter,
 > buildUpdateOperation(
     entity: EntityMapping<Entity>,
@@ -135,32 +134,25 @@ fun <
     validation: ResolvedEntityValidationConfig<
         BatchValidationRule<RuleClient, Candidate>, BatchValidationRule<RuleClient, RuleInput>, *,
     >,
-    ruleInput: (State) -> RuleInput,
     adapter: Adapter,
     beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
     beforeUpdate: List<BatchTransformingHook<BeforeUpdateState>>,
     afterUpdate: List<BatchActionHook<Entity>>,
 ): MutationOperation<RuleClient, UpdateMutationInput<Draft>, Entity>
-    where Adapter : UpdateMutationAdapter<Draft, Entity, PendingEdges, State, Candidate, BeforeUpdateState>,
+    where Adapter : UpdateMutationAdapter<Draft, Entity, PendingEdges, Candidate, BeforeUpdateState, RuleInput>,
           Adapter : UpdateMutationHookStateConverter<Draft, Entity, PendingEdges, BeforeSaveState, BeforeUpdateState> {
-    val updateRuleInput = { prepared: PreparedUpdate<State, Candidate> -> ruleInput(prepared.state) }
-
-    val privacyEvaluator = MutationPrivacyEvaluator(
-        entity = entity,
-        operation = PrivacyOperation.UPDATE,
-        primary = PrivacyDecisionEvaluator(privacy.updateRules, updateRuleInput),
-        fallback = if (privacy.updateDerivesFromCreate) {
-            PrivacyDecisionEvaluator(privacy.createRules, PreparedUpdate<State, Candidate>::candidate)
-        } else {
-            null
-        },
+    val privacyEvaluator = UpdatePrivacyEvaluator(
+        entityName = entity.entityName,
+        rules = privacy.updateRules,
+        createRules = privacy.createRules,
+        derivesFromCreate = privacy.updateDerivesFromCreate,
     )
 
     val validationEvaluator = MutationValidationEvaluator(
         lifecycle = "${entity.entityName} UPDATE validation",
-        primary = ValidationDecisionEvaluator(validation.updateRules, updateRuleInput),
+        primary = ValidationDecisionEvaluator(validation.updateRules, PreparedUpdate<RuleInput, Candidate>::state),
         additional = if (validation.updateDerivesFromCreate) {
-            ValidationDecisionEvaluator(validation.createRules, PreparedUpdate<State, Candidate>::candidate)
+            ValidationDecisionEvaluator(validation.createRules, PreparedUpdate<RuleInput, Candidate>::candidate)
         } else {
             null
         },
@@ -189,20 +181,25 @@ fun <
     RuleClient : EntRuleClient,
     Entity : EntEntity<*>,
     Candidate : WriteCandidate<Entity>,
-    RuleInput,
 > buildDeleteMutationOperation(
     entity: EntityDescriptor<Entity, *>,
     converter: DeleteMutationConverter<Entity, Candidate>,
     privacy: ResolvedEntityPrivacyConfig<
-        *, BatchPrivacyRule<RuleClient, Candidate>, *, BatchPrivacyRule<RuleClient, RuleInput>,
+        *, BatchPrivacyRule<RuleClient, Candidate>, *, BatchPrivacyRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
-    validation: ResolvedEntityValidationConfig<*, *, BatchValidationRule<RuleClient, RuleInput>>,
-    ruleInput: (Entity, Candidate) -> RuleInput,
+    validation: ResolvedEntityValidationConfig<
+        *, *, BatchValidationRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
+    >,
     beforeDelete: List<BatchActionHook<Entity>>,
     afterDelete: List<BatchActionHook<Entity>>,
 ): DeleteMutationOperation<RuleClient, Entity, Candidate> {
-    val privacyEvaluator = buildDeletePrivacyEvaluator(entity, privacy, ruleInput)
-    val validationEvaluator = buildDeleteValidationEvaluator(entity, validation, ruleInput)
+    val privacyEvaluator = DeletePrivacyEvaluator(
+        entityName = entity.entityName,
+        rules = privacy.deleteRules,
+        createRules = privacy.createRules,
+        derivesFromCreate = privacy.deleteDerivesFromCreate,
+    )
+    val validationEvaluator = buildDeleteValidationEvaluator(entity, validation)
 
     return DeleteMutationOperation(
         entity = entity,
@@ -220,22 +217,27 @@ fun <
     RuleClient : EntRuleClient,
     Entity : EntEntity<*>,
     Candidate : WriteCandidate<Entity>,
-    RuleInput,
 > buildDeleteManyMutationOperation(
     entity: EntityDescriptor<Entity, *>,
     converter: DeleteMutationConverter<Entity, Candidate>,
     privacy: ResolvedEntityPrivacyConfig<
-        *, BatchPrivacyRule<RuleClient, Candidate>, *, BatchPrivacyRule<RuleClient, RuleInput>,
+        *, BatchPrivacyRule<RuleClient, Candidate>, *, BatchPrivacyRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
-    validation: ResolvedEntityValidationConfig<*, *, BatchValidationRule<RuleClient, RuleInput>>,
-    ruleInput: (Entity, Candidate) -> RuleInput,
+    validation: ResolvedEntityValidationConfig<
+        *, *, BatchValidationRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
+    >,
     driver: DatabaseDriver,
     readExecutionHost: ReadQueryExecutionHost,
     beforeDelete: List<BatchActionHook<Entity>>,
     afterDelete: List<BatchActionHook<Entity>>,
 ): DeleteManyMutationOperation<RuleClient, Entity, Candidate> {
-    val privacyEvaluator = buildDeletePrivacyEvaluator(entity, privacy, ruleInput)
-    val validationEvaluator = buildDeleteValidationEvaluator(entity, validation, ruleInput)
+    val privacyEvaluator = DeletePrivacyEvaluator(
+        entityName = entity.entityName,
+        rules = privacy.deleteRules,
+        createRules = privacy.createRules,
+        derivesFromCreate = privacy.deleteDerivesFromCreate,
+    )
+    val validationEvaluator = buildDeleteValidationEvaluator(entity, validation)
 
     return DeleteManyMutationOperation(
         entity = entity,
@@ -252,49 +254,12 @@ private fun <
     RuleClient : EntRuleClient,
     Entity : EntEntity<*>,
     Candidate : WriteCandidate<Entity>,
-    RuleInput,
-> buildDeletePrivacyEvaluator(
-    entity: EntityMapping<Entity>,
-    privacy: ResolvedEntityPrivacyConfig<
-        *, BatchPrivacyRule<RuleClient, Candidate>, *, BatchPrivacyRule<RuleClient, RuleInput>,
-    >,
-    ruleInput: (Entity, Candidate) -> RuleInput,
-): MutationPrivacyEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>> {
-    val deleteRuleInput = { state: DeleteRuleCandidate<Entity, Candidate> ->
-        ruleInput(state.entity, state.candidate)
-    }
-
-    return MutationPrivacyEvaluator(
-        entity = entity,
-        operation = PrivacyOperation.DELETE,
-        primary = PrivacyDecisionEvaluator(privacy.deleteRules, deleteRuleInput),
-        fallback = if (privacy.deleteDerivesFromCreate) {
-            PrivacyDecisionEvaluator(
-                rules = privacy.createRules,
-                freshItem = { state: DeleteRuleCandidate<Entity, Candidate> -> state.candidate },
-            )
-        } else {
-            null
-        },
-    )
-}
-
-private fun <
-    RuleClient : EntRuleClient,
-    Entity : EntEntity<*>,
-    Candidate : WriteCandidate<Entity>,
-    RuleInput,
 > buildDeleteValidationEvaluator(
     entity: EntityMapping<Entity>,
-    validation: ResolvedEntityValidationConfig<*, *, BatchValidationRule<RuleClient, RuleInput>>,
-    ruleInput: (Entity, Candidate) -> RuleInput,
-): MutationValidationEvaluator<RuleClient, DeleteRuleCandidate<Entity, Candidate>> {
-    val deleteRuleInput = { state: DeleteRuleCandidate<Entity, Candidate> ->
-        ruleInput(state.entity, state.candidate)
-    }
-
-    return MutationValidationEvaluator(
-        lifecycle = "${entity.entityName} DELETE validation",
-        primary = ValidationDecisionEvaluator(validation.deleteRules, deleteRuleInput),
-    )
-}
+    validation: ResolvedEntityValidationConfig<
+        *, *, BatchValidationRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
+    >,
+): MutationValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>> = MutationValidationEvaluator(
+    lifecycle = "${entity.entityName} DELETE validation",
+    rules = validation.deleteRules,
+)

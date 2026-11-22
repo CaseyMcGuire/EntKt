@@ -160,15 +160,13 @@ class JsonCodegenTest {
 
         val updateBinding = repo.substringAfter("updateOperation = buildUpdateOperation(")
             .substringBefore("deleteOperation = buildDeleteMutationOperation(")
-        assertFalse("state.before.copy(" in updateBinding, updateBinding)
-        assertFalse("state.candidate.copy(" in updateBinding, updateBinding)
-        assertFalse("state.requestedPatch.copy(" in updateBinding, updateBinding)
-        assertFalse("state.effectivePatch.copy(" in updateBinding, updateBinding)
-        assertTrue(
-            "JsonArticleUpdateRuleInput( state.before, state.requestedPatch, state.effectivePatch, state.candidate, state.edgeChanges, )" in updateBinding,
-            updateBinding,
-        )
+        assertFalse("ruleInput =" in updateBinding, updateBinding)
         assertFalse("candidate =" in updateBinding, updateBinding)
+
+        assertTrue(
+            "state = JsonArticleUpdateRuleInput( before = before, requestedPatch = requestedPatch, effectivePatch = effectivePatch, candidate = candidate, edgeChanges = edgeChanges, )" in update,
+            update,
+        )
     }
 
     // ── Generic JSON types ─────────────────────────────────────────

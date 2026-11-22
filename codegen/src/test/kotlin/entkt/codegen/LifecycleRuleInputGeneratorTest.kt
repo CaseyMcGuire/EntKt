@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import com.squareup.kotlinpoet.TypeAliasSpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.mutation.LifecycleRuleInputGenerator
 import kotlin.test.Test
@@ -9,24 +10,26 @@ class LifecycleRuleInputGeneratorTest {
     private val generator = LifecycleRuleInputGenerator("com.example.ent")
 
     @Test
-    fun `generates only the compound update and delete inputs in same-named files`() {
+    fun `generates only the update input class and the delete input alias in same-named files`() {
         val files = generator.generate("User")
 
         assertEquals(
             listOf("UserUpdateRuleInput", "UserDeleteRuleInput"),
             files.map { it.name },
         )
-        files.forEach { file ->
-            assertEquals(
-                listOf(file.name),
-                file.members.filterIsInstance<TypeSpec>().mapNotNull { it.name },
-            )
-        }
+        val (update, delete) = files
+        assertEquals(listOf("UserUpdateRuleInput"), update.members.map { (it as TypeSpec).name })
+        assertEquals(listOf("UserDeleteRuleInput"), delete.members.map { (it as TypeAliasSpec).name })
     }
 
     @Test
     fun `create rules need no generated wrapper`() {
         assert(generator.generate("User").none { it.name == "UserCreateRuleInput" })
+    }
+
+    @Test
+    fun `update input implements the rule input marker for its entity`() {
+        assert(output("UserUpdateRuleInput").contains(") : UpdateRuleInput<User>"))
     }
 
     @Test
@@ -42,12 +45,12 @@ class LifecycleRuleInputGeneratorTest {
     }
 
     @Test
-    fun `delete input contains the existing entity and normalized candidate`() {
+    fun `delete input aliases the runtime pair of existing entity and normalized candidate`() {
         val output = output("UserDeleteRuleInput")
-        val constructor = constructorOf(output, "UserDeleteRuleInput")
 
-        assert(constructor.contains("val entity: User"))
-        assert(constructor.contains("val candidate: UserWriteCandidate"))
+        assert(output.contains("typealias UserDeleteRuleInput = DeleteRuleInput<User, UserWriteCandidate>")) { output }
+        assert(output.contains("import entkt.runtime.mutation.DeleteRuleInput")) { output }
+        assert(!output.contains("class ")) { output }
     }
 
     private fun output(fileName: String): String =

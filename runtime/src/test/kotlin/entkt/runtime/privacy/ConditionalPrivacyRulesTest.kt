@@ -88,8 +88,8 @@ class ConditionalPrivacyRulesTest {
             },
         )
         val items = listOf(-2, 0, 1)
-        val decisions = evaluateBatchPrivacyRulesForInternalUse(
-            lifecycle = "test privacy",
+        val decisions = evaluateLoadDecisions(
+            entityName = "test",
             items = items,
             rules = rules,
             context = context,
@@ -97,25 +97,16 @@ class ConditionalPrivacyRulesTest {
         )
 
         assertEquals(
-            listOf(PrivacyDecision.Deny("negative"), PrivacyDecision.Allow, PrivacyDecision.Continue),
+            listOf(PrivacyDecision.Deny("negative"), PrivacyDecision.Allow, PrivacyDecision.Deny("no load rule allowed access")),
             decisions,
         )
         assertEquals(listOf(0, 1), reachedAllow)
-
-        val evaluation = correlatePrivacyEvaluationForInternalUse(
-            lifecycle = "test privacy",
-            subjects = items,
-            decisions = decisions,
-            unresolvedReason = "no rule allowed access",
-        )
-        assertEquals(listOf(0), evaluation.allowedSubjects())
-        assertEquals(listOf("negative", "no rule allowed access"), evaluation.deniedOutcomes().map { it.reason })
     }
 
     @Test
     fun `an earlier allow skips a later denial`() {
-        val decisions = evaluateBatchPrivacyRulesForInternalUse(
-            lifecycle = "test privacy",
+        val decisions = evaluateLoadDecisions(
+            entityName = "test",
             items = listOf(7),
             rules = listOf(
                 allowIf { _, _ -> true },

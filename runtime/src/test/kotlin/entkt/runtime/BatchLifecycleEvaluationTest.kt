@@ -10,7 +10,7 @@ import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.privacy.evaluateBatchPrivacyRulesForInternalUse
+import entkt.runtime.privacy.evaluateLoadDecisions
 import entkt.runtime.result.EntBatchRuleContractException
 import entkt.runtime.rule.TestRuleClient
 import entkt.runtime.validation.ValidationDecision
@@ -50,8 +50,8 @@ class BatchLifecycleEvaluationTest {
             },
         )
 
-        val decisions = evaluateBatchPrivacyRulesForInternalUse(
-            lifecycle = "Widget LOAD privacy",
+        val decisions = evaluateLoadDecisions(
+            entityName = "Widget",
             items = listOf(1, 2, 3, 4),
             rules = rules,
             context = viewerContext,
@@ -88,8 +88,8 @@ class BatchLifecycleEvaluationTest {
             },
         )
 
-        evaluateBatchPrivacyRulesForInternalUse(
-            "Widget LOAD privacy",
+        evaluateLoadDecisions(
+            "Widget",
             listOf(Unit),
             rules,
             viewerContext,
@@ -103,8 +103,8 @@ class BatchLifecycleEvaluationTest {
     @Test
     fun `privacy evaluation correlates duplicate values by position and skips later rules once resolved`() {
         var laterCalls = 0
-        val decisions = evaluateBatchPrivacyRulesForInternalUse(
-            lifecycle = "Widget LOAD privacy",
+        val decisions = evaluateLoadDecisions(
+            entityName = "Widget",
             items = listOf(7, 7),
             rules = listOf(
                 batchPrivacyRule<TestRuleClient, Int> { _, batch ->
@@ -128,8 +128,8 @@ class BatchLifecycleEvaluationTest {
     @Test
     fun `privacy decideEachIndexed uses the current active batch index`() {
         val laterBatches = mutableListOf<List<String>>()
-        val decisions = evaluateBatchPrivacyRulesForInternalUse(
-            lifecycle = "Widget LOAD privacy",
+        val decisions = evaluateLoadDecisions(
+            entityName = "Widget",
             items = listOf("same", "resolved", "same"),
             rules = listOf(
                 batchPrivacyRule<TestRuleClient, String> { _, batch ->
@@ -217,11 +217,11 @@ class BatchLifecycleEvaluationTest {
     }
 
     @Test
-    fun `no rules preserve one unresolved result slot per item`() {
+    fun `no rules deny privacy and leave validation empty for each item`() {
         assertEquals(
-            listOf(PrivacyDecision.Continue, PrivacyDecision.Continue),
-            evaluateBatchPrivacyRulesForInternalUse<Int, TestRuleClient, Int>(
-                "Widget LOAD privacy",
+            listOf(PrivacyDecision.Deny("no load rule allowed access"), PrivacyDecision.Deny("no load rule allowed access")),
+            evaluateLoadDecisions<Int, TestRuleClient, Int>(
+                "Widget",
                 listOf(1, 2),
                 emptyList(),
                 viewerContext,
@@ -256,8 +256,8 @@ class BatchLifecycleEvaluationTest {
 
         assertEquals(
             emptyList(),
-            evaluateBatchPrivacyRulesForInternalUse(
-                "privacy",
+            evaluateLoadDecisions(
+                "test",
                 emptyList<Int>(),
                 listOf(privacy),
                 viewerContext,
@@ -290,15 +290,15 @@ class BatchLifecycleEvaluationTest {
         val privacy = batchPrivacyRule<TestRuleClient, Int> { context, batch ->
             privacyDelegate.runBatch(context, batch).mapDecisions { it }
         }
-        evaluateBatchPrivacyRulesForInternalUse(
-            "Widget LOAD privacy",
+        evaluateLoadDecisions(
+            "Widget",
             listOf(1),
             listOf(privacy),
             viewerContext,
         ) { it }
         val privacyException = assertFailsWith<EntBatchRuleContractException> {
-            evaluateBatchPrivacyRulesForInternalUse(
-                "Widget LOAD privacy",
+            evaluateLoadDecisions(
+                "Widget",
                 listOf(2),
                 listOf(privacy),
                 viewerContext,
@@ -332,8 +332,8 @@ class BatchLifecycleEvaluationTest {
     @Test
     fun `privacy and validation evaluators reject null Java decisions`() {
         val privacyException = assertFailsWith<EntBatchRuleContractException> {
-            evaluateBatchPrivacyRulesForInternalUse(
-                "Widget LOAD privacy",
+            evaluateLoadDecisions(
+                "Widget",
                 listOf("widget"),
                 listOf(BatchLifecycleJavaCompatibility.NULL_PRIVACY_DECISION_BATCH),
                 BatchLifecycleJavaCompatibility.VIEWER_CONTEXT,
@@ -359,8 +359,8 @@ class BatchLifecycleEvaluationTest {
     @Test
     fun `privacy and validation evaluators reject null Java decision results`() {
         val privacyException = assertFailsWith<EntBatchRuleContractException> {
-            evaluateBatchPrivacyRulesForInternalUse(
-                "Widget LOAD privacy",
+            evaluateLoadDecisions(
+                "Widget",
                 listOf("widget"),
                 listOf(BatchLifecycleJavaCompatibility.NULL_PRIVACY_RESULT_BATCH),
                 BatchLifecycleJavaCompatibility.VIEWER_CONTEXT,
@@ -394,8 +394,8 @@ class BatchLifecycleEvaluationTest {
         val failure = IllegalStateException("rule failed")
         var laterCalls = 0
         val thrown = assertFailsWith<IllegalStateException> {
-            evaluateBatchPrivacyRulesForInternalUse(
-                lifecycle = "Widget LOAD privacy",
+            evaluateLoadDecisions(
+                entityName = "Widget",
                 items = listOf(1),
                 rules = listOf(
                     batchPrivacyRule<TestRuleClient, Int> { _, _ -> throw failure },
@@ -436,7 +436,7 @@ class BatchLifecycleEvaluationTest {
             }
         }
 
-        evaluateBatchPrivacyRulesForInternalUse(
+        evaluateLoadDecisions(
             "privacy",
             listOf(1),
             listOf(privacy),
