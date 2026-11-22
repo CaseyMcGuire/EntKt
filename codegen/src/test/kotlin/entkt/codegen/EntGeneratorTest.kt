@@ -154,7 +154,7 @@ class EntGeneratorTest {
     }
 
     @Test
-    fun `generated files only document rule input ownership when schemas have no comments`() {
+    fun `generated files only document rule inputs and required creation when schemas have no comments`() {
         val car = Car()
         val user = User()
         finalize(car, user)
@@ -166,11 +166,11 @@ class EntGeneratorTest {
 
         assertEquals(
             setOf(
-                "CarPrivacy", "CarValidation", "CarUpdateRuleInput", "CarDeleteRuleInput",
-                "UserPrivacy", "UserValidation", "UserUpdateRuleInput", "UserDeleteRuleInput",
+                "CarRepo", "CarPrivacy", "CarValidation", "CarUpdateRuleInput", "CarDeleteRuleInput",
+                "UserRepo", "UserPrivacy", "UserValidation", "UserUpdateRuleInput", "UserDeleteRuleInput",
             ),
             commentedFiles.toSet(),
-            "Only rule input ownership contracts should add generated documentation",
+            "Only rule input ownership and required-parameter creation should add generated documentation",
         )
     }
 

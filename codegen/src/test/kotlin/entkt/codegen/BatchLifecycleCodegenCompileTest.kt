@@ -303,6 +303,7 @@ class BatchLifecycleCodegenCompileTest {
             import entkt.runtime.result.EntBatchRuleContractException
             import entkt.runtime.result.EntPrivacyDeniedException
             import entkt.runtime.result.LoadDenialOrigin
+            import entkt.runtime.result.ReadCollectionResult
             import entkt.runtime.result.ReadResult
 
             object BatchLifecycleRuntimeProbe {
@@ -363,12 +364,15 @@ class BatchLifecycleCodegenCompileTest {
                             })
                         }
                     }.widgets.query().all(viewerContext)
-                    val mixedFailure = mixedResult as? ReadResult.Failed
-                        ?: error("expected mixed ReadResult.Failed, got ${'$'}mixedResult")
-                    val mixedException = mixedFailure.exception as? EntPrivacyDeniedException
-                        ?: error("expected EntPrivacyDeniedException, got ${'$'}{mixedFailure.exception}")
-                    check(mixedException.origin == LoadDenialOrigin.Root)
-                    val mixedDenials = mixedException.denials
+                    val mixedEntries = (mixedResult as? ReadCollectionResult.Completed)?.entries
+                        ?: error("expected mixed ReadCollectionResult.Completed, got ${'$'}mixedResult")
+                    check(mixedEntries.map { (it as? ReadResult.Success)?.value?.id } == listOf(30, null, 40, null))
+                    val mixedDenials = mixedEntries.filterIsInstance<ReadResult.Failed>().map { entry ->
+                        val exception = entry.exception as? EntPrivacyDeniedException
+                            ?: error("expected EntPrivacyDeniedException, got ${'$'}{entry.exception}")
+                        check(exception.origin == LoadDenialOrigin.Root)
+                        exception.denials.single()
+                    }
                     check(mixedDenials.map { it.entityType } == listOf("Widget", "Widget"))
                     check(
                         mixedDenials.map { Triple(it.entityKey.field, it.entityKey.value, it.reason) } ==
@@ -467,8 +471,8 @@ class BatchLifecycleCodegenCompileTest {
                     }
                     foreignClient.widgets.query().all(viewerContext).getOrThrow()
                     val foreign = foreignClient.widgets.query().all(viewerContext)
-                    val failure = foreign as? ReadResult.Failed
-                        ?: error("expected ReadResult.Failed, got ${'$'}foreign")
+                    val failure = foreign as? ReadCollectionResult.Failed
+                        ?: error("expected ReadCollectionResult.Failed, got ${'$'}foreign")
                     val contract = failure.exception as? EntBatchRuleContractException
                         ?: error("expected EntBatchRuleContractException, got ${'$'}{failure.exception}")
                     check(contract.foreignBatchResult)

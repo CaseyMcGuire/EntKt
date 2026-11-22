@@ -86,7 +86,8 @@ class JsonCodegenTest {
         assertContains(entity, "kotlinxSerializer = ListSerializer(Meta.serializer())")
         for (draft in listOf("JsonMixinArticleCreateDraft", "JsonMixinArticleUpdateDraft")) {
             assertContains(generated.getValue(draft), "input: Meta?")
-            assertContains(generated.getValue(draft), "items: List<Meta>?")
+            assertContains(generated.getValue(draft), "var items: List<Meta> ")
+            assertContains(generated.getValue(draft), "_itemsStaging: List<Meta>? = null")
         }
     }
 
@@ -226,7 +227,7 @@ class JsonCodegenTest {
         assertTrue("rects = _entktPreparedRects" in create, create)
         assertFalse("copyJsonValue(JsonBoard.TABLE, \"rects\", rects) as List<Meta>" in create, create)
         val state = genGeneric().getValue("JsonBoardBeforeCreateState")
-        assertTrue("rects: FieldPatch<List<Meta>?>" in state, state)
+        assertTrue("rects: FieldPatch<List<Meta>>" in state, state)
     }
 
     @Test
