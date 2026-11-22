@@ -25,11 +25,11 @@ import entkt.runtime.privacy.UpdatePrivacyEvaluator
 import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
+import entkt.runtime.result.EntOperation
 import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.validation.BatchValidationRule
-import entkt.runtime.validation.MutationValidationEvaluator
 import entkt.runtime.validation.ResolvedEntityValidationConfig
-import entkt.runtime.validation.ValidationDecisionEvaluator
+import entkt.runtime.validation.ValidationEvaluator
 
 /** Assemble scalar and bulk CREATE from one converter serving both preparation and hook conversion. */
 @EntktInternal
@@ -95,8 +95,9 @@ fun <
         rules = privacy.createRules,
     )
 
-    val validationEvaluator = MutationValidationEvaluator(
-        lifecycle = "${entity.entityName} CREATE validation",
+    val validationEvaluator = ValidationEvaluator(
+        entityName = entity.entityName,
+        operation = EntOperation.CREATE,
         rules = validation.createRules,
     )
 
@@ -148,15 +149,21 @@ fun <
         derivesFromCreate = privacy.updateDerivesFromCreate,
     )
 
-    val validationEvaluator = MutationValidationEvaluator(
-        lifecycle = "${entity.entityName} UPDATE validation",
-        primary = ValidationDecisionEvaluator(validation.updateRules, PreparedUpdate<RuleInput, Candidate>::state),
-        additional = if (validation.updateDerivesFromCreate) {
-            ValidationDecisionEvaluator(validation.createRules, PreparedUpdate<RuleInput, Candidate>::candidate)
-        } else {
-            null
-        },
+    val validationEvaluator = ValidationEvaluator(
+        entityName = entity.entityName,
+        operation = EntOperation.UPDATE,
+        rules = validation.updateRules,
     )
+    // Derived CREATE rules validate an update, so their contract errors name UPDATE.
+    val derivedCreateValidationEvaluator = if (validation.updateDerivesFromCreate) {
+        ValidationEvaluator(
+            entityName = entity.entityName,
+            operation = EntOperation.UPDATE,
+            rules = validation.createRules,
+        )
+    } else {
+        null
+    }
 
     val hooks = UpdateMutationHooks(
         converter = adapter,
@@ -170,6 +177,7 @@ fun <
         mutationRuntime = mutationRuntime,
         privacyEvaluator = privacyEvaluator,
         validationEvaluator = validationEvaluator,
+        derivedCreateValidationEvaluator = derivedCreateValidationEvaluator,
         adapter = adapter,
         hooks = hooks,
     )
@@ -199,7 +207,11 @@ fun <
         createRules = privacy.createRules,
         derivesFromCreate = privacy.deleteDerivesFromCreate,
     )
-    val validationEvaluator = buildDeleteValidationEvaluator(entity, validation)
+    val validationEvaluator = ValidationEvaluator(
+        entityName = entity.entityName,
+        operation = EntOperation.DELETE,
+        rules = validation.deleteRules,
+    )
 
     return DeleteMutationOperation(
         entity = entity,
@@ -237,7 +249,11 @@ fun <
         createRules = privacy.createRules,
         derivesFromCreate = privacy.deleteDerivesFromCreate,
     )
-    val validationEvaluator = buildDeleteValidationEvaluator(entity, validation)
+    val validationEvaluator = ValidationEvaluator(
+        entityName = entity.entityName,
+        operation = EntOperation.DELETE,
+        rules = validation.deleteRules,
+    )
 
     return DeleteManyMutationOperation(
         entity = entity,
@@ -249,17 +265,3 @@ fun <
         afterDelete = afterDelete,
     )
 }
-
-private fun <
-    RuleClient : EntRuleClient,
-    Entity : EntEntity<*>,
-    Candidate : WriteCandidate<Entity>,
-> buildDeleteValidationEvaluator(
-    entity: EntityMapping<Entity>,
-    validation: ResolvedEntityValidationConfig<
-        *, *, BatchValidationRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
-    >,
-): MutationValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>> = MutationValidationEvaluator(
-    lifecycle = "${entity.entityName} DELETE validation",
-    rules = validation.deleteRules,
-)

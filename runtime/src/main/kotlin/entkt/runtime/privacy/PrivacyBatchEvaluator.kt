@@ -7,7 +7,6 @@ import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
 import entkt.runtime.rule.decisionsForInternalUse
-import entkt.runtime.rule.ruleBatchForInternalUse
 
 /** Reusable batch execution with fixed diagnostics and per-call evaluation state. */
 internal class PrivacyBatchEvaluator(
@@ -79,7 +78,7 @@ internal class PrivacyBatchEvaluator(
             if (activeIndexes.isEmpty()) {
                 return
             }
-            val batch = ruleBatchForInternalUse(activeIndexes.map { toRuleInput(subjects[it]) })
+            val batch = RuleBatch.from(activeIndexes.map { toRuleInput(subjects[it]) })
             val returned = checkedDecisions(batch, rule.runBatch(context, batch))
             val remainingIndexes = ArrayList<Int>(activeIndexes.size)
             activeIndexes.forEachIndexed { batchIndex, subjectIndex ->

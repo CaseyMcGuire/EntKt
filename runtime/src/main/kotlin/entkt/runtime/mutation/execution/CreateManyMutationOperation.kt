@@ -27,7 +27,7 @@ import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.toValidationViolation
 import entkt.runtime.rule.EntRuleClient
-import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ValidationEvaluator
 import entkt.runtime.validation.ValidationRuleContext
 import java.util.concurrent.CancellationException
 
@@ -52,7 +52,7 @@ class CreateManyMutationOperation<
     private val entity: EntityMapping<Entity>,
     private val converter: CreateMutationConverter<Draft, Candidate, Entity, BeforeCreateState>,
     private val privacyEvaluator: CreatePrivacyEvaluator<RuleClient, Candidate>,
-    private val validationEvaluator: MutationValidationEvaluator<RuleClient, Candidate>,
+    private val validationEvaluator: ValidationEvaluator<RuleClient, Candidate>,
     private val hookStateConverter:
         CreateMutationHookStateConverter<Draft, Entity, BeforeSaveState, BeforeCreateState>,
     private val beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
@@ -180,16 +180,17 @@ class CreateManyMutationOperation<
         states: List<BeforeCreateState>,
         entityName: String,
     ) {
-        states.firstNotNullOfOrNull { state ->
-            converter.requiredInputViolations(state).takeIf { it.isNotEmpty() }
-        }?.let { violations ->
-            attempt.reject(
-                EntValidationException(
-                    entityType = entityName,
-                    operation = EntOperation.CREATE,
-                    violations = violations,
-                ),
-            )
+        for (state in states) {
+            val violations = converter.requiredInputViolations(state)
+            if (violations.isNotEmpty()) {
+                attempt.reject(
+                    EntValidationException(
+                        entityType = entityName,
+                        operation = EntOperation.CREATE,
+                        violations = violations,
+                    ),
+                )
+            }
         }
     }
 
@@ -199,16 +200,17 @@ class CreateManyMutationOperation<
         entityName: String,
         prepared: List<PreparedCreate<Candidate>>,
     ) {
-        prepared.firstNotNullOfOrNull { create ->
-            converter.fieldViolations(create.candidate).takeIf { it.isNotEmpty() }
-        }?.let { violations ->
-            attempt.reject(
-                EntValidationException(
-                    entityType = entityName,
-                    operation = EntOperation.CREATE,
-                    violations = violations,
-                ),
-            )
+        for (create in prepared) {
+            val violations = converter.fieldViolations(create.candidate)
+            if (violations.isNotEmpty()) {
+                attempt.reject(
+                    EntValidationException(
+                        entityType = entityName,
+                        operation = EntOperation.CREATE,
+                        violations = violations,
+                    ),
+                )
+            }
         }
     }
 
@@ -219,21 +221,25 @@ class CreateManyMutationOperation<
         prepared: List<PreparedCreate<Candidate>>,
         context: PrivacyRuleContext<RuleClient>,
     ) {
-        val denial = privacyEvaluator.evaluate(
+        val candidates = prepared.map { create -> create.candidate }
+        val evaluation = privacyEvaluator.evaluate(
             context = context,
-            candidates = prepared.map { it.candidate },
-        ).firstDeniedOrNull()
-        denial?.let {
-            attempt.reject(
-                EntMutationPrivacyDeniedException(
-                    writeState = MutationWriteState.NotPersisted,
-                    entityType = entityName,
-                    operation = EntOperation.CREATE,
-                    entityKey = null,
-                    reason = it.reason,
-                ),
-            )
+            candidates = candidates,
+        )
+        val firstDenial = evaluation.firstDeniedOrNull()
+        if (firstDenial == null) {
+            return
         }
+
+        attempt.reject(
+            EntMutationPrivacyDeniedException(
+                writeState = MutationWriteState.NotPersisted,
+                entityType = entityName,
+                operation = EntOperation.CREATE,
+                entityKey = null,
+                reason = firstDenial.reason,
+            ),
+        )
     }
 
     /** Reject the entire create operation when any candidate is invalid. */
@@ -243,15 +249,20 @@ class CreateManyMutationOperation<
         entityName: String,
         prepared: List<PreparedCreate<Candidate>>,
     ) {
-        validationEvaluator.evaluate(context, prepared.map { it.candidate }).firstInvalidOrNull()?.let { invalid ->
-            attempt.reject(
-                EntValidationException(
-                    entityType = entityName,
-                    operation = EntOperation.CREATE,
-                    violations = invalid.violations.map { it.toValidationViolation() },
-                ),
-            )
+        val candidates = prepared.map { create -> create.candidate }
+        val violationsPerCandidate = validationEvaluator.evaluate(context, candidates)
+        val firstViolations = violationsPerCandidate.firstOrNull { violations -> violations.isNotEmpty() }
+        if (firstViolations == null) {
+            return
         }
+
+        attempt.reject(
+            EntValidationException(
+                entityType = entityName,
+                operation = EntOperation.CREATE,
+                violations = firstViolations.map { violation -> violation.toValidationViolation() },
+            ),
+        )
     }
 
     /** Persist prepared rows with the scalar or batch driver primitive. */

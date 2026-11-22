@@ -135,11 +135,6 @@ private object RuleBatchImplementations {
     }
 }
 
-/** Create the private implementation supplied to one framework callback. */
-@JvmSynthetic
-internal fun <Item> ruleBatchForInternalUse(items: List<Item>): RuleBatch<Item> =
-    RuleBatch.from(items)
-
 /** Extract and validate a batch-bound result at the framework callback boundary. */
 @JvmSynthetic
 internal fun <Item, Decision> RuleBatch<Item>.decisionsForInternalUse(

@@ -1,12 +1,8 @@
 package entkt.runtime.validation
 
-import entkt.query.EntktInternal
 import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
-import entkt.runtime.rule.decisionsForInternalUse
-import entkt.runtime.rule.ruleBatchForInternalUse
-import entkt.runtime.result.EntBatchRuleContractException
 import entkt.runtime.privacy.ViewerContext
 
 /**
@@ -99,51 +95,6 @@ fun <Client : EntRuleClient, Item> batchValidationRule(
         context: ValidationRuleContext<Client>,
         batch: RuleBatch<Item>,
     ): RuleDecisions<ValidationDecision> = block(context, batch)
-}
-
-/**
- * Evaluate every ordered validation rule for every [item], retaining invalid
- * decisions by original item index and rule registration order.
- */
-@EntktInternal
-fun <I, Client : EntRuleClient, Item> evaluateBatchValidationRulesForInternalUse(
-    lifecycle: String,
-    items: List<I>,
-    rules: List<BatchValidationRule<Client, Item>>,
-    context: ValidationRuleContext<Client>,
-    freshItem: (I) -> Item,
-): List<List<ValidationDecision.Invalid>> {
-    if (items.isEmpty()) return emptyList()
-
-    val itemSnapshot = items.toList()
-    val ruleSnapshot = rules.toList()
-    val violations = List(itemSnapshot.size) { mutableListOf<ValidationDecision.Invalid>() }
-    for (rule in ruleSnapshot) {
-        val ruleItems = itemSnapshot.map(freshItem)
-        val batch = ruleBatchForInternalUse(ruleItems)
-        val returnedDecisions: RuleDecisions<ValidationDecision>? = rule.validateBatch(context, batch)
-        val ruleDecisions: List<*> = returnedDecisions
-            ?.let { batch.decisionsForInternalUse(lifecycle, it) }
-            ?: throw EntBatchRuleContractException(lifecycle, ruleItems.size, actualSize = null)
-        if (ruleDecisions.size != ruleItems.size) {
-            throw EntBatchRuleContractException(lifecycle, ruleItems.size, ruleDecisions.size)
-        }
-
-        ruleDecisions.forEachIndexed { index, decision ->
-            when (decision) {
-                ValidationDecision.Valid -> Unit
-                is ValidationDecision.Invalid -> violations[index] += decision
-                else -> throw EntBatchRuleContractException(
-                    lifecycle = lifecycle,
-                    expectedSize = ruleItems.size,
-                    actualSize = ruleDecisions.size,
-                    invalidDecisionIndex = index,
-                )
-            }
-        }
-    }
-
-    return violations.map { it.toList() }
 }
 
 /**

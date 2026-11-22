@@ -2,6 +2,7 @@
 
 package entkt.runtime.validation
 
+import entkt.runtime.result.EntOperation
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.TestRuleClient
 import kotlin.test.Test
@@ -140,12 +141,12 @@ class FieldValidationRulesTest {
             rule.validateBatch(context, batch),
         )
 
-        val evaluator = MutationValidationEvaluator<TestRuleClient, Candidate>(
-            lifecycle = "Candidate CREATE validation",
+        val evaluator = ValidationEvaluator<TestRuleClient, Candidate>(
+            entityName = "Candidate",
+            operation = EntOperation.CREATE,
             rules = listOf(rule, min(Candidate::age, 0)),
         )
         val evaluated = evaluator.evaluate(context, listOf(invalid, valid))
-        assertEquals(listOf("name", "age"), evaluated.firstInvalidOrNull()!!.violations.map { it.field })
-        assertEquals(listOf(valid), evaluated.validSubjects())
+        assertEquals(listOf(listOf("name", "age"), emptyList()), evaluated.map { violations -> violations.map { it.field } })
     }
 }

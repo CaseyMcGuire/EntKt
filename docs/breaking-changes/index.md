@@ -29,6 +29,19 @@ above it.
 
 ## Unreleased
 
+- **Evaluate validation with one runtime evaluator** (`runtime`)
+  `ValidationEvaluator` runs one rule list over an operation's inputs and
+  returns each input's violations. It replaces `MutationValidationEvaluator`,
+  `ValidationDecisionEvaluator`, the standalone batch-evaluation and
+  correlation functions, and `ValidationEvaluation`/`ValidationOutcome`.
+  Validation rules and policy DSL behavior are unchanged, including UPDATE
+  deriving from CREATE.
+  _Migration:_ internal integrations should construct
+  `ValidationEvaluator(entityName, operation, rules)` and read the violation
+  list for each input. `UpdateMutationOperation` takes a second, optional
+  evaluator for the CREATE rules, used when UPDATE validation derives from
+  CREATE. The evaluator uses the rule list it is given without copying it.
+
 - **Alias DELETE rule inputs to the runtime `DeleteRuleInput`** (`runtime`, `codegen`)
   `${Entity}DeleteRuleInput` is now a type alias for
   `DeleteRuleInput<${Entity}, ${Entity}WriteCandidate>` instead of a generated

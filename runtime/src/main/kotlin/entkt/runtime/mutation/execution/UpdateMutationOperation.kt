@@ -29,7 +29,7 @@ import entkt.runtime.result.PrivacyDenial
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.toValidationViolation
 import entkt.runtime.rule.EntRuleClient
-import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ValidationEvaluator
 import entkt.runtime.validation.ValidationRuleContext
 import java.util.concurrent.CancellationException
 
@@ -48,7 +48,9 @@ class UpdateMutationOperation<
     private val entity: EntityMapping<Entity>,
     private val mutationRuntime: MutationRuntime,
     private val privacyEvaluator: UpdatePrivacyEvaluator<RuleClient, Candidate, RuleInput>,
-    private val validationEvaluator: MutationValidationEvaluator<RuleClient, PreparedUpdate<RuleInput, Candidate>>,
+    private val validationEvaluator: ValidationEvaluator<RuleClient, RuleInput>,
+    /** CREATE rules that also validate the candidate; present only when UPDATE validation derives from CREATE. */
+    private val derivedCreateValidationEvaluator: ValidationEvaluator<RuleClient, Candidate>?,
     private val adapter:
         UpdateMutationAdapter<Draft, Entity, PendingEdges, Candidate, BeforeUpdateState, RuleInput>,
     private val hooks:
@@ -241,22 +243,24 @@ class UpdateMutationOperation<
         id: Any,
         prepared: PreparedUpdate<RuleInput, Candidate>,
     ) {
-        privacyEvaluator.evaluate(
+        val evaluation = privacyEvaluator.evaluate(
             context = context,
             subjects = listOf(prepared),
-            toRuleInput = { it.state },
-            toCandidate = { it.candidate },
-        ).firstDeniedOrNull()?.let { denial ->
-            attempt.reject(
-                EntMutationPrivacyDeniedException(
-                    writeState = MutationWriteState.NotPersisted,
-                    entityType = entity.entityName,
-                    operation = EntOperation.UPDATE,
-                    entityKey = EntityKey("id", id),
-                    reason = denial.reason,
-                ),
-            )
-        }
+            toRuleInput = { preparedUpdate -> preparedUpdate.state },
+            toCandidate = { preparedUpdate -> preparedUpdate.candidate },
+        )
+      val denial = evaluation.firstDeniedOrNull()
+          ?: return
+
+      attempt.reject(
+            EntMutationPrivacyDeniedException(
+                writeState = MutationWriteState.NotPersisted,
+                entityType = entity.entityName,
+                operation = EntOperation.UPDATE,
+                entityKey = EntityKey("id", id),
+                reason = denial.reason,
+            ),
+        )
     }
 
     private fun evaluateValidation(
@@ -264,15 +268,23 @@ class UpdateMutationOperation<
         context: ValidationRuleContext<RuleClient>,
         prepared: PreparedUpdate<RuleInput, Candidate>,
     ) {
-        validationEvaluator.evaluate(context, listOf(prepared)).firstInvalidOrNull()?.let { invalid ->
-            attempt.reject(
-                EntValidationException(
-                    entityType = entity.entityName,
-                    operation = EntOperation.UPDATE,
-                    violations = invalid.violations.map { it.toValidationViolation() },
-                ),
-            )
+        // UPDATE validates exactly one prepared row, so each evaluator returns a single violation list.
+        val updateRuleViolations = validationEvaluator.evaluate(context, listOf(prepared.state)).single()
+        val derivedCreateRuleViolations =
+          derivedCreateValidationEvaluator?.evaluate(context, listOf(prepared.candidate))?.single()
+              ?: emptyList()
+        val violations = updateRuleViolations + derivedCreateRuleViolations
+        if (violations.isEmpty()) {
+            return
         }
+
+        attempt.reject(
+            EntValidationException(
+                entityType = entity.entityName,
+                operation = EntOperation.UPDATE,
+                violations = violations.map { violation -> violation.toValidationViolation() },
+            ),
+        )
     }
 
     private fun persistUpdate(

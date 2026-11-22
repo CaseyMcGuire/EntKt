@@ -321,7 +321,7 @@ class UpdateGeneratorTest {
             "No-op preparation should retain the unchanged rule state without owner values\n$output"
         }
         assert(!output.contains("PrivacyEvaluator") &&
-            !output.contains("MutationValidationEvaluator")) {
+            !output.contains("ValidationEvaluator")) {
             "The adapter should only prepare the no-op state; runtime owns rule evaluation\n$output"
         }
     }

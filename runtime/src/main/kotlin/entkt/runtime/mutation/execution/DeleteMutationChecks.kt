@@ -15,7 +15,7 @@ import entkt.runtime.result.EntityKey
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.result.toValidationViolation
 import entkt.runtime.rule.EntRuleClient
-import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ValidationEvaluator
 import entkt.runtime.validation.ValidationRuleContext
 
 /** Apply the same privacy-before-validation checks to one candidate or a complete DELETE batch. */
@@ -26,31 +26,36 @@ internal fun <RuleClient : EntRuleClient, Entity : EntEntity<*>, Candidate : Wri
     viewerContext: ViewerContext,
     ruleInputs: List<DeleteRuleInput<Entity, Candidate>>,
     privacyEvaluator: DeletePrivacyEvaluator<RuleClient, Candidate, DeleteRuleInput<Entity, Candidate>>,
-    validationEvaluator: MutationValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
+    validationEvaluator: ValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
 ) {
-    val denial = privacyEvaluator.evaluate(
+    val privacyEvaluation = privacyEvaluator.evaluate(
         context = PrivacyRuleContext(viewerContext, ruleClient),
         subjects = ruleInputs,
-        toRuleInput = { it },
-        toCandidate = { it.candidate },
-    ).firstDeniedOrNull()
-    if (denial != null) {
+        toRuleInput = { ruleInput -> ruleInput },
+        toCandidate = { ruleInput -> ruleInput.candidate },
+    )
+    val firstDenial = privacyEvaluation.firstDeniedOrNull()
+    if (firstDenial != null) {
+        val deniedEntity = firstDenial.subject.entity
         execution.reject(
             EntMutationPrivacyDeniedException(
                 writeState = MutationWriteState.NotPersisted,
                 entityType = entityName,
                 operation = EntOperation.DELETE,
-                entityKey = EntityKey("id", denial.subject.entity.id),
-                reason = denial.reason,
+                entityKey = EntityKey("id", deniedEntity.id),
+                reason = firstDenial.reason,
             ),
         )
     }
-    validationEvaluator.evaluate(ValidationRuleContext(ruleClient), ruleInputs).firstInvalidOrNull()?.let { invalid ->
+
+    val violationsPerRuleInput = validationEvaluator.evaluate(ValidationRuleContext(ruleClient), ruleInputs)
+    val firstViolations = violationsPerRuleInput.firstOrNull { violations -> violations.isNotEmpty() }
+    if (firstViolations != null) {
         execution.reject(
             EntValidationException(
                 entityType = entityName,
                 operation = EntOperation.DELETE,
-                violations = invalid.violations.map { it.toValidationViolation() },
+                violations = firstViolations.map { violation -> violation.toValidationViolation() },
             ),
         )
     }

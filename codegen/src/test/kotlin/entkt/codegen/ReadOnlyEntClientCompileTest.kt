@@ -87,7 +87,7 @@ class ReadOnlyEntClientCompileTest {
             "CreateEvaluator" to "CreatePrivacyEvaluator<Any, Unit>",
             "UpdateEvaluator" to "UpdatePrivacyEvaluator<Any, Unit, Unit>",
             "DeleteEvaluator" to "DeletePrivacyEvaluator<Any, Unit, Unit>",
-            "ValidationEvaluator" to "MutationValidationEvaluator<Any, Unit>",
+            "ValidationEvaluator" to "ValidationEvaluator<Any, Unit>",
             "PrivacyContext" to "PrivacyRuleContext<Any>",
             "ValidationContext" to "ValidationRuleContext<Any>",
             "PrivacyRule" to "BatchPrivacyRule<Any, Car>",

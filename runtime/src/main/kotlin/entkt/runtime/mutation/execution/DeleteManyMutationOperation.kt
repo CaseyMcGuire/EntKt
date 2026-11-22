@@ -20,7 +20,7 @@ import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntUnexpectedMutationException
 import entkt.runtime.result.MutationWriteState
 import entkt.runtime.rule.EntRuleClient
-import entkt.runtime.validation.MutationValidationEvaluator
+import entkt.runtime.validation.ValidationEvaluator
 import java.util.concurrent.CancellationException
 
 /** Select, authorize, and persist one atomic DELETE batch with correlated acknowledgements. */
@@ -31,7 +31,7 @@ class DeleteManyMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity
     private val privacyEvaluator:
         DeletePrivacyEvaluator<RuleClient, Candidate, DeleteRuleInput<Entity, Candidate>>,
     private val validationEvaluator:
-        MutationValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
+        ValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
     private val readQueryExecutor: ReadQueryExecutor<Entity>,
     private val beforeDelete: List<BatchActionHook<Entity>>,
     private val afterDelete: List<BatchActionHook<Entity>>,

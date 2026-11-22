@@ -502,7 +502,7 @@ class RepoGeneratorTest {
                 "MutationExecutor",
                 "ReadQueryExecutor",
                 "PrivacyEvaluator",
-                "MutationValidationEvaluator",
+                "ValidationEvaluator",
                 "PrivacyRuleContext(",
                 "ValidationRuleContext(",
                 "PrivacyDecision.",

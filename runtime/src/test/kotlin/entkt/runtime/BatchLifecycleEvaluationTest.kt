@@ -12,11 +12,14 @@ import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.privacy.evaluateLoadDecisions
 import entkt.runtime.result.EntBatchRuleContractException
+import entkt.runtime.result.EntOperation
+import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.TestRuleClient
+import entkt.runtime.validation.BatchValidationRule
 import entkt.runtime.validation.ValidationDecision
+import entkt.runtime.validation.ValidationEvaluator
 import entkt.runtime.validation.ValidationRuleContext
 import entkt.runtime.validation.batchValidationRule
-import entkt.runtime.validation.evaluateBatchValidationRulesForInternalUse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -29,6 +32,13 @@ class BatchLifecycleEvaluationTest {
         client = TestRuleClient("privacy-client"),
     )
     private val validationContext = ValidationRuleContext(client = TestRuleClient("validation-client"))
+
+    private fun <Client : EntRuleClient, Item> evaluateValidation(
+        items: List<Item>,
+        rules: List<BatchValidationRule<Client, Item>>,
+        context: ValidationRuleContext<Client>,
+    ): List<List<ValidationDecision.Invalid>> =
+        ValidationEvaluator("Widget", EntOperation.CREATE, rules).evaluate(context, items)
 
     @Test
     fun `privacy evaluation filters finalized items and retains original positions`() {
@@ -173,13 +183,7 @@ class BatchLifecycleEvaluationTest {
             },
         )
 
-        val violations = evaluateBatchValidationRulesForInternalUse(
-            lifecycle = "Widget CREATE validation",
-            items = listOf("a", "b"),
-            rules = rules,
-            context = validationContext,
-            freshItem = { it },
-        )
+        val violations = evaluateValidation(listOf("a", "b"), rules, validationContext)
 
         assertEquals(listOf(listOf("a", "b"), listOf("a", "b")), invocations)
         assertEquals(listOf("first a"), violations[0].map { it.message })
@@ -187,8 +191,7 @@ class BatchLifecycleEvaluationTest {
     }
 
     @Test
-    fun `validation evaluation reuses shared context and creates fresh items for each rule`() {
-        var nextSnapshot = 0
+    fun `validation evaluation reuses shared context and gives every rule the same inputs`() {
         val seen = mutableListOf<List<Int>>()
         val seenContexts = mutableListOf<ValidationRuleContext<TestRuleClient>>()
         val rules = listOf(
@@ -204,14 +207,9 @@ class BatchLifecycleEvaluationTest {
             },
         )
 
-        evaluateBatchValidationRulesForInternalUse(
-            "Widget CREATE validation",
-            listOf(Unit, Unit),
-            rules,
-            validationContext,
-        ) { ++nextSnapshot }
+        evaluateValidation(listOf(1, 2), rules, validationContext)
 
-        assertEquals(listOf(listOf(1, 2), listOf(3, 4)), seen)
+        assertEquals(listOf(listOf(1, 2), listOf(1, 2)), seen)
         assertSame(validationContext, seenContexts[0])
         assertSame(validationContext, seenContexts[1])
     }
@@ -229,12 +227,7 @@ class BatchLifecycleEvaluationTest {
         )
         assertEquals(
             listOf(emptyList(), emptyList()),
-            evaluateBatchValidationRulesForInternalUse<Int, TestRuleClient, Int>(
-                "Widget CREATE validation",
-                listOf(1, 2),
-                emptyList(),
-                validationContext,
-            ) { it },
+            evaluateValidation<TestRuleClient, Int>(listOf(1, 2), emptyList(), validationContext),
         )
     }
 
@@ -265,12 +258,7 @@ class BatchLifecycleEvaluationTest {
         )
         assertEquals(
             emptyList(),
-            evaluateBatchValidationRulesForInternalUse(
-                "validation",
-                emptyList<Int>(),
-                listOf(validation),
-                validationContext,
-            ) { it },
+            evaluateValidation(emptyList<Int>(), listOf(validation), validationContext),
         )
         runActionHooks(emptyList(), listOf(hook))
 
@@ -312,19 +300,9 @@ class BatchLifecycleEvaluationTest {
                 priorValidationDecisions = it
             }
         }
-        evaluateBatchValidationRulesForInternalUse(
-            "Widget CREATE validation",
-            listOf(1),
-            listOf(validation),
-            validationContext,
-        ) { it }
+        evaluateValidation(listOf(1), listOf(validation), validationContext)
         val validationException = assertFailsWith<EntBatchRuleContractException> {
-            evaluateBatchValidationRulesForInternalUse(
-                "Widget CREATE validation",
-                listOf(2),
-                listOf(validation),
-                validationContext,
-            ) { it }
+            evaluateValidation(listOf(2), listOf(validation), validationContext)
         }
         assertEquals(true, validationException.foreignBatchResult)
     }
@@ -344,12 +322,11 @@ class BatchLifecycleEvaluationTest {
         assertEquals(1, privacyException.actualSize)
 
         val validationException = assertFailsWith<EntBatchRuleContractException> {
-            evaluateBatchValidationRulesForInternalUse(
-                "Widget CREATE validation",
+            evaluateValidation(
                 listOf("widget"),
                 listOf(BatchLifecycleJavaCompatibility.NULL_VALIDATION_DECISION_BATCH),
                 BatchLifecycleJavaCompatibility.VALIDATION_CONTEXT,
-            ) { it }
+            )
         }
         assertEquals(0, validationException.invalidDecisionIndex)
         assertEquals(1, validationException.expectedSize)
@@ -374,12 +351,11 @@ class BatchLifecycleEvaluationTest {
         )
 
         val validationException = assertFailsWith<EntBatchRuleContractException> {
-            evaluateBatchValidationRulesForInternalUse(
-                "Widget CREATE validation",
+            evaluateValidation(
                 listOf("widget"),
                 listOf(BatchLifecycleJavaCompatibility.NULL_VALIDATION_RESULT_BATCH),
                 BatchLifecycleJavaCompatibility.VALIDATION_CONTEXT,
-            ) { it }
+            )
         }
         assertEquals(null, validationException.actualSize)
         assertEquals(null, validationException.invalidDecisionIndex)
@@ -442,12 +418,7 @@ class BatchLifecycleEvaluationTest {
             listOf(privacy),
             viewerContext,
         ) { it }
-        evaluateBatchValidationRulesForInternalUse(
-            "validation",
-            listOf(1),
-            listOf(validation),
-            validationContext,
-        ) { it }
+        evaluateValidation(listOf(1), listOf(validation), validationContext)
         runActionHooks(listOf(1), listOf(hook))
     }
 

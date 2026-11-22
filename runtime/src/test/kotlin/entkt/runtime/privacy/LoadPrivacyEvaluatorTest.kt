@@ -8,8 +8,8 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityDescriptor
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.result.EntBatchRuleContractException
+import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.TestRuleClient
-import entkt.runtime.rule.ruleBatchForInternalUse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -170,7 +170,7 @@ class LoadPrivacyEvaluatorTest {
 
     @Test
     fun `rule contract failures identify the descriptor and LOAD operation`() {
-        val foreignDecisions = ruleBatchForInternalUse(listOf(Record(1L, "one")))
+        val foreignDecisions = RuleBatch.from(listOf(Record(1L, "one")))
             .decideEach { PrivacyDecision.Allow }
         val evaluator = loadEvaluator<TestRuleClient, Record>(
             entityName = RecordDescriptor.entityName,
