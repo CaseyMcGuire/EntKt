@@ -217,9 +217,16 @@ class EntktPluginTest {
                 "Repo should expose its schema-specific query configuration scope",
             )
             assertTrue(
-                !repoContent.contains("fun create(") && !repoContent.contains("fun update(") &&
+                !repoFlat.contains("fun create(block:") && !repoContent.contains("fun update(") &&
                     !repoContent.contains("fun query()"),
                 "Repo should not duplicate runtime-owned entry points",
+            )
+            assertTrue(
+                repoFlat.contains(
+                    "fun create(name: String, block: PetCreateDraft.() -> Unit = {}): " +
+                        "PendingCreateMutation<PetCreateDraft, Pet> = super.create {",
+                ),
+                "Repo should expose a required-parameter create overload that delegates to the runtime create path",
             )
 
             // EntClient wires repos together — this is the DI entry point
