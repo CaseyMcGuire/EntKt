@@ -285,7 +285,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a filterVisible-denied target does not reach the nested pass`() {
-        val viewerContext = ViewerContext(Viewer.User(999L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(999L))
         val nestedPasses = mutableListOf<List<Any?>>()
         val client = EntClient(resetAndDriver()) {
 
@@ -818,7 +818,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `nested privacy rules receive one ordered distinct union batch per logical edge step`() {
-        val viewerContext = ViewerContext(Viewer.User(999L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(999L))
         val invocations = mutableListOf<List<String>>()
         val driver = resetAndDriver()
         val client = EntClient(driver) {
@@ -861,7 +861,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a strict nested denial projects the first denial from the union batch with the full path`() {
-        val viewerContext = ViewerContext(Viewer.User(999L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(999L))
         val driver = resetAndDriver()
         val client = EntClient(driver) {
 

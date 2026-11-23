@@ -19,13 +19,13 @@ class ViewerTest {
 
     @Test
     fun `PrivacyBypass requires a non-blank reason`() {
-        assertFailsWith<IllegalArgumentException> { Viewer.PrivacyBypass("") }
-        assertFailsWith<IllegalArgumentException> { Viewer.PrivacyBypass("   ") }
+        assertFailsWith<IllegalArgumentException> { ViewerContext.privacyBypass_DANGEROUS("") }
+        assertFailsWith<IllegalArgumentException> { ViewerContext.privacyBypass_DANGEROUS("   ") }
     }
 
     @Test
     fun `PrivacyBypass keeps its reason`() {
-        assertEquals("migration backfill", Viewer.PrivacyBypass("migration backfill").reason)
+        assertEquals("migration backfill", ViewerContext.privacyBypass_DANGEROUS("migration backfill").reason)
     }
 
     @Test
@@ -34,7 +34,6 @@ class ViewerTest {
 
         assertSame(user, user.userOrNull())
         assertNull(Viewer.Anonymous.userOrNull())
-        assertNull(Viewer.PrivacyBypass("test").userOrNull())
     }
 
     @Test
@@ -54,11 +53,20 @@ class ViewerTest {
 
     @Test
     fun `privacy context id helpers delegate to viewer`() {
-        val context = ViewerContext(Viewer.User(42L))
+        val context = ViewerContext.AsViewer(Viewer.User(42L))
 
         assertEquals(42L, context.longIdOrNull())
         assertEquals(42L, context.userIdOrNull())
         assertSame(context.viewer.userOrNull(), context.userOrNull())
-        assertNull(ViewerContext(Viewer.Anonymous).longIdOrNull())
+        assertNull(ViewerContext.AsViewer(Viewer.Anonymous).longIdOrNull())
+    }
+
+    @Test
+    fun `a privacy bypass context has no user`() {
+        val bypass = ViewerContext.privacyBypass_DANGEROUS("test")
+
+        assertNull(bypass.userOrNull())
+        assertNull(bypass.userIdOrNull())
+        assertNull(bypass.longIdOrNull())
     }
 }

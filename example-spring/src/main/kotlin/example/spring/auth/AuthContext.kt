@@ -25,6 +25,6 @@ class AuthContext {
 }
 
 /** Capture the authenticated viewer once for an entity operation. */
-fun AuthContext.viewerContext(): ViewerContext = ViewerContext(
+fun AuthContext.viewerContext(): ViewerContext = ViewerContext.AsViewer(
     userId?.let(Viewer::User) ?: Viewer.Anonymous,
 )

@@ -535,7 +535,7 @@ stores.
 ### Transactions
 
 ```kotlin
-val viewerContext = ViewerContext(Viewer.User(currentUserId()))
+val viewerContext = ViewerContext.AsViewer(Viewer.User(currentUserId()))
 client.withTransaction { tx ->
     val alice = tx.users.create { name = "Alice"; email = "a@b.com" }
         .saveAndLoad(viewerContext)

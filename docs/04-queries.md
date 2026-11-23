@@ -13,7 +13,7 @@ transaction client safe for concurrent execution or extend its lifetime.
 ## Basic Usage
 
 ```kotlin
-val viewerContext = ViewerContext(Viewer.User(currentUserId()))
+val viewerContext = ViewerContext.AsViewer(Viewer.User(currentUserId()))
 val users = client.users.query {
     where(User.active eq true)
     orderBy(User.name.asc())
@@ -798,9 +798,13 @@ val client = EntClient(driver) {
         // Per-entity: narrow every Post read to the viewer's tenant.
         posts(
             interceptor = QueryInterceptor { scope, ctx ->
-                scope.addPredicate(
-                    Post.tenantId eq ctx.viewerContext.viewer.requireTenantId(),
-                )
+                when (val viewerContext = ctx.viewerContext) {
+                    is ViewerContext.AsViewer -> scope.addPredicate(
+                        Post.tenantId eq viewerContext.viewer.requireTenantId(),
+                    )
+                    // Trusted operations read every tenant.
+                    is ViewerContext.PrivacyBypass -> Unit
+                }
             },
             name = "tenant-scope",
         )
@@ -830,7 +834,8 @@ read. The `context` carries:
 - `context.operation: ReadOperation` — which read fired
   (`BY_ID`, `FIRST`, `ALL`, `EDGE_TRAVERSAL`, `EDGE_PREDICATE`,
   `EAGER_LOAD`, `EAGER_JUNCTION`, `DELETE_CANDIDATES`)
-- `context.viewerContext` — the active `ViewerContext` (viewer, etc.)
+- `context.viewerContext` — the operation's `ViewerContext`, either `AsViewer`
+  or `PrivacyBypass`; interceptors run for both
 - `context.rootEntity` / `context.currentEntity` /
   `context.sourceEntity` / `context.edgeName` / `context.path` —
   set for traversal / eager / edge-predicate steps; null/empty

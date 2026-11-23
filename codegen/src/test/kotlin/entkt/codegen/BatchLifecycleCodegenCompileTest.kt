@@ -332,7 +332,7 @@ class BatchLifecycleCodegenCompileTest {
 
                 @JvmStatic
                 fun run(): String {
-                    val viewerContext = ViewerContext(Viewer.User(1))
+                    val viewerContext = ViewerContext.AsViewer(Viewer.User(1))
                     val batchIds = mutableListOf<List<Int>>()
                     val batchPolicy = object : EntityPolicy<Widget, WidgetPolicyScope> {
                         override fun configure(scope: WidgetPolicyScope) = scope.run {

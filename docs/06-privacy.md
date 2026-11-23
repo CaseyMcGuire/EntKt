@@ -42,7 +42,7 @@ val client = EntClient(driver) {
     }
 }
 
-val viewerContext = ViewerContext(Viewer.User(currentUserId()))
+val viewerContext = ViewerContext.AsViewer(Viewer.User(currentUserId()))
 val users = client.users.query().all(viewerContext).getOrThrow()
 ```
 
@@ -56,7 +56,6 @@ val users = client.users.query().all(viewerContext).getOrThrow()
 sealed interface Viewer {
     data object Anonymous : Viewer   // unauthenticated
     data class User(val id: Any) : Viewer  // authenticated user
-    data class PrivacyBypass(val reason: String) : Viewer
 }
 ```
 
@@ -77,7 +76,8 @@ Typed helpers are exact type checks. For example, `longIdOrNull()` returns
 
 ### ViewerContext
 
-`ViewerContext` bundles the viewer supplied to a generated operation.
+`ViewerContext` is what a generated operation runs as: either a viewer, whose
+access the privacy rules decide, or an explicit privacy bypass.
 Every execution terminal requires it as its first argument. One logical
 operation retains and shares that exact instance
 across every privacy-consuming phase. For a read, that includes interceptors,
@@ -89,7 +89,22 @@ long-lived client can safely execute operations for different viewers,
 including concurrently when each operation uses its own builder.
 
 ```kotlin
-data class ViewerContext(val viewer: Viewer)
+sealed interface ViewerContext {
+    data class AsViewer(val viewer: Viewer) : ViewerContext
+    class PrivacyBypass(val reason: String) : ViewerContext  // built by privacyBypass_DANGEROUS
+}
+```
+
+Privacy rules never run for a bypass, so `PrivacyRuleContext.viewerContext` is
+always an `AsViewer`, and `context.viewer` is its viewer. Hooks and query
+interceptors do run for a bypass. They receive the context as it was supplied
+and branch on the two cases:
+
+```kotlin
+when (val viewerContext = state.viewerContext) {
+    is ViewerContext.AsViewer -> recordActor(viewerContext.viewer)
+    is ViewerContext.PrivacyBypass -> recordTrustedOperation(viewerContext.reason)
+}
 ```
 
 ### PrivacyDecision
@@ -380,7 +395,7 @@ Construct the context at the application boundary and pass it directly to
 every terminal that executes an entity operation:
 
 ```kotlin
-val viewerContext = ViewerContext(Viewer.User(getCurrentUserId()))
+val viewerContext = ViewerContext.AsViewer(Viewer.User(getCurrentUserId()))
 
 client.posts.query { where(Post.published eq true) }
     .all(viewerContext)
@@ -389,7 +404,7 @@ client.posts.create { title = "Hello" }
 ```
 
 There is no default, provider, thread-local lookup, or client-scoping API.
-Use `ViewerContext(Viewer.Anonymous)` explicitly for unauthenticated work.
+Use `ViewerContext.AsViewer(Viewer.Anonymous)` explicitly for unauthenticated work.
 Builders and `withTransaction` remain contextless because they do not execute
 an entity operation.
 
@@ -466,12 +481,11 @@ This ordering means an exception from a later item in an earlier registered
 rule can surface before a denial that an earlier item would have received from
 a later rule. Rules should not rely on cross-item side-effect ordering.
 
-> **`Viewer.PrivacyBypass(reason)` bypasses all privacy checks** at the framework
+> **A `ViewerContext.PrivacyBypass` bypasses all privacy checks** at the framework
 > level -- it is the escape hatch for trusted/internal operations (the required
-> `reason` says why). You do not need (and cannot write) a rule for it. At
-> application call sites prefer
-> `ViewerContext.privacyBypass_DANGEROUS(reason)` (below), whose loud name
-> makes bypasses obvious in review.
+> `reason` says why). You do not need (and cannot write) a rule for it. It is
+> built only by `ViewerContext.privacyBypass_DANGEROUS(reason)` (below), whose
+> loud name makes bypasses obvious in review.
 
 LOAD privacy is enforced on every read terminal that materializes
 entities. Denial is never thrown from the terminal — it is the read's
@@ -735,8 +749,9 @@ the create rules also fail to `Allow`, the operation is denied
 
 ### `ViewerContext.privacyBypass_DANGEROUS`
 
-Construct a context that bypasses privacy checks. The loud name and required
-`reason` make escape-hatch call sites obvious and easy to grep for:
+Construct a context that bypasses privacy checks. This is the only way to build
+one. The loud name and required `reason` make escape-hatch call sites obvious
+and easy to grep for:
 
 ```kotlin
 val bypass = ViewerContext.privacyBypass_DANGEROUS("migration backfill")
@@ -751,8 +766,8 @@ hooks, query interceptors, transactions, and database constraints still apply.
 Use the same long-lived client and pass the intended context to each terminal:
 
 ```kotlin
-val viewer42 = ViewerContext(Viewer.User(42L))
-val viewer99 = ViewerContext(Viewer.User(99L))
+val viewer42 = ViewerContext.AsViewer(Viewer.User(42L))
+val viewer99 = ViewerContext.AsViewer(Viewer.User(99L))
 
 client.users.query().all(viewer42).getOrThrow()
 client.users.query().all(viewer99).getOrThrow()

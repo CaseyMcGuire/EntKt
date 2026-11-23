@@ -149,10 +149,10 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.PrivacyBypass("test"),
+        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUser,
     ): EntClient {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {
 
@@ -226,7 +226,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     fun `createMany runs lifecycle phases once over the full ordered batch and inserts once`() {
         val events = mutableListOf<String>()
         val recording = RecordingDriver(resetAndDriver())
-        val capturedPrivacy = ViewerContext(Viewer.User(42L))
+        val capturedPrivacy = ViewerContext.AsViewer(Viewer.User(42L))
         var createPrivacy: ViewerContext? = null
         var loadPrivacy: ViewerContext? = null
         val policy = object : EntityPolicy<User, UserPolicyScope> {
@@ -646,7 +646,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a later CREATE privacy denial evaluates the full batch before validation or insert`() {
-        val viewerContext = ViewerContext(Viewer.User(42L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(42L))
         val privacyBatches = mutableListOf<List<String>>()
         var validationCalls = 0
         val recording = RecordingDriver(resetAndDriver())
@@ -699,7 +699,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `EntKt-owned batch COMMITS when only return disclosure is denied`() {
-        val client = freshClient(viewer = Viewer.User(1L), userPolicy = createButNoLoad("B"))
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = createButNoLoad("B"))
 
         val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
@@ -738,7 +738,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewer = Viewer.User(1L), userPolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = policy)
 
         val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
@@ -767,7 +767,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewer = Viewer.User(1L), userPolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = policy)
 
         val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
@@ -801,7 +801,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewer = Viewer.User(1L), userPolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = policy)
 
         val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
@@ -820,7 +820,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `owned batch keeps an earlier ignored hook mutation failure primary over returned LOAD denial`() {
-        val viewerContext = ViewerContext(Viewer.User(1L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
         var launchedNestedMutation = false
         var nestedFailure: EntMutationException? = null
         val client = EntClient(resetAndDriver()) {
@@ -858,7 +858,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `caller-owned transaction reports TransactionPending and rolls back`() {
-        val client = freshClient(viewer = Viewer.User(1L), userPolicy = createButNoLoad("B"))
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = createButNoLoad("B"))
 
         var inner: MutationResult<List<User>>? = null
         val txResult = client.withTransaction { tx ->

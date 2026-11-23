@@ -17,10 +17,12 @@ class CreatePrivacyEvaluator<Client : EntRuleClient, Candidate>(
     )
 
     fun evaluate(
-        context: PrivacyRuleContext<Client>,
+        viewerContext: ViewerContext,
+        client: Client,
         candidates: List<Candidate>,
     ): PrivacyEvaluation<Candidate> = batchEvaluator.evaluate(
-        context = context,
+        viewerContext = viewerContext,
+        client = client,
         subjects = candidates,
         rules = rules,
     )

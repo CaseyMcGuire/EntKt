@@ -53,7 +53,7 @@ class CreateConverterCompileTest {
                 fun run(): String {
                     val client = EntClient(NoopDriver)
                     val converter = RecordCreateConverter(NoopDriver, client.hookClientScopeForInternalUse)
-                    val viewer = ViewerContext(Viewer.User(7L))
+                    val viewer = ViewerContext.AsViewer(Viewer.User(7L))
                     val fixedTime = Instant.parse("2000-01-01T00:00:00Z")
                     val draft = RecordCreateDraft("caller-id").apply {
                         title = "original"

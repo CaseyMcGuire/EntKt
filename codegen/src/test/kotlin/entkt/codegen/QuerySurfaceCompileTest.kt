@@ -322,7 +322,7 @@ class QuerySurfaceCompileTest {
                 check(!UserQuery::class.java.isInstance(rules.groups.query().queryMembers()))
                 check(calls == 0)
 
-                val context = ViewerContext(Viewer.User(1L))
+                val context = ViewerContext.AsViewer(Viewer.User(1L))
                 check(full.all(context).getOrThrow().isEmpty())
                 check(read.all(context).getOrThrow().isEmpty())
                 check(read.firstOrNull(context).getOrThrow() == null)

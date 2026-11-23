@@ -97,7 +97,7 @@ class ReadQueryExecutorRootTest {
             annotations = emptyMap(),
         ),
     ) : EntityMapping<Item> {
-        val viewerContext = ViewerContext(Viewer.User(7L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
         var denials: List<PrivacyDenial?> = emptyList()
         var preparationFailure: Throwable? = null
         var decodingFailure: Throwable? = null

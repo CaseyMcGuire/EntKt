@@ -41,7 +41,7 @@ import kotlin.test.assertTrue
 
 /** Exercise generated mutation rule and hook wiring without a database or per-rule copying. */
 class MutationRuleInputTest {
-    private val viewerContext = ViewerContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
 
     @Test
     fun `scalar and bulk CREATE share prepared candidates across scalar and batch rules`() {

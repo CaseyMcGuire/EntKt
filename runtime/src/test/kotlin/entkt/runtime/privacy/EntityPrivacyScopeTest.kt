@@ -7,6 +7,7 @@ import entkt.runtime.rule.TestRuleClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class EntityPrivacyScopeTest {
@@ -81,8 +82,8 @@ class EntityPrivacyScopeTest {
             delete(shared)
         }
         assertTrue(seen.isEmpty(), "Registration must not evaluate context rules")
-        val signedIn = PrivacyRuleContext(ViewerContext(Viewer.User(7L)), TestRuleClient())
-        val anonymous = PrivacyRuleContext(ViewerContext(Viewer.Anonymous), TestRuleClient())
+        val signedIn = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7L)), TestRuleClient())
+        val anonymous = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.Anonymous), TestRuleClient())
 
         assertEquals(
             listOf(PrivacyDecision.Allow, PrivacyDecision.Allow),
@@ -97,10 +98,13 @@ class EntityPrivacyScopeTest {
             listOf(PrivacyDecision.Deny("authentication required")),
             evaluate(listOf(2L), config.deleteRules, anonymous),
         )
-        assertEquals(
-            listOf<PrivacyRuleContext<EntRuleClient>>(signedIn, signedIn, anonymous, signedIn, anonymous),
-            seen,
-        )
+        val expected = listOf(signedIn, signedIn, anonymous, signedIn, anonymous)
+        assertEquals(expected.size, seen.size)
+        expected.forEachIndexed { index, context ->
+            assertSame(context.viewerContext, seen[index].viewerContext)
+            assertSame(context.client, seen[index].client)
+        }
+        assertSame(seen[0], seen[1], "Both items of one LOAD phase share a rule context")
     }
 
     @Test
@@ -128,7 +132,7 @@ class EntityPrivacyScopeTest {
         }
         assertTrue(calls.isEmpty(), "Registration must not evaluate any rule")
 
-        val context = PrivacyRuleContext(ViewerContext(Viewer.User(7L)), TestRuleClient())
+        val context = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7L)), TestRuleClient())
         assertEquals(
             listOf(PrivacyDecision.Allow, PrivacyDecision.Allow),
             evaluate(listOf("first", "second"), config.loadRules, context),

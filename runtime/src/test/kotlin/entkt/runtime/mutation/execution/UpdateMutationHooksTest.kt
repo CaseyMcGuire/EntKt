@@ -39,7 +39,7 @@ class UpdateMutationHooksTest {
     @Test
     fun `before phases convert and transform state in lifecycle order`() {
         val events = mutableListOf<String>()
-        val expectedViewerContext = ViewerContext(Viewer.User(7L))
+        val expectedViewerContext = ViewerContext.AsViewer(Viewer.User(7L))
         val hooks = UpdateMutationHooks(
             converter = object :
                 UpdateMutationHookStateConverter<

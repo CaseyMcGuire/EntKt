@@ -169,7 +169,7 @@ class RequiredCreateCompileTest {
                 }
                 check(writes.isEmpty())
 
-                val viewer = ViewerContext(Viewer.PrivacyBypass("create overload test"))
+                val viewer = ViewerContext.privacyBypass_DANGEROUS("create overload test")
                 val session = client.sessions.create(id = "required", token = "token")
                     .saveAndLoad(viewer).getOrThrow()
                 val defaulted = client.explicitDefaults.create(id = "defaulted")

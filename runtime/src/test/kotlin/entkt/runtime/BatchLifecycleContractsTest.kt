@@ -32,7 +32,7 @@ import kotlin.test.assertSame
 class BatchLifecycleContractsTest {
 
     private val viewerContext = PrivacyRuleContext(
-        viewerContext = ViewerContext(Viewer.Anonymous),
+        viewerContext = ViewerContext.AsViewer(Viewer.Anonymous),
         client = TestRuleClient("privacy-client"),
     )
     private val validationContext = ValidationRuleContext(client = TestRuleClient("validation-client"))

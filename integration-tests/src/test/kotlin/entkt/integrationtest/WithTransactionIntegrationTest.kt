@@ -69,10 +69,10 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.PrivacyBypass("test"),
+        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
     ): EntClient {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {
 
@@ -122,7 +122,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         val result = client.withTransaction<Unit> { tx ->
             run {
                 val scoped = tx
-                val viewerContext = ViewerContext(Viewer.Anonymous)
+                val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
                 assertEquals(Viewer.Anonymous, viewerContext.viewer)
                 scoped.users.create { name = "Scoped"; email = "scoped@example.com" }
                     .save(viewerContext)
@@ -236,7 +236,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a read failure does not mark the scope rollback-only unless orRollback'd`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyLoadArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyLoadArticles)
         val article = run {
             val sys = client
             val viewerContext = testBypassContext("test")
@@ -262,7 +262,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `orRollback on a Failed read rolls back the transaction`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyLoadArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyLoadArticles)
         val article = run {
             val sys = client
             val viewerContext = testBypassContext("test")

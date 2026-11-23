@@ -23,7 +23,7 @@ class EntExplorerConfig internal constructor() {
 
     internal var authorize: (EntExplorerRequest) -> Boolean = { false }
     internal var viewerContext: (EntExplorerRequest) -> ViewerContext =
-        { ViewerContext(Viewer.Anonymous) }
+        { ViewerContext.AsViewer(Viewer.Anonymous) }
     internal val visibility = EntityVisibility()
     internal val redaction = Redaction()
 

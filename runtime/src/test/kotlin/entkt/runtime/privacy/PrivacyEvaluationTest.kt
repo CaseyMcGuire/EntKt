@@ -10,7 +10,7 @@ import kotlin.test.assertSame
 
 class PrivacyEvaluationTest {
     private data class Subject(val value: Int)
-    private val context = PrivacyRuleContext(ViewerContext(Viewer.User(7L)), TestRuleClient())
+    private val context = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7L)), TestRuleClient())
 
     @Test
     fun `evaluation attaches final decisions to the exact subjects`() {
@@ -22,7 +22,7 @@ class PrivacyEvaluationTest {
             }
         }))
 
-        val evaluation = evaluator.evaluate(context, listOf(first, equalButDistinct))
+        val evaluation = evaluator.evaluate(context.viewerContext, context.client, listOf(first, equalButDistinct))
 
         assertEquals(2, evaluation.size)
         assertSame(first, evaluation.allowedSubjects().single())
@@ -37,7 +37,7 @@ class PrivacyEvaluationTest {
         val subject = Subject(1)
         val evaluator = loadEvaluator("Subject", listOf(PrivacyRule<TestRuleClient, Subject> { _, _ -> PrivacyDecision.Continue }))
 
-        val evaluation = evaluator.evaluate(context, listOf(subject))
+        val evaluation = evaluator.evaluate(context.viewerContext, context.client, listOf(subject))
 
         val denied = evaluation.firstDeniedOrNull()
         assertIs<PrivacyOutcome.Denied<Subject>>(denied)

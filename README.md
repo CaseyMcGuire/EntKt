@@ -59,7 +59,7 @@ val client = EntClient(PostgresDriver(dataSource)) {
         posts(PostPolicy)
     }
 }
-val viewerContext = ViewerContext(Viewer.User(currentUserId()))
+val viewerContext = ViewerContext.AsViewer(Viewer.User(currentUserId()))
 
 val alice = client.users.create {
     name = "Alice"

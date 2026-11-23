@@ -26,7 +26,7 @@ final class BatchLifecycleJavaCompatibility {
 
     static final PrivacyRuleContext<TestRuleClient> VIEWER_CONTEXT =
             new PrivacyRuleContext<>(
-                    new ViewerContext(Viewer.Anonymous.INSTANCE),
+                    new ViewerContext.AsViewer(Viewer.Anonymous.INSTANCE),
                     new TestRuleClient());
 
     static final ValidationRuleContext<TestRuleClient> VALIDATION_CONTEXT =

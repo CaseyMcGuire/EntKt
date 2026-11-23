@@ -278,7 +278,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a pre-write UPDATE privacy rejection carries operation UPDATE and NotPersisted`() {
-        val viewerContext = ViewerContext(Viewer.User(1L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
         val denyUpdate = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {

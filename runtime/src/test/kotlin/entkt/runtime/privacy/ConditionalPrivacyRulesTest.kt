@@ -11,7 +11,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertSame
 
 class ConditionalPrivacyRulesTest {
-    private val context = PrivacyRuleContext(ViewerContext(Viewer.User(7)), TestRuleClient())
+    private val context = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7)), TestRuleClient())
 
     @Test
     fun `allowIf allows matches and continues otherwise`() {

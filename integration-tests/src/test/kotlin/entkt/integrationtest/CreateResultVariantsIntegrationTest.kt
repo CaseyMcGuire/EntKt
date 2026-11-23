@@ -57,11 +57,11 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.PrivacyBypass("test"),
+        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUser,
     ): EntClient {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {
 
@@ -136,7 +136,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = policy)
         val author = run {
             val sys = client
             val viewerContext = testBypassContext("test")
@@ -236,7 +236,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewer = Viewer.Anonymous, articlePolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.Anonymous), articlePolicy = policy)
         // Seed an author with a system context — the test's privacy
         // boundary is on Article, not User.
         val author = run {
@@ -272,9 +272,9 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        // Viewer.PrivacyBypass bypasses privacy checks by design — use an
+        // ViewerContext.PrivacyBypass bypasses privacy checks by design — use an
         // authenticated viewer so the deny rule actually fires.
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = policy)
         val author = run {
             val sys = client
             val viewerContext = testBypassContext("test")

@@ -11,7 +11,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertSame
 
 class ContextPrivacyRuleTest {
-    private val context = PrivacyRuleContext(ViewerContext(Viewer.User(7)), TestRuleClient())
+    private val context = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7)), TestRuleClient())
 
     @Test
     fun `one rule accepts different item types without capturing a viewer or client`() {
@@ -26,7 +26,7 @@ class ContextPrivacyRuleTest {
         }
         val numbers: PrivacyRule<TestRuleClient, Int> = shared
         val strings: PrivacyRule<TestRuleClient, String> = shared
-        val anonymous = PrivacyRuleContext(ViewerContext(Viewer.Anonymous), TestRuleClient())
+        val anonymous = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.Anonymous), TestRuleClient())
 
         assertEquals(0, seen.size, "registration must not evaluate or cache a decision")
         assertSame(shared, numbers)
@@ -44,7 +44,8 @@ class ContextPrivacyRuleTest {
         var contextCalls = 0
         val reachedScalar = mutableListOf<Int>()
         val shared = ContextPrivacyRule<TestRuleClient> { received ->
-            assertSame(context, received)
+            assertSame(context.viewerContext, received.viewerContext)
+            assertSame(context.client, received.client)
             when (contextCalls++) {
                 0 -> PrivacyDecision.Continue
                 1 -> PrivacyDecision.Allow
@@ -114,7 +115,7 @@ class ContextPrivacyRuleTest {
         val rule = ContextPrivacyRule<TestRuleClient> { PrivacyDecision.Continue }
         val items = listOf(7)
         val evaluation = loadEvaluator("test", listOf<BatchPrivacyRule<TestRuleClient, Int>>(rule))
-            .evaluate(context, items)
+            .evaluate(context.viewerContext, context.client, items)
 
         assertEquals(emptyList(), evaluation.allowedSubjects())
         assertEquals("no load rule allowed access", evaluation.deniedOutcomes().single().reason)

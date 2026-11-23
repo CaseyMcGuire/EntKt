@@ -224,7 +224,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         }
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         client.articles.create { title = "hidden"; authorId = author.id }.save(testViewerContext).getOrThrow()
-        val viewer = ViewerContext(Viewer.User(author.id))
+        val viewer = ViewerContext.AsViewer(Viewer.User(author.id))
         var handle: EdgeLoad<UserQueryScope>? = null
         val base = client.users.query()
         val query = base.configure { handle = loadArticles() }

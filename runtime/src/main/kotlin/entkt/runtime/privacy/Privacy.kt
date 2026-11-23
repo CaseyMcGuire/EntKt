@@ -13,23 +13,6 @@ sealed interface Viewer {
     data object Anonymous : Viewer
     /** An authenticated user identified by their primary key. */
     data class User(val id: Any) : Viewer
-
-    /**
-     * Trusted framework/application escape hatch that bypasses generated privacy
-     * checks (LOAD / CREATE / UPDATE / DELETE). It does NOT bypass validation,
-     * hooks, query interceptors, transactions, or database constraints. Use only
-     * for seed data, migrations, validation reads, tests, and similarly explicit
-     * internal operations — prefer [ViewerContext.privacyBypass_DANGEROUS] at
-     * application call sites. The required [reason] forces
-     * authors to say why the escape hatch is being used.
-     */
-    data class PrivacyBypass(val reason: String) : Viewer {
-        init {
-            require(reason.isNotBlank()) {
-                "Viewer.PrivacyBypass requires a non-blank reason"
-            }
-        }
-    }
 }
 
 fun Viewer.userOrNull(): Viewer.User? =
@@ -51,38 +34,64 @@ fun Viewer.uuidIdOrNull(): UUID? =
     userOrNull()?.id as? UUID
 
 /**
- * Viewer context supplied to a generated operation and threaded through its
- * privacy checks. Scalar operations retain one context; batch-aware
- * collection reads and `createMany` likewise retain the same instance for the
- * complete logical operation rather than once per item.
+ * What a generated operation runs as: either a viewer, whose access the
+ * privacy rules decide, or an explicit privacy bypass.
+ *
+ * The context supplied to an operation is threaded through its privacy
+ * checks. Scalar operations retain one context; batch-aware collection reads
+ * and `createMany` likewise retain the same instance for the complete logical
+ * operation rather than once per item.
  */
-data class ViewerContext(
-    val viewer: Viewer,
-) {
+sealed interface ViewerContext {
+    /** Run as [viewer]. Privacy rules decide what is allowed. */
+    data class AsViewer(val viewer: Viewer) : ViewerContext
+
+    /**
+     * Trusted framework/application escape hatch that bypasses generated privacy
+     * checks (LOAD / CREATE / UPDATE / DELETE). It does NOT bypass validation,
+     * hooks, query interceptors, transactions, or database constraints. Use only
+     * for seed data, migrations, validation reads, tests, and similarly explicit
+     * internal operations. Created only by
+     * [ViewerContext.privacyBypass_DANGEROUS]; the required [reason] forces
+     * authors to say why the escape hatch is being used.
+     */
+    @ConsistentCopyVisibility
+    data class PrivacyBypass internal constructor(val reason: String) : ViewerContext {
+        init {
+            require(reason.isNotBlank()) {
+                "ViewerContext.PrivacyBypass requires a non-blank reason"
+            }
+        }
+    }
+
     companion object {
         /** Construct an explicitly privileged operation context. */
-        fun privacyBypass_DANGEROUS(reason: String): ViewerContext =
-            ViewerContext(Viewer.PrivacyBypass(reason))
+        fun privacyBypass_DANGEROUS(reason: String): PrivacyBypass =
+            PrivacyBypass(reason)
     }
 }
 
+/** The authenticated user this context runs as, or `null` for any other viewer and for a privacy bypass. */
 fun ViewerContext.userOrNull(): Viewer.User? =
-    viewer.userOrNull()
+    when (this) {
+        is ViewerContext.AsViewer -> viewer.userOrNull()
+        is ViewerContext.PrivacyBypass -> null
+    }
 
 fun ViewerContext.userIdOrNull(): Any? =
-    viewer.userIdOrNull()
+    userOrNull()?.id
 
 fun ViewerContext.stringIdOrNull(): String? =
-    viewer.stringIdOrNull()
+    userOrNull()?.id as? String
 
 fun ViewerContext.intIdOrNull(): Int? =
-    viewer.intIdOrNull()
+    userOrNull()?.id as? Int
 
 fun ViewerContext.longIdOrNull(): Long? =
-    viewer.longIdOrNull()
+    userOrNull()?.id as? Long
 
 fun ViewerContext.uuidIdOrNull(): UUID? =
-    viewer.uuidIdOrNull()
+    userOrNull()?.id as? UUID
 
 /**
  * State shared by every item and reached rule in one privacy evaluation phase.
@@ -91,11 +100,18 @@ fun ViewerContext.uuidIdOrNull(): UUID? =
  * captured [viewerContext] and privacy-capable [client] live here so scalar
  * and batch rules receive the same item shape. The framework passes the exact
  * same instance to every reached rule in that phase.
+ *
+ * Privacy rules are never evaluated for a privacy bypass, so [viewerContext]
+ * is always the [ViewerContext.AsViewer] the operation was given.
  */
 class PrivacyRuleContext<out Client : EntRuleClient>(
-    val viewerContext: ViewerContext,
+    val viewerContext: ViewerContext.AsViewer,
     val client: Client,
-)
+) {
+    /** The viewer the operation runs as. */
+    val viewer: Viewer
+        get() = viewerContext.viewer
+}
 
 /**
  * The kind of operation being privacy-checked.

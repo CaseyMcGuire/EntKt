@@ -17,11 +17,11 @@ class ValidationRuleContext<out Client : EntRuleClient>(
     val client: Client,
 ) {
     /** Explicit privileged context for reads performed while validating invariants. */
-    val readViewerContext: ViewerContext
+    val readViewerContext: ViewerContext.PrivacyBypass
         get() = VALIDATION_READ_VIEWER_CONTEXT
 
     private companion object {
-        val VALIDATION_READ_VIEWER_CONTEXT: ViewerContext =
+        val VALIDATION_READ_VIEWER_CONTEXT: ViewerContext.PrivacyBypass =
             ViewerContext.privacyBypass_DANGEROUS("validation read")
     }
 }

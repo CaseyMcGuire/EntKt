@@ -17,7 +17,14 @@ import kotlin.test.assertTrue
 class MutationPrivacyEvaluatorsTest {
     private data class Record(val id: Long, val name: String = "record")
 
-    private val ruleContext = PrivacyRuleContext(ViewerContext(Viewer.User(7L)), TestRuleClient())
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val ruleClient = TestRuleClient()
+
+    /** The evaluator builds the rule context; it must carry the supplied viewer context and client. */
+    private fun assertSuppliedInputs(context: PrivacyRuleContext<TestRuleClient>) {
+        assertSame(viewerContext, context.viewerContext)
+        assertSame(ruleClient, context.client)
+    }
 
     private class Evaluators<Candidate>(
         val load: LoadPrivacyEvaluator<TestRuleClient, Record>,
@@ -81,11 +88,11 @@ class MutationPrivacyEvaluatorsTest {
             derivesFromCreate = true,
         )
         val record = Record(1)
-        assertSame(record, load.evaluate(ruleContext, listOf(record)).allowedSubjects().single())
-        assertEquals(listOf("candidate"), create.evaluate(ruleContext, listOf("candidate")).allowedSubjects())
-        assertSame(record, update.evaluate(ruleContext, listOf(record), { it.id }, { error("resolved") })
+        assertSame(record, load.evaluate(viewerContext, ruleClient, listOf(record)).allowedSubjects().single())
+        assertEquals(listOf("candidate"), create.evaluate(viewerContext, ruleClient, listOf("candidate")).allowedSubjects())
+        assertSame(record, update.evaluate(viewerContext, ruleClient, listOf(record), { it.id }, { error("resolved") })
             .allowedSubjects().single())
-        assertSame(record, delete.evaluate(ruleContext, listOf(record), { true }, { error("resolved") })
+        assertSame(record, delete.evaluate(viewerContext, ruleClient, listOf(record), { true }, { error("resolved") })
             .allowedSubjects().single())
         assertEquals(listOf("load:1", "create:candidate", "update:1", "delete:true"), calls)
     }
@@ -93,14 +100,15 @@ class MutationPrivacyEvaluatorsTest {
     @Test
     fun `CREATE preserves duplicate subjects and shares them with every rule`() {
         val seen = mutableListOf<Record>()
+        val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
         val rules = listOf<BatchPrivacyRule<TestRuleClient, Record>>(
             PrivacyRule { context, item ->
-                assertSame(ruleContext, context)
+                contexts += context
                 seen += item
                 PrivacyDecision.Continue
             },
             batchPrivacyRule { context, batch ->
-                assertSame(ruleContext, context)
+                contexts += context
                 batch.decideEachIndexed { index, item ->
                     seen += item
                     if (index == 0) PrivacyDecision.Deny("first") else PrivacyDecision.Allow
@@ -109,9 +117,14 @@ class MutationPrivacyEvaluatorsTest {
         )
         val evaluators = evaluators(create = rules)
         val record = Record(1)
-        val evaluation = evaluators.create.evaluate(ruleContext, listOf(record, record))
+        val evaluation = evaluators.create.evaluate(viewerContext, ruleClient, listOf(record, record))
         assertEquals(4, seen.size)
         seen.forEach { assertSame(record, it) }
+        assertEquals(3, contexts.size)
+        contexts.forEach { context ->
+            assertSame(contexts.first(), context)
+            assertSuppliedInputs(context)
+        }
         assertSame(record, evaluation.allowedSubjects().single())
         assertSame(record, evaluation.deniedOutcomes().single().subject)
         assertEquals("first", evaluation.deniedOutcomes().single().reason)
@@ -173,8 +186,8 @@ class MutationPrivacyEvaluatorsTest {
                 record.name
             }
             val evaluation = when (operation) {
-                PrivacyOperation.UPDATE -> evaluators.update.evaluate(ruleContext, states, toRuleInput, toCandidate)
-                else -> evaluators.delete.evaluate(ruleContext, states, toRuleInput, toCandidate)
+                PrivacyOperation.UPDATE -> evaluators.update.evaluate(viewerContext, ruleClient, states, toRuleInput, toCandidate)
+                else -> evaluators.delete.evaluate(viewerContext, ruleClient, states, toRuleInput, toCandidate)
             }
             assertEquals(listOf(listOf(1L, 2L, 3L, 4L, 5L), listOf(3L, 4L, 5L)), operationBatches)
             assertEquals(listOf(1L, 2L, 3L, 4L, 5L, 3L, 4L, 5L), converted)
@@ -186,7 +199,10 @@ class MutationPrivacyEvaluatorsTest {
                 evaluation.deniedOutcomes().map { it.reason })
             evaluation.forEachIndexed { index, outcome -> assertSame(states[index], outcome.subject) }
             assertEquals(4, contexts.size)
-            contexts.forEach { assertSame(ruleContext, it) }
+            contexts.forEach { context ->
+                assertSame(contexts.first(), context)
+                assertSuppliedInputs(context)
+            }
         }
     }
 
@@ -200,11 +216,11 @@ class MutationPrivacyEvaluatorsTest {
                     deriveUpdate = deriveUpdate,
                     deriveDelete = deriveDelete,
                 )
-                val update = evaluators.update.evaluate(ruleContext, listOf(record), { it }) {
+                val update = evaluators.update.evaluate(viewerContext, ruleClient, listOf(record), { it }) {
                     assertTrue(deriveUpdate, "Disabled UPDATE derivation must skip conversion")
                     it
                 }
-                val delete = evaluators.delete.evaluate(ruleContext, listOf(record), { it }) {
+                val delete = evaluators.delete.evaluate(viewerContext, ruleClient, listOf(record), { it }) {
                     assertTrue(deriveDelete, "Disabled DELETE derivation must skip conversion")
                     it
                 }
@@ -220,10 +236,10 @@ class MutationPrivacyEvaluatorsTest {
             val evaluators = evaluators(create = rules, deriveUpdate = true, deriveDelete = true)
             val record = Record(1)
             val evaluations = listOf(
-                PrivacyOperation.LOAD to evaluators.load.evaluate(ruleContext, listOf(record)),
-                PrivacyOperation.CREATE to evaluators.create.evaluate(ruleContext, listOf(record)),
-                PrivacyOperation.UPDATE to evaluators.update.evaluate(ruleContext, listOf(record), { it }, { it }),
-                PrivacyOperation.DELETE to evaluators.delete.evaluate(ruleContext, listOf(record), { it }, { it }),
+                PrivacyOperation.LOAD to evaluators.load.evaluate(viewerContext, ruleClient, listOf(record)),
+                PrivacyOperation.CREATE to evaluators.create.evaluate(viewerContext, ruleClient, listOf(record)),
+                PrivacyOperation.UPDATE to evaluators.update.evaluate(viewerContext, ruleClient, listOf(record), { it }, { it }),
+                PrivacyOperation.DELETE to evaluators.delete.evaluate(viewerContext, ruleClient, listOf(record), { it }, { it }),
             )
             for ((operation, evaluation) in evaluations) {
                 assertSame(record, evaluation.deniedOutcomes().single().subject)
@@ -240,13 +256,16 @@ class MutationPrivacyEvaluatorsTest {
         val unreachableConversion = { _: Record -> error("Input must not be converted") }
         val record = Record(1)
         for (subjects in listOf(emptyList(), listOf(record, record))) {
-            val context = if (subjects.isEmpty()) ruleContext else PrivacyRuleContext(
-                ViewerContext.privacyBypass_DANGEROUS("evaluator test"), ruleContext.client)
+            val context: ViewerContext = if (subjects.isEmpty()) {
+                viewerContext
+            } else {
+                ViewerContext.privacyBypass_DANGEROUS("evaluator test")
+            }
             val evaluations = listOf(
-                evaluators.load.evaluate(context, subjects),
-                evaluators.create.evaluate(context, subjects),
-                evaluators.update.evaluate(context, subjects, unreachableConversion, unreachableConversion),
-                evaluators.delete.evaluate(context, subjects, unreachableConversion, unreachableConversion),
+                evaluators.load.evaluate(context, ruleClient, subjects),
+                evaluators.create.evaluate(context, ruleClient, subjects),
+                evaluators.update.evaluate(context, ruleClient, subjects, unreachableConversion, unreachableConversion),
+                evaluators.delete.evaluate(context, ruleClient, subjects, unreachableConversion, unreachableConversion),
             )
             evaluations.forEach { evaluation ->
                 assertEquals(subjects.size, evaluation.size)
@@ -271,8 +290,8 @@ class MutationPrivacyEvaluatorsTest {
                 batch.allowAll()
             }))
         for (evaluation in listOf(
-            evaluators.update.evaluate(ruleContext, listOf(record, record), { it }, { it }),
-            evaluators.delete.evaluate(ruleContext, listOf(record, record), { it }, { it }),
+            evaluators.update.evaluate(viewerContext, ruleClient, listOf(record, record), { it }, { it }),
+            evaluators.delete.evaluate(viewerContext, ruleClient, listOf(record, record), { it }, { it }),
         )) {
             assertEquals(2, evaluation.size)
             assertSame(record, evaluation.allowedSubjects().single())
@@ -293,9 +312,9 @@ class MutationPrivacyEvaluatorsTest {
                 })
                 val evaluators = evaluators(update = rules, delete = rules, deriveUpdate = true, deriveDelete = true,
                     create = listOf(PrivacyRule<TestRuleClient, Record> { _, _ -> throw failure }))
-                assertSame(failure, assertFails { evaluators.create.evaluate(ruleContext, listOf(Record(1))) })
-                assertSame(failure, assertFails { evaluators.update.evaluate(ruleContext, listOf(Record(1)), { it }, { it }) })
-                assertSame(failure, assertFails { evaluators.delete.evaluate(ruleContext, listOf(Record(1)), { it }, { it }) })
+                assertSame(failure, assertFails { evaluators.create.evaluate(viewerContext, ruleClient, listOf(Record(1))) })
+                assertSame(failure, assertFails { evaluators.update.evaluate(viewerContext, ruleClient, listOf(Record(1)), { it }, { it }) })
+                assertSame(failure, assertFails { evaluators.delete.evaluate(viewerContext, ruleClient, listOf(Record(1)), { it }, { it }) })
             }
         }
     }
@@ -311,9 +330,9 @@ class MutationPrivacyEvaluatorsTest {
             val evaluators = evaluators(update = rules, delete = rules, deriveUpdate = true, deriveDelete = true,
                 create = listOf(batchPrivacyRule<TestRuleClient, Record> { _, _ -> foreign }))
             val calls = listOf(
-                PrivacyOperation.CREATE to { evaluators.create.evaluate(ruleContext, listOf(record)) },
-                PrivacyOperation.UPDATE to { evaluators.update.evaluate(ruleContext, listOf(record), { it }, { it }) },
-                PrivacyOperation.DELETE to { evaluators.delete.evaluate(ruleContext, listOf(record), { it }, { it }) },
+                PrivacyOperation.CREATE to { evaluators.create.evaluate(viewerContext, ruleClient, listOf(record)) },
+                PrivacyOperation.UPDATE to { evaluators.update.evaluate(viewerContext, ruleClient, listOf(record), { it }, { it }) },
+                PrivacyOperation.DELETE to { evaluators.delete.evaluate(viewerContext, ruleClient, listOf(record), { it }, { it }) },
             )
             for ((operation, call) in calls) {
                 val failure = assertFailsWith<EntBatchRuleContractException> { call() }
@@ -330,10 +349,14 @@ class MutationPrivacyEvaluatorsTest {
             seen += context
             PrivacyDecision.Allow
         }))
-        val contexts = listOf(ruleContext, PrivacyRuleContext(ViewerContext(Viewer.User(8L)), TestRuleClient()))
-        contexts.forEach { evaluators.update.evaluate(it, listOf(Record(1)), { it }, { it }) }
+        val secondViewerContext = ViewerContext.AsViewer(Viewer.User(8L))
+        val secondClient = TestRuleClient()
+        evaluators.update.evaluate(viewerContext, ruleClient, listOf(Record(1)), { it }, { it })
+        evaluators.update.evaluate(secondViewerContext, secondClient, listOf(Record(1)), { it }, { it })
         assertEquals(2, seen.size)
-        contexts.forEachIndexed { index, context -> assertSame(context, seen[index]) }
+        assertSuppliedInputs(seen[0])
+        assertSame(secondViewerContext, seen[1].viewerContext)
+        assertSame(secondClient, seen[1].client)
         assertNotSame(seen[0], seen[1])
     }
 }

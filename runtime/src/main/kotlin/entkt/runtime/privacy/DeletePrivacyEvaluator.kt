@@ -19,14 +19,16 @@ class DeletePrivacyEvaluator<Client : EntRuleClient, Candidate, RuleInput>(
     )
 
     fun <Subject> evaluate(
-        context: PrivacyRuleContext<Client>,
+        viewerContext: ViewerContext,
+        client: Client,
         subjects: List<Subject>,
         toRuleInput: (Subject) -> RuleInput,
         toCandidate: (Subject) -> Candidate,
     ): PrivacyEvaluation<Subject> {
         if (derivesFromCreate) {
             return batchEvaluator.evaluate(
-                context = context,
+                viewerContext = viewerContext,
+                client = client,
                 subjects = subjects,
                 rules = rules,
                 toRuleInput = toRuleInput,
@@ -35,7 +37,8 @@ class DeletePrivacyEvaluator<Client : EntRuleClient, Candidate, RuleInput>(
             )
         }
         return batchEvaluator.evaluate(
-            context = context,
+            viewerContext = viewerContext,
+            client = client,
             subjects = subjects,
             rules = rules,
             toRuleInput = toRuleInput,

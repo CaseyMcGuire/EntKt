@@ -112,7 +112,7 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
 
         run {
             val scoped = client
-            val testViewerContext = ViewerContext(Viewer.Anonymous)
+            val testViewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
             scoped.posts
         }
 

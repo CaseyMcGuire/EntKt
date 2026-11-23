@@ -6,7 +6,6 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.mutation.DeleteRuleInput
 import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacy.DeletePrivacyEvaluator
-import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -29,7 +28,8 @@ internal fun <RuleClient : EntRuleClient, Entity : EntEntity<*>, Candidate : Wri
     validationEvaluator: ValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
 ) {
     val privacyEvaluation = privacyEvaluator.evaluate(
-        context = PrivacyRuleContext(viewerContext, ruleClient),
+        viewerContext = viewerContext,
+        client = ruleClient,
         subjects = ruleInputs,
         toRuleInput = { ruleInput -> ruleInput },
         toCandidate = { ruleInput -> ruleInput.candidate },

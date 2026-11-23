@@ -9,7 +9,10 @@ internal fun <Client : EntRuleClient, Item> loadEvaluator(
     rules: List<BatchPrivacyRule<Client, Item>>,
 ): LoadPrivacyEvaluator<Client, Item> = LoadPrivacyEvaluator(entityName, rules)
 
-/** Project final outcomes for tests of rule composition and callback contracts. */
+/**
+ * Project final outcomes for tests of rule composition and callback contracts.
+ * The evaluator builds its own rule context from [context]'s viewer context and client.
+ */
 internal fun <Subject, Client : EntRuleClient, Item> evaluateLoadDecisions(
     entityName: String,
     items: List<Subject>,
@@ -17,7 +20,7 @@ internal fun <Subject, Client : EntRuleClient, Item> evaluateLoadDecisions(
     context: PrivacyRuleContext<Client>,
     freshItem: (Subject) -> Item,
 ): List<PrivacyDecision> = PrivacyBatchEvaluator(entityName, PrivacyOperation.LOAD)
-    .evaluate(context, items, rules, freshItem)
+    .evaluate(context.viewerContext, context.client, items, rules, freshItem)
     .map { outcome ->
         when (outcome) {
             is PrivacyOutcome.Allowed -> PrivacyDecision.Allow

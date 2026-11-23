@@ -17,7 +17,6 @@ import entkt.runtime.mutation.UpdatePendingEdges
 import entkt.runtime.mutation.UpdateRuleInput
 import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacy.UpdatePrivacyEvaluator
-import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -77,7 +76,7 @@ class UpdateMutationOperation<
         val before = loadTarget(execution, request, relationshipRequirements)
         val prepared = prepareUpdate(execution, viewerContext, request, before)
 
-        evaluatePrivacy(execution, PrivacyRuleContext(viewerContext, ruleClient), request.id, prepared)
+        evaluatePrivacy(execution, viewerContext, ruleClient, request.id, prepared)
         evaluateValidation(execution, ValidationRuleContext(ruleClient), prepared)
 
         val resultEntity = if (prepared.isNoOp) {
@@ -239,12 +238,14 @@ class UpdateMutationOperation<
 
     private fun evaluatePrivacy(
         attempt: MutationExecution,
-        context: PrivacyRuleContext<RuleClient>,
+        viewerContext: ViewerContext,
+        ruleClient: RuleClient,
         id: Any,
         prepared: PreparedUpdate<RuleInput, Candidate>,
     ) {
         val evaluation = privacyEvaluator.evaluate(
-            context = context,
+            viewerContext = viewerContext,
+            client = ruleClient,
             subjects = listOf(prepared),
             toRuleInput = { preparedUpdate -> preparedUpdate.state },
             toCandidate = { preparedUpdate -> preparedUpdate.candidate },

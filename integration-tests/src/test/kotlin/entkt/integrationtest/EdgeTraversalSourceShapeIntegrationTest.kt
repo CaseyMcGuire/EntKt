@@ -326,7 +326,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `source LOAD privacy is not applied implicitly`() {
-        val viewerContext = ViewerContext(Viewer.Anonymous)
+        val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
         val client = EntClient(resetAndDriver()) {
 
             policies {
@@ -357,7 +357,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `target LOAD privacy still applies to traversal results`() {
-        val viewerContext = ViewerContext(Viewer.Anonymous)
+        val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
         val client = EntClient(resetAndDriver()) {
 
             policies {

@@ -2,7 +2,11 @@
 
 ## Status
 
-Possible future feature. This is not implemented.
+Partly implemented. Stage 1 of the [implementation plan](#implementation-plan)
+is done: `ViewerContext` is the sealed pair `AsViewer` / `PrivacyBypass`, and
+`Viewer.PrivacyBypass` is gone. Stages 2 and 3 are not implemented, so the
+context is not generic yet and the runtime still owns `Viewer`. The Motivation
+section describes the model before stage 1.
 
 ## Summary
 
@@ -141,7 +145,7 @@ Guidance for the type itself:
 ```kotlin
 sealed interface ViewerContext<out Viewer : Any> {
     /** Run as [viewer]. Privacy rules decide what is allowed. */
-    data class ForViewer<out Viewer : Any>(val viewer: Viewer) : ViewerContext<Viewer>
+    data class AsViewer<out Viewer : Any>(val viewer: Viewer) : ViewerContext<Viewer>
 
     /** Skip generated privacy checks. Created only by [privacyBypass_DANGEROUS]. */
     class PrivacyBypass internal constructor(val reason: String) : ViewerContext<Nothing>
@@ -153,7 +157,7 @@ sealed interface ViewerContext<out Viewer : Any> {
 ```
 
 ```kotlin
-val viewerContext = ViewerContext.ForViewer(appViewer)
+val viewerContext = ViewerContext.AsViewer(appViewer)
 client.posts.query().all(viewerContext).getOrThrow()
 
 val bypass = ViewerContext.privacyBypass_DANGEROUS("migration backfill")
@@ -180,7 +184,7 @@ non-bypass case directly:
 
 ```kotlin
 class PrivacyRuleContext<out Viewer : Any, out Client : EntRuleClient>(
-    val viewerContext: ViewerContext.ForViewer<Viewer>,
+    val viewerContext: ViewerContext.AsViewer<Viewer>,
     val client: Client,
 ) {
     val viewer: Viewer
@@ -268,7 +272,7 @@ Hooks and query interceptors run under bypass, so they receive the full
 posts(
     interceptor = QueryInterceptor { scope, context ->
         when (val viewerContext = context.viewerContext) {
-            is ViewerContext.ForViewer ->
+            is ViewerContext.AsViewer ->
                 scope.addPredicate(Post.tenantId eq viewerContext.viewer.tenantId)
             is ViewerContext.PrivacyBypass -> Unit // backfills read every tenant
         }
@@ -334,7 +338,7 @@ Rejected because a flavor is looked up by class at run time: a capability that
 was never attached is a `null`, not a compile error. Flavors also keep
 `id: Any` and leave open how they are stored. With an application viewer, a
 capability is a property, and elevating one operation is
-`ViewerContext.ForViewer(viewer.copy(canReadArchived = true))`.
+`ViewerContext.AsViewer(viewer.copy(canReadArchived = true))`.
 
 ### A Type Parameter On The Generated Client
 
@@ -431,11 +435,11 @@ That is stage 2 below.
 Each stage leaves the build passing and updates the guides and the
 breaking-changes log for what it changes.
 
-1. **Move bypass onto the context.** Make `ViewerContext` the sealed pair
-   `ForViewer` / `PrivacyBypass`, still without a type parameter and still
-   holding the runtime's `Viewer`. Remove `Viewer.PrivacyBypass`, make the
-   factory the only way to build a bypass, have the privacy evaluators decide
-   bypass before building the rule context, and narrow
+1. **Move bypass onto the context.** (Implemented.) Make `ViewerContext` the
+   sealed pair `AsViewer` / `PrivacyBypass`, still without a type parameter
+   and still holding the runtime's `Viewer`. Remove `Viewer.PrivacyBypass`,
+   make the factory the only way to build a bypass, have the privacy
+   evaluators decide bypass before building the rule context, and narrow
    `PrivacyRuleContext.viewerContext` and `readViewerContext` to their cases.
    Generated signatures do not change. This stage is useful on its own: bypass
    becomes a mode of an operation rather than a kind of viewer.
@@ -454,7 +458,7 @@ breaking-changes log for what it changes.
 
 Before implementation, add tests for:
 
-- a typed terminal accepts a `ForViewer` context and a bypass context, and a
+- a typed terminal accepts a `AsViewer` context and a bypass context, and a
   context for another viewer type does not compile
 - comparing a typed viewer ID with a field of an unrelated type does not
   compile
@@ -462,7 +466,7 @@ Before implementation, add tests for:
   including context-only and batch rules
 - `PrivacyRuleContext.viewerContext` is the instance the terminal received,
   and nested rule reads can pass it on
-- hooks and interceptors receive `PrivacyBypass` under bypass and `ForViewer`
+- hooks and interceptors receive `PrivacyBypass` under bypass and `AsViewer`
   otherwise
 - validation rules can read through the rule client with `readViewerContext`
 - `allowAll`, and a rule declared against a supertype of the viewer, register

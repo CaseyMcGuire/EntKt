@@ -55,7 +55,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ForUpdateQueryIntegrationTest : PostgresTestBase() {
-    private val viewer = ViewerContext(Viewer.User(7L))
+    private val viewer = ViewerContext.AsViewer(Viewer.User(7L))
 
     @Test
     fun `locking values are inert immutable and retain their original transaction binding`() {

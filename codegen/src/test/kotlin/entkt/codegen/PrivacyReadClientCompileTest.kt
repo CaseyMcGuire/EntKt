@@ -315,7 +315,7 @@ class PrivacyReadClientCompileTest {
     fun `privacy read client factory is absent`() {
         assertAdapterRemoved(
             "asPrivacyReadClientForInternalUse",
-            "asPrivacyReadClientForInternalUse(ViewerContext(Viewer.Anonymous))",
+            "asPrivacyReadClientForInternalUse(ViewerContext.AsViewer(Viewer.Anonymous))",
         )
     }
 }

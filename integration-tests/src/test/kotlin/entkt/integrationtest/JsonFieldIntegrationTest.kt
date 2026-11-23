@@ -118,7 +118,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             name = "A"
             email = "json-snapshots@example.com"
         }.saveAndLoad(testViewerContext).getOrThrow()
-        val viewerContext = ViewerContext(Viewer.User(author.id))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
 
         val firstTags = mutableListOf("first")
         val secondTags = mutableListOf("second")
@@ -205,7 +205,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             name = "A"
             email = "json-create-alias@example.com"
         }.saveAndLoad(testViewerContext).getOrThrow()
-        val viewerContext = ViewerContext(Viewer.User(author.id))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
         val callerTags = mutableListOf("original")
         var seenCandidate: List<String>? = null
 
@@ -252,7 +252,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             name = "A"
             email = "json-update-snapshots@example.com"
         }.saveAndLoad(testViewerContext).getOrThrow()
-        val viewerContext = ViewerContext(Viewer.User(author.id))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
         val original = system.articles.create {
             title = "update snapshots"
             authorId = author.id

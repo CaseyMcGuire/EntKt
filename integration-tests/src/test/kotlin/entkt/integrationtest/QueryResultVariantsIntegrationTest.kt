@@ -75,10 +75,10 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.PrivacyBypass("test"),
+        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
     ): EntClient {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {
 
@@ -137,7 +137,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `all lists every denied root row in encountered order with keys but no hydrated data`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = pinPolicy("Second"))
         val (first, second, third) = seedThree(client)
 
         val result = client.articles.query { orderBy(Article.id.asc()) }.all(viewerContext)
@@ -162,7 +162,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `strict unwrapping never returns a partial list after denial`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = pinPolicy("Second"))
         seedThree(client)
 
         assertFailsWith<EntPrivacyDeniedException> { client.articles.query().all(viewerContext).getOrThrow() }
@@ -170,7 +170,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `all evaluates only the selected window`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("First"))
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = pinPolicy("First"))
         seedThree(client)
 
         // Window = first row only (by id); the denied Second/Third rows
@@ -195,7 +195,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = explodingPolicy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = explodingPolicy)
         seedThree(client)
 
         // First is denied, Second's rule throws: the ordinary exception is
@@ -210,7 +210,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `all denied roots project to null slots while empty results remain empty`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyAllArticles)
         assertEquals(emptyList(), client.articles.query().all(viewerContext).deniedAsNull().getOrThrow())
         seedThree(client)
 
@@ -222,7 +222,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `null projection preserves the selected offset window without refilling`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = pinPolicy("Second"))
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = pinPolicy("Second"))
         val (_, second, _) = seedThree(client)
 
         val result = client.articles.query { orderBy(Article.id.asc()); offset(1); limit(2) }.all(viewerContext)
@@ -277,7 +277,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = recordingDenyPolicy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = recordingDenyPolicy)
         val (first, _, _) = seedThree(client)
 
         val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull(viewerContext)
@@ -293,7 +293,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `firstOrNull denial getOrThrow throws the stored exception instance`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyAllArticles)
         seedThree(client)
 
         val result = client.articles.query { orderBy(Article.id.asc()) }.firstOrNull(viewerContext)

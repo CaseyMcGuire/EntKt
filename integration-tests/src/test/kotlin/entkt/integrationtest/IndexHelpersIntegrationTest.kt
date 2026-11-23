@@ -66,11 +66,11 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.PrivacyBypass("test"),
+        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUser,
     ): EntClient {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {
 
@@ -194,7 +194,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `LOAD privacy still runs through an index query terminal`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyAllArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyAllArticles)
         val s = seed(client)
 
         val result = client.articles.indexes.authorId(s.authorA).query().all(viewerContext)
@@ -204,7 +204,7 @@ class IndexHelpersIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `LOAD privacy denial surfaces as Failed through the unique find terminal`() {
-        val client = freshClient(viewer = Viewer.User(1L), userPolicy = denyAllUsers)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = denyAllUsers)
         seed(client)
 
         val result = client.users.indexes.email("a@example.com").find(viewerContext)

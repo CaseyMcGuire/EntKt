@@ -26,7 +26,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ContextPrivacyRuleIntegrationTest : PostgresTestBase() {
-    private val viewer = ViewerContext(Viewer.User(7L))
+    private val viewer = ViewerContext.AsViewer(Viewer.User(7L))
 
     @Test
     fun `one context rule handles CRUD across entities including an owned transaction`() {

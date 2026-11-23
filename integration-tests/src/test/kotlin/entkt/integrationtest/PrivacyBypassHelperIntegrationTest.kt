@@ -33,7 +33,7 @@ class PrivacyBypassHelperIntegrationTest : PostgresTestBase() {
     @Test
     fun `privacy bypass is explicit per operation on one client`() {
         val client = anonClient()
-        val anonymous = ViewerContext(Viewer.Anonymous)
+        val anonymous = ViewerContext.AsViewer(Viewer.Anonymous)
         val bypass = ViewerContext.privacyBypass_DANGEROUS("seed draft")
 
         val userId = client.users.create { name = "u"; email = "u@x.com" }

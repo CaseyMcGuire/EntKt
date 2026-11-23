@@ -38,13 +38,11 @@ class LoadPrivacyEvaluatorTest {
             Record(row.getValue("id") as Long, row.getValue("label") as String)
     }
 
-    private val viewerContext = ViewerContext(Viewer.User(7L))
-    private val ruleContext = PrivacyRuleContext(viewerContext, TestRuleClient())
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val ruleClient = TestRuleClient()
 
     @Test
     fun `evaluator preserves context correlation and fail-closed outcomes`() {
-        val ruleClient = TestRuleClient()
-        val ruleContext = PrivacyRuleContext(viewerContext, ruleClient)
         val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
         val seenItems = mutableListOf<Record>()
         val first = PrivacyRule<TestRuleClient, Record> { context, item ->
@@ -67,7 +65,7 @@ class LoadPrivacyEvaluatorTest {
         )
 
         val entities = listOf(Record(1L, "one"), Record(2L, "two"), Record(3L, "three"))
-        val evaluation = evaluator.evaluate(ruleContext, entities)
+        val evaluation = evaluator.evaluate(viewerContext, ruleClient, entities)
 
         assertEquals(listOf(1L), evaluation.allowedSubjects().map(Record::id))
         assertSame(entities[0], evaluation.allowedSubjects().single())
@@ -76,7 +74,7 @@ class LoadPrivacyEvaluatorTest {
         assertEquals(listOf("owner only", "no load rule allowed access"), denied.map { it.reason })
         assertEquals(4, contexts.size)
         contexts.forEach { context ->
-            assertSame(ruleContext, context)
+            assertSame(contexts.first(), context)
             assertSame(viewerContext, context.viewerContext)
             assertSame(ruleClient, context.client)
         }
@@ -100,7 +98,7 @@ class LoadPrivacyEvaluatorTest {
             }),
         )
 
-        val evaluation = evaluator.evaluate(ruleContext, listOf(entity, entity))
+        val evaluation = evaluator.evaluate(viewerContext, ruleClient, listOf(entity, entity))
 
         assertEquals(2, evaluation.size)
         assertSame(entity, evaluation.allowedSubjects().single())
@@ -122,11 +120,12 @@ class LoadPrivacyEvaluatorTest {
             ),
         )
 
-        assertEquals(0, evaluator.evaluate(ruleContext, emptyList()).size)
+        assertEquals(0, evaluator.evaluate(viewerContext, ruleClient, emptyList()).size)
         assertEquals(
             listOf(Record(1L, "one"), Record(1L, "duplicate")),
             evaluator.evaluate(
-                PrivacyRuleContext(ViewerContext.privacyBypass_DANGEROUS("load phase test"), TestRuleClient()),
+                ViewerContext.privacyBypass_DANGEROUS("load phase test"),
+                ruleClient,
                 listOf(Record(1L, "one"), Record(1L, "duplicate")),
             ).allowedSubjects(),
         )
@@ -144,7 +143,7 @@ class LoadPrivacyEvaluatorTest {
         )
 
         val thrown = assertFailsWith<IllegalStateException> {
-            evaluator.evaluate(ruleContext, listOf(Record(1L, "one")))
+            evaluator.evaluate(viewerContext, ruleClient, listOf(Record(1L, "one")))
         }
 
         assertSame(failure, thrown)
@@ -158,7 +157,7 @@ class LoadPrivacyEvaluatorTest {
         )
         val entities = listOf(Record(1L, "one"), Record(2L, "two"))
 
-        val evaluation = evaluator.evaluate(ruleContext, entities)
+        val evaluation = evaluator.evaluate(viewerContext, ruleClient, entities)
 
         assertEquals(emptyList(), evaluation.allowedSubjects())
         assertEquals(entities, evaluation.deniedOutcomes().map { it.subject })
@@ -178,7 +177,7 @@ class LoadPrivacyEvaluatorTest {
         )
 
         val failure = assertFailsWith<EntBatchRuleContractException> {
-            evaluator.evaluate(ruleContext, listOf(Record(1L, "one")))
+            evaluator.evaluate(viewerContext, ruleClient, listOf(Record(1L, "one")))
         }
 
         assertEquals("StoredRecord LOAD privacy", failure.lifecycle)
@@ -191,26 +190,36 @@ class LoadPrivacyEvaluatorTest {
 
     @Test
     fun `a nested evaluation cannot replace the outer context subjects or decisions`() {
-        val nestedContext = PrivacyRuleContext(ViewerContext(Viewer.User(8L)), TestRuleClient())
+        val nestedViewerContext = ViewerContext.AsViewer(Viewer.User(8L))
+        val nestedClient = TestRuleClient()
         val nestedRecord = Record(2L, "nested")
         val outerRecords = listOf(Record(1L, "allowed"), Record(3L, "denied"))
+        var outerContext: PrivacyRuleContext<TestRuleClient>? = null
         lateinit var evaluator: LoadPrivacyEvaluator<TestRuleClient, Record>
         evaluator = LoadPrivacyEvaluator(
             entityName = RecordDescriptor.entityName,
             rules = listOf(
                 batchPrivacyRule { context, batch ->
-                    if (context === ruleContext) {
-                        val nested = evaluator.evaluate(nestedContext, listOf(nestedRecord, nestedRecord))
+                    if (context.viewerContext === viewerContext) {
+                        outerContext = context
+                        val nested = evaluator.evaluate(
+                            nestedViewerContext,
+                            nestedClient,
+                            listOf(nestedRecord, nestedRecord),
+                        )
                         assertEquals(listOf(nestedRecord, nestedRecord), nested.allowedSubjects())
                         assertEquals(outerRecords, batch)
                         batch.decideEach { PrivacyDecision.Continue }
                     } else {
-                        assertSame(nestedContext, context)
+                        assertSame(nestedViewerContext, context.viewerContext)
+                        assertSame(nestedClient, context.client)
                         batch.decideEach { PrivacyDecision.Allow }
                     }
                 },
                 batchPrivacyRule { context, batch ->
-                    assertSame(ruleContext, context)
+                    assertSame(outerContext, context)
+                    assertSame(viewerContext, context.viewerContext)
+                    assertSame(ruleClient, context.client)
                     assertEquals(outerRecords, batch)
                     batch.decideEachIndexed { index, _ ->
                         if (index == 0) {
@@ -223,7 +232,7 @@ class LoadPrivacyEvaluatorTest {
             ),
         )
 
-        val outer = evaluator.evaluate(ruleContext, outerRecords)
+        val outer = evaluator.evaluate(viewerContext, ruleClient, outerRecords)
 
         assertSame(outerRecords[0], outer.allowedSubjects().single())
         assertSame(outerRecords[1], outer.deniedOutcomes().single().subject)
@@ -242,15 +251,19 @@ class LoadPrivacyEvaluatorTest {
                 },
             ),
         )
-        val firstContext = PrivacyRuleContext(ViewerContext(Viewer.User(1L)), TestRuleClient())
-        val secondContext = PrivacyRuleContext(ViewerContext(Viewer.User(2L)), TestRuleClient())
+        val firstViewerContext = ViewerContext.AsViewer(Viewer.User(1L))
+        val firstClient = TestRuleClient()
+        val secondViewerContext = ViewerContext.AsViewer(Viewer.User(2L))
+        val secondClient = TestRuleClient()
         val entities = listOf(Record(1L, "one"))
 
-        assertEquals(entities, evaluator.evaluate(firstContext, entities).allowedSubjects())
-        assertEquals(entities, evaluator.evaluate(secondContext, entities).allowedSubjects())
+        assertEquals(entities, evaluator.evaluate(firstViewerContext, firstClient, entities).allowedSubjects())
+        assertEquals(entities, evaluator.evaluate(secondViewerContext, secondClient, entities).allowedSubjects())
 
         assertEquals(2, contexts.size)
-        assertSame(firstContext, contexts[0])
-        assertSame(secondContext, contexts[1])
+        assertSame(firstViewerContext, contexts[0].viewerContext)
+        assertSame(firstClient, contexts[0].client)
+        assertSame(secondViewerContext, contexts[1].viewerContext)
+        assertSame(secondClient, contexts[1].client)
     }
 }

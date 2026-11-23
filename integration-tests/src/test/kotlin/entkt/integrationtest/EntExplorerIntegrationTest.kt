@@ -80,7 +80,7 @@ class EntExplorerIntegrationTest : PostgresTestBase() {
         assertEquals(200, list.status)
         assertTrue("First" in list.body && "Second" in list.body)
 
-        val anonymous = explorer(plain, ViewerContext(Viewer.Anonymous))
+        val anonymous = explorer(plain, ViewerContext.AsViewer(Viewer.Anonymous))
         val hidden = get(anonymous, "/_ent/entities/articles")
         assertEquals(200, hidden.status)
         assertFalse("First" in hidden.body, "fail-closed privacy must hide rows from Anonymous")
@@ -99,7 +99,7 @@ class EntExplorerIntegrationTest : PostgresTestBase() {
         assertTrue("First" in detail.body)
         assertTrue("/_ent/entities/users/${article.authorId}" in detail.body, "belongsTo links to the author detail")
 
-        val anonymous = explorer(plain, ViewerContext(Viewer.Anonymous))
+        val anonymous = explorer(plain, ViewerContext.AsViewer(Viewer.Anonymous))
         assertEquals(404, get(anonymous, "/_ent/entities/articles/${article.id}").status)
         assertEquals(404, get(visible, "/_ent/entities/articles/999999").status, "missing row is the same 404")
         assertEquals(404, get(visible, "/_ent/entities/articles/not-a-number").status, "unparseable id is the same 404")
@@ -196,7 +196,7 @@ class EntExplorerIntegrationTest : PostgresTestBase() {
         // with a Root denial, which renders as a privacy-filtered empty
         // page WITH the banner — and next stays offered rather than
         // becoming a visible-count oracle.
-        val anonymous = explorer(plain, ViewerContext(Viewer.Anonymous))
+        val anonymous = explorer(plain, ViewerContext.AsViewer(Viewer.Anonymous))
         val denied = get(anonymous, "/_ent/entities/users")
         assertEquals(200, denied.status)
         assertTrue("Row-level privacy applies" in denied.body, "denied pages carry the privacy banner")

@@ -13,7 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class BatchPrivacyDecisionsTest {
-    private val context = PrivacyRuleContext(ViewerContext(Viewer.User(7L)), TestRuleClient())
+    private val context = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7L)), TestRuleClient())
 
     @Test
     fun `allowAll returns an allow for every occurrence including null items`() {

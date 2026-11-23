@@ -151,7 +151,7 @@ private object EdgeCheckedArticlePolicy : EntityPolicy<Article, ArticlePolicySco
  * in `codegen`'s `ValidationReadClientCompileTest`.
  */
 class ValidationReadClientIntegrationTest : PostgresTestBase() {
-    private val anonymousViewerContext = ViewerContext(Viewer.Anonymous)
+    private val anonymousViewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
 
     private fun freshClient(config: EntClientConfig.() -> Unit): EntClient =
         EntClient(resetAndDriver(), config)
@@ -179,7 +179,7 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
             }
         }
         val client = freshClient { policies { users(policy) } }
-        val operationContext = ViewerContext(Viewer.User("shared-read-client-test"))
+        val operationContext = ViewerContext.AsViewer(Viewer.User("shared-read-client-test"))
 
         client.users.create { name = "Alice"; email = "alice@test.com" }
             .save(operationContext)
@@ -318,8 +318,8 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `read interceptors run for validator queries and observe the bypass context`() {
-        val seenViewers = mutableListOf<Viewer>()
-        val recorder = QueryInterceptor<User> { _, context -> seenViewers.add(context.viewerContext.viewer) }
+        val seenContexts = mutableListOf<ViewerContext>()
+        val recorder = QueryInterceptor<User> { _, context -> seenContexts.add(context.viewerContext) }
 
         val client = freshClient {
 
@@ -332,9 +332,9 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
         // The validator's uniqueness query passed through the interceptor
         // chain with the validator's explicit readViewerContext.
         assertTrue(
-            seenViewers.any { it is Viewer.PrivacyBypass && it.reason == "validation read" },
+            seenContexts.any { it is ViewerContext.PrivacyBypass && it.reason == "validation read" },
             "Expected the validation read to run through the users interceptor " +
-                "with the fixed PrivacyBypass(\"validation read\") context; saw: $seenViewers",
+                "with the fixed PrivacyBypass(\"validation read\") context; saw: $seenContexts",
         )
     }
 }

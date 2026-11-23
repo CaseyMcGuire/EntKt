@@ -57,7 +57,7 @@ class HookStateCopyCompileTest {
                     val ownerId = FieldPatch.Set(1L)
                     val createdAt = FieldPatch.Set(Instant.parse("2000-01-01T00:00:00Z"))
                     val client = EntClientScope()
-                    val viewerContext = ViewerContext(Viewer.User(7L))
+                    val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
                     val before = Record(1L)
                     val pendingEdges = RecordPendingEdgeOps()
 

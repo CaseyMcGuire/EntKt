@@ -17,10 +17,12 @@ class LoadPrivacyEvaluator<Client : EntRuleClient, Entity>(
     )
 
     fun evaluate(
-        context: PrivacyRuleContext<Client>,
+        viewerContext: ViewerContext,
+        client: Client,
         entities: List<Entity>,
     ): PrivacyEvaluation<Entity> = batchEvaluator.evaluate(
-        context = context,
+        viewerContext = viewerContext,
+        client = client,
         subjects = entities,
         rules = rules,
     )

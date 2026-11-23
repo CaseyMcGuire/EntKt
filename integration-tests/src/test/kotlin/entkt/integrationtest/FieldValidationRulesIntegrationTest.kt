@@ -31,7 +31,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 
 class FieldValidationRulesIntegrationTest : PostgresTestBase() {
-    private val viewerContext = ViewerContext(Viewer.Anonymous)
+    private val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
 
     private object UserFieldPolicy : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {

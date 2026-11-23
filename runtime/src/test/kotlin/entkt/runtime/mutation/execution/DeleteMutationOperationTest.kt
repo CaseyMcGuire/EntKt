@@ -155,8 +155,8 @@ class DeleteMutationOperationTest {
     ) {
         val events = mutableListOf<String>()
         val driver = RecordingDriver(events, inTransaction)
-        val viewerContext = ViewerContext(Viewer.User(7L))
-        val otherViewerContext = ViewerContext(Viewer.User(8L))
+        val viewerContext: ViewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+        val otherViewerContext = ViewerContext.AsViewer(Viewer.User(8L))
         val ruleClient = TestRuleClient()
         val failures = mutableListOf<EntMutationException>()
         var privacyDecisions: List<PrivacyDecision> = emptyList()

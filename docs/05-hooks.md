@@ -154,7 +154,8 @@ The `beforeUpdate` hook receives an immutable `{Entity}BeforeUpdateState` with:
 
 - **`client`** — the transaction-safe `EntClientScope` described above.
 - **`viewerContext`** — the exact context supplied to the update terminal; pass
-  it to nested reads or mutations issued through `client`.
+  it to nested reads or mutations issued through `client`. Hooks also run for a
+  privacy bypass, so branch on the context's case before reading a viewer.
 - **`before`** — the current stored entity, loaded before any update hooks run.
   This load is not blocked by LOAD privacy. The default
   `UpdateConsistency.ReadCurrent` provides a current snapshot.
@@ -304,7 +305,7 @@ logging, notifications). Use
 Hooks are automatically inherited by transaction-scoped clients:
 
 ```kotlin
-val viewerContext = ViewerContext(Viewer.User(currentUserId()))
+val viewerContext = ViewerContext.AsViewer(Viewer.User(currentUserId()))
 val client = EntClient(driver) {
     policies { users(UserPolicy) } // Your application's policy.
     hooks {

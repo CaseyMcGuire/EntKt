@@ -482,10 +482,9 @@ it does not return a partial-success or multi-item error payload. A thrown rule
 exception stops the phase at that registered rule rather than becoming a
 validation decision.
 
-`Viewer.PrivacyBypass` does **not** bypass validation. Validation enforces
-data model invariants that apply regardless of who is performing the
-operation. This differs from privacy, where `Viewer.PrivacyBypass` bypasses
-all checks.
+A `ViewerContext.PrivacyBypass` does **not** bypass validation. Validation
+enforces data model invariants that apply regardless of who is performing the
+operation. This differs from privacy, where a bypass context skips all checks.
 
 ## Execution Order
 

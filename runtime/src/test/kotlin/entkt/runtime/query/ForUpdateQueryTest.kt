@@ -78,7 +78,7 @@ class ForUpdateQueryTest {
     )
 
     private class Fixture {
-        val viewer = ViewerContext(Viewer.User(7L))
+        val viewer = ViewerContext.AsViewer(Viewer.User(7L))
         val events = mutableListOf<String>()
         val calls = mutableListOf<Call>()
         val contexts = mutableListOf<QueryContext>()

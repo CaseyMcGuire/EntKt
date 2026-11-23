@@ -63,8 +63,8 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         }
     }
 
-    private fun freshClient(viewer: Viewer = Viewer.User(1L)): EntClient {
-        viewerContext = ViewerContext(viewer)
+    private fun freshClient(viewerContext: ViewerContext = ViewerContext.AsViewer(Viewer.User(1L))): EntClient {
+        this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {
 
@@ -255,7 +255,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `pre-write CREATE denial carries operation CREATE and NotPersisted, and writes nothing`() {
-        val viewerContext = ViewerContext(Viewer.User(1L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
         val denyCreate = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {

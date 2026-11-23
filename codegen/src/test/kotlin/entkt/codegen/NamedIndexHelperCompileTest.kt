@@ -131,7 +131,7 @@ class NamedIndexHelperCompileTest {
                     val chained = client.testCases.indexes.problemId(7L).position(3)
                     val read = client.readOnlyClient.testCases.indexes.byProblemAndPosition(7L, 3)
                     val expected = listOf(TestCase.problemId.eq(7L), TestCase.position.eq(3))
-                    val viewer = ViewerContext(Viewer.User(1L))
+                    val viewer = ViewerContext.AsViewer(Viewer.User(1L))
                 }
 
                 fun buildsPredicatesWithoutExecuting() = with(Fixture()) {

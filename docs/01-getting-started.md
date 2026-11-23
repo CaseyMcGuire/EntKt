@@ -180,7 +180,7 @@ fun main() {
     val client = EntClient(PostgresDriver(dataSource)) {
         policies { users(UserPolicy) }
     }
-    val viewerContext = ViewerContext(Viewer.Anonymous)
+    val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
 
     // Create — saveAndLoad(viewerContext) returns MutationResult<User>
     val alice = client.users.create {

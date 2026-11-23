@@ -56,10 +56,10 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
     }
 
     private fun recordingClient(
-        viewer: Viewer = Viewer.PrivacyBypass("test"),
+        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
     ): Pair<EntClient, RecordingDriver> {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val recording = RecordingDriver(resetAndDriver())
         val client = EntClient(recording) {
 
@@ -108,7 +108,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val (client, recording) = recordingClient(viewer = Viewer.User(1L), articlePolicy = countingDeny)
+        val (client, recording) = recordingClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = countingDeny)
         val article = seedArticle(client)
 
         val result = client.articles.findById(viewerContext, article.id)
@@ -124,7 +124,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `getOrThrow on a failed read performs zero driver calls and throws the stored instance`() {
-        val (client, recording) = recordingClient(viewer = Viewer.User(1L), articlePolicy = denyArticles)
+        val (client, recording) = recordingClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         val result = client.articles.findById(viewerContext, article.id)
@@ -153,7 +153,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val (client, recording) = recordingClient(Viewer.User(1L), policy)
+        val (client, recording) = recordingClient(ViewerContext.AsViewer(Viewer.User(1L)), policy)
         seedArticle(client)
         val result = assertIs<ReadCollectionResult.Completed<Article>>(client.articles.query().all(viewerContext))
 

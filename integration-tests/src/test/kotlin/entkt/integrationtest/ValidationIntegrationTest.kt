@@ -254,7 +254,7 @@ private object ImmutableBytesArticlePolicy : EntityPolicy<Article, ArticlePolicy
  * operation, violations))` with `writeState = NotPersisted` (validation
  * runs before persistence), where each violation is a
  * `ValidationViolation(message, field, code)`. Privacy runs before
- * validation, `Viewer.PrivacyBypass` bypasses privacy but never
+ * validation, `ViewerContext.PrivacyBypass` bypasses privacy but never
  * validation, and scoped / transaction clients preserve validation
  * config.
  */
@@ -282,11 +282,11 @@ class ValidationIntegrationTest {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.PrivacyBypass("test"),
+        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = ValidatedArticlePolicy,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUserPolicy,
     ): EntClient {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val driver = PostgresDriver(dataSource)
         seedSchemas()
 
@@ -317,7 +317,7 @@ class ValidationIntegrationTest {
     @Test
     fun `rules can mutate their own byte array copies without changing shared inputs or persistence`() {
         val client = freshClient(
-            viewer = Viewer.User(7L),
+            viewerContext = ViewerContext.AsViewer(Viewer.User(7L)),
             articlePolicy = ImmutableBytesArticlePolicy,
         )
         val author = seedAuthor(client)
@@ -493,7 +493,7 @@ class ValidationIntegrationTest {
     @Test
     fun `privacy denial fires before validation on create`() {
         val client = freshClient(
-            viewer = Viewer.Anonymous,
+            viewerContext = ViewerContext.AsViewer(Viewer.Anonymous),
             articlePolicy = PrivacyBeforeValidationPolicy,
         )
         val author = run {
@@ -516,11 +516,11 @@ class ValidationIntegrationTest {
         assertEquals("authentication required", ex.reason)
     }
 
-    // ---- Viewer.PrivacyBypass does NOT bypass validation ----
+    // ---- ViewerContext.PrivacyBypass does NOT bypass validation ----
 
     @Test
     fun `PrivacyBypass viewer does not bypass create validation`() {
-        val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
+        val client = freshClient(viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"))
         val author = seedAuthor(client)
 
         val failed = assertIs<MutationResult.Failed>(
@@ -536,7 +536,7 @@ class ValidationIntegrationTest {
     @Test
     fun `PrivacyBypass viewer does not bypass update validation`() {
         val client = freshClient(
-            viewer = Viewer.PrivacyBypass("test"),
+            viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
             articlePolicy = FullyValidatedArticlePolicy,
         )
         val author = seedAuthor(client)
@@ -556,7 +556,7 @@ class ValidationIntegrationTest {
     @Test
     fun `PrivacyBypass viewer does not bypass delete validation`() {
         val client = freshClient(
-            viewer = Viewer.PrivacyBypass("test"),
+            viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
             articlePolicy = FullyValidatedArticlePolicy,
         )
         val author = seedAuthor(client)
@@ -617,7 +617,7 @@ class ValidationIntegrationTest {
 
     @Test
     fun `explicit viewer context preserves validation config`() {
-        val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
+        val client = freshClient(viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"))
         val author = seedAuthor(client)
 
         // Validation is still enforced inside a scoped client
@@ -637,7 +637,7 @@ class ValidationIntegrationTest {
 
     @Test
     fun `withTransaction preserves validation config`() {
-        val client = freshClient(viewer = Viewer.PrivacyBypass("test"))
+        val client = freshClient(viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"))
         val author = seedAuthor(client)
 
         // The validation failure recorded through the transaction client

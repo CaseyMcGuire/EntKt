@@ -140,7 +140,7 @@ class JunctionRelationshipReaderTest {
         }
     }
 
-    private val viewerContext = ViewerContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
     private val targetPath = listOf(EdgeStep(Source::class, "targets", Target::class))
     private val relationshipContext = RelationshipReadContext(
         viewerContext = viewerContext,

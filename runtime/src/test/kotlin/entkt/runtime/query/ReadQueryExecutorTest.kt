@@ -51,7 +51,7 @@ class ReadQueryExecutorTest {
 
     }
 
-    private val viewerContext = ViewerContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
 
     private fun query(): EntityQuery<Item> = EntityQuery(
         entity = ItemMapping,

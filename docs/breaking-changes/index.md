@@ -29,6 +29,28 @@ above it.
 
 ## Unreleased
 
+- **Move privacy bypass from `Viewer` to `ViewerContext`** (`runtime`, `ent-explorer`)
+  `ViewerContext` is now a sealed pair: `ViewerContext.AsViewer(viewer)` runs an
+  operation as a viewer, and `ViewerContext.PrivacyBypass` skips generated
+  privacy checks. `Viewer.PrivacyBypass` is removed, and a bypass can only be
+  built with `ViewerContext.privacyBypass_DANGEROUS(reason)`. Privacy rules
+  never run for a bypass, so `PrivacyRuleContext.viewerContext` is now a
+  `ViewerContext.AsViewer` and `PrivacyRuleContext.viewer` exposes its viewer.
+  `ValidationRuleContext.readViewerContext` is typed
+  `ViewerContext.PrivacyBypass`. Bypass behavior is unchanged. This is the
+  first stage of
+  [Application-Defined Viewer](../possible-features/privacy-validation/application-defined-viewer.md).
+  _Migration:_ replace `ViewerContext(viewer)` with
+  `ViewerContext.AsViewer(viewer)`, and
+  `ViewerContext(Viewer.PrivacyBypass(reason))` with
+  `ViewerContext.privacyBypass_DANGEROUS(reason)`. Hooks and query interceptors
+  that read `viewerContext.viewer` must branch on the context's case first,
+  because they also run for a bypass. Code that matched `Viewer.PrivacyBypass`
+  matches `ViewerContext.PrivacyBypass` instead. Internal integrations call the
+  privacy evaluators with the viewer context and rule client
+  (`evaluate(viewerContext, client, ...)`); the evaluator builds the
+  `PrivacyRuleContext`.
+
 - **Rename Ent Viewer to Ent Explorer** (`ent-explorer`, `codegen`, `gradle-plugin`)
   The read-only browser tool is now called Ent Explorer, so "viewer" refers
   only to who an operation runs as. Modules, coordinates, packages, types,

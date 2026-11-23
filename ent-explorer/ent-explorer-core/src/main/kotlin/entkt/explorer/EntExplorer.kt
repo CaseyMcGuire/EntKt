@@ -8,7 +8,7 @@ package entkt.explorer
  * val explorer = EntExplorer(client, GeneratedEntExplorerRegistry) {
  *     path = "/_ent"
  *     authorize { request -> request.principal.isAdminOfSomeKind() }
- *     viewerContext { request -> ViewerContext(Viewer.User(...)) }
+ *     viewerContext { request -> ViewerContext.AsViewer(Viewer.User(...)) }
  *     entities { exclude("session") }
  * }
  *

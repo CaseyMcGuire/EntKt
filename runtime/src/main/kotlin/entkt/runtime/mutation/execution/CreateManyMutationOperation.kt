@@ -16,7 +16,6 @@ import entkt.runtime.mutation.CreateMutationDraft
 import entkt.runtime.mutation.PreparedCreate
 import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacy.CreatePrivacyEvaluator
-import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -153,7 +152,8 @@ class CreateManyMutationOperation<
             attempt = attempt,
             entityName = entityName,
             prepared = resolvedCreates,
-            context = PrivacyRuleContext(viewerContext, ruleClient),
+            viewerContext = viewerContext,
+            ruleClient = ruleClient,
         )
         evaluateCreateValidation(
             attempt = attempt,
@@ -219,11 +219,13 @@ class CreateManyMutationOperation<
         attempt: MutationExecution,
         entityName: String,
         prepared: List<PreparedCreate<Candidate>>,
-        context: PrivacyRuleContext<RuleClient>,
+        viewerContext: ViewerContext,
+        ruleClient: RuleClient,
     ) {
         val candidates = prepared.map { create -> create.candidate }
         val evaluation = privacyEvaluator.evaluate(
-            context = context,
+            viewerContext = viewerContext,
+            client = ruleClient,
             candidates = candidates,
         )
         val firstDenial = evaluation.firstDeniedOrNull()

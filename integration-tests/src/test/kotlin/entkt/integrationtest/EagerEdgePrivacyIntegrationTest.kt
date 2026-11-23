@@ -53,7 +53,7 @@ import kotlin.test.assertTrue
  * maps an eager denial to root absence.
  */
 class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
-    private val viewerContext = ViewerContext(Viewer.User(1L))
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
 
     // ---- fixture policies ----
 

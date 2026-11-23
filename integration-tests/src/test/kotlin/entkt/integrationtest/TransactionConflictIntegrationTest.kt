@@ -362,7 +362,7 @@ class TransactionConflictIntegrationTest : PostgresTestBase() {
 
         val result = client.withTransaction { tx ->
             val read = tx.users.query { where(User.id eq selected.id) }
-                .forUpdate().firstOrNull(ViewerContext(Viewer.User(selected.id)))
+                .forUpdate().firstOrNull(ViewerContext.AsViewer(Viewer.User(selected.id)))
             val failure = assertIs<ReadResult.Failed>(read)
             assertSame(applicationFailure, failure.exception)
             assertFalse(failure.exception is EntConflictFailure)

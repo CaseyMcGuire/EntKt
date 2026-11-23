@@ -27,7 +27,7 @@ import kotlin.test.assertTrue
 /** Exercise actual generated conversions without allowing any storage I/O. */
 class MutationConverterTest {
     private val client = EntClient(NoopDriver)
-    private val viewerContext = ViewerContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
 
     @Test
     fun `hook conversion preserves its scope and maps required field-backed relationships`() {

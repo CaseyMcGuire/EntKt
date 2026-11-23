@@ -299,7 +299,7 @@ class LinkTableM2MPostgresIntegrationTest {
 
     @Test
     fun `hook edge snapshots stay read-only while rules share prepared relationship changes`() {
-        val viewerContext = ViewerContext(Viewer.User(1L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
         val seedClient = freshClient()
         val post = seedClient.posts.create { title = "Hello" }.saveAndLoad(testViewerContext).getOrThrow()
         val tagA = seedClient.tags.create { name = "a" }.saveAndLoad(testViewerContext).getOrThrow()

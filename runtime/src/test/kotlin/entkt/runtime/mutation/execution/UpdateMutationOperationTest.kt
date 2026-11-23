@@ -164,7 +164,7 @@ class UpdateMutationOperationTest {
             supportsRelationshipSerialization,
         )
         val mapping = RecordingMapping(events)
-        val viewerContext = ViewerContext(Viewer.User(7L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
         val ruleClient = TestRuleClient()
         val failures = mutableListOf<EntMutationException>()
         val receivedContexts = mutableListOf<ViewerContext>()

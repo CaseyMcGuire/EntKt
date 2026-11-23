@@ -28,7 +28,7 @@ import kotlin.test.assertSame
 class BatchLifecycleEvaluationTest {
 
     private val viewerContext = PrivacyRuleContext(
-        viewerContext = ViewerContext(Viewer.User(7)),
+        viewerContext = ViewerContext.AsViewer(Viewer.User(7)),
         client = TestRuleClient("privacy-client"),
     )
     private val validationContext = ValidationRuleContext(client = TestRuleClient("validation-client"))
@@ -106,8 +106,9 @@ class BatchLifecycleEvaluationTest {
         ) { ++nextSnapshot }
 
         assertEquals(listOf(listOf(1), listOf(2)), seen)
-        assertSame(viewerContext, seenContexts[0])
-        assertSame(viewerContext, seenContexts[1])
+        assertSame(seenContexts[0], seenContexts[1])
+        assertSame(viewerContext.viewerContext, seenContexts[0].viewerContext)
+        assertSame(viewerContext.client, seenContexts[0].client)
     }
 
     @Test

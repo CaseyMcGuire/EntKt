@@ -63,11 +63,11 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.PrivacyBypass("test"),
+        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
         config: entkt.integrationtest.ent.EntClientConfig.() -> Unit = {},
     ): EntClient {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {
 
@@ -141,7 +141,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `deleteById returns Failed(EntMutationPrivacyDeniedException) when DELETE denies`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
         val result = client.articles.deleteById(viewerContext, article.id)
@@ -161,7 +161,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `getOrThrow throws the exact stored exception on delete denial`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
         val result = client.articles.deleteById(viewerContext, article.id)
@@ -196,7 +196,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `deleteById returns Failed when DELETE denies and leaves the row`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyDelete)
         val article = seedArticle(client)
 
         val result = client.articles.deleteById(viewerContext, article.id)
@@ -251,7 +251,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
         // Every candidate is denied, so the FIRST candidate fails before
         // any delete staged — the typed failure passes through unchanged
         // and NotPersisted is the honest state after confirmed rollback.
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyDelete)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyDelete)
         seedArticle(client, "One")
         seedArticle(client, "Two")
         seedArticle(client, "Three")
@@ -286,7 +286,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denySecond)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denySecond)
         seedArticle(client, "One")
         seedArticle(client, "Two")
         seedArticle(client, "Three")

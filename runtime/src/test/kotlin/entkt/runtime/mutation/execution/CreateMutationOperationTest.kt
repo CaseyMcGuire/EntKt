@@ -769,7 +769,7 @@ class CreateMutationOperationTest {
         val mapping = RecordingMapping(events)
         val spec = RecordingSpec(events)
         val input = RecordingInput(events)
-        val viewerContext = ViewerContext(Viewer.User(7L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
         val recordedFailures = mutableListOf<EntMutationException>()
         val mutationRuntime = object : MutationRuntime {
             override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {

@@ -109,7 +109,7 @@ class RequiredCreateIntegrationTest : PostgresTestBase() {
         }
         assertTrue(events.isEmpty())
 
-        val article = pending.saveAndLoad(ViewerContext(Viewer.User(author.id))).getOrThrow()
+        val article = pending.saveAndLoad(ViewerContext.AsViewer(Viewer.User(author.id))).getOrThrow()
 
         assertEquals("beforeCreate", article.title)
         assertEquals(author.id, article.authorId)

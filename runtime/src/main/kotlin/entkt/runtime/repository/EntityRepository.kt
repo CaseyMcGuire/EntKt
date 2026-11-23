@@ -28,7 +28,6 @@ import entkt.runtime.mutation.execution.UpdateMutationInput
 import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.privacy.LoadPrivacyEvaluator
 import entkt.runtime.privacy.PrivacyEvaluation
-import entkt.runtime.privacy.PrivacyRuleContext
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.EntityQueryBuilder
 import entkt.runtime.query.ReadOperation
@@ -151,7 +150,7 @@ abstract class EntityRepository<
 
     @EntktInternal
     fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Entity>): PrivacyEvaluation<Entity> =
-        loadPrivacyEvaluator.evaluate(PrivacyRuleContext(viewerContext, ruleClient), entities)
+        loadPrivacyEvaluator.evaluate(viewerContext, ruleClient, entities)
 
     /** Bind immutable execution dependencies now; saving does not call back into this repository. */
     protected fun pendingCreate(draft: CreateDraft): PendingCreateMutation<CreateDraft, Entity> {

@@ -48,7 +48,7 @@ class TransactionClientCompileTest {
                 import entkt.runtime.privacy.Viewer
 
                 fun useTransactionClient(client: EntClient) {
-                    val viewerContext = ViewerContext(Viewer.Anonymous)
+                    val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
                     client.withTransaction { tx ->
                         val typed: EntTransactionClient = tx
                         typed.cars.query { }.all(viewerContext)

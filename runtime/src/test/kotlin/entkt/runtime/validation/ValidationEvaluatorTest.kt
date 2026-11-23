@@ -2,7 +2,6 @@
 
 package entkt.runtime.validation
 
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntBatchRuleContractException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.rule.RuleBatch
@@ -13,7 +12,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -91,7 +89,7 @@ class ValidationEvaluatorTest {
 
         for (context in contexts) {
             assertEquals(listOf("invalid"), evaluator.evaluate(context, listOf(Input(1))).single().map(Invalid::message))
-            assertIs<Viewer.PrivacyBypass>(context.readViewerContext.viewer)
+            assertEquals("validation read", context.readViewerContext.reason)
         }
 
         assertEquals(2, seenContexts.size)

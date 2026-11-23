@@ -126,7 +126,7 @@ class EntityGraphLoaderTest {
         }
     }
 
-    private val viewerContext = ViewerContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
 
     @Test
     fun `recurses before attachment and visits sibling relationships in declaration order`() {

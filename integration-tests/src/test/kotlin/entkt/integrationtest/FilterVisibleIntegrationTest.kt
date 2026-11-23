@@ -44,7 +44,7 @@ import kotlin.test.assertSame
  *  - a rule-thrown ordinary exception still fails the terminal
  */
 class FilterVisibleIntegrationTest : PostgresTestBase() {
-    private val viewerContext = ViewerContext(Viewer.User(1L))
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
 
     private fun openNotes() = object : EntityPolicy<Note, NotePolicyScope> {
         override fun configure(scope: NotePolicyScope) = scope.run { privacy { load(allowAll) } }

@@ -64,7 +64,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     @Test
     fun `one privacy context is shared by traversal edge predicate eager load and LOAD privacy`() {
         val driver = freshDriver()
-        val firstPrivacy = ViewerContext(Viewer.User("viewer-a"))
+        val firstPrivacy = ViewerContext.AsViewer(Viewer.User("viewer-a"))
         val interceptorObservations = mutableListOf<Pair<ReadOperation, ViewerContext>>()
         val loadContexts = mutableListOf<ViewerContext>()
         val client = EntClient(driver) {
@@ -321,7 +321,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // eager denial must stay Failed — an eager load can never
         // turn a visible root into apparent absence.
         val viewer = Viewer.User("denied-user")
-        val viewerContext = ViewerContext(viewer)
+        val viewerContext = ViewerContext.AsViewer(viewer)
         val client = EntClient(driver) {
 
             policies {
@@ -356,7 +356,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `firstOrNull fails with a Root denial on a denied first row and visibleOrNull maps it to absence`() {
-        val viewerContext = ViewerContext(Viewer.User("u1"))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User("u1"))
         val driver = freshDriver()
         // Two articles, one published, one draft. Article privacy
         // denies the draft. The canonical firstOrNull evaluates ONLY

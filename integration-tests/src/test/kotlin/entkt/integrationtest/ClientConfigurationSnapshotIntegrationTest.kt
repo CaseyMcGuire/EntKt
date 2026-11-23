@@ -71,13 +71,13 @@ class ClientConfigurationSnapshotIntegrationTest : PostgresTestBase() {
         }
         assertEquals("Ada", created.name)
 
-        val anonymousContext = ViewerContext(Viewer.Anonymous)
+        val anonymousContext = ViewerContext.AsViewer(Viewer.Anonymous)
         assertFailsWith<EntPrivacyDeniedException> { client.users.query().all(anonymousContext).getOrThrow() }
 
         val transactionRead = client.withTransaction { transaction ->
             run {
                 val scoped = transaction
-                val testViewerContext = ViewerContext(Viewer.Anonymous)
+                val testViewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
                 scoped.users.query().all(testViewerContext)
             }
         }.getOrThrow()

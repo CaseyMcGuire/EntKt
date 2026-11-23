@@ -17,7 +17,7 @@ class AllowAllRuleTest {
     private data class FakeLoadCtx(val id: Int)
     private data class FakeCreateCtx(val name: String)
     private val context = PrivacyRuleContext(
-        viewerContext = ViewerContext(Viewer.Anonymous),
+        viewerContext = ViewerContext.AsViewer(Viewer.Anonymous),
         client = TestRuleClient("client"),
     )
 

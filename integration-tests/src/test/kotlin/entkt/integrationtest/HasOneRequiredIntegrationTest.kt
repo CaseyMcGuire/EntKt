@@ -223,7 +223,7 @@ class HasOneRequiredIntegrationTest : PostgresTestBase() {
             }
         }
         val (user, profile) = createPair(client)
-        val viewerContext = ViewerContext(Viewer.User(7L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
         assertEquals(user, client.users.findById(viewerContext, user.id).getOrThrow())
 
         val strict = client.users.query { loadProfile() }.firstOrNull(viewerContext)

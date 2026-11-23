@@ -169,11 +169,11 @@ class PrivacyIntegrationTest {
 
     /** Create a fresh driver with migrated tables, truncate between tests. */
     private fun freshClient(
-        viewer: Viewer,
+        viewerContext: ViewerContext,
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = ArticlePolicy,
         userPolicy: EntityPolicy<User, UserPolicyScope> = UserPolicy,
     ): EntClient {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val driver = PostgresDriver(dataSource)
         seedSchemas()
 
@@ -217,7 +217,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `all fails when any result entity is denied`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         // Anonymous can see published but not drafts. Strict all()
@@ -231,7 +231,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `all succeeds when all results are allowed`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         // Query only published — all allowed
@@ -244,13 +244,13 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `all with owner viewer sees own drafts`() {
-        val client = freshClient(Viewer.User(0L))
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)))
         val (alice, _) = seedData(client)
 
         // Alice querying only her own articles — should see both published and draft
         val articles = run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(alice.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(alice.id))
             scoped.articles.query {
                 where(Article.authorId eq alice.id)
             }.all(viewerContext).getOrThrow()
@@ -262,7 +262,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `firstOrNull fails when the selected first row is denied`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         // The denied selected first row is reported with exactly one
@@ -279,7 +279,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `firstOrNull returns null when no row matches`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         val result = client.articles.query {
@@ -290,7 +290,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `firstOrNull returns entity when allowed`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         val result = client.articles.query {
@@ -304,7 +304,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `findById fails on denied entity`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         val (alice, _) = seedData(client)
 
         // Find Alice's draft via the bypass
@@ -326,7 +326,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `findById returns allowed entity`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         val published = run {
@@ -341,11 +341,11 @@ class PrivacyIntegrationTest {
         assertEquals(published.id, result.id)
     }
 
-    // ---- Viewer.PrivacyBypass bypass ----
+    // ---- ViewerContext.PrivacyBypass bypass ----
 
     @Test
     fun `PrivacyBypass viewer sees all entities`() {
-        val client = freshClient(Viewer.PrivacyBypass("test"))
+        val client = freshClient(ViewerContext.privacyBypass_DANGEROUS("test"))
         seedData(client)
 
         val all = client.articles.query().all(viewerContext).getOrThrow()
@@ -354,7 +354,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `PrivacyBypass viewer can create without auth`() {
-        val client = freshClient(Viewer.PrivacyBypass("test"))
+        val client = freshClient(ViewerContext.privacyBypass_DANGEROUS("test"))
         val user = client.users.create { name = "Sys"; email = "sys@test.com" }.saveAndLoad(viewerContext).getOrThrow()
         val article = client.articles.create {
             title = "System Article"
@@ -366,7 +366,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `PrivacyBypass viewer can delete any entity`() {
-        val client = freshClient(Viewer.PrivacyBypass("test"))
+        val client = freshClient(ViewerContext.privacyBypass_DANGEROUS("test"))
         val (alice, _) = seedData(client)
 
         val article = client.articles.query {
@@ -380,7 +380,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `bypass all reports all rows regardless of privacy`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         val count = client.articles.query()
@@ -393,7 +393,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `bypass all with predicate counts matching rows`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         val count = client.articles.query {
@@ -406,7 +406,7 @@ class PrivacyIntegrationTest {
     fun `bypass firstOrNull can check storage existence regardless of privacy`() {
         // Drafts are LOAD-denied to Anonymous, so the explicit bypass is what
         // authorizes this storage-wide existence check.
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         val result = client.articles.query {
@@ -419,7 +419,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `create denied for anonymous viewer`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         val user = run {
             val sys = client
             val viewerContext = testBypassContext("test")
@@ -441,7 +441,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `create allowed for authenticated viewer`() {
-        val client = freshClient(Viewer.User(1L))
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(1L)))
         val user = run {
             val sys = client
             val viewerContext = testBypassContext("test")
@@ -460,12 +460,12 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `delete denied for non-owner`() {
-        val client = freshClient(Viewer.User(0L))
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)))
         val (alice, bob) = seedData(client)
 
         val (aliceArticle, ex) = run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(bob.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(bob.id))
             // Bob tries to delete Alice's published article
             val article = scoped.articles.query {
                 where(Article.authorId eq alice.id)
@@ -491,7 +491,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `deleteById authorizes against current ownership after it changes`() {
-        val client = freshClient(Viewer.User(0L))
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)))
         val (alice, bob) = seedData(client)
 
         val aliceArticle = run {
@@ -510,7 +510,7 @@ class PrivacyIntegrationTest {
 
         val ex = run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(alice.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(alice.id))
             // Alice held the entity before the transfer, but only Bob can delete the current row.
             val failed = assertIs<MutationResult.Failed>(scoped.articles.deleteById(viewerContext, aliceArticle.id))
             assertIs<EntMutationPrivacyDeniedException>(failed.exception)
@@ -530,12 +530,12 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `delete allowed for owner`() {
-        val client = freshClient(Viewer.User(0L))
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)))
         val (alice, _) = seedData(client)
 
         val articleId = run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(alice.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(alice.id))
             val article = scoped.articles.query {
                 where(Article.authorId eq alice.id)
                 where(Article.published eq true)
@@ -558,7 +558,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `one client executes independently for different viewer contexts`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         // Anonymous: drafts are denied — strict all() fails.
@@ -580,7 +580,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `eager loaded edge respects privacy when target is allowed`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         seedData(client)
 
         // Eagerly load author on published articles — authors are publicly visible
@@ -596,12 +596,12 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `eager loaded edge fails when target entity is denied`() {
-        val client = freshClient(Viewer.User(0L), userPolicy = RestrictiveUserPolicy)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)), userPolicy = RestrictiveUserPolicy)
         val (alice, _) = seedData(client)
 
         run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(alice.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(alice.id))
             // Alice queries her own published article with eager author.
             // The article itself is allowed (she's the owner), and the eager author
             // is also Alice — so AllowSelfOnly allows it.
@@ -634,7 +634,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `privacy enforced within transactions`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
 
         val user = run {
             val sys = client
@@ -662,12 +662,12 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `update denied for non-owner`() {
-        val client = freshClient(Viewer.User(0L), articlePolicy = ArticlePolicyWithUpdate)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)), articlePolicy = ArticlePolicyWithUpdate)
         val (alice, bob) = seedData(client)
 
         run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(bob.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(bob.id))
             // Bob can see Alice's published article
             val article = scoped.articles.query {
                 where(Article.authorId eq alice.id)
@@ -699,12 +699,12 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `update allowed for owner`() {
-        val client = freshClient(Viewer.User(0L), articlePolicy = ArticlePolicyWithUpdate)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)), articlePolicy = ArticlePolicyWithUpdate)
         val (alice, _) = seedData(client)
 
         run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(alice.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(alice.id))
             val article = scoped.articles.query {
                 where(Article.authorId eq alice.id)
                 where(Article.published eq true)
@@ -719,7 +719,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `updateDerivesFromCreate uses create rules for update`() {
-        val client = freshClient(Viewer.User(0L), articlePolicy = ArticlePolicyWithDerived)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)), articlePolicy = ArticlePolicyWithDerived)
         seedData(client)
 
         // Get an article via the bypass
@@ -734,7 +734,7 @@ class PrivacyIntegrationTest {
         // The denial still reports the UPDATE operation (the denied decision).
         run {
             val anon = client
-            val viewerContext = ViewerContext(Viewer.Anonymous)
+            val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
             val failed = assertIs<MutationResult.Failed>(
                 anon.articles.update(article.id) { title = "Anon Update" }.save(viewerContext),
             )
@@ -746,7 +746,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `deleteDerivesFromCreate uses create rules for delete`() {
-        val client = freshClient(Viewer.Anonymous, articlePolicy = ArticlePolicyWithDerived)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous), articlePolicy = ArticlePolicyWithDerived)
         seedData(client)
 
         // Anonymous delete fails — RequireAuth create rule denies anonymous
@@ -765,13 +765,13 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `derived delete allows authenticated viewer`() {
-        val client = freshClient(Viewer.User(0L), articlePolicy = ArticlePolicyWithDerived)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)), articlePolicy = ArticlePolicyWithDerived)
         val (alice, _) = seedData(client)
 
         // Authenticated user can delete (create rule only blocks anonymous)
         run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(alice.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(alice.id))
             val article = scoped.articles.query {
                 where(Article.authorId eq alice.id)
                 where(Article.published eq true)
@@ -786,7 +786,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `deleteById bypasses LOAD privacy but enforces DELETE`() {
-        val client = freshClient(Viewer.User(0L))
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)))
         val (alice, bob) = seedData(client)
 
         // Get Alice's draft ID via the bypass
@@ -804,7 +804,7 @@ class PrivacyIntegrationTest {
         // check, and DELETE privacy still denies Bob.
         run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(bob.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(bob.id))
             val failed = assertIs<MutationResult.Failed>(scoped.articles.deleteById(viewerContext, draftId))
             val ex = assertIs<EntMutationPrivacyDeniedException>(failed.exception)
             assertEquals(EntOperation.DELETE, ex.operation)
@@ -821,7 +821,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `deleteById succeeds for owner even on LOAD-denied entity`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         val (alice, _) = seedData(client)
 
         // Get Alice's draft ID via the bypass — anonymous can't load it
@@ -838,7 +838,7 @@ class PrivacyIntegrationTest {
         // Success(true) means this call deleted the row.
         run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(alice.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(alice.id))
             assertTrue(scoped.articles.deleteById(viewerContext, draftId).getOrThrow())
         }
 
@@ -852,7 +852,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `deleteById returns Success false for nonexistent ID`() {
-        val client = freshClient(Viewer.PrivacyBypass("test"))
+        val client = freshClient(ViewerContext.privacyBypass_DANGEROUS("test"))
         seedData(client)
 
         assertEquals(MutationResult.Success(false), client.articles.deleteById(viewerContext, 99999))
@@ -862,7 +862,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `createMany surfaces per-row CREATE privacy denial as Failed`() {
-        val client = freshClient(Viewer.Anonymous)
+        val client = freshClient(ViewerContext.AsViewer(Viewer.Anonymous))
         val user = run {
             val sys = client
             val viewerContext = testBypassContext("test")
@@ -892,7 +892,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `createMany succeeds for authenticated viewer`() {
-        val client = freshClient(Viewer.User(1L))
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(1L)))
         val user = run {
             val sys = client
             val viewerContext = testBypassContext("test")
@@ -912,7 +912,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `deleteMany enforces per-row DELETE privacy atomically`() {
-        val client = freshClient(Viewer.User(0L))
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)))
         val (alice, bob) = seedData(client)
 
         // Bob tries to deleteMany all published articles — Alice's article
@@ -920,7 +920,7 @@ class PrivacyIntegrationTest {
         // is deleted (no committed subset after the confirmed rollback).
         run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(bob.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(bob.id))
             val failed = assertIs<MutationResult.Failed>(
                 scoped.articles.deleteMany(viewerContext, Article.published eq true),
             )
@@ -940,12 +940,12 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `deleteMany succeeds when viewer owns all matched entities`() {
-        val client = freshClient(Viewer.User(0L))
+        val client = freshClient(ViewerContext.AsViewer(Viewer.User(0L)))
         val (alice, _) = seedData(client)
 
         run {
             val scoped = client
-            val viewerContext = ViewerContext(Viewer.User(alice.id))
+            val viewerContext = ViewerContext.AsViewer(Viewer.User(alice.id))
             val count = scoped.articles.deleteMany(viewerContext, Article.authorId eq alice.id).getOrThrow()
             assertEquals(2, count)
         }
@@ -962,7 +962,7 @@ class PrivacyIntegrationTest {
 
     @Test
     fun `no policy means every operation is denied (fail-closed)`() {
-        val viewerContext = ViewerContext(Viewer.User(1L))
+        val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
         val driver = PostgresDriver(dataSource)
         seedSchemas()
         dataSource.connection.use { conn ->

@@ -108,7 +108,7 @@ class EntityQueryBuilderTest {
         override val self: ItemQueryScope get() = this
     }
 
-    private val vc = ViewerContext(Viewer.User(7L))
+    private val vc = ViewerContext.AsViewer(Viewer.User(7L))
 
     @Test
     fun `fluent configuration creates independent typed queries`() {

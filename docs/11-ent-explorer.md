@@ -42,7 +42,7 @@ val explorer = EntExplorer(client, GeneratedEntExplorerRegistry) {
     path = "/_ent"
     authorize { request -> request.principal.isAdminOfSomeKind() }
     viewerContext { request ->
-        ViewerContext(Viewer.User((request.principal as Admin).userId))
+        ViewerContext.AsViewer(Viewer.User((request.principal as Admin).userId))
     }
     entities { exclude("session") }
     redaction { extra("users", "legacy_secret_column") }

@@ -44,7 +44,7 @@ class ReadRuntimeNameCollisionCompileTest {
             object ReadRuntimeNameCollisionProbe {
                 @JvmStatic
                 fun run(): String {
-                    val viewer = ViewerContext(Viewer.User(7L))
+                    val viewer = ViewerContext.AsViewer(Viewer.User(7L))
                     val calls = mutableListOf<String>()
                     val client = EntClient(NoopDriver) {
                         policies {

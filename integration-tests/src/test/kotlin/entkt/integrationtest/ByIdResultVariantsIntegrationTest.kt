@@ -58,10 +58,10 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewer: Viewer = Viewer.PrivacyBypass("test"),
+        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
     ): EntClient {
-        viewerContext = ViewerContext(viewer)
+        this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {
 
@@ -120,7 +120,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `findById returns Failed with a Root denial carrying exactly one keyed denial`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         val result = client.articles.findById(viewerContext, article.id)
@@ -137,7 +137,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `getOrThrow throws the exact stored exception instance on denial`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         val result = client.articles.findById(viewerContext, article.id)
@@ -170,7 +170,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `visibleOrNull maps Root LOAD denial to Success(null)`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         // Invisibility and absence both collapse to null; a caller that
@@ -182,7 +182,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `visibleOrNull leaves non-privacy failures unchanged`() {
-        val client = freshClient(viewer = Viewer.User(1L), articlePolicy = denyArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         val failed = assertIs<ReadResult.Failed>(client.articles.findById(viewerContext, article.id))

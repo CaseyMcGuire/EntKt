@@ -49,7 +49,7 @@ import kotlin.test.assertSame
  * for rows the statement actually removed.
  */
 class DeleteManyIntegrationTest : PostgresTestBase() {
-    private val viewerContext = ViewerContext(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
 
     private data class SeededUser(
         val name: String,
@@ -265,7 +265,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         driver.probe.orderReturnedIdsByAscendingId = true
         val callerPredicate = User.name neq "caller-filtered"
         val interceptorPredicate = User.email neq "interceptor-filtered@example.com"
-        val capturedPrivacy = ViewerContext(Viewer.User(7L))
+        val capturedPrivacy = ViewerContext.AsViewer(Viewer.User(7L))
         var interceptorCalls = 0
         val configuredPolicy = policy {
             privacy {
