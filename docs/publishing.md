@@ -9,7 +9,7 @@ Changing the version in the checkout does not mean it has been published.
 
 The publishing plugin is applied only to `schema`, `runtime`, `codegen`,
 `gradle-plugin`, `postgres`, `jackson`, `migrations`, `flyway`,
-`ent-viewer-core`, and `ent-viewer-spring`. Example applications and test
+`ent-explorer-core`, and `ent-explorer-spring`. Example applications and test
 projects are excluded.
 
 Library coordinates are `io.entkt:<module>:<version>`. The Gradle plugin

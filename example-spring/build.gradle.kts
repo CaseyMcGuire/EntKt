@@ -22,11 +22,11 @@ dependencies {
     implementation(project(":postgres"))
     implementation(project(":migrations"))
     implementation(project(":example-spring:schema"))
-    // Viewer adapters are generated below (GenerateMain viewer arg = true);
-    // ent-viewer-spring auto-mounts the EntViewer bean declared in
-    // EntViewerConfig — no hand-written controller needed.
-    implementation(project(":ent-viewer-core"))
-    implementation(project(":ent-viewer-spring"))
+    // Explorer adapters are generated below (GenerateMain generateEntExplorer arg = true);
+    // ent-explorer-spring auto-mounts the EntExplorer bean declared in
+    // EntExplorerConfig — no hand-written controller needed.
+    implementation(project(":ent-explorer-core"))
+    implementation(project(":ent-explorer-spring"))
 
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")

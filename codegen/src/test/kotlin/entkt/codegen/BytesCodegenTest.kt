@@ -16,7 +16,7 @@ class BytesCodegenTest {
     private val files: Map<String, String> by lazy {
         val schema = BinaryRecord()
         schema.finalize(mapOf(BinaryRecord::class to schema))
-        EntGenerator("com.example.ent", viewer = true)
+        EntGenerator("com.example.ent", generateEntExplorer = true)
             .generate(listOf(SchemaInput(schema)))
             .associate { it.name to it.toString().replace(Regex("\\s+"), " ") }
     }
@@ -56,12 +56,12 @@ class BytesCodegenTest {
     }
 
     @Test
-    fun `viewer shows Bytes without changing binary filtering capabilities`() {
-        val viewer = files.getValue("BinaryRecordViewerEntity")
+    fun `explorer shows Bytes without changing binary filtering capabilities`() {
+        val explorer = files.getValue("BinaryRecordExplorerEntity")
         assertContains(
-            viewer,
-            """EntViewerColumn(name = "payload", type = FieldType.BYTES, nullable = false, unique = false, sensitive = false, filterable = false, orderable = false, entType = "Bytes")""",
+            explorer,
+            """EntExplorerColumn(name = "payload", type = FieldType.BYTES, nullable = false, unique = false, sensitive = false, filterable = false, orderable = false, entType = "Bytes")""",
         )
-        assertContains(viewer, "entity.payload.size")
+        assertContains(explorer, "entity.payload.size")
     }
 }

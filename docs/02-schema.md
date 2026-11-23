@@ -114,7 +114,7 @@ class User : EntSchema(
 ```
 
 The schema comment defaults to `null` and is preserved verbatim in generated
-`User.SCHEMA.comment`. [Ent Viewer](11-ent-viewer.md#routes) displays it beneath
+`User.SCHEMA.comment`. [Ent Explorer](11-ent-explorer.md#routes) displays it beneath
 the schema heading; field comments appear beneath their column names. Comments
 are plain text, not HTML or Markdown, and absent or blank comments are hidden.
 

@@ -1,0 +1,39 @@
+package entkt.explorer.html
+
+import entkt.explorer.EntExplorerColumn
+import entkt.explorer.EntExplorerEntity
+import entkt.explorer.EntExplorerResponse
+import kotlinx.html.a
+import kotlinx.html.h1
+import kotlinx.html.h2
+import kotlinx.html.p
+import kotlinx.html.span
+
+/** One entity's full schema: documentation, columns, edges (cross-linked), indexes. */
+internal fun schemaDetailPage(
+    entity: EntExplorerEntity<*>,
+    columns: List<EntExplorerColumn>,
+    visibleRoutes: Set<String>,
+    urls: ExplorerUrls,
+): EntExplorerResponse = pageShell(200, "${entity.displayName} schema", urls) {
+    h1 { +"${entity.displayName} " ; span("muted") { +"(${entity.schema.table})" } }
+    val comment = entity.schema.comment
+    if (!comment.isNullOrBlank()) {
+        p("muted") { +comment }
+    }
+    p {
+        a(href = urls.entityList(entity.routeName)) { +"Browse rows" }
+        span("muted") { +"  ·  " }
+        a(href = urls.schema()) { +"All schemas" }
+    }
+    h2 { +"Columns" }
+    columnsTable(columns, entity.schema)
+    if (entity.edges.isNotEmpty()) {
+        h2 { +"Edges" }
+        schemaEdgesTable(entity.edges, visibleRoutes, urls)
+    }
+    if (entity.schema.indexes.isNotEmpty()) {
+        h2 { +"Indexes" }
+        indexesTable(entity.schema.indexes)
+    }
+}

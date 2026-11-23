@@ -9,7 +9,7 @@ import entkt.codegen.client.ReadRuntimeGenerator
 import entkt.codegen.client.RepoGenerator
 import entkt.codegen.entity.EntityGenerator
 import entkt.codegen.entity.PrivacyGenerator
-import entkt.codegen.entity.ViewerGenerator
+import entkt.codegen.entity.EntExplorerGenerator
 import entkt.codegen.manifest.formatMemberCollisionDiagnostic
 import entkt.codegen.manifest.runMemberCollisionCheck
 import entkt.codegen.metadata.columnMetadataFor
@@ -755,14 +755,14 @@ class EntGenerator(
      */
     private val jsonMapper: String = entkt.runtime.driver.JsonMapperIds.KOTLINX,
     /**
-     * Emit the opt-in ent-viewer bridge (per-entity `<Name>ViewerEntity`
-     * adapters + `GeneratedEntViewerRegistry`). Off by default: no viewer
-     * files, no `io.entkt:ent-viewer` dependency needed.
+     * Emit the Ent Explorer adapters (one `<Name>ExplorerEntity` per entity)
+     * and `GeneratedEntExplorerRegistry`. Off by default: no explorer files,
+     * and no `io.entkt:ent-explorer-core` dependency is needed.
      */
-    private val viewer: Boolean = false,
+    private val generateEntExplorer: Boolean = false,
 ) {
     private val entityGenerator = EntityGenerator(packageName, jsonMapper)
-    private val viewerGenerator = ViewerGenerator(packageName)
+    private val entExplorerGenerator = EntExplorerGenerator(packageName)
     private val mutationGenerator = MutationGenerator(packageName)
     private val createGenerator = CreateGenerator(packageName)
     private val createConverterGenerator = CreateConverterGenerator(packageName)
@@ -863,12 +863,16 @@ class EntGenerator(
                 addAll(lifecycleRuleInputGenerator.generate(name))
             }
         }
-        val viewerFiles = if (viewer) viewerGenerator.generate(schemas, schemaNames) else emptyList()
+        val entExplorerFiles = if (generateEntExplorer) {
+            entExplorerGenerator.generate(schemas, schemaNames)
+        } else {
+            emptyList()
+        }
         val files = perSchema +
             readRuntimeGenerator.generate(schemas) +
             readClientGenerator.generate(schemas, schemaNames) +
             clientGenerator.generate(schemas) +
-            viewerFiles
+            entExplorerFiles
 
         // Two same-named FileSpecs would silently overwrite each other in
         // writeTo(): raw-name uniqueness doesn't stop a schema name from

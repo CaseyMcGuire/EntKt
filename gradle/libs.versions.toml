@@ -10,10 +10,10 @@ kotlin-compile-testing = "0.5.1"
 kotlinx-serialization = "1.9.0"
 # Jackson databind + kotlin module for the opt-in JacksonJsonCodec (:jackson).
 jackson = "2.18.2"
-# Server-side HTML + CSS DSLs for the opt-in ent viewer (:ent-viewer).
+# Server-side HTML + CSS DSLs for the opt-in ent explorer (:ent-explorer).
 kotlinx-html = "0.12.0"
 kotlin-css = "2025.7.14"
-# Spring Boot for the opt-in :ent-viewer-spring auto-configuration (matches example-spring).
+# Spring Boot for the opt-in :ent-explorer-spring auto-configuration (matches example-spring).
 spring-boot = "3.4.4"
 postgresql = "42.7.4"
 testcontainers = "2.0.4"

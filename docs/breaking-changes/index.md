@@ -29,6 +29,25 @@ above it.
 
 ## Unreleased
 
+- **Rename Ent Viewer to Ent Explorer** (`ent-explorer`, `codegen`, `gradle-plugin`)
+  The read-only browser tool is now called Ent Explorer, so "viewer" refers
+  only to who an operation runs as. Modules, coordinates, packages, types,
+  generated names, Spring bean names, and the build option are renamed. The
+  tool's behavior and its default `/_ent` mount path are unchanged, and its
+  page title is now "EntKt Explorer".
+  _Migration:_ depend on `io.entkt:ent-explorer-core` and
+  `io.entkt:ent-explorer-spring` instead of the `ent-viewer` coordinates.
+  Import from `entkt.explorer` and `entkt.explorer.spring`, and replace the
+  `EntViewer` prefix with `EntExplorer` on every type (`EntExplorer`,
+  `EntExplorerConfig`, `EntExplorerEntity`, `EntExplorerPrincipalResolver`,
+  and so on). Generated `{Entity}ViewerEntity` objects are now
+  `{Entity}ExplorerEntity`, and `GeneratedEntViewerRegistry` is
+  `GeneratedEntExplorerRegistry`. In the build, replace
+  `entkt { viewer.set(true) }` with `entkt { generateEntExplorer.set(true) }`;
+  `EntGenerator(viewer = ...)` becomes `EntGenerator(generateEntExplorer = ...)`.
+  The Spring beans `entViewerRoutes` and `entViewerPrincipalResolver` are now
+  `entExplorerRoutes` and `entExplorerPrincipalResolver`.
+
 - **Evaluate validation with one runtime evaluator** (`runtime`)
   `ValidationEvaluator` runs one rule list over an operation's inputs and
   returns each input's violations. It replaces `MutationValidationEvaluator`,

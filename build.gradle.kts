@@ -26,8 +26,8 @@ val moduleDescriptions = mapOf(
     "jackson" to "Jackson JSON column codec for EntKt",
     "migrations" to "Database schema comparison and migration planning for EntKt",
     "flyway" to "Flyway migration generation for EntKt",
-    "ent-viewer-core" to "Read-only entity inspection and HTML rendering for EntKt",
-    "ent-viewer-spring" to "Spring Boot integration for the EntKt entity viewer",
+    "ent-explorer-core" to "Read-only entity inspection and HTML rendering for EntKt",
+    "ent-explorer-spring" to "Spring Boot integration for the EntKt entity explorer",
 )
 
 subprojects {

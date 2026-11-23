@@ -76,12 +76,12 @@ internal mappings, mutation specs, and adapters declared inside per-entity
 files. Treat `@EntktInternal` as an explicit boundary rather than an invitation
 to opt in.
 
-### Optional Ent Viewer types
+### Optional Ent Explorer types
 
-When Ent Viewer generation is enabled, codegen additionally emits one
-`{Entity}ViewerEntity` adapter per schema and a
-`GeneratedEntViewerRegistry`. Applications mount the registry; the adapters
-are framework integration details. See [Ent Viewer](../docs/11-ent-viewer.md).
+When Ent Explorer generation is enabled, codegen additionally emits one
+`{Entity}ExplorerEntity` adapter per schema and a
+`GeneratedEntExplorerRegistry`. Applications mount the registry; the adapters
+are framework integration details. See [Ent Explorer](../docs/11-ent-explorer.md).
 
 ### Runtime types used by the generated API
 

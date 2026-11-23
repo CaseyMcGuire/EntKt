@@ -664,9 +664,9 @@ class EntityGeneratorTest {
     }
 }
 
-// Appended by the ent-viewer prerequisite: `.sensitive()` must reach the
+// Appended by the ent-explorer prerequisite: `.sensitive()` must reach the
 // generated runtime ColumnMetadata so display surfaces (generated toString,
-// the ent viewer) can redact from metadata alone.
+// the ent explorer) can redact from metadata alone.
 class SensitiveColumnMetadataTest {
     private class Vault : entkt.schema.EntSchema("vaults", clientName = "vaults") {
         override fun id() = entkt.schema.EntId.long()

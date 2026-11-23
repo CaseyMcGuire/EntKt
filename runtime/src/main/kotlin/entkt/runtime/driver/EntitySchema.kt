@@ -74,7 +74,7 @@ data class ColumnMetadata(
     /**
      * True when the schema field was marked `.sensitive()`. A framework-wide
      * display contract: surfaces that render values (generated `toString()`,
-     * the ent viewer) must redact this column by default. Storage behavior is
+     * the ent explorer) must redact this column by default. Storage behavior is
      * unaffected.
      */
     val sensitive: Boolean = false,

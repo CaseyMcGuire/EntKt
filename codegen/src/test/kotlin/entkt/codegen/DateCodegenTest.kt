@@ -18,7 +18,7 @@ class DateCodegenTest {
     private val files: Map<String, String> by lazy {
         val schema = CalendarEvent()
         schema.finalize(mapOf(CalendarEvent::class to schema))
-        EntGenerator("com.example.ent", viewer = true)
+        EntGenerator("com.example.ent", generateEntExplorer = true)
             .generate(listOf(SchemaInput(schema)))
             .associate { it.name to it.toString().replace(Regex("\\s+"), " ") }
     }
@@ -53,11 +53,11 @@ class DateCodegenTest {
     }
 
     @Test
-    fun `viewer metadata exposes dates as filterable and orderable`() {
-        val viewer = files.getValue("CalendarEventViewerEntity")
+    fun `explorer metadata exposes dates as filterable and orderable`() {
+        val explorer = files.getValue("CalendarEventExplorerEntity")
         assertContains(
-            viewer,
-            """EntViewerColumn(name = "starts_on", type = FieldType.DATE, nullable = false, unique = false, sensitive = false, filterable = true, orderable = true, entType = "LocalDate")""",
+            explorer,
+            """EntExplorerColumn(name = "starts_on", type = FieldType.DATE, nullable = false, unique = false, sensitive = false, filterable = true, orderable = true, entType = "LocalDate")""",
         )
     }
 }

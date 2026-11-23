@@ -15,10 +15,11 @@ interface EntktExtension {
     val jsonMapper: Property<String>
 
     /**
-     * Generate the opt-in ent-viewer bridge (`<Name>ViewerEntity` adapters +
-     * `GeneratedEntViewerRegistry`). Default false: no viewer files are
-     * emitted and the application needs no `io.entkt:ent-viewer` dependency.
-     * When true, add `io.entkt:ent-viewer` to the implementation classpath.
+     * Generate the Ent Explorer adapters (one `<Name>ExplorerEntity` per
+     * entity) and `GeneratedEntExplorerRegistry`. Default false: no explorer
+     * files are emitted and the application needs no
+     * `io.entkt:ent-explorer-core` dependency. When true, add
+     * `io.entkt:ent-explorer-core` to the implementation classpath.
      */
-    val viewer: Property<Boolean>
+    val generateEntExplorer: Property<Boolean>
 }

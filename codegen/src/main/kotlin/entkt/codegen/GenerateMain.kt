@@ -20,7 +20,7 @@ import java.nio.file.Path
  * }
  * ```
  *
- * Args: [packageName] [outputDir] [jsonMapper] [viewer]
+ * Args: [packageName] [outputDir] [jsonMapper] [generateEntExplorer]
  *
  * [jsonMapper] (optional, default `kotlinx`) is the JSON mapper id stamped
  * into generated JSON-column metadata — `kotlinx`, `jackson`, or a
@@ -29,12 +29,12 @@ import java.nio.file.Path
  * register() cross-check at startup.
  */
 fun main(args: Array<String>) {
-    require(args.size >= 2) { "Usage: GenerateMain <packageName> <outputDir> [jsonMapper] [viewer]" }
+    require(args.size >= 2) { "Usage: GenerateMain <packageName> <outputDir> [jsonMapper] [generateEntExplorer]" }
     val packageName = args[0]
     val outputDir = Path.of(args[1])
     val jsonMapper = args.getOrNull(2) ?: entkt.runtime.driver.JsonMapperIds.KOTLINX
-    // arg 4 (optional, default false): emit the opt-in ent-viewer bridge.
-    val viewer = args.getOrNull(3)?.toBooleanStrictOrNull() ?: false
+    // arg 4 (optional, default false): generate the Ent Explorer adapters and registry.
+    val generateEntExplorer = args.getOrNull(3)?.toBooleanStrictOrNull() ?: false
 
     val classpath = System.getProperty("java.class.path")
         .split(File.pathSeparator)
@@ -66,7 +66,7 @@ fun main(args: Array<String>) {
     outputDir.toFile().deleteRecursively()
     outputDir.toFile().mkdirs()
 
-    val generator = EntGenerator(packageName, jsonMapper, viewer)
+    val generator = EntGenerator(packageName, jsonMapper, generateEntExplorer)
     val files = generator.generate(schemas)
     files.forEach { it.writeTo(outputDir) }
 

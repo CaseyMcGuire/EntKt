@@ -60,10 +60,10 @@ entkt {
     // Optional: JSON mapper for typed json(...) columns — "kotlinx" (default)
     // or "jackson" (pair with io.entkt:jackson's JacksonJsonCodec on the driver).
     // jsonMapper.set("jackson")
-    // Optional: generate the read-only ent viewer bridge (see the Ent Viewer
-    // guide); requires io.entkt:ent-viewer-core on the implementation classpath
-    // (plus io.entkt:ent-viewer-spring for Spring Boot auto-mounting).
-    // viewer.set(true)
+    // Optional: generate the read-only Ent Explorer adapters (see the Ent
+    // Explorer guide); requires io.entkt:ent-explorer-core on the implementation
+    // classpath (plus io.entkt:ent-explorer-spring for Spring Boot auto-mounting).
+    // generateEntExplorer.set(true)
 }
 
 dependencies {
@@ -299,7 +299,7 @@ to read and write users:
 | `EntClient` | The application entry point containing every generated repository |
 
 The generator also emits schema-set configuration, transaction, hook,
-read-only, and optional Ent Viewer types. See the
+read-only, and optional Ent Explorer types. See the
 [complete generated-output reference](../codegen/README.md#generated-output)
 for their roles and for the boundary between application API and internal
 storage adapters.

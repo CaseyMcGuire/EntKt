@@ -10,12 +10,12 @@ include("gradle-plugin")
 include("example-spring:schema")
 include("postgres")
 include("jackson")
-// The ent-viewer family lives under one folder; Gradle paths and published
-// coordinates keep the full module names (io.entkt:ent-viewer-core, ...).
-include("ent-viewer-core")
-project(":ent-viewer-core").projectDir = file("ent-viewer/ent-viewer-core")
-include("ent-viewer-spring")
-project(":ent-viewer-spring").projectDir = file("ent-viewer/ent-viewer-spring")
+// The ent-explorer family lives under one folder; Gradle paths and published
+// coordinates keep the full module names (io.entkt:ent-explorer-core, ...).
+include("ent-explorer-core")
+project(":ent-explorer-core").projectDir = file("ent-explorer/ent-explorer-core")
+include("ent-explorer-spring")
+project(":ent-explorer-spring").projectDir = file("ent-explorer/ent-explorer-spring")
 include("migrations")
 include("flyway")
 include("example-spring")
