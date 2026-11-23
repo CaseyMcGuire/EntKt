@@ -8,10 +8,8 @@ This project is under active development — see the module READMEs for
 details on each component, and [Roadmap](#roadmap) for what's missing.
 For guides, see the [documentation](docs/index.md).
 
-Released artifacts are available from Maven Central. These docs describe the
-current checkout (`0.1.0-alpha.3`); see [Getting Started](docs/01-getting-started.md#using-the-gradle-plugin)
-for local publishing and consumer setup. Use a release's matching documentation
-when depending on published artifacts.
+EntKt `0.1.0-alpha.4` is available from Maven Central. For Gradle setup and a
+first query, see [Getting Started](docs/01-getting-started.md#using-the-gradle-plugin).
 
 ## Overview
 

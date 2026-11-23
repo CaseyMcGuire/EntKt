@@ -29,6 +29,10 @@ above it.
 
 ## Unreleased
 
+## 0.1.0-alpha.4
+
+Upgrade the plugin and all EntKt dependencies together, set `viewerType`, and regenerate the client.
+
 - **Bind generated code to an application-defined viewer type** (`runtime`, `codegen`, `gradle-plugin`, `ent-explorer`)
   The runtime no longer defines who a viewer is. `Viewer`, `Viewer.Anonymous`,
   `Viewer.User`, and the ID helpers `userOrNull()`, `userIdOrNull()`,

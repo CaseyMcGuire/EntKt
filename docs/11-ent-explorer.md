@@ -8,10 +8,9 @@ path — never a privileged backdoor around it.
 
 ## Install
 
-First complete [consumer setup](01-getting-started.md#using-the-gradle-plugin),
-including local publishing and `mavenLocal()` for this unpublished checkout.
-Keep explorer dependencies aligned with the plugin and runtime version. Then
-enable adapter generation and add the explorer module:
+Follow the [consumer setup](01-getting-started.md#using-the-gradle-plugin).
+Enable adapter generation and add the explorer module at the same version as
+the plugin and runtime.
 
 ```kotlin
 // build.gradle.kts
@@ -22,9 +21,9 @@ entkt {
 }
 
 dependencies {
-    implementation("io.entkt:ent-explorer-core:0.1.0-alpha.3")
+    implementation("io.entkt:ent-explorer-core:0.1.0-alpha.4")
     // Spring Boot apps: auto-mounts the EntExplorer bean you declare.
-    implementation("io.entkt:ent-explorer-spring:0.1.0-alpha.3")
+    implementation("io.entkt:ent-explorer-spring:0.1.0-alpha.4")
 }
 ```
 

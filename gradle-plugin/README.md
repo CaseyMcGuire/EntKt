@@ -12,17 +12,14 @@ into your build.
 
 ## Setup
 
-These examples target the current unpublished checkout, `0.1.0-alpha.3`.
-Run `./gradlew publishToMavenLocal` from the EntKt checkout first. Published
-releases resolve from Maven Central without `mavenLocal()`; use their matching
-documentation and keep all EntKt versions aligned. See
+The examples use EntKt `0.1.0-alpha.4` from Maven Central. Keep the plugin
+and libraries on the same version. See
 [Getting Started](../docs/01-getting-started.md#using-the-gradle-plugin).
 
 ```kotlin
 // settings.gradle.kts
 pluginManagement {
     repositories {
-        mavenLocal()
         mavenCentral() // EntKt plugin markers are published here.
         gradlePluginPortal()
     }
@@ -32,12 +29,11 @@ pluginManagement {
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("io.entkt") version "0.1.0-alpha.3"
-    id("io.entkt.flyway") version "0.1.0-alpha.3" // optional
+    id("io.entkt") version "0.1.0-alpha.4"
+    id("io.entkt.flyway") version "0.1.0-alpha.4" // optional
 }
 
 repositories {
-    mavenLocal()
     mavenCentral()
 }
 
@@ -56,14 +52,14 @@ dependencies {
     schemas(project(":schema"))  // your schema module
 
     // Codegen + migration tooling (runs in a separate JVM)
-    entktCodegen("io.entkt:codegen:0.1.0-alpha.3")
-    entktCodegen("io.entkt:postgres:0.1.0-alpha.3")
-    entktCodegen("io.entkt:flyway:0.1.0-alpha.3") // only if using io.entkt.flyway
+    entktCodegen("io.entkt:codegen:0.1.0-alpha.4")
+    entktCodegen("io.entkt:postgres:0.1.0-alpha.4")
+    entktCodegen("io.entkt:flyway:0.1.0-alpha.4") // only if using io.entkt.flyway
 
     // Runtime dependencies for your application
-    implementation("io.entkt:runtime:0.1.0-alpha.3")
-    implementation("io.entkt:postgres:0.1.0-alpha.3")
-    implementation("io.entkt:migrations:0.1.0-alpha.3")
+    implementation("io.entkt:runtime:0.1.0-alpha.4")
+    implementation("io.entkt:postgres:0.1.0-alpha.4")
+    implementation("io.entkt:migrations:0.1.0-alpha.4")
 }
 ```
 
