@@ -14,7 +14,7 @@ import entkt.runtime.mutation.TransactionRequiredException
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacyEvaluation
 import entkt.runtime.query.execution.ReadQueryExecutionHost
@@ -78,10 +78,10 @@ class ForUpdateQueryTest {
     )
 
     private class Fixture {
-        val viewer = ViewerContext.AsViewer(Viewer.User(7L))
+        val viewer = ViewerContext.AsViewer(TestViewer.User(7L))
         val events = mutableListOf<String>()
         val calls = mutableListOf<Call>()
-        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
         var transactional = true
         var supported = true
         var skipLockedSupported = true
@@ -92,7 +92,7 @@ class ForUpdateQueryTest {
         val classifiedExceptions = mutableListOf<Exception>()
         var rows = listOf(listOf(mapOf<String, Any?>("id" to 1L, "parent_id" to 2L)))
         var denied = emptySet<Long>()
-        var intercept: (InterceptScope<Item>, QueryContext<Viewer>) -> Unit = { _, _ -> }
+        var intercept: (InterceptScope<Item>, QueryContext<TestViewer>) -> Unit = { _, _ -> }
         val driver = object : DatabaseDriver by NoopDriver {
             override val inTransaction: Boolean get() = transactional
             override val supportsQueryForUpdate: Boolean get() = supported
@@ -118,8 +118,8 @@ class ForUpdateQueryTest {
                 return rows[minOf(calls.lastIndex, rows.lastIndex)]
             }
         }
-        private val host = object : ReadQueryExecutionHost<Viewer> {
-            override val entityInterceptors = EntInterceptorsConfig<Viewer>().apply {
+        private val host = object : ReadQueryExecutionHost<TestViewer> {
+            override val entityInterceptors = EntInterceptorsConfig<TestViewer>().apply {
                 addEntity<Item>("items", "test") { scope, context ->
                     events += "interceptor:${context.operation}"
                     contexts += context
@@ -134,7 +134,7 @@ class ForUpdateQueryTest {
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
-                viewerContext: ViewerContext<Viewer>,
+                viewerContext: ViewerContext<TestViewer>,
                 entities: List<Entity>,
             ): PrivacyEvaluation<Entity> {
                 events += "privacy:${entities.joinToString { it.id.toString() }}"
@@ -143,8 +143,8 @@ class ForUpdateQueryTest {
                 })
             }
         }
-        val executor = ReadQueryExecutor<Viewer, Item>(driver, host)
-        fun locking(query: EntityQuery<Item> = EntityQuery(Items)): ForUpdateQuery<Viewer, Item> =
+        val executor = ReadQueryExecutor<TestViewer, Item>(driver, host)
+        fun locking(query: EntityQuery<Item> = EntityQuery(Items)): ForUpdateQuery<TestViewer, Item> =
             ForUpdateQuery(query, executor)
     }
 
@@ -297,7 +297,7 @@ class ForUpdateQueryTest {
         assertEquals(listOf("guard"), expired.events)
 
         assertIs<IllegalStateException>(
-            assertIs<ReadCollectionResult.Failed>(ForUpdateQuery<Viewer, Item>(EntityQuery(Items), null).all(expired.viewer)).exception,
+            assertIs<ReadCollectionResult.Failed>(ForUpdateQuery<TestViewer, Item>(EntityQuery(Items), null).all(expired.viewer)).exception,
         )
     }
 

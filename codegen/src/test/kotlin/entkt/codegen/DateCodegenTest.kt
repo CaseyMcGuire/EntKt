@@ -18,7 +18,7 @@ class DateCodegenTest {
     private val files: Map<String, String> by lazy {
         val schema = CalendarEvent()
         schema.finalize(mapOf(CalendarEvent::class to schema))
-        EntGenerator("com.example.ent", generateEntExplorer = true)
+        EntGenerator("com.example.ent", TEST_VIEWER_TYPE, generateEntExplorer = true)
             .generate(listOf(SchemaInput(schema)))
             .associate { it.name to it.toString().replace(Regex("\\s+"), " ") }
     }

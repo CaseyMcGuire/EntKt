@@ -13,7 +13,7 @@ import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.EntityQuery
 import entkt.runtime.query.EdgeMapping
@@ -97,13 +97,13 @@ class ReadQueryExecutorRootTest {
             annotations = emptyMap(),
         ),
     ) : EntityMapping<Item> {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
         var denials: List<PrivacyDenial?> = emptyList()
         var preparationFailure: Throwable? = null
         var decodingFailure: Throwable? = null
         var privacyFailure: Throwable? = null
-        val interceptorContexts = mutableListOf<QueryContext<Viewer>>()
-        var interceptorBehavior: (InterceptScope<Item>, QueryContext<Viewer>) -> Unit = { _, context ->
+        val interceptorContexts = mutableListOf<QueryContext<TestViewer>>()
+        var interceptorBehavior: (InterceptScope<Item>, QueryContext<TestViewer>) -> Unit = { _, context ->
             events += if (context.operation == ReadOperation.ALL || context.operation == ReadOperation.FIRST) {
                 "root-interceptors"
             } else {
@@ -111,7 +111,7 @@ class ReadQueryExecutorRootTest {
             }
         }
         val childrenEdge: EdgeMapping<Item, Item> = ItemEdge(this)
-        val interceptors = EntInterceptorsConfig<Viewer>().apply {
+        val interceptors = EntInterceptorsConfig<TestViewer>().apply {
             addEntity<Item>("items", "trace") { scope, context ->
                 preparationFailure?.let { throw it }
                 interceptorContexts += context
@@ -167,9 +167,9 @@ class ReadQueryExecutorRootTest {
         captureQuery = { query },
     )
 
-    private fun queryExecutor(adapter: Adapter): ReadQueryExecutor<Viewer, Item> = ReadQueryExecutor(
+    private fun queryExecutor(adapter: Adapter): ReadQueryExecutor<TestViewer, Item> = ReadQueryExecutor(
         driver = adapter.driver,
-        executionHost = object : ReadQueryExecutionHost<Viewer> {
+        executionHost = object : ReadQueryExecutionHost<TestViewer> {
             override val entityInterceptors = adapter.interceptors
 
             override fun checkReadExecution() {
@@ -178,7 +178,7 @@ class ReadQueryExecutorRootTest {
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
-                viewerContext: ViewerContext<Viewer>,
+                viewerContext: ViewerContext<TestViewer>,
                 entities: List<Entity>,
             ): PrivacyEvaluation<Entity> {
                 assertSame(adapter as Any, entity as Any)
@@ -407,7 +407,7 @@ class ReadQueryExecutorRootTest {
         assertEquals(Predicate.Leaf<Item>("target_visible", Op.EQ, true), predicates[2])
         assertEquals(
             listOf(ReadOperation.EDGE_TRAVERSAL, ReadOperation.ALL),
-            adapter.interceptorContexts.map(QueryContext<Viewer>::operation),
+            adapter.interceptorContexts.map(QueryContext<TestViewer>::operation),
         )
         val targetContext = adapter.interceptorContexts.last()
         assertEquals(Item::class, targetContext.rootEntity)

@@ -1,6 +1,5 @@
 package example.spring.auth
 
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import org.springframework.stereotype.Component
 import org.springframework.web.context.annotation.RequestScope
@@ -25,6 +24,5 @@ class AuthContext {
 }
 
 /** Capture the authenticated viewer once for an entity operation. */
-fun AuthContext.viewerContext(): ViewerContext<Viewer> = ViewerContext.AsViewer(
-    userId?.let(Viewer::User) ?: Viewer.Anonymous,
-)
+fun AuthContext.viewerContext(): ViewerContext<AppViewer> =
+    ViewerContext.AsViewer(AppViewer(userId))

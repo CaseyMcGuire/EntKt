@@ -29,7 +29,7 @@ class HookStateCopyCompileTest {
         val schemas = listOf(Owner(), record)
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = MutationGenerator("com.example.ent")
+        val generated = MutationGenerator("com.example.ent", TEST_VIEWER)
             .generate("Record", record, schemas.associateWith { it::class.simpleName!! })
             .toCompileTestSources()
         val probe = SourceFile.kotlin(
@@ -40,7 +40,7 @@ class HookStateCopyCompileTest {
 
             import entkt.runtime.entity.EntEntity
             import entkt.runtime.mutation.FieldPatch
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
             import java.time.Instant
 
@@ -57,7 +57,7 @@ class HookStateCopyCompileTest {
                     val ownerId = FieldPatch.Set(1L)
                     val createdAt = FieldPatch.Set(Instant.parse("2000-01-01T00:00:00Z"))
                     val client = EntClientScope()
-                    val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+                    val viewerContext = ViewerContext.AsViewer(AppViewer(userId = java.util.UUID(0L, 7L)))
                     val before = Record(1L)
                     val pendingEdges = RecordPendingEdgeOps()
 

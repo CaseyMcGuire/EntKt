@@ -6,7 +6,7 @@ import entkt.runtime.query.RegisteredInterceptor
 import entkt.runtime.query.StorageQuerySpec
 import entkt.runtime.query.ExcludeDeleted
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.QuerySpecBuilder
@@ -32,7 +32,7 @@ class ExcludeDeletedTest {
 
     private val queryCompiler = ReadQueryCompiler(
         driver = NoopDriver,
-        registeredInterceptors = EntInterceptorsConfig<Viewer>().resolveForInternalUse(),
+        registeredInterceptors = EntInterceptorsConfig<TestViewer>().resolveForInternalUse(),
     )
 
     private fun builder(): QuerySpecBuilder<Post> = QuerySpecBuilder(
@@ -46,7 +46,7 @@ class ExcludeDeletedTest {
         flags = emptySet(),
     )
 
-    private fun rootContext(): QueryContext<Viewer> = QueryContext(
+    private fun rootContext(): QueryContext<TestViewer> = QueryContext(
         viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
         operation = ReadOperation.ALL,
         rootEntity = Post::class,

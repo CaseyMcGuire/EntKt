@@ -17,34 +17,34 @@ class ViewerContextCompileTest {
             """
             package com.example.app
 
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.PrivacyDecision
             import entkt.runtime.privacy.PrivacyRule
             import entkt.runtime.privacy.PrivacyRuleContext
-            import entkt.runtime.privacy.Viewer
             import entkt.runtime.privacy.ViewerContext
             import entkt.runtime.query.QueryInterceptor
             import entkt.runtime.rule.EntRuleClient
 
-            fun contexts(): List<ViewerContext<Viewer>> = listOf(
-                ViewerContext.AsViewer(Viewer.Anonymous),
+            fun contexts(): List<ViewerContext<AppViewer>> = listOf(
+                ViewerContext.AsViewer(AppViewer(userId = null)),
                 ViewerContext.privacyBypass_DANGEROUS("probe"),
             )
 
-            fun describe(viewerContext: ViewerContext<Viewer>): String =
+            fun describe(viewerContext: ViewerContext<AppViewer>): String =
                 when (viewerContext) {
                     is ViewerContext.AsViewer -> "viewer " + viewerContext.viewer
                     is ViewerContext.PrivacyBypass -> "bypass " + viewerContext.reason
                 }
 
-            fun ruleViewers(context: PrivacyRuleContext<Viewer, EntRuleClient>): List<Viewer> =
+            fun ruleViewers(context: PrivacyRuleContext<AppViewer, EntRuleClient>): List<AppViewer> =
                 listOf(context.viewer, context.viewerContext.viewer)
 
             // Rules and interceptors that ignore the viewer fit slots typed for a specific viewer.
             val anyViewerRule: PrivacyRule<Any, EntRuleClient, Any?> =
                 PrivacyRule { _, _ -> PrivacyDecision.Continue }
-            val typedRule: PrivacyRule<Viewer, EntRuleClient, String> = anyViewerRule
+            val typedRule: PrivacyRule<AppViewer, EntRuleClient, String> = anyViewerRule
             val anyViewerInterceptor: QueryInterceptor<Any, String> = QueryInterceptor { _, _ -> }
-            val typedInterceptor: QueryInterceptor<Viewer, String> = anyViewerInterceptor
+            val typedInterceptor: QueryInterceptor<AppViewer, String> = anyViewerInterceptor
             """.trimIndent(),
         )
 
@@ -59,7 +59,7 @@ class ViewerContextCompileTest {
             "DirectBypass" to "fun invalid() = ViewerContext.PrivacyBypass(\"reason\")",
             "CopiedBypass" to
                 "fun invalid(bypass: ViewerContext.PrivacyBypass) = bypass.copy(reason = \"other\")",
-            "UnbranchedViewer" to "fun invalid(viewerContext: ViewerContext<Viewer>) = viewerContext.viewer",
+            "UnbranchedViewer" to "fun invalid(viewerContext: ViewerContext<AppViewer>) = viewerContext.viewer",
             "UnrelatedViewer" to "fun invalid() = typed(ViewerContext.AsViewer(OtherViewer()))",
         )
         val snippets = invalidSources.map { (name, body) ->
@@ -68,12 +68,12 @@ class ViewerContextCompileTest {
                 """
                 package com.example.app.${name.lowercase()}
 
-                import entkt.runtime.privacy.Viewer
+                import com.example.auth.AppViewer
                 import entkt.runtime.privacy.ViewerContext
 
                 class OtherViewer
 
-                fun typed(viewerContext: ViewerContext<Viewer>): ViewerContext<Viewer> = viewerContext
+                fun typed(viewerContext: ViewerContext<AppViewer>): ViewerContext<AppViewer> = viewerContext
 
                 $body
                 """.trimIndent(),

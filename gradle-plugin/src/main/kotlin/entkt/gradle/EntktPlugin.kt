@@ -41,6 +41,7 @@ class EntktPlugin : Plugin<Project> {
             task.args(
                 extension.packageName.get(),
                 generatedDir.get().asFile.absolutePath,
+                requireViewerType(extension),
                 extension.jsonMapper.getOrElse("kotlinx"),
                 extension.generateEntExplorer.getOrElse(false).toString(),
             )
@@ -85,6 +86,16 @@ class EntktPlugin : Plugin<Project> {
     }
 
     companion object {
+        internal fun requireViewerType(extension: EntktExtension): String =
+            extension.viewerType.orNull
+                ?: error(
+                    "entkt.viewerType is not set. Set it to the fully qualified name of the " +
+                        "application's viewer type, for example:\n" +
+                        "  entkt {\n" +
+                        "      viewerType.set(\"com.example.auth.AppViewer\")\n" +
+                        "  }"
+                )
+
         internal fun requireCodegenDeps(config: Configuration) {
             if (config.isEmpty) {
                 error(

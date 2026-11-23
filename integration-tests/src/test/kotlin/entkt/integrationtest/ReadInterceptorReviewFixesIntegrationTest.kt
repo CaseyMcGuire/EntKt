@@ -22,7 +22,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import entkt.runtime.privacy.Viewer
 
 /**
  * Regression coverage for fixes identified post-contract review:

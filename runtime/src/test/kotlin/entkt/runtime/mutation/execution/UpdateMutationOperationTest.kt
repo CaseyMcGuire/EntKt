@@ -23,7 +23,7 @@ import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
@@ -164,10 +164,10 @@ class UpdateMutationOperationTest {
             supportsRelationshipSerialization,
         )
         val mapping = RecordingMapping(events)
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
         val ruleClient = TestRuleClient()
         val failures = mutableListOf<EntMutationException>()
-        val receivedContexts = mutableListOf<ViewerContext<Viewer>>()
+        val receivedContexts = mutableListOf<ViewerContext<TestViewer>>()
         val receivedClients = mutableListOf<TestRuleClient>()
         var loadedRow: Map<String, Any?>?
             get() = driver.loadedRow
@@ -198,7 +198,7 @@ class UpdateMutationOperationTest {
         val privacy = ResolvedEntityPrivacyConfig(
             loadRules = emptyList<Nothing>(),
             createRules = listOf(
-                batchPrivacyRule<Viewer, TestRuleClient, Candidate> { context, candidates ->
+                batchPrivacyRule<TestViewer, TestRuleClient, Candidate> { context, candidates ->
                     assertSame(viewerContext, context.viewerContext)
                     assertSame(ruleClient, context.client)
                     privacyFallbackCandidates += candidates.toList()
@@ -206,7 +206,7 @@ class UpdateMutationOperationTest {
                 },
             ),
             updateRules = listOf(
-                batchPrivacyRule<Viewer, TestRuleClient, State> { context, states ->
+                batchPrivacyRule<TestViewer, TestRuleClient, State> { context, states ->
                     events += "privacy:${states.single().name}"
                     receivedContexts += context.viewerContext
                     receivedClients += context.client
@@ -239,12 +239,12 @@ class UpdateMutationOperationTest {
 
         private val adapter = object :
             UpdateMutationAdapter<Draft, Widget, PendingEdges, Candidate, BeforeUpdateState, State>,
-            UpdateMutationHookStateConverter<Viewer, Draft, Widget, PendingEdges, BeforeSaveState, BeforeUpdateState> {
+            UpdateMutationHookStateConverter<TestViewer, Draft, Widget, PendingEdges, BeforeSaveState, BeforeUpdateState> {
             override fun toBeforeSaveState(draft: Draft): BeforeSaveState =
                 BeforeSaveState("before-save:before")
 
             override fun toBeforeUpdateState(
-                viewerContext: ViewerContext<Viewer>,
+                viewerContext: ViewerContext<TestViewer>,
                 before: Widget,
                 pendingEdges: PendingEdges,
                 beforeSaveState: BeforeSaveState,
@@ -284,7 +284,7 @@ class UpdateMutationOperationTest {
             }
         }
 
-        val mutationRuntime = object : MutationRuntime<Viewer> {
+        val mutationRuntime = object : MutationRuntime<TestViewer> {
             override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
                 events += "runtime-preflight:$operation:$multiWrite"
             }
@@ -296,7 +296,7 @@ class UpdateMutationOperationTest {
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
-                viewerContext: ViewerContext<Viewer>,
+                viewerContext: ViewerContext<TestViewer>,
                 entities: List<Entity>,
             ): PrivacyEvaluation<Entity> {
                 events += "load-privacy"

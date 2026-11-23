@@ -19,7 +19,7 @@ class BatchRuleRegistrationCompileTest {
     }
 
     private fun compile(vararg application: SourceFile): JvmCompilationResult {
-        val generated = EntGenerator("com.example.ent")
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(Widget())))
             .toCompileTestSources()
         return compileSources(generated + application)
@@ -31,6 +31,7 @@ class BatchRuleRegistrationCompileTest {
         package com.example.app
 
         import com.example.ent.*
+        import com.example.auth.AppViewer
         import entkt.runtime.privacy.*
         import entkt.runtime.validation.*
         import kotlin.test.assertEquals
@@ -176,16 +177,17 @@ class BatchRuleRegistrationCompileTest {
 
             import com.example.ent.*;
             import entkt.runtime.mutation.DeleteRuleInput;
+            import com.example.auth.AppViewer;
             import entkt.runtime.privacy.*;
             import entkt.runtime.validation.*;
 
             public final class BatchVarargsJava {
                 public static void privacy(
                     WidgetPrivacyScope scope,
-                    BatchPrivacyRule<Viewer, ReadOnlyEntClient, Widget>[] load,
-                    BatchPrivacyRule<Viewer, ReadOnlyEntClient, WidgetWriteCandidate>[] create,
-                    BatchPrivacyRule<Viewer, ReadOnlyEntClient, WidgetUpdateRuleInput>[] update,
-                    BatchPrivacyRule<Viewer, ReadOnlyEntClient, DeleteRuleInput<Widget, WidgetWriteCandidate>>[] delete
+                    BatchPrivacyRule<AppViewer, ReadOnlyEntClient, Widget>[] load,
+                    BatchPrivacyRule<AppViewer, ReadOnlyEntClient, WidgetWriteCandidate>[] create,
+                    BatchPrivacyRule<AppViewer, ReadOnlyEntClient, WidgetUpdateRuleInput>[] update,
+                    BatchPrivacyRule<AppViewer, ReadOnlyEntClient, DeleteRuleInput<Widget, WidgetWriteCandidate>>[] delete
                 ) {
                     scope.load();
                     scope.load(load[0]);
@@ -197,7 +199,7 @@ class BatchRuleRegistrationCompileTest {
                     scope.update(update);
                     scope.delete(delete[0], delete[1]);
                     scope.delete(delete);
-                    PrivacyRule<Viewer, ReadOnlyEntClient, Widget> scalar = (context, item) -> PrivacyDecision.Continue.INSTANCE;
+                    PrivacyRule<AppViewer, ReadOnlyEntClient, Widget> scalar = (context, item) -> PrivacyDecision.Continue.INSTANCE;
                     scope.load(scalar);
                     scope.load(scalar, load[0], scalar);
                     scope.load(

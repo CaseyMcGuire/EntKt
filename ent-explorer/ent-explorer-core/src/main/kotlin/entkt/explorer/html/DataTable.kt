@@ -19,7 +19,7 @@ import kotlinx.html.tr
  * the id column linking to detail, and [valueCell]s truncated for list view.
  */
 internal fun FlowContent.dataTable(
-    entity: EntExplorerEntity<*>,
+    entity: EntExplorerEntity<*, *>,
     columns: List<EntExplorerColumn>,
     rows: List<EntExplorerRow>,
     ctx: ListContext,

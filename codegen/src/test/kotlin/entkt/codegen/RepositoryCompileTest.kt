@@ -28,7 +28,7 @@ class RepositoryCompileTest {
                 import entkt.runtime.repository.GeneratedIdRepository
                 import entkt.runtime.repository.ExplicitIdRepository
                 import entkt.runtime.rule.EntRuleClient
-                import entkt.runtime.privacy.Viewer
+                import com.example.auth.AppViewer
 
                 data class Widget(override val id: Long) : EntEntity.LongId
                 data class Other(override val id: Long) : EntEntity.LongId
@@ -36,11 +36,11 @@ class RepositoryCompileTest {
                 class UpdateDraft(var name: String = "") : UpdateMutationDraft<Widget>
                 class OtherCreateDraft : CreateMutationDraft<Other>
                 class OtherUpdateDraft : UpdateMutationDraft<Other>
-                abstract class WidgetQuery(query: EntityQuery<Widget>) : EntityQueryBuilder<Viewer, Widget, WidgetQuery>(NoopDriver, null, query)
-                abstract class OtherQuery(query: EntityQuery<Other>) : EntityQueryBuilder<Viewer, Other, OtherQuery>(NoopDriver, null, query)
+                abstract class WidgetQuery(query: EntityQuery<Widget>) : EntityQueryBuilder<AppViewer, Widget, WidgetQuery>(NoopDriver, null, query)
+                abstract class OtherQuery(query: EntityQuery<Other>) : EntityQueryBuilder<AppViewer, Other, OtherQuery>(NoopDriver, null, query)
 
-                typealias GeneratedRepo = GeneratedIdRepository<Viewer, Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, EntRuleClient>
-                typealias ExplicitRepo = ExplicitIdRepository<Viewer, Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, EntRuleClient>
+                typealias GeneratedRepo = GeneratedIdRepository<AppViewer, Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, EntRuleClient>
+                typealias ExplicitRepo = ExplicitIdRepository<AppViewer, Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, EntRuleClient>
                 """.trimIndent(),
             ),
             SourceFile.kotlin(
@@ -51,7 +51,7 @@ class RepositoryCompileTest {
                 import entkt.query.Predicate
                 import entkt.runtime.mutation.PendingCreateMutation
                 import entkt.runtime.mutation.PendingUpdateMutation
-                import entkt.runtime.privacy.Viewer
+                import com.example.auth.AppViewer
                 import entkt.runtime.privacy.ViewerContext
                 import entkt.runtime.repository.GeneratedIdRepository
                 import entkt.runtime.result.MutationResult
@@ -68,20 +68,20 @@ class RepositoryCompileTest {
     fun `inherited entry points retain concrete types and need no internal opt-in`() {
         val result = compile(
             """
-            fun generated(repo: GeneratedRepo, viewer: ViewerContext<Viewer>, predicate: Predicate<Widget>) {
+            fun generated(repo: GeneratedRepo, viewer: ViewerContext<AppViewer>, predicate: Predicate<Widget>) {
                 val query: WidgetQuery = repo.query().where(predicate)
-                val create: PendingCreateMutation<Viewer, CreateDraft, Widget> = repo.create { name = "new" }
-                val update: PendingUpdateMutation<Viewer, UpdateDraft, Widget> = repo.update(1L) { name = "changed" }
+                val create: PendingCreateMutation<AppViewer, CreateDraft, Widget> = repo.create { name = "new" }
+                val update: PendingUpdateMutation<AppViewer, UpdateDraft, Widget> = repo.update(1L) { name = "changed" }
                 val found: ReadResult<Widget?> = repo.findById(viewer, 1L)
                 val deleted: MutationResult<Boolean> = repo.deleteById(viewer, 1L)
                 val created: MutationResult<List<Widget>> = repo.createMany(viewer, { name = "one" }, { name = "two" })
                 val count: MutationResult<Int> = repo.deleteMany(viewer, predicate)
             }
 
-            fun explicit(repo: ExplicitRepo, viewer: ViewerContext<Viewer>) {
+            fun explicit(repo: ExplicitRepo, viewer: ViewerContext<AppViewer>) {
                 val query: WidgetQuery = repo.query()
-                val create: PendingCreateMutation<Viewer, CreateDraft, Widget> = repo.create(1L) { name = "new" }
-                val update: PendingUpdateMutation<Viewer, UpdateDraft, Widget> = repo.update(1L) { name = "changed" }
+                val create: PendingCreateMutation<AppViewer, CreateDraft, Widget> = repo.create(1L) { name = "new" }
+                val update: PendingUpdateMutation<AppViewer, UpdateDraft, Widget> = repo.update(1L) { name = "changed" }
                 val found: ReadResult<Widget?> = repo.findById(viewer, 1L)
                 val deleted: MutationResult<Boolean> = repo.deleteById(viewer, 1L)
                 val count: MutationResult<Int> = repo.deleteMany(viewer)
@@ -133,14 +133,14 @@ class RepositoryCompileTest {
             "Widget, Long, CreateDraft, UpdateDraft, OtherQuery, EntRuleClient",
         )
         for (types in invalidTypes) {
-            val result = compile("fun invalid(repo: GeneratedIdRepository<Viewer, $types>) {}")
+            val result = compile("fun invalid(repo: GeneratedIdRepository<AppViewer, $types>) {}")
             assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
             assertTrue(result.messages.contains("bound", ignoreCase = true), result.messages)
         }
     }
 
     private fun assertRejected(repo: String, expression: String, diagnostic: String) {
-        val result = compile("fun invalid(repo: $repo, viewer: ViewerContext<Viewer>) { $expression }")
+        val result = compile("fun invalid(repo: $repo, viewer: ViewerContext<AppViewer>) { $expression }")
 
         assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
         assertTrue(result.messages.contains(diagnostic, ignoreCase = true), result.messages)

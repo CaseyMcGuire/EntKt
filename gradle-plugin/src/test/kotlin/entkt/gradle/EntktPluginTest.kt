@@ -94,6 +94,7 @@ class EntktPluginTest {
 
                     entkt {
                         packageName.set("com.example.ent")
+                        viewerType.set("com.example.auth.AppViewer")
                     }
 
                     dependencies {
@@ -129,7 +130,7 @@ class EntktPluginTest {
 
             val entityContent = generatedDir.resolve("Pet.kt").readText()
             assertTrue(entityContent.contains("data class Pet"), "Should generate data class")
-            // jsonMapper default threads plugin -> GenerateMain arg 3 -> EntGenerator:
+            // jsonMapper default threads plugin -> GenerateMain arg 4 -> EntGenerator:
             // the JSON column's metadata must target the kotlinx mapper and carry
             // its serializer expression.
             val entityFlat = entityContent.replace("\\s+".toRegex(), " ")
@@ -169,8 +170,12 @@ class EntktPluginTest {
             assertTrue(queryContent.contains("@EntktDsl"), "Query class should be annotated @EntktDsl")
             val queryFlat = queryContent.replace("\\s+".toRegex(), " ")
             assertTrue(
-                queryFlat.contains("EntityQueryBuilder<Viewer, Pet, PetQuery>"),
+                queryFlat.contains("EntityQueryBuilder<AppViewer, Pet, PetQuery>"),
                 "Query class should inherit its common builder API from EntityQueryBuilder",
+            )
+            assertTrue(
+                queryContent.contains("import com.example.auth.AppViewer"),
+                "entkt { viewerType.set(...) } must reach the generated sources",
             )
             assertTrue(
                 !queryContent.contains("fun `where`") && !queryContent.contains("fun orderBy"),
@@ -188,7 +193,7 @@ class EntktPluginTest {
             assertTrue(repoContent.contains("driver: DatabaseDriver"), "Should take DatabaseDriver in constructor")
             assertTrue(
                 repoFlat.contains(
-                    "GeneratedIdRepository<Viewer, Pet, Int, PetCreateDraft, PetUpdateDraft, PetQuery, ReadOnlyEntClient>",
+                    "GeneratedIdRepository<AppViewer, Pet, Int, PetCreateDraft, PetUpdateDraft, PetQuery, ReadOnlyEntClient>",
                 ),
                 "Repo should inherit its typed CRUD API from GeneratedIdRepository",
             )
@@ -224,7 +229,7 @@ class EntktPluginTest {
             assertTrue(
                 repoFlat.contains(
                     "fun create(name: String, block: PetCreateDraft.() -> Unit = {}): " +
-                        "PendingCreateMutation<Viewer, PetCreateDraft, Pet> = super.create {",
+                        "PendingCreateMutation<AppViewer, PetCreateDraft, Pet> = super.create {",
                 ),
                 "Repo should expose a required-parameter create overload that delegates to the runtime create path",
             )
@@ -328,6 +333,7 @@ class EntktPluginTest {
 
                     entkt {
                         packageName.set("com.example.ent")
+                        viewerType.set("com.example.auth.AppViewer")
                         jsonMapper.set("jackson")
                     }
 
@@ -365,6 +371,43 @@ class EntktPluginTest {
                 !entityContent.contains("kotlinx.serialization"),
                 "Jackson-mode generated code must reference no kotlinx symbols",
             )
+        } finally {
+            projectDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `generateEntkt fails with a message naming viewerType when it is not set`() {
+        val kotlinVersion = KotlinVersion.CURRENT.let { "${it.major}.${it.minor}.${it.patch}" }
+        val projectDir = File.createTempFile("entkt-test-viewer-type", "").apply {
+            delete()
+            mkdirs()
+        }
+
+        try {
+            projectDir.resolve("settings.gradle.kts").writeText("")
+            projectDir.resolve("build.gradle.kts").writeText(
+                """
+                plugins {
+                    kotlin("jvm") version "$kotlinVersion"
+                    id("io.entkt")
+                }
+                repositories { mavenCentral() }
+
+                entkt {
+                    packageName.set("com.example.ent")
+                }
+                """.trimIndent()
+            )
+
+            val result = GradleRunner.create()
+                .withProjectDir(projectDir)
+                .withArguments("generateEntkt")
+                .withPluginClasspath()
+                .buildAndFail()
+
+            assertTrue(result.output.contains("entkt.viewerType is not set"), result.output)
+            assertTrue(result.output.contains("viewerType.set(\"com.example.auth.AppViewer\")"), result.output)
         } finally {
             projectDir.deleteRecursively()
         }

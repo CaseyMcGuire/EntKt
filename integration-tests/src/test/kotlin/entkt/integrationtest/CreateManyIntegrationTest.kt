@@ -21,7 +21,6 @@ import entkt.runtime.mutation.orElse
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntMutationException
@@ -149,7 +148,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewerContext: ViewerContext<Viewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
+        viewerContext: ViewerContext<TestViewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUser,
     ): EntClient {
         this.viewerContext = viewerContext
@@ -226,19 +225,19 @@ class CreateManyIntegrationTest : PostgresTestBase() {
     fun `createMany runs lifecycle phases once over the full ordered batch and inserts once`() {
         val events = mutableListOf<String>()
         val recording = RecordingDriver(resetAndDriver())
-        val capturedPrivacy = ViewerContext.AsViewer(Viewer.User(42L))
-        var createPrivacy: ViewerContext<Viewer>? = null
-        var loadPrivacy: ViewerContext<Viewer>? = null
+        val capturedPrivacy = ViewerContext.AsViewer(TestViewer.User(42L))
+        var createPrivacy: ViewerContext<TestViewer>? = null
+        var loadPrivacy: ViewerContext<TestViewer>? = null
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
-                    create(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate> { context, batch ->
+                    create(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserWriteCandidate> { context, batch ->
                         assertEquals(0, recording.callCount("insertMany:users"))
                         createPrivacy = context.viewerContext
                         events += "createPrivacy:${batch.joinToString { it.name }}"
                         batch.decideEach { PrivacyDecision.Allow }
                     })
-                    load(batchPrivacyRule<Viewer, ReadOnlyEntClient, User> { context, batch ->
+                    load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, User> { context, batch ->
                         loadPrivacy = context.viewerContext
                         events += "loadPrivacy:${batch.joinToString { it.name }}"
                         batch.decideEach { PrivacyDecision.Allow }
@@ -646,14 +645,14 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a later CREATE privacy denial evaluates the full batch before validation or insert`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(42L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(42L))
         val privacyBatches = mutableListOf<List<String>>()
         var validationCalls = 0
         val recording = RecordingDriver(resetAndDriver())
         val policy = object : EntityPolicy<User, UserPolicyScope> {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
-                    create(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate> { _, batch ->
+                    create(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserWriteCandidate> { _, batch ->
                         privacyBatches += batch.map { it.name }
                         batch.decideEach { item ->
                             if (item.name == "B") {
@@ -699,7 +698,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `EntKt-owned batch COMMITS when only return disclosure is denied`() {
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = createButNoLoad("B"))
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), userPolicy = createButNoLoad("B"))
 
         val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
@@ -734,11 +733,11 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
                     create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
-                    load(batchPrivacyRule<Viewer, ReadOnlyEntClient, User> { _, _ -> throw thrown })
+                    load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, User> { _, _ -> throw thrown })
                 }
             }
         }
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), userPolicy = policy)
 
         val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
@@ -758,7 +757,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
                     create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
-                    load(batchPrivacyRule<Viewer, ReadOnlyEntClient, User> { context, batch ->
+                    load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, User> { context, batch ->
                         context.client.users.query {
                             where(Predicate.Leaf<User>("missing_column", Op.EQ, 1))
                         }.firstOrNull(context.viewerContext).getOrThrow()
@@ -767,7 +766,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), userPolicy = policy)
 
         val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
@@ -789,7 +788,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
             override fun configure(scope: UserPolicyScope) = scope.run {
                 privacy {
                     create(UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow })
-                    load(batchPrivacyRule<Viewer, ReadOnlyEntClient, User> { context, batch ->
+                    load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, User> { context, batch ->
                         // Deliberately inspect-and-handle the read failure rather
                         // than throwing it. PostgreSQL still marks the transaction
                         // aborted, so the owned boundary confirms rollback.
@@ -801,7 +800,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), userPolicy = policy)
 
         val result = client.users.createMany(viewerContext,
             { name = "A"; email = "a@example.com" },
@@ -820,7 +819,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `owned batch keeps an earlier ignored hook mutation failure primary over returned LOAD denial`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(1L))
         var launchedNestedMutation = false
         var nestedFailure: EntMutationException? = null
         val client = EntClient(resetAndDriver()) {
@@ -858,7 +857,7 @@ class CreateManyIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `caller-owned transaction reports TransactionPending and rolls back`() {
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), userPolicy = createButNoLoad("B"))
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), userPolicy = createButNoLoad("B"))
 
         var inner: MutationResult<List<User>>? = null
         val txResult = client.withTransaction { tx ->

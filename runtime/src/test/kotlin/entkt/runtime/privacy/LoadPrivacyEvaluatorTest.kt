@@ -38,14 +38,14 @@ class LoadPrivacyEvaluatorTest {
             Record(row.getValue("id") as Long, row.getValue("label") as String)
     }
 
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
     private val ruleClient = TestRuleClient()
 
     @Test
     fun `evaluator preserves context correlation and fail-closed outcomes`() {
-        val contexts = mutableListOf<PrivacyRuleContext<Viewer, TestRuleClient>>()
+        val contexts = mutableListOf<PrivacyRuleContext<TestViewer, TestRuleClient>>()
         val seenItems = mutableListOf<Record>()
-        val first = PrivacyRule<Viewer, TestRuleClient, Record> { context, item ->
+        val first = PrivacyRule<TestViewer, TestRuleClient, Record> { context, item ->
             contexts += context
             seenItems += item
             when (item.id) {
@@ -54,7 +54,7 @@ class LoadPrivacyEvaluatorTest {
                 else -> PrivacyDecision.Continue
             }
         }
-        val second = PrivacyRule<Viewer, TestRuleClient, Record> { context, item ->
+        val second = PrivacyRule<TestViewer, TestRuleClient, Record> { context, item ->
             contexts += context
             seenItems += item
             PrivacyDecision.Continue
@@ -113,7 +113,7 @@ class LoadPrivacyEvaluatorTest {
         val evaluator = loadEvaluator<TestRuleClient, Record>(
             entityName = RecordDescriptor.entityName,
             rules = listOf(
-                PrivacyRule<Viewer, TestRuleClient, Record> { _, _ ->
+                PrivacyRule<TestViewer, TestRuleClient, Record> { _, _ ->
                     ruleCalls++
                     PrivacyDecision.Deny("must not run")
                 },
@@ -138,7 +138,7 @@ class LoadPrivacyEvaluatorTest {
         val evaluator = loadEvaluator<TestRuleClient, Record>(
             entityName = RecordDescriptor.entityName,
             rules = listOf(
-                PrivacyRule<Viewer, TestRuleClient, Record> { _, _ -> throw failure },
+                PrivacyRule<TestViewer, TestRuleClient, Record> { _, _ -> throw failure },
             ),
         )
 
@@ -190,12 +190,12 @@ class LoadPrivacyEvaluatorTest {
 
     @Test
     fun `a nested evaluation cannot replace the outer context subjects or decisions`() {
-        val nestedViewerContext = ViewerContext.AsViewer(Viewer.User(8L))
+        val nestedViewerContext = ViewerContext.AsViewer(TestViewer.User(8L))
         val nestedClient = TestRuleClient()
         val nestedRecord = Record(2L, "nested")
         val outerRecords = listOf(Record(1L, "allowed"), Record(3L, "denied"))
-        var outerContext: PrivacyRuleContext<Viewer, TestRuleClient>? = null
-        lateinit var evaluator: LoadPrivacyEvaluator<Viewer, TestRuleClient, Record>
+        var outerContext: PrivacyRuleContext<TestViewer, TestRuleClient>? = null
+        lateinit var evaluator: LoadPrivacyEvaluator<TestViewer, TestRuleClient, Record>
         evaluator = LoadPrivacyEvaluator(
             entityName = RecordDescriptor.entityName,
             rules = listOf(
@@ -241,19 +241,19 @@ class LoadPrivacyEvaluatorTest {
 
     @Test
     fun `each evaluation uses the supplied context without retaining a client or viewer`() {
-        val contexts = mutableListOf<PrivacyRuleContext<Viewer, TestRuleClient>>()
+        val contexts = mutableListOf<PrivacyRuleContext<TestViewer, TestRuleClient>>()
         val evaluator = loadEvaluator<TestRuleClient, Record>(
             entityName = RecordDescriptor.entityName,
             rules = listOf(
-                PrivacyRule<Viewer, TestRuleClient, Record> { context, _ ->
+                PrivacyRule<TestViewer, TestRuleClient, Record> { context, _ ->
                     contexts += context
                     PrivacyDecision.Allow
                 },
             ),
         )
-        val firstViewerContext = ViewerContext.AsViewer(Viewer.User(1L))
+        val firstViewerContext = ViewerContext.AsViewer(TestViewer.User(1L))
         val firstClient = TestRuleClient()
-        val secondViewerContext = ViewerContext.AsViewer(Viewer.User(2L))
+        val secondViewerContext = ViewerContext.AsViewer(TestViewer.User(2L))
         val secondClient = TestRuleClient()
         val entities = listOf(Record(1L, "one"))
 

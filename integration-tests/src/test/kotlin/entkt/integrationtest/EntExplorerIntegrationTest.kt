@@ -4,7 +4,6 @@ import entkt.integrationtest.ent.EntClient
 import entkt.integrationtest.ent.GeneratedEntExplorerRegistry
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.privacy.Viewer
 import entkt.explorer.EntExplorer
 import entkt.explorer.EntExplorerRequest
 import kotlin.test.Test
@@ -27,13 +26,13 @@ class EntExplorerIntegrationTest : PostgresTestBase() {
         return EntClient(driver) to EntClient(newDriver())
     }
 
-    private fun explorer(client: EntClient, context: ViewerContext<Viewer>): EntExplorer<EntClient> =
+    private fun explorer(client: EntClient, context: ViewerContext<TestViewer>): EntExplorer<TestViewer, EntClient> =
         EntExplorer(client, GeneratedEntExplorerRegistry) {
             authorize { true }
             viewerContext { context }
         }
 
-    private fun get(explorer: EntExplorer<EntClient>, path: String, vararg params: Pair<String, String>) =
+    private fun get(explorer: EntExplorer<TestViewer, EntClient>, path: String, vararg params: Pair<String, String>) =
         explorer.handle(EntExplorerRequest(path = path, query = params.groupBy({ it.first }, { it.second })))
 
     private fun seed(sys: EntClient) {
@@ -80,7 +79,7 @@ class EntExplorerIntegrationTest : PostgresTestBase() {
         assertEquals(200, list.status)
         assertTrue("First" in list.body && "Second" in list.body)
 
-        val anonymous = explorer(plain, ViewerContext.AsViewer(Viewer.Anonymous))
+        val anonymous = explorer(plain, ViewerContext.AsViewer(TestViewer.Anonymous))
         val hidden = get(anonymous, "/_ent/entities/articles")
         assertEquals(200, hidden.status)
         assertFalse("First" in hidden.body, "fail-closed privacy must hide rows from Anonymous")
@@ -99,7 +98,7 @@ class EntExplorerIntegrationTest : PostgresTestBase() {
         assertTrue("First" in detail.body)
         assertTrue("/_ent/entities/users/${article.authorId}" in detail.body, "belongsTo links to the author detail")
 
-        val anonymous = explorer(plain, ViewerContext.AsViewer(Viewer.Anonymous))
+        val anonymous = explorer(plain, ViewerContext.AsViewer(TestViewer.Anonymous))
         assertEquals(404, get(anonymous, "/_ent/entities/articles/${article.id}").status)
         assertEquals(404, get(visible, "/_ent/entities/articles/999999").status, "missing row is the same 404")
         assertEquals(404, get(visible, "/_ent/entities/articles/not-a-number").status, "unparseable id is the same 404")
@@ -196,7 +195,7 @@ class EntExplorerIntegrationTest : PostgresTestBase() {
         // with a Root denial, which renders as a privacy-filtered empty
         // page WITH the banner — and next stays offered rather than
         // becoming a visible-count oracle.
-        val anonymous = explorer(plain, ViewerContext.AsViewer(Viewer.Anonymous))
+        val anonymous = explorer(plain, ViewerContext.AsViewer(TestViewer.Anonymous))
         val denied = get(anonymous, "/_ent/entities/users")
         assertEquals(200, denied.status)
         assertTrue("Row-level privacy applies" in denied.body, "denied pages carry the privacy banner")

@@ -11,7 +11,7 @@ import kotlinx.html.thead
 import kotlinx.html.tr
 
 /** Entity overview rows for the home and entity-index pages. */
-internal fun FlowContent.entityTable(entities: List<EntExplorerEntity<*>>, urls: ExplorerUrls) {
+internal fun FlowContent.entityTable(entities: List<EntExplorerEntity<*, *>>, urls: ExplorerUrls) {
     card {
         table {
             thead { tr { th { +"Entity" }; th { +"Table" }; th { +"Columns" }; th { +"Edges" } } }

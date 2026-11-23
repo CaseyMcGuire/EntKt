@@ -17,7 +17,6 @@ import entkt.runtime.mutation.FieldPatch
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
 import entkt.runtime.result.EntValidationException
@@ -84,7 +83,7 @@ private val CannotDeletePublished = ArticleDeleteValidationRule { _, item ->
 private val AllowAllLoads = ArticleLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
 private val AllowAllUserLoads = UserLoadPrivacyRule { _, _ -> PrivacyDecision.Allow }
 private val RequireAuthForCreate = ArticleCreatePrivacyRule { context, _ ->
-    if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
+    if (context.viewerContext.viewer is TestViewer.Anonymous) PrivacyDecision.Deny("authentication required")
     else PrivacyDecision.Allow
 }
 
@@ -282,7 +281,7 @@ class ValidationIntegrationTest {
     }
 
     private fun freshClient(
-        viewerContext: ViewerContext<Viewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
+        viewerContext: ViewerContext<TestViewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = ValidatedArticlePolicy,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUserPolicy,
     ): EntClient {
@@ -317,7 +316,7 @@ class ValidationIntegrationTest {
     @Test
     fun `rules can mutate their own byte array copies without changing shared inputs or persistence`() {
         val client = freshClient(
-            viewerContext = ViewerContext.AsViewer(Viewer.User(7L)),
+            viewerContext = ViewerContext.AsViewer(TestViewer.User(7L)),
             articlePolicy = ImmutableBytesArticlePolicy,
         )
         val author = seedAuthor(client)
@@ -493,7 +492,7 @@ class ValidationIntegrationTest {
     @Test
     fun `privacy denial fires before validation on create`() {
         val client = freshClient(
-            viewerContext = ViewerContext.AsViewer(Viewer.Anonymous),
+            viewerContext = ViewerContext.AsViewer(TestViewer.Anonymous),
             articlePolicy = PrivacyBeforeValidationPolicy,
         )
         val author = run {

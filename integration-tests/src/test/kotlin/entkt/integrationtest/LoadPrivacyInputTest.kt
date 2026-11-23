@@ -13,7 +13,6 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.types.Bytes
@@ -24,7 +23,7 @@ import kotlin.test.assertSame
 
 /** Exercise generated LOAD wiring without database I/O or JSON copying. */
 class LoadPrivacyInputTest {
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
     private val driver = object : DatabaseDriver by NoopDriver {
         override fun <T> copyJsonValue(table: String, column: String, value: T): T =
             error("LOAD privacy must not copy JSON values")

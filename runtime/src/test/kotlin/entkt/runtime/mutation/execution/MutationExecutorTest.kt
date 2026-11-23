@@ -6,7 +6,7 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntConflictException
@@ -568,7 +568,7 @@ class MutationExecutorTest {
         }
     }
 
-    private class RecordingRuntime(private val events: MutableList<String>) : MutationRuntime<Viewer> {
+    private class RecordingRuntime(private val events: MutableList<String>) : MutationRuntime<TestViewer> {
         val preflights = mutableListOf<Pair<String, Boolean>>()
         val failures = mutableListOf<EntMutationException>()
         var preflightFailure: Exception? = null
@@ -585,7 +585,7 @@ class MutationExecutorTest {
 
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<TestViewer>,
             entities: List<Entity>,
         ): PrivacyEvaluation<Entity> = error("privacy belongs to the operation")
     }

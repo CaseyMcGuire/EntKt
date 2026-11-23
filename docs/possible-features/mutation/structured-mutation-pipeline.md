@@ -268,7 +268,7 @@ val client = EntClient(driver) {
             }
 
             authorize { ctx ->
-                if (ctx.privacy.viewer is Viewer.Anonymous) {
+                if (ctx.privacy.viewer.userId == null) {
                     PrivacyDecision.Deny("authentication required")
                 } else {
                     PrivacyDecision.Allow

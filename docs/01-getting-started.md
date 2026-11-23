@@ -57,6 +57,9 @@ repositories {
 
 entkt {
     packageName.set("com.example.ent")
+    // Required: the viewer type your application defines (see "Declaring Your
+    // Viewer" below). Generated terminals take ViewerContext<AppViewer>.
+    viewerType.set("com.example.auth.AppViewer")
     // Optional: JSON mapper for typed json(...) columns — "kotlinx" (default)
     // or "jackson" (pair with io.entkt:jackson's JacksonJsonCodec on the driver).
     // jsonMapper.set("jackson")
@@ -119,9 +122,30 @@ that scans the classpath for `EntSchema` classes:
 val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
     classpath = codegenRunner
     mainClass.set("entkt.codegen.GenerateMainKt")
-    args("com.example.ent", generatedDir.get().asFile.absolutePath)
+    // packageName, outputDir, viewerType; optionally jsonMapper and generateEntExplorer
+    args("com.example.ent", generatedDir.get().asFile.absolutePath, "com.example.auth.AppViewer")
 }
 ```
+
+## Declaring Your Viewer
+
+Every generated operation runs as a viewer: who is asking. The viewer is a type
+your application defines, and `viewerType` binds the generated code to it.
+Declare a public, top-level, non-generic class or interface in the module that
+compiles the generated sources, or in one that module depends on:
+
+```kotlin
+package com.example.auth
+
+import java.util.UUID
+
+/** `userId` is null for an unauthenticated viewer. */
+data class AppViewer(val userId: UUID?)
+```
+
+Give it whatever your privacy rules, hooks, and interceptors need to know, such
+as roles or a tenant. `viewerType` is required: code generation fails when it
+is missing. See [Privacy](06-privacy.md#viewer) for guidance on the type.
 
 ## Defining Your First Schema
 
@@ -153,6 +177,7 @@ ordinary viewer. This standalone demo explicitly allows each operation;
 replace these rules with your application's [privacy policy](06-privacy.md).
 
 ```kotlin
+import com.example.auth.AppViewer
 import com.example.ent.*
 import entkt.postgres.PostgresDriver
 import entkt.query.*
@@ -180,7 +205,7 @@ fun main() {
     val client = EntClient(PostgresDriver(dataSource)) {
         policies { users(UserPolicy) }
     }
-    val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
+    val viewerContext = ViewerContext.AsViewer(AppViewer(userId = null))
 
     // Create — saveAndLoad(viewerContext) returns MutationResult<User>
     val alice = client.users.create {
@@ -290,7 +315,7 @@ to read and write users:
 | `User` | Typed entity properties and query columns such as `User.name` and `User.age` |
 | `UserCreateDraft` | Mutable create input used by `client.users.create { ... }` and later `configure { ... }` blocks |
 | `UserUpdateDraft` | Mutable update patch used by `client.users.update(id) { ... }` and later `configure { ... }` blocks |
-| `PendingCreateMutation<Viewer, UserCreateDraft, User>` / `PendingUpdateMutation<Viewer, UserUpdateDraft, User>` | Single-use runtime operations returned by `create` and `update`; they supply `configure`, `save`, and `saveAndLoad` and are not generated per entity |
+| `PendingCreateMutation<AppViewer, UserCreateDraft, User>` / `PendingUpdateMutation<AppViewer, UserUpdateDraft, User>` | Single-use runtime operations returned by `create` and `update`; they supply `configure`, `save`, and `saveAndLoad` and are not generated per entity |
 | `PendingMutation<Viewer, Draft, Entity>` | Shared abstract mutation lifecycle for code that accepts either a pending create or update operation |
 | `UserQuery` | Filtering, ordering, pagination, traversal, edge loading, and result-bearing read terminals |
 | `UserRepo` | Entry points such as `create`, `update`, `query`, `findById`, and the delete methods |

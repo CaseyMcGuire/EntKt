@@ -15,7 +15,7 @@ import entkt.runtime.driver.RelatedRows
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.query.execution.DatabaseGraphStorage
 import entkt.runtime.query.execution.ReadQueryCompiler
 import entkt.runtime.query.execution.RelationshipReadContext
@@ -246,7 +246,7 @@ class DatabaseGraphStorageTest {
         }
     }
 
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
 
     @Test
     fun `to-one target reads classify database conflicts`() {
@@ -315,8 +315,8 @@ class DatabaseGraphStorageTest {
                 ),
             ),
         )
-        val contexts = mutableListOf<QueryContext<Viewer>>()
-        val interceptors = EntInterceptorsConfig<Viewer>().apply {
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
+        val interceptors = EntInterceptorsConfig<TestViewer>().apply {
             addEntity<Parent>("parents", "only-two") { scope, context ->
                 contexts += context
                 scope.addPredicate(Predicate.Leaf("id", Op.EQ, 2L))
@@ -348,8 +348,8 @@ class DatabaseGraphStorageTest {
                 ),
             ),
         )
-        val contexts = mutableListOf<QueryContext<Viewer>>()
-        val interceptors = EntInterceptorsConfig<Viewer>().apply {
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
+        val interceptors = EntInterceptorsConfig<TestViewer>().apply {
             addEntity<Child>("children", "record") { _, context -> contexts += context }
         }
         val relationship = storage(driver, interceptors).loadRelationship(
@@ -489,8 +489,8 @@ class DatabaseGraphStorageTest {
 
     private fun storage(
         driver: DatabaseDriver,
-        interceptors: EntInterceptorsConfig<Viewer> = EntInterceptorsConfig<Viewer>(),
-    ): DatabaseGraphStorage<Viewer> = DatabaseGraphStorage(
+        interceptors: EntInterceptorsConfig<TestViewer> = EntInterceptorsConfig<TestViewer>(),
+    ): DatabaseGraphStorage<TestViewer> = DatabaseGraphStorage(
         driver = driver,
         queryCompiler = ReadQueryCompiler(
             driver = driver,
@@ -498,7 +498,7 @@ class DatabaseGraphStorageTest {
         ),
     )
 
-    private fun relationshipContext(step: EdgeStep): RelationshipReadContext<Viewer> =
+    private fun relationshipContext(step: EdgeStep): RelationshipReadContext<TestViewer> =
         RelationshipReadContext(
             viewerContext = viewerContext,
             rootEntity = Parent::class,

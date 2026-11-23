@@ -3,11 +3,11 @@ package entkt.explorer
 import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.schema.FieldType
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -20,6 +20,8 @@ import kotlin.test.assertTrue
  */
 class EntExplorerTest {
 
+    private class FakeViewer
+
     private class FakeClient
 
     private class FakeEntity(
@@ -29,9 +31,9 @@ class EntExplorerTest {
         override val edges: List<EntExplorerEdge> = emptyList(),
         private val rows: MutableMap<String, EntExplorerRow> = mutableMapOf(),
         comment: String? = null,
-    ) : EntExplorerEntity<FakeClient> {
+    ) : EntExplorerEntity<FakeViewer, FakeClient> {
         var lastListRequest: EntExplorerListRequest? = null
-        var lastViewerContext: ViewerContext<Viewer>? = null
+        var lastViewerContext: ViewerContext<FakeViewer>? = null
         var listResult: List<EntExplorerRow> = emptyList()
 
         override val schema = EntitySchema(
@@ -69,7 +71,7 @@ class EntExplorerTest {
 
         override fun list(
             client: FakeClient,
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<FakeViewer>,
             request: EntExplorerListRequest,
         ): EntExplorerListResult {
             lastViewerContext = viewerContext
@@ -84,7 +86,7 @@ class EntExplorerTest {
 
         override fun get(
             client: FakeClient,
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<FakeViewer>,
             id: String,
         ): EntExplorerRow? {
             lastViewerContext = viewerContext
@@ -92,10 +94,14 @@ class EntExplorerTest {
         }
     }
 
+    /** Builds an explorer that reads under a bypass context unless [configure] supplies its own provider. */
     private fun explorer(
         vararg entities: FakeEntity,
-        configure: EntExplorerConfig.() -> Unit = { authorize { true } },
-    ): EntExplorer<FakeClient> = EntExplorer(FakeClient(), entities.toList(), configure)
+        configure: EntExplorerConfig<FakeViewer>.() -> Unit = { authorize { true } },
+    ): EntExplorer<FakeViewer, FakeClient> = EntExplorer(FakeClient(), entities.toList()) {
+        viewerContext { ViewerContext.privacyBypass_DANGEROUS("explorer-test default") }
+        configure()
+    }
 
     private fun get(path: String, vararg params: Pair<String, String>): EntExplorerRequest =
         EntExplorerRequest(
@@ -126,6 +132,29 @@ class EntExplorerTest {
     fun `rejects non-GET methods — the explorer is read-only`() {
         val explorer = explorer(FakeEntity("user", "User"))
         assertEquals(405, explorer.handle(EntExplorerRequest(path = "/_ent", method = "POST")).status)
+    }
+
+    @Test
+    fun `an explorer cannot be constructed without a viewer context provider`() {
+        val failure = assertFailsWith<IllegalArgumentException> {
+            EntExplorer(FakeClient(), listOf(FakeEntity("user", "User"))) { authorize { true } }
+        }
+
+        assertTrue("viewerContext" in failure.message.orEmpty(), failure.message)
+    }
+
+    @Test
+    fun `the provider's viewer reaches a read as the context the application built`() {
+        val entity = FakeEntity("user", "User")
+        val viewer = FakeViewer()
+        val explorer = explorer(entity, configure = {
+            authorize { true }
+            viewerContext { ViewerContext.AsViewer(viewer) }
+        })
+
+        explorer.handle(get("/_ent/entities/user"))
+
+        assertEquals(ViewerContext.AsViewer(viewer), entity.lastViewerContext)
     }
 
     @Test
@@ -356,6 +385,8 @@ class EntExplorerTest {
  */
 class EntExplorerReviewContractTest {
 
+    private class FakeViewer
+
     private class FakeClient
 
     private class Entity(
@@ -363,7 +394,7 @@ class EntExplorerReviewContractTest {
         override val displayName: String,
         override val edges: List<EntExplorerEdge> = emptyList(),
         fkFilterable: Boolean = true,
-    ) : EntExplorerEntity<FakeClient> {
+    ) : EntExplorerEntity<FakeViewer, FakeClient> {
         val gotIds = mutableListOf<String>()
         var result: EntExplorerListResult = EntExplorerListResult(emptyList(), hasNext = false)
         var throwOnList: RuntimeException? = null
@@ -385,7 +416,7 @@ class EntExplorerReviewContractTest {
 
         override fun list(
             client: FakeClient,
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<FakeViewer>,
             request: EntExplorerListRequest,
         ): EntExplorerListResult {
             throwOnList?.let { throw it }
@@ -394,7 +425,7 @@ class EntExplorerReviewContractTest {
 
         override fun get(
             client: FakeClient,
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<FakeViewer>,
             id: String,
         ): EntExplorerRow? {
             gotIds.add(id)
@@ -402,8 +433,13 @@ class EntExplorerReviewContractTest {
         }
     }
 
-    private fun explorer(vararg entities: Entity, configure: EntExplorerConfig.() -> Unit = { authorize { true } }) =
-        EntExplorer(FakeClient(), entities.toList(), configure)
+    private fun explorer(
+        vararg entities: Entity,
+        configure: EntExplorerConfig<FakeViewer>.() -> Unit = { authorize { true } },
+    ) = EntExplorer(FakeClient(), entities.toList()) {
+        viewerContext { ViewerContext.privacyBypass_DANGEROUS("explorer-test default") }
+        configure()
+    }
 
     private fun get(path: String, vararg params: Pair<String, String>) =
         EntExplorerRequest(path = path, query = params.groupBy({ it.first }, { it.second }))

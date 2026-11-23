@@ -6,7 +6,7 @@ import entkt.runtime.privacy.ViewerContext;
 import entkt.runtime.privacy.PrivacyDecision;
 import entkt.runtime.privacy.PrivacyRule;
 import entkt.runtime.privacy.PrivacyRuleContext;
-import entkt.runtime.privacy.Viewer;
+import entkt.runtime.privacy.TestViewer;
 import entkt.runtime.rule.RuleBatch;
 import entkt.runtime.rule.RuleDecisions;
 import entkt.runtime.rule.TestRuleClient;
@@ -24,20 +24,20 @@ import java.util.List;
 final class BatchLifecycleJavaCompatibility {
     private BatchLifecycleJavaCompatibility() {}
 
-    static final PrivacyRuleContext<Viewer, TestRuleClient> VIEWER_CONTEXT =
+    static final PrivacyRuleContext<TestViewer, TestRuleClient> VIEWER_CONTEXT =
             new PrivacyRuleContext<>(
-                    new ViewerContext.AsViewer<>(Viewer.Anonymous.INSTANCE),
+                    new ViewerContext.AsViewer<>(TestViewer.Anonymous.INSTANCE),
                     new TestRuleClient());
 
     static final ValidationRuleContext<TestRuleClient> VALIDATION_CONTEXT =
             new ValidationRuleContext<>(new TestRuleClient());
 
-    static final PrivacyRule<Viewer, TestRuleClient, String> PRIVACY_LAMBDA =
+    static final PrivacyRule<TestViewer, TestRuleClient, String> PRIVACY_LAMBDA =
             (context, value) -> PrivacyDecision.Allow.INSTANCE;
 
-    static final PrivacyRule<Viewer, TestRuleClient, String> PRIVACY_CLASS = new PrivacyRule<>() {
+    static final PrivacyRule<TestViewer, TestRuleClient, String> PRIVACY_CLASS = new PrivacyRule<>() {
         @Override
-        public PrivacyDecision run(PrivacyRuleContext<Viewer, TestRuleClient> context, String value) {
+        public PrivacyDecision run(PrivacyRuleContext<TestViewer, TestRuleClient> context, String value) {
             return PrivacyDecision.Allow.INSTANCE;
         }
     };
@@ -52,22 +52,22 @@ final class BatchLifecycleJavaCompatibility {
         }
     };
 
-    static final BatchPrivacyRule<Viewer, TestRuleClient, String> NULL_PRIVACY_DECISION_BATCH =
+    static final BatchPrivacyRule<TestViewer, TestRuleClient, String> NULL_PRIVACY_DECISION_BATCH =
             (context, batch) -> batch.decideEach(value -> null);
 
     static final BatchValidationRule<TestRuleClient, String> NULL_VALIDATION_DECISION_BATCH =
             (context, batch) -> batch.decideEach(value -> null);
 
-    static final BatchPrivacyRule<Viewer, TestRuleClient, String> NULL_PRIVACY_RESULT_BATCH =
+    static final BatchPrivacyRule<TestViewer, TestRuleClient, String> NULL_PRIVACY_RESULT_BATCH =
             (context, values) -> null;
 
     static final BatchValidationRule<TestRuleClient, String> NULL_VALIDATION_RESULT_BATCH =
             (context, values) -> null;
 
-    static final BatchPrivacyRule<Viewer, TestRuleClient, String> PRIVACY_BATCH_CLASS = new BatchPrivacyRule<>() {
+    static final BatchPrivacyRule<TestViewer, TestRuleClient, String> PRIVACY_BATCH_CLASS = new BatchPrivacyRule<>() {
         @Override
         public RuleDecisions<PrivacyDecision> runBatch(
-                PrivacyRuleContext<Viewer, TestRuleClient> context,
+                PrivacyRuleContext<TestViewer, TestRuleClient> context,
                 RuleBatch<String> batch) {
             return batch.decideEach(value -> PrivacyDecision.Allow.INSTANCE);
         }

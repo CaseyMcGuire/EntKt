@@ -38,7 +38,7 @@ class BytesEqualityCompileTest {
     fun `an entity named Bytes does not shadow the binary value type`() {
         val schema = BinaryNameFixture.Bytes()
         schema.finalize(mapOf(schema::class to schema))
-        val generated = EntGenerator("com.example.ent").generate(listOf(SchemaInput(schema)))
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(SchemaInput(schema)))
         val result = compileSources(generated.toCompileTestSources())
 
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
@@ -47,7 +47,7 @@ class BytesEqualityCompileTest {
     private fun compile(): JvmCompilationResult {
         val schema = Attachment()
         schema.finalize(mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(schema::class to schema))
-        val sources = EntGenerator("com.example.ent")
+        val sources = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(schema)))
             .toCompileTestSources()
         val probe = SourceFile.kotlin(
@@ -55,11 +55,11 @@ class BytesEqualityCompileTest {
             """
             import com.example.ent.*
             import entkt.runtime.mutation.FieldPatch
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
             import entkt.types.Bytes
 
-            fun checkBinaryApis(client: EntClient, context: ViewerContext<Viewer>) {
+            fun checkBinaryApis(client: EntClient, context: ViewerContext<AppViewer>) {
                 val value = Bytes.of(byteArrayOf(1, 2))
                 val created = client.attachments.create {
                     payload = value

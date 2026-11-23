@@ -14,7 +14,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.mutation.FieldPatch
 import entkt.runtime.validation.ValidationDecision
 import kotlin.test.Test
@@ -118,7 +117,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             name = "A"
             email = "json-snapshots@example.com"
         }.saveAndLoad(testViewerContext).getOrThrow()
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(author.id))
 
         val firstTags = mutableListOf("first")
         val secondTags = mutableListOf("second")
@@ -205,7 +204,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             name = "A"
             email = "json-create-alias@example.com"
         }.saveAndLoad(testViewerContext).getOrThrow()
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(author.id))
         val callerTags = mutableListOf("original")
         var seenCandidate: List<String>? = null
 
@@ -252,7 +251,7 @@ class JsonFieldIntegrationTest : PostgresTestBase() {
             name = "A"
             email = "json-update-snapshots@example.com"
         }.saveAndLoad(testViewerContext).getOrThrow()
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(author.id))
         val original = system.articles.create {
             title = "update snapshots"
             authorId = author.id

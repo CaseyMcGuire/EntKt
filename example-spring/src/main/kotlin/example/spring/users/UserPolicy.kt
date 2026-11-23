@@ -3,7 +3,6 @@ package example.spring.users
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.validation.max
 import entkt.runtime.validation.maxLength
@@ -17,6 +16,7 @@ import example.ent.UserPolicyScope
 import example.ent.UserUpdateRuleInput
 import example.ent.UserUpdatePrivacyRule
 import example.ent.UserWriteCandidate
+import example.spring.auth.AppViewer
 
 object UserPolicy : EntityPolicy<User, UserPolicyScope> {
     override fun configure(scope: UserPolicyScope) = scope.run {
@@ -43,12 +43,12 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
 /** Only the user themselves can update their profile. */
 class AllowSelfUpdate : UserUpdatePrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<Viewer, ReadOnlyEntClient>,
+        context: PrivacyRuleContext<AppViewer, ReadOnlyEntClient>,
         item: UserUpdateRuleInput,
     ): PrivacyDecision {
-        val viewer = context.viewerContext.viewer as? Viewer.User
+        val viewerId = context.viewer.userId
             ?: return PrivacyDecision.Deny("authentication required")
-        return if (viewer.id == item.before.id) PrivacyDecision.Allow
+        return if (viewerId == item.before.id) PrivacyDecision.Allow
         else PrivacyDecision.Deny("can only update your own profile")
     }
 }
@@ -56,12 +56,12 @@ class AllowSelfUpdate : UserUpdatePrivacyRule {
 /** Only the user themselves can delete their account. */
 class AllowSelfDelete : UserDeletePrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<Viewer, ReadOnlyEntClient>,
+        context: PrivacyRuleContext<AppViewer, ReadOnlyEntClient>,
         item: UserDeleteRuleInput,
     ): PrivacyDecision {
-        val viewer = context.viewerContext.viewer as? Viewer.User
+        val viewerId = context.viewer.userId
             ?: return PrivacyDecision.Deny("authentication required")
-        return if (viewer.id == item.entity.id) PrivacyDecision.Allow
+        return if (viewerId == item.entity.id) PrivacyDecision.Allow
         else PrivacyDecision.Deny("can only delete your own account")
     }
 }

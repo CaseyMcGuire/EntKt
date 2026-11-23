@@ -19,7 +19,6 @@ import entkt.runtime.query.GlobalQueryInterceptor
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntQueryRejectedException
 import entkt.runtime.result.EntUnexpectedMutationException
@@ -64,9 +63,9 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     @Test
     fun `one privacy context is shared by traversal edge predicate eager load and LOAD privacy`() {
         val driver = freshDriver()
-        val firstPrivacy = ViewerContext.AsViewer(Viewer.User("viewer-a"))
-        val interceptorObservations = mutableListOf<Pair<ReadOperation, ViewerContext<Viewer>>>()
-        val loadContexts = mutableListOf<ViewerContext<Viewer>>()
+        val firstPrivacy = ViewerContext.AsViewer(TestViewer.User("viewer-a"))
+        val interceptorObservations = mutableListOf<Pair<ReadOperation, ViewerContext<TestViewer>>>()
+        val loadContexts = mutableListOf<ViewerContext<TestViewer>>()
         val client = EntClient(driver) {
             interceptors {
                 users(
@@ -320,7 +319,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // visibleOrNull maps only ROOT denials to absence, so the
         // eager denial must stay Failed — an eager load can never
         // turn a visible root into apparent absence.
-        val viewer = Viewer.User("denied-user")
+        val viewer = TestViewer.User("denied-user")
         val viewerContext = ViewerContext.AsViewer(viewer)
         val client = EntClient(driver) {
 
@@ -356,7 +355,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `firstOrNull fails with a Root denial on a denied first row and visibleOrNull maps it to absence`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User("u1"))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User("u1"))
         val driver = freshDriver()
         // Two articles, one published, one draft. Article privacy
         // denies the draft. The canonical firstOrNull evaluates ONLY

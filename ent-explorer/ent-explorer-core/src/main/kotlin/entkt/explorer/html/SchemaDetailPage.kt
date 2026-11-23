@@ -11,7 +11,7 @@ import kotlinx.html.span
 
 /** One entity's full schema: documentation, columns, edges (cross-linked), indexes. */
 internal fun schemaDetailPage(
-    entity: EntExplorerEntity<*>,
+    entity: EntExplorerEntity<*, *>,
     columns: List<EntExplorerColumn>,
     visibleRoutes: Set<String>,
     urls: ExplorerUrls,

@@ -1,5 +1,6 @@
 package entkt.codegen
 
+import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.TypeAliasSpec
 import com.squareup.kotlinpoet.TypeSpec
@@ -133,6 +134,11 @@ internal fun findClientNameErrors(schemas: List<SchemaInput>): List<String> = bu
  * emitters. Over-rejecting a name like `Int` costs a rename prompted
  * by a clear message; under-rejecting costs a wall of compiler errors
  * in generated code.
+ *
+ * The application's viewer type is rejected for the same names, by
+ * [parseViewerType]. Every generated file that names the viewer imports
+ * it explicitly, and an explicit import outranks the default imports
+ * too.
  */
 private val SHADOWABLE_KOTLIN_NAMES = setOf(
     "Any", "Boolean", "Byte", "ByteArray", "Char", "Comparable", "Double",
@@ -158,6 +164,42 @@ internal fun findShadowedKotlinTypeNameErrors(schemas: List<SchemaInput>): List<
                 "the schema class.",
         )
     }
+}
+
+/**
+ * Resolve the configured `viewerType`. Code generation needs only the name: the
+ * type is compiled with the generated sources, not loaded from the schema classpath.
+ *
+ * The simple name must not be one of [SHADOWABLE_KOTLIN_NAMES]. Generated files
+ * import the viewer type, and that import would shadow the Kotlin declaration
+ * wherever an emitter writes it as raw text.
+ */
+internal fun parseViewerType(viewerType: String): ClassName {
+    val segments = viewerType.split('.')
+    val hasPackage = segments.size >= 2
+    val wellFormed = hasPackage && segments.all { segment -> isIdentifier(segment) }
+    require(wellFormed) {
+        "viewerType must be the fully qualified name of a top-level, non-generic class or interface, " +
+            "such as \"com.example.auth.AppViewer\", but was \"$viewerType\""
+    }
+    val packageName = segments.dropLast(1).joinToString(".")
+    val simpleName = segments.last()
+    require(simpleName !in SHADOWABLE_KOTLIN_NAMES) {
+        "viewerType \"$viewerType\" is named after the Kotlin declaration '$simpleName'. Generated " +
+            "sources import the viewer type, and that import would shadow the Kotlin declaration " +
+            "and make the generated code uncompilable. Rename the viewer type."
+    }
+    return ClassName(packageName, simpleName)
+}
+
+private fun isIdentifier(segment: String): Boolean {
+    if (segment.isEmpty()) {
+        return false
+    }
+    if (!Character.isJavaIdentifierStart(segment[0])) {
+        return false
+    }
+    return segment.all { character -> Character.isJavaIdentifierPart(character) }
 }
 
 /**
@@ -746,6 +788,15 @@ private fun validateThroughLinkJunctions(
 class EntGenerator(
     private val packageName: String,
     /**
+     * Fully qualified name of the application's viewer type: a public,
+     * top-level, non-generic class or interface. Generated code binds the
+     * runtime's viewer type parameter to it, so terminals take
+     * `ViewerContext<ThatType>`. Only the name is used here; the type is
+     * compiled with the generated sources. See [parseViewerType] for the names
+     * that are rejected.
+     */
+    viewerType: String,
+    /**
      * Which JSON mapper generated metadata targets — an id from
      * `entkt.runtime.driver.JsonMapperIds` (or a third-party codec id).
      * Kotlinx (the default) emits statically-resolved serializer
@@ -761,26 +812,27 @@ class EntGenerator(
      */
     private val generateEntExplorer: Boolean = false,
 ) {
+    private val viewer = parseViewerType(viewerType)
     private val entityGenerator = EntityGenerator(packageName, jsonMapper)
-    private val entExplorerGenerator = EntExplorerGenerator(packageName)
-    private val mutationGenerator = MutationGenerator(packageName)
+    private val entExplorerGenerator = EntExplorerGenerator(packageName, viewer)
+    private val mutationGenerator = MutationGenerator(packageName, viewer)
     private val createGenerator = CreateGenerator(packageName)
-    private val createConverterGenerator = CreateConverterGenerator(packageName)
+    private val createConverterGenerator = CreateConverterGenerator(packageName, viewer)
     private val deleteConverterGenerator = DeleteConverterGenerator(packageName)
-    private val updateGenerator = UpdateGenerator(packageName)
+    private val updateGenerator = UpdateGenerator(packageName, viewer)
     private val entityDescriptorGenerator = EntityDescriptorGenerator(packageName)
-    private val queryGenerator = QueryGenerator(packageName)
-    private val readQueryGenerator = QueryGenerator(packageName, QuerySurface.ReadOnly)
+    private val queryGenerator = QueryGenerator(packageName, viewer)
+    private val readQueryGenerator = QueryGenerator(packageName, viewer, QuerySurface.ReadOnly)
     private val queryScopeGenerator = QueryScopeGenerator(packageName)
-    private val repoGenerator = RepoGenerator(packageName)
-    private val indexHelperGenerator = IndexHelperGenerator(packageName)
-    private val readIndexHelperGenerator = IndexHelperGenerator(packageName, QuerySurface.ReadOnly)
-    private val privacyGenerator = PrivacyGenerator(packageName)
+    private val repoGenerator = RepoGenerator(packageName, viewer)
+    private val indexHelperGenerator = IndexHelperGenerator(packageName, viewer)
+    private val readIndexHelperGenerator = IndexHelperGenerator(packageName, viewer, QuerySurface.ReadOnly)
+    private val privacyGenerator = PrivacyGenerator(packageName, viewer)
     private val validationGenerator = ValidationGenerator(packageName)
     private val lifecycleRuleInputGenerator = LifecycleRuleInputGenerator(packageName)
-    private val readRuntimeGenerator = ReadRuntimeGenerator(packageName)
-    private val readClientGenerator = ReadClientGenerator(packageName)
-    private val clientGenerator = ClientGenerator(packageName)
+    private val readRuntimeGenerator = ReadRuntimeGenerator(packageName, viewer)
+    private val readClientGenerator = ReadClientGenerator(packageName, viewer)
+    private val clientGenerator = ClientGenerator(packageName, viewer)
 
     fun generate(schemas: List<SchemaInput>): List<FileSpec> {
         ensureFinalized(schemas)

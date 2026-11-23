@@ -53,7 +53,7 @@ class DeclarationNamePathsTest {
         val names = names(user, dir)
         return buildString {
             append(
-                QueryGenerator("com.example.ent")
+                QueryGenerator("com.example.ent", TEST_VIEWER)
                     .generate("PathDirectory", dir, names),
             )
             EntityDescriptorGenerator("com.example.ent")

@@ -13,11 +13,11 @@ import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
-import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
+import entkt.codegen.metadata.viewerContextType
 import entkt.schema.EntSchema
 
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
@@ -31,7 +31,9 @@ private val BEFORE_UPDATE_HOOK_STATE =
 /** Generates the immutable, schema-typed states transformed by before hooks. */
 internal class MutationGenerator(
     private val packageName: String,
+    viewer: ClassName,
 ) {
+    private val viewerContext = viewerContextType(viewer)
     fun generate(
         schemaName: String,
         schema: EntSchema,
@@ -97,7 +99,7 @@ internal class MutationGenerator(
                 marker = BEFORE_CREATE_HOOK_STATE.parameterizedBy(entityClass),
                 context = listOf(
                     StateProperty("client", ClassName(packageName, "EntClientScope")),
-                    StateProperty("viewerContext", VIEWER_CONTEXT),
+                    StateProperty("viewerContext", viewerContext),
                 ),
                 assignments = createAssignments,
             ),
@@ -106,7 +108,7 @@ internal class MutationGenerator(
                 marker = BEFORE_UPDATE_HOOK_STATE.parameterizedBy(entityClass),
                 context = listOf(
                     StateProperty("client", ClassName(packageName, "EntClientScope")),
-                    StateProperty("viewerContext", VIEWER_CONTEXT),
+                    StateProperty("viewerContext", viewerContext),
                     StateProperty("before", entityClass),
                     StateProperty(
                         "pendingEdges",

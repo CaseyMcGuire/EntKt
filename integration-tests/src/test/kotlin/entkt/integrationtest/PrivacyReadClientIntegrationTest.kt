@@ -18,7 +18,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntPrivacyDeniedException
@@ -41,7 +40,7 @@ import kotlin.test.assertTrue
 
 /** Users readable by authenticated viewers only (fail-closed otherwise). */
 private val AllowUserLoadsForAuthenticated = UserLoadPrivacyRule { context, _ ->
-    if (context.viewerContext.viewer is Viewer.User) PrivacyDecision.Allow else PrivacyDecision.Continue
+    if (context.viewerContext.viewer is TestViewer.User) PrivacyDecision.Allow else PrivacyDecision.Continue
 }
 
 private val AllowAllUserCreates = UserCreatePrivacyRule { _, _ -> PrivacyDecision.Allow }
@@ -198,8 +197,8 @@ private object SecretMemberGateArticlePolicy : EntityPolicy<Article, ArticlePoli
  * `PrivacyReadClientCompileTest`.
  */
 class PrivacyReadClientIntegrationTest : PostgresTestBase() {
-    private val anonymousViewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
-    private val transactionViewerContext = ViewerContext.AsViewer(Viewer.User(42L))
+    private val anonymousViewerContext = ViewerContext.AsViewer(TestViewer.Anonymous)
+    private val transactionViewerContext = ViewerContext.AsViewer(TestViewer.User(42L))
 
     private fun freshClient(config: EntClientConfig.() -> Unit): EntClient =
         EntClient(resetAndDriver(), config)
@@ -230,7 +229,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         // viewer-scoped, so the article is visible.
         val asUser = run {
             val c = client
-            val testViewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
+            val testViewerContext = ViewerContext.AsViewer(TestViewer.User(author.id))
             c.articles.findById(testViewerContext, article.id).getOrThrow()
         }
         assertNotNull(asUser)
@@ -261,7 +260,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
 
         val asUser = run {
             val c = client
-            val testViewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
+            val testViewerContext = ViewerContext.AsViewer(TestViewer.User(author.id))
             c.articles.findById(testViewerContext, article.id).getOrThrow()
         }
         assertNotNull(asUser)
@@ -300,7 +299,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         // finds the email — the rule allows the article.
         val asUser = run {
             val c = client
-            val testViewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
+            val testViewerContext = ViewerContext.AsViewer(TestViewer.User(author.id))
             c.articles.findById(testViewerContext, article.id).getOrThrow()
         }
         assertNotNull(asUser)
@@ -432,8 +431,8 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `read interceptors run for rule queries and observe the caller viewer`() {
-        val seenContexts = mutableListOf<ViewerContext<Viewer>>()
-        val recorder = QueryInterceptor<Viewer, User> { _, context -> seenContexts.add(context.viewerContext) }
+        val seenContexts = mutableListOf<ViewerContext<TestViewer>>()
+        val recorder = QueryInterceptor<TestViewer, User> { _, context -> seenContexts.add(context.viewerContext) }
 
         val client = freshClient {
 
@@ -447,7 +446,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
 
         run {
             val c = client
-            val testViewerContext = ViewerContext.AsViewer(Viewer.User(author.id))
+            val testViewerContext = ViewerContext.AsViewer(TestViewer.User(author.id))
             c.articles.findById(testViewerContext, article.id).getOrThrow()
         }
 
@@ -456,9 +455,9 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         // their explicit `readViewerContext`; privacy rule reads normally pass
         // `viewerContext`.
         assertTrue(
-            seenContexts.any { it is ViewerContext.AsViewer && it.viewer == Viewer.User(author.id) },
+            seenContexts.any { it is ViewerContext.AsViewer && it.viewer == TestViewer.User(author.id) },
             "Expected the rule's user read to run through the users interceptor " +
-                "with the caller's Viewer.User; saw: $seenContexts",
+                "with the caller's TestViewer.User; saw: $seenContexts",
         )
         assertTrue(
             seenContexts.none { it is ViewerContext.PrivacyBypass },
@@ -471,7 +470,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         val ready = CountDownLatch(2)
         val release = CountDownLatch(1)
         val seenClients = ConcurrentLinkedQueue<ReadOnlyEntClient>()
-        val seenContexts = ConcurrentLinkedQueue<ViewerContext<Viewer>>()
+        val seenContexts = ConcurrentLinkedQueue<ViewerContext<TestViewer>>()
         val concurrentRule = ArticleLoadPrivacyRule { context, _ ->
             seenClients.add(context.client)
             seenContexts.add(context.viewerContext)
@@ -486,8 +485,8 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         }
         val client = freshClient { policies { articles(policy) } }
         val (_, article) = seedAuthorAndArticle(client)
-        val firstContext = ViewerContext.AsViewer(Viewer.User("first"))
-        val secondContext = ViewerContext.AsViewer(Viewer.User("second"))
+        val firstContext = ViewerContext.AsViewer(TestViewer.User("first"))
+        val secondContext = ViewerContext.AsViewer(TestViewer.User("second"))
         val errors = ConcurrentLinkedQueue<Throwable>()
 
         val threads = listOf(firstContext, secondContext).map { viewerContext ->

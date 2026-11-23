@@ -100,7 +100,7 @@ private class EntClientScope : EntSchema("reserved_scope", clientName = "reserve
 
 class EntGeneratorTest {
 
-    private val generator = EntGenerator("com.example.ent")
+    private val generator = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
 
     @Test
     fun `generates schema and client classes in separate files`() {
@@ -256,7 +256,7 @@ class EntGeneratorTest {
             inputs.forEach { finalize(it.schema) }
             val inspectorErrors = SchemaInspector.validate(inputs).errors
             val generatorError = assertFailsWith<IllegalStateException> {
-                EntGenerator("com.example.ent").generate(inputs)
+                EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(inputs)
             }.message!!
 
             assertTrue(
@@ -325,6 +325,76 @@ class EntGeneratorTest {
         }
 
         assertContains(error.message!!, "reserved generated client capability type")
+    }
+
+    @Test
+    fun `viewerType must be the fully qualified name of a top-level class`() {
+        val invalidViewerTypes = listOf(
+            "",
+            "AppViewer",
+            "com.example.auth.",
+            "com..AppViewer",
+            "com.example.auth.App Viewer",
+            "com.example.auth.AppViewer<String>",
+            "com.example.auth.AppViewer?",
+        )
+
+        for (viewerType in invalidViewerTypes) {
+            val failure = assertFailsWith<IllegalArgumentException>("viewerType \"$viewerType\"") {
+                EntGenerator("com.example.ent", viewerType)
+            }
+
+            val message = failure.message.orEmpty()
+            assertContains(message, "viewerType must be the fully qualified name")
+            assertContains(message, "but was \"$viewerType\"")
+        }
+    }
+
+    @Test
+    fun `viewerType cannot be named after a Kotlin declaration that generated sources reference by name`() {
+        for (simpleName in listOf("String", "Any", "Unit", "Map")) {
+            val viewerType = "com.example.auth.$simpleName"
+
+            val failure = assertFailsWith<IllegalArgumentException>(viewerType) {
+                EntGenerator("com.example.ent", viewerType)
+            }
+
+            val message = failure.message.orEmpty()
+            assertContains(message, "viewerType \"$viewerType\" is named after the Kotlin declaration '$simpleName'")
+            assertContains(message, "Rename the viewer type")
+        }
+    }
+
+    @Test
+    fun `the command line entry point names viewerType when that argument is missing`() {
+        val failure = assertFailsWith<IllegalArgumentException> {
+            main(arrayOf("com.example.ent", "build/unused-output"))
+        }
+
+        assertContains(failure.message.orEmpty(), "viewerType is required")
+    }
+
+    @Test
+    fun `generated code is bound to the configured viewer type`() {
+        val car = Car()
+        val user = User()
+        finalize(car, user)
+
+        val files = EntGenerator("com.example.ent", "com.acme.identity.Principal")
+            .generate(listOf(SchemaInput(car), SchemaInput(user)))
+        val sources = files.associate { file -> file.name to file.toString() }
+
+        val repository = sources.getValue("UserRepo")
+        assertContains(repository, "import com.acme.identity.Principal")
+        assertContains(repository, "GeneratedIdRepository<Principal, User,")
+        assertContains(
+            sources.getValue("UserPrivacy"),
+            "typealias UserLoadPrivacyRule = PrivacyRule<Principal, ReadOnlyEntClient, User>",
+        )
+        assertContains(sources.getValue("UserBeforeCreateState"), "viewerContext: ViewerContext<Principal>")
+        for ((name, source) in sources) {
+            assertFalse("entkt.runtime.privacy.Viewer\n" in source, "$name still names the removed runtime Viewer")
+        }
     }
 
     @Test

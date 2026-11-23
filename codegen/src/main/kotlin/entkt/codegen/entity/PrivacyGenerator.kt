@@ -20,8 +20,6 @@ import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.kotlinpoet.typeAlias
 import entkt.codegen.metadata.HelperEligibleM2M
-import entkt.codegen.metadata.VIEWER
-import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
@@ -56,6 +54,7 @@ private val EDGE_CHANGES = ClassName("entkt.runtime.mutation", "EdgeChanges")
  */
 internal class PrivacyGenerator(
     private val packageName: String,
+    private val viewer: ClassName,
 ) {
 
     fun generate(
@@ -105,34 +104,34 @@ internal class PrivacyGenerator(
         val deleteBatchRule = "${schemaName}DeleteBatchPrivacyRule"
 
         return kotlinFile(packageName, "${schemaName}Privacy") {
-            typeAlias(loadRule, PRIVACY_RULE.parameterizedBy(VIEWER, readClientClass, entityClass)) {
+            typeAlias(loadRule, PRIVACY_RULE.parameterizedBy(viewer, readClientClass, entityClass)) {
                 addKdoc(
                     "LOAD rules receive the original entity without defensive copies.\n" +
                         "Treat the entity and all nested values as read-only.\n",
                 )
             }
-            typeAlias(createRule, PRIVACY_RULE.parameterizedBy(VIEWER, readClientClass, candidateClass)) {
+            typeAlias(createRule, PRIVACY_RULE.parameterizedBy(viewer, readClientClass, candidateClass)) {
                 addKdoc(
                     "CREATE rules receive the prepared write candidate without per-rule defensive copies.\n" +
                         "Treat the candidate and all nested values as read-only.\n",
                 )
             }
-            typeAlias(updateRule, PRIVACY_RULE.parameterizedBy(VIEWER, readClientClass, updateInput))
-            typeAlias(deleteRule, PRIVACY_RULE.parameterizedBy(VIEWER, readClientClass, deleteInput))
-            typeAlias(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(VIEWER, readClientClass, entityClass)) {
+            typeAlias(updateRule, PRIVACY_RULE.parameterizedBy(viewer, readClientClass, updateInput))
+            typeAlias(deleteRule, PRIVACY_RULE.parameterizedBy(viewer, readClientClass, deleteInput))
+            typeAlias(loadBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(viewer, readClientClass, entityClass)) {
                 addKdoc(
                     "Batch LOAD rules receive the original entities without defensive copies.\n" +
                         "Treat the entities and all nested values as read-only.\n",
                 )
             }
-            typeAlias(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(VIEWER, readClientClass, candidateClass)) {
+            typeAlias(createBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(viewer, readClientClass, candidateClass)) {
                 addKdoc(
                     "Batch CREATE rules receive prepared write candidates without per-rule defensive copies.\n" +
                         "Treat the candidates and all nested values as read-only.\n",
                 )
             }
-            typeAlias(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(VIEWER, readClientClass, updateInput))
-            typeAlias(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(VIEWER, readClientClass, deleteInput))
+            typeAlias(updateBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(viewer, readClientClass, updateInput))
+            typeAlias(deleteBatchRule, BATCH_PRIVACY_RULE.parameterizedBy(viewer, readClientClass, deleteInput))
 
         // WriteCandidate
             addType(buildWriteCandidate(candidateClass, entityClass, fields, edgeFks))
@@ -379,7 +378,7 @@ internal class PrivacyGenerator(
         return classType(scopeClass) {
             superclass(
                 ENTITY_PRIVACY_SCOPE.parameterizedBy(
-                    VIEWER,
+                    viewer,
                     readClientClass,
                     entityClass,
                     candidateClass,

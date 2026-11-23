@@ -12,17 +12,17 @@ import kotlin.test.assertTrue
 
 class EntityPrivacyScopeTest {
     private class Config : EntityPrivacyConfig<
-        BatchPrivacyRule<Viewer, TestRuleClient, String>,
-        BatchPrivacyRule<Viewer, TestRuleClient, Int>,
-        BatchPrivacyRule<Viewer, TestRuleClient, Boolean>,
-        BatchPrivacyRule<Viewer, TestRuleClient, Long>,
+        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
+        BatchPrivacyRule<TestViewer, TestRuleClient, Int>,
+        BatchPrivacyRule<TestViewer, TestRuleClient, Boolean>,
+        BatchPrivacyRule<TestViewer, TestRuleClient, Long>,
     >()
 
-    private class Scope(config: Config) : EntityPrivacyScope<Viewer, TestRuleClient, String, Int, Boolean, Long>(config)
+    private class Scope(config: Config) : EntityPrivacyScope<TestViewer, TestRuleClient, String, Int, Boolean, Long>(config)
 
     @Test
     fun `registration preserves mixed rule order duplicates and empty inputs in every phase`() {
-        val context = ContextPrivacyRule<Viewer, EntRuleClient> { error("Registration must not evaluate context rules") }
+        val context = ContextPrivacyRule<TestViewer, EntRuleClient> { error("Registration must not evaluate context rules") }
         val loadScalar = scalarRule<String>()
         val loadBatch = batchRule<String>()
         val createScalar = scalarRule<Int>()
@@ -65,10 +65,10 @@ class EntityPrivacyScopeTest {
 
     @Test
     fun `one context rule accepts every item type and uses each evaluation's current context`() {
-        val seen = mutableListOf<PrivacyRuleContext<Viewer, EntRuleClient>>()
-        val shared = ContextPrivacyRule<Viewer, EntRuleClient> { context ->
+        val seen = mutableListOf<PrivacyRuleContext<TestViewer, EntRuleClient>>()
+        val shared = ContextPrivacyRule<TestViewer, EntRuleClient> { context ->
             seen += context
-            if (context.viewerContext.viewer is Viewer.Anonymous) {
+            if (context.viewerContext.viewer is TestViewer.Anonymous) {
                 PrivacyDecision.Deny("authentication required")
             } else {
                 PrivacyDecision.Allow
@@ -82,8 +82,8 @@ class EntityPrivacyScopeTest {
             delete(shared)
         }
         assertTrue(seen.isEmpty(), "Registration must not evaluate context rules")
-        val signedIn = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7L)), TestRuleClient())
-        val anonymous = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.Anonymous), TestRuleClient())
+        val signedIn = PrivacyRuleContext(ViewerContext.AsViewer(TestViewer.User(7L)), TestRuleClient())
+        val anonymous = PrivacyRuleContext(ViewerContext.AsViewer(TestViewer.Anonymous), TestRuleClient())
 
         assertEquals(
             listOf(PrivacyDecision.Allow, PrivacyDecision.Allow),
@@ -132,7 +132,7 @@ class EntityPrivacyScopeTest {
         }
         assertTrue(calls.isEmpty(), "Registration must not evaluate any rule")
 
-        val context = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7L)), TestRuleClient())
+        val context = PrivacyRuleContext(ViewerContext.AsViewer(TestViewer.User(7L)), TestRuleClient())
         assertEquals(
             listOf(PrivacyDecision.Allow, PrivacyDecision.Allow),
             evaluate(listOf("first", "second"), config.loadRules, context),
@@ -172,16 +172,16 @@ class EntityPrivacyScopeTest {
         }
     }
 
-    private fun <Item> scalarRule(): PrivacyRule<Viewer, TestRuleClient, Item> =
+    private fun <Item> scalarRule(): PrivacyRule<TestViewer, TestRuleClient, Item> =
         PrivacyRule { _, _ -> error("Registration must not evaluate scalar rules") }
 
-    private fun <Item> batchRule(): BatchPrivacyRule<Viewer, TestRuleClient, Item> =
+    private fun <Item> batchRule(): BatchPrivacyRule<TestViewer, TestRuleClient, Item> =
         batchPrivacyRule { _, _ -> error("Registration must not evaluate batch rules") }
 
     private fun <Item> evaluate(
         items: List<Item>,
-        rules: List<BatchPrivacyRule<Viewer, TestRuleClient, Item>>,
-        context: PrivacyRuleContext<Viewer, TestRuleClient>,
+        rules: List<BatchPrivacyRule<TestViewer, TestRuleClient, Item>>,
+        context: PrivacyRuleContext<TestViewer, TestRuleClient>,
     ): List<PrivacyDecision> = evaluateLoadDecisions(
         entityName = "test",
         items = items,

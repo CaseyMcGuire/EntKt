@@ -26,7 +26,6 @@ import entkt.runtime.hook.batchTransformingHook
 import entkt.runtime.mutation.FieldPatch
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.privacy.batchPrivacyRule
@@ -41,7 +40,7 @@ import kotlin.test.assertTrue
 
 /** Exercise generated mutation rule and hook wiring without a database or per-rule copying. */
 class MutationRuleInputTest {
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
 
     @Test
     fun `scalar and bulk CREATE share prepared candidates across scalar and batch rules`() {

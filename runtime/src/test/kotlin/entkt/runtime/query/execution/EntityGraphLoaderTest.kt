@@ -8,7 +8,7 @@ import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EdgeSelection
 import entkt.runtime.query.EdgeStep
@@ -64,7 +64,7 @@ class EntityGraphLoaderTest {
         private val rootEntities: List<Item>,
         private val targetsByEdge: Map<String, List<Item>>,
         private val events: MutableList<String>,
-    ) : GraphStorage<Viewer> {
+    ) : GraphStorage<TestViewer> {
         val rootEntitiesByRelationship = mutableListOf<KClass<*>>()
         val paths = mutableListOf<List<String>>()
         val sourceIds = mutableListOf<List<Any>>()
@@ -75,7 +75,7 @@ class EntityGraphLoaderTest {
             query: EntityQuery<Entity>,
             operation: ReadOperation,
             maximumRows: Int?,
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<TestViewer>,
             lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Entity> {
             events += "load:root"
@@ -88,7 +88,7 @@ class EntityGraphLoaderTest {
         override fun <Source : EntEntity<*>, Target : EntEntity<*>> loadRelationship(
             selection: EdgeSelection<Source, Target>,
             sources: List<Source>,
-            context: RelationshipReadContext<Viewer>,
+            context: RelationshipReadContext<TestViewer>,
         ): LoadedRelationship<Source, Target> {
             val edgeName = selection.edge.name
             events += "load:$edgeName"
@@ -109,10 +109,10 @@ class EntityGraphLoaderTest {
     private class RecordingPrivacy(
         private val events: MutableList<String>,
         private val deniedIds: Set<Long> = emptySet(),
-    ) : LoadPrivacyDispatcher<Viewer> {
+    ) : LoadPrivacyDispatcher<TestViewer> {
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<TestViewer>,
             entities: List<Entity>,
         ): PrivacyEvaluation<Entity> {
             events += "privacy:${entities.joinToString { it.id.toString() }}"
@@ -126,7 +126,7 @@ class EntityGraphLoaderTest {
         }
     }
 
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
 
     @Test
     fun `recurses before attachment and visits sibling relationships in declaration order`() {

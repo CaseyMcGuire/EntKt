@@ -1,7 +1,6 @@
 package entkt.explorer
 
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.privacy.Viewer
 
 /**
  * Explorer configuration, safe by construction:
@@ -9,21 +8,25 @@ import entkt.runtime.privacy.Viewer
  *  - [authorize] defaults to deny-all — installing the explorer without an
  *    authorization callback yields 403 for every request, never a public
  *    route;
- *  - [viewerContext] defaults to [Viewer.Anonymous];
+ *  - [viewerContext] has no default and is required: an explorer cannot be
+ *    constructed without a provider, because only the application knows what
+ *    a viewer is;
  *  - all generated entities are included; hiding one is the explicit action
  *    ([EntityVisibility.exclude]) — there is deliberately no `include(...)`
  *    allow-list in V1;
  *  - `.sensitive()` schema fields are always redacted; [Redaction.extra]
  *    only adds to that set and nothing can remove from it.
+ *
+ * @param Viewer the application's viewer type, the one the generated client is
+ * bound to.
  */
-class EntExplorerConfig internal constructor() {
+class EntExplorerConfig<Viewer : Any> internal constructor() {
 
     /** Route prefix the explorer is mounted under. */
     var path: String = "/_ent"
 
     internal var authorize: (EntExplorerRequest) -> Boolean = { false }
-    internal var viewerContext: (EntExplorerRequest) -> ViewerContext<Viewer> =
-        { ViewerContext.AsViewer(Viewer.Anonymous) }
+    internal var viewerContext: ((EntExplorerRequest) -> ViewerContext<Viewer>)? = null
     internal val visibility = EntityVisibility()
     internal val redaction = Redaction()
 
@@ -39,7 +42,8 @@ class EntExplorerConfig internal constructor() {
     /**
      * Viewer context every explorer read runs under, resolved per request.
      * The data displayed is the data this context is allowed to read —
-     * the explorer adds no privileges.
+     * the explorer adds no privileges. Required: constructing an explorer
+     * without it fails.
      */
     fun viewerContext(provider: (EntExplorerRequest) -> ViewerContext<Viewer>) {
         viewerContext = provider
@@ -62,7 +66,7 @@ class EntExplorerConfig internal constructor() {
         }
 
         /** Exclude by generated adapter reference. */
-        fun exclude(entity: EntExplorerEntity<*>) {
+        fun exclude(entity: EntExplorerEntity<*, *>) {
             excludedRoutes.add(entity.routeName)
         }
     }

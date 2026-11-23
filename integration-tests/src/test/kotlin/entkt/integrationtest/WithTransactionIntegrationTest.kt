@@ -11,7 +11,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.EntUnexpectedMutationException
@@ -69,7 +68,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewerContext: ViewerContext<Viewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
+        viewerContext: ViewerContext<TestViewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
     ): EntClient {
         this.viewerContext = viewerContext
@@ -122,8 +121,8 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
         val result = client.withTransaction<Unit> { tx ->
             run {
                 val scoped = tx
-                val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
-                assertEquals(Viewer.Anonymous, viewerContext.viewer)
+                val viewerContext = ViewerContext.AsViewer(TestViewer.Anonymous)
+                assertEquals(TestViewer.Anonymous, viewerContext.viewer)
                 scoped.users.create { name = "Scoped"; email = "scoped@example.com" }
                     .save(viewerContext)
                     .orRollback()
@@ -236,7 +235,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a read failure does not mark the scope rollback-only unless orRollback'd`() {
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyLoadArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = denyLoadArticles)
         val article = run {
             val sys = client
             val viewerContext = testBypassContext("test")
@@ -262,7 +261,7 @@ class WithTransactionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `orRollback on a Failed read rolls back the transaction`() {
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyLoadArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = denyLoadArticles)
         val article = run {
             val sys = client
             val viewerContext = testBypassContext("test")

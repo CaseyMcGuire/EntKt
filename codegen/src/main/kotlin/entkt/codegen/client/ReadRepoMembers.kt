@@ -13,7 +13,6 @@ import entkt.codegen.kotlinpoet.getter
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
-import entkt.codegen.metadata.VIEWER_CONTEXT
 
 private val PREDICATE = ClassName("entkt.query", "Predicate")
 private val OP = ClassName("entkt.query", "Op")
@@ -46,11 +45,12 @@ internal fun buildFindById(
     entityClass: ClassName,
     queryClass: ClassName,
     idType: TypeName,
+    viewerContext: TypeName,
     clientRef: String,
 ): FunSpec {
     val resultType = READ_RESULT.parameterizedBy(entityClass.copy(nullable = true))
     return function("findById", returnType = resultType) {
-        parameter("viewerContext", VIEWER_CONTEXT)
+        parameter("viewerContext", viewerContext)
         parameter("id", idType)
         body {
             add("val query = %T(driver, %L)\n", queryClass, clientRef)

@@ -29,7 +29,7 @@ class ReadClientGeneratorTest {
         )
         car.finalize(registry)
         user.finalize(registry)
-        return EntGenerator("com.example.ent")
+        return EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(car), SchemaInput(user)))
     }
 
@@ -58,14 +58,14 @@ class ReadClientGeneratorTest {
         assertContains(repo, "val query = UserReadQuery(driver, runtime)")
 
         val query = files.getValue("UserReadQuery")
-        assertContains(query, "EntityQueryBuilder<Viewer, User, UserReadQuery>")
+        assertContains(query, "EntityQueryBuilder<AppViewer, User, UserReadQuery>")
         assertContains(query, "configureQuery(UserQueryScope(driver, client, entityQuery), block)")
         assertContains(query, "fun queryCars(block: CarQueryScope.() -> Unit = {}): CarReadQuery")
         assertFalse(Regex("\\b(UserQuery|CarQuery)\\b").containsMatchIn(query), query)
         assertFalse("forUpdate" in query)
         // The longer return type makes KotlinPoet wrap the delegation, so compare without line breaks.
         val writableQuery = files.getValue("UserQuery").replace("\\s+".toRegex(), " ")
-        assertContains(writableQuery, "fun forUpdate(): ForUpdateQuery<Viewer, User>")
+        assertContains(writableQuery, "fun forUpdate(): ForUpdateQuery<AppViewer, User>")
         assertContains(writableQuery, "ForUpdateQuery(entityQuery, readQueryExecutor)")
 
         val indexes = files.getValue("UserReadIndexes")
@@ -132,14 +132,14 @@ class ReadClientGeneratorTest {
 
         assert(
             runtimeOutput.contains(
-                "public interface CarReadSurface { public fun evaluateLoadPrivacy(viewerContext: ViewerContext<Viewer>, entities: List<Car>): PrivacyEvaluation<Car>",
+                "public interface CarReadSurface { public fun evaluateLoadPrivacy(viewerContext: ViewerContext<AppViewer>, entities: List<Car>): PrivacyEvaluation<Car>",
             ),
         ) {
             "CarReadSurface should expose the correlated LOAD evaluation contract\n$runtimeOutput"
         }
         assert(
             clientOutput.contains(
-                "override fun evaluateLoadPrivacy(viewerContext: ViewerContext<Viewer>, entities: List<Car>): PrivacyEvaluation<Car> = host.evaluateLoadPrivacy(viewerContext, entities)",
+                "override fun evaluateLoadPrivacy(viewerContext: ViewerContext<AppViewer>, entities: List<Car>): PrivacyEvaluation<Car> = host.evaluateLoadPrivacy(viewerContext, entities)",
             ),
         ) {
             "CarReadRepo should delegate the complete LOAD evaluation to its host surface\n$clientOutput"
@@ -189,7 +189,7 @@ class ReadClientGeneratorTest {
 
         // The read-only entry point contributes the id predicate and delegates
         // execution to the runtime query pipeline.
-        assert(readSpan.contains("public fun findById(viewerContext: ViewerContext<Viewer>, id: Int): ReadResult<Car?> {")) {
+        assert(readSpan.contains("public fun findById(viewerContext: ViewerContext<AppViewer>, id: Int): ReadResult<Car?> {")) {
             "findById should retain its nullable ReadResult surface\n$readSpan"
         }
         assert(

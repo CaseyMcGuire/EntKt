@@ -86,6 +86,7 @@ plugins {
 
 entkt {
     packageName.set("com.example.ent")
+    viewerType.set("com.example.auth.AppViewer")
 }
 
 entktFlyway {

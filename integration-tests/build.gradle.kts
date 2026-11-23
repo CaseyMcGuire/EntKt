@@ -38,7 +38,13 @@ val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
     description = "Runs entkt codegen against the integration-test schemas"
     classpath = codegenRunner
     mainClass.set("entkt.codegen.GenerateMainKt")
-    args("entkt.integrationtest.ent", generatedDir.get().asFile.absolutePath, "kotlinx", "true")
+    args(
+        "entkt.integrationtest.ent",
+        generatedDir.get().asFile.absolutePath,
+        "entkt.integrationtest.TestViewer",
+        "kotlinx",
+        "true",
+    )
     outputs.dir(generatedDir)
     inputs.files(project(":integration-tests:schema").fileTree("src/main/kotlin"))
 }
@@ -49,7 +55,11 @@ val generateRequiredOneEntkt = tasks.register<JavaExec>("generateRequiredOneEntk
     description = "Generates an isolated client for required hasOne integration tests"
     classpath = requiredOneCodegenRunner
     mainClass.set("entkt.codegen.GenerateMainKt")
-    args("entkt.integrationtest.required.ent", requiredOneGeneratedDir.get().asFile.absolutePath)
+    args(
+        "entkt.integrationtest.required.ent",
+        requiredOneGeneratedDir.get().asFile.absolutePath,
+        "entkt.integrationtest.TestViewer",
+    )
     outputs.dir(requiredOneGeneratedDir)
     inputs.files(project(":integration-tests:schema").fileTree("src/requiredOne/kotlin"))
 }

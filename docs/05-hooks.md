@@ -135,7 +135,7 @@ This is the generated repository surface shared by `EntClient` and
 ```kotlin
 fun emailIsTaken(
     client: EntClientScope,
-    viewerContext: ViewerContext<Viewer>,
+    viewerContext: ViewerContext<AppViewer>,
     email: String,
 ): Boolean = client.users.indexes.email(email).find(viewerContext).getOrThrow() != null
 ```
@@ -305,7 +305,7 @@ logging, notifications). Use
 Hooks are automatically inherited by transaction-scoped clients:
 
 ```kotlin
-val viewerContext = ViewerContext.AsViewer(Viewer.User(currentUserId()))
+val viewerContext = ViewerContext.AsViewer(AppViewer(userId = currentUserId()))
 val client = EntClient(driver) {
     policies { users(UserPolicy) } // Your application's policy.
     hooks {

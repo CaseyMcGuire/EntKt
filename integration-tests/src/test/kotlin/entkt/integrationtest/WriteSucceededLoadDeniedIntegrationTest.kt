@@ -11,7 +11,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -63,7 +62,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         }
     }
 
-    private fun freshClient(viewerContext: ViewerContext<Viewer> = ViewerContext.AsViewer(Viewer.User(1L))): EntClient {
+    private fun freshClient(viewerContext: ViewerContext<TestViewer> = ViewerContext.AsViewer(TestViewer.User(1L))): EntClient {
         this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {
@@ -255,7 +254,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `pre-write CREATE denial carries operation CREATE and NotPersisted, and writes nothing`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(1L))
         val denyCreate = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {

@@ -1,10 +1,13 @@
 package entkt.integrationtest
 
 import entkt.integrationtest.ent.EntClient
+import entkt.integrationtest.ent.User
+import entkt.integrationtest.ent.UserPolicyScope
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
+import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.allowAll
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.MutationResult
@@ -13,6 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertSame
 
 /**
  * End-to-end coverage of [ViewerContext.privacyBypass_DANGEROUS]. Reuses
@@ -33,7 +37,7 @@ class PrivacyBypassHelperIntegrationTest : PostgresTestBase() {
     @Test
     fun `privacy bypass is explicit per operation on one client`() {
         val client = anonClient()
-        val anonymous = ViewerContext.AsViewer(Viewer.Anonymous)
+        val anonymous = ViewerContext.AsViewer(TestViewer.Anonymous)
         val bypass = ViewerContext.privacyBypass_DANGEROUS("seed draft")
 
         val userId = client.users.create { name = "u"; email = "u@x.com" }
@@ -79,5 +83,35 @@ class PrivacyBypassHelperIntegrationTest : PostgresTestBase() {
         client.articles.create { title = "hooked"; published = false; authorId = uid }
             .save(bypass).getOrThrow()
         assertEquals(listOf("hooked"), created)
+    }
+
+    @Test
+    fun `a before hook receives the viewer's context for a viewer and the bypass context under bypass`() {
+        val seen = mutableListOf<ViewerContext<TestViewer>>()
+        val creatableUsers = object : EntityPolicy<User, UserPolicyScope> {
+            override fun configure(scope: UserPolicyScope) = scope.run {
+                privacy { create(allowAll) }
+            }
+        }
+        val client = EntClient(resetAndDriver()) {
+            policies { users(creatableUsers) }
+            hooks {
+                users {
+                    beforeCreate { state ->
+                        seen.add(state.viewerContext)
+                        state
+                    }
+                }
+            }
+        }
+        val asViewer = ViewerContext.AsViewer(TestViewer.User(1L))
+        val bypass = ViewerContext.privacyBypass_DANGEROUS("seed")
+
+        client.users.create { name = "a"; email = "a@x.com" }.save(asViewer).getOrThrow()
+        client.users.create { name = "b"; email = "b@x.com" }.save(bypass).getOrThrow()
+
+        assertEquals(2, seen.size)
+        assertSame(asViewer, seen[0])
+        assertSame(bypass, seen[1])
     }
 }

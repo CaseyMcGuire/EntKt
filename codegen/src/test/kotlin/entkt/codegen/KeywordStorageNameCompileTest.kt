@@ -55,7 +55,7 @@ class KeywordStorageNameCompileTest {
         )
         item.finalize(registry)
         schema.finalize(registry)
-        return EntGenerator("com.example.ent")
+        return EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(item), SchemaInput(schema)))
     }
 

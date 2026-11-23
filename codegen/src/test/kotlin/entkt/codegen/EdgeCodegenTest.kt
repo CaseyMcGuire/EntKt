@@ -834,7 +834,7 @@ class EdgeCodegenTest {
     @Test
     fun `update builder gets FK property without entity setter for unique edge`() {
         val (_, names, byName) = createAllSchemas()
-        val output = UpdateGenerator("com.example.ent")
+        val output = UpdateGenerator("com.example.ent", TEST_VIEWER)
             .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("var ownerId: Long?")) {
@@ -848,7 +848,7 @@ class EdgeCodegenTest {
     @Test
     fun `update builder save lowers edge FK dirty tracking to FieldPatch`() {
         val (_, names, byName) = createAllSchemas()
-        val output = UpdateGenerator("com.example.ent")
+        val output = UpdateGenerator("com.example.ent", TEST_VIEWER)
             .generate("Pet", byName["Pet"]!!, names).toString()
 
         // Optional edge FK: Set(this.ownerId) — Set(null) is an explicit clear.
@@ -868,7 +868,7 @@ class EdgeCodegenTest {
     @Test
     fun `update builder edge FK setter tracks dirty state`() {
         val (_, names, byName) = createAllSchemas()
-        val output = UpdateGenerator("com.example.ent")
+        val output = UpdateGenerator("com.example.ent", TEST_VIEWER)
             .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("dirtyFields.add(\"ownerId\")")) {
@@ -920,13 +920,13 @@ class EdgeCodegenTest {
             "Create builder FK property should not carry framework KDoc\n$createOutput"
         }
 
-        val updateOutput = UpdateGenerator("com.example.ent")
+        val updateOutput = UpdateGenerator("com.example.ent", TEST_VIEWER)
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
         assert(!updateOutput.contains("/**")) {
             "Update builder FK property should not carry framework KDoc\n$updateOutput"
         }
 
-        val mutationOutput = MutationGenerator("com.example.ent")
+        val mutationOutput = MutationGenerator("com.example.ent", TEST_VIEWER)
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
         assert(!mutationOutput.contains("FK to")) {
             "Hook-state FK property should not invent framework KDoc\n$mutationOutput"
@@ -950,12 +950,12 @@ class EdgeCodegenTest {
             "Create builder FK property should pick up the backing field's comment as KDoc\n$createOutput"
         }
 
-        val updateOutput = UpdateGenerator("com.example.ent").generate("CommentedFkChild", child, names).toString()
+        val updateOutput = UpdateGenerator("com.example.ent", TEST_VIEWER).generate("CommentedFkChild", child, names).toString()
         assert(updateOutput.contains("FK to the owning user")) {
             "Update builder FK property should pick up the backing field's comment as KDoc\n$updateOutput"
         }
 
-        val mutationOutput = MutationGenerator("com.example.ent").generate("CommentedFkChild", child, names).toString()
+        val mutationOutput = MutationGenerator("com.example.ent", TEST_VIEWER).generate("CommentedFkChild", child, names).toString()
         assert(mutationOutput.contains("FK to the owning user")) {
             "Mutation interface FK property should pick up the backing field's comment as KDoc\n$mutationOutput"
         }
@@ -1012,7 +1012,7 @@ class EdgeCodegenTest {
             "Create should still expose the immutable FK on its draft\n$createOutput"
         }
 
-        val updateOutput = UpdateGenerator("com.example.ent")
+        val updateOutput = UpdateGenerator("com.example.ent", TEST_VIEWER)
             .generate("ImmutableFkChild", child, names).toString()
         // Update must not expose the FK at all — no setter, no staging,
         // no patch entry, no values-map line.
@@ -1042,14 +1042,14 @@ class EdgeCodegenTest {
         finalize(parent, child)
         val names = mapOf<EntSchema, String>(parent to "ImmutableFkParent", child to "ImmutableFkChild")
 
-        val privacyOutput = PrivacyGenerator("com.example.ent")
+        val privacyOutput = PrivacyGenerator("com.example.ent", TEST_VIEWER)
             .generate("ImmutableFkChild", child, names).toString()
         // UpdatePatch must not carry a slot for the immutable FK.
         assert(!privacyOutput.contains("ownerId: FieldPatch")) {
             "UpdatePatch must not include an FK slot for immutable FKs\n$privacyOutput"
         }
 
-        val stateFiles = MutationGenerator("com.example.ent")
+        val stateFiles = MutationGenerator("com.example.ent", TEST_VIEWER)
             .generate("ImmutableFkChild", child, names).associateBy { it.name }
         assert(stateFiles.getValue("ImmutableFkChildBeforeCreateState").toString().contains("ownerId: FieldPatch"))
         assert(!stateFiles.getValue("ImmutableFkChildBeforeSaveState").toString().contains("ownerId: FieldPatch"))
@@ -1087,15 +1087,15 @@ class EdgeCodegenTest {
     @Test
     fun `create operation receives generated immutable hook state converter`() {
         val (_, names, byName) = createAllSchemas()
-        val output = entkt.codegen.client.RepoGenerator("com.example.ent")
+        val output = entkt.codegen.client.RepoGenerator("com.example.ent", TEST_VIEWER)
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
-        val converter = entkt.codegen.mutation.CreateConverterGenerator("com.example.ent")
+        val converter = entkt.codegen.mutation.CreateConverterGenerator("com.example.ent", TEST_VIEWER)
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
         assert(converter.contains("internal class PetCreateConverter"))
-        assert(converter.contains("CreateMutationHookStateConverter<Viewer, PetCreateDraft, Pet, PetBeforeSaveState, PetBeforeCreateState>"))
+        assert(converter.contains("CreateMutationHookStateConverter<AppViewer, PetCreateDraft, Pet, PetBeforeSaveState, PetBeforeCreateState>"))
         assert(converter.contains("CreateMutationConverter<PetCreateDraft, PetWriteCandidate, Pet, PetBeforeCreateState>"))
         assert(output.contains("converter = PetCreateConverter(driver, client.hookClientScopeForInternalUse)")) {
             "the repo should construct its schema-specific converter\n$output"
@@ -1121,7 +1121,7 @@ class EdgeCodegenTest {
     @Test
     fun `MutationGenerator emits separate immutable lifecycle state files`() {
         val (_, names, byName) = createAllSchemas()
-        val files = MutationGenerator("com.example.ent")
+        val files = MutationGenerator("com.example.ent", TEST_VIEWER)
             .generate("Pet", byName["Pet"]!!, names)
         val output = files.joinToString("\n").replace("\\s+".toRegex(), " ")
 
@@ -1192,7 +1192,7 @@ class EdgeCodegenTest {
     @Test
     fun `update builder applies required-FK semantics to field-backed FKs`() {
         val (_, names, byName) = createAllSchemas()
-        val output = UpdateGenerator("com.example.ent")
+        val output = UpdateGenerator("com.example.ent", TEST_VIEWER)
             .generate("TeamMember", byName["TeamMember"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
@@ -1240,7 +1240,7 @@ class EdgeCodegenTest {
     @Test
     fun `update builder required FK property is non-null typed`() {
         val (_, names, byName) = createAllSchemas()
-        val output = UpdateGenerator("com.example.ent")
+        val output = UpdateGenerator("com.example.ent", TEST_VIEWER)
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
 
         assert(output.contains("var ownerId: Long\n")) {
@@ -1267,7 +1267,7 @@ class EdgeCodegenTest {
     @Test
     fun `update builder required FK setter rejects null at entry`() {
         val (_, names, byName) = createAllSchemas()
-        val output = UpdateGenerator("com.example.ent")
+        val output = UpdateGenerator("com.example.ent", TEST_VIEWER)
             .generate("RequiredPet", byName["RequiredPet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
@@ -1281,7 +1281,7 @@ class EdgeCodegenTest {
     @Test
     fun `update builder edge FK getter throws on untouched read`() {
         val (_, names, byName) = createAllSchemas()
-        val output = UpdateGenerator("com.example.ent")
+        val output = UpdateGenerator("com.example.ent", TEST_VIEWER)
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
 
@@ -1392,7 +1392,7 @@ class EdgeCodegenTest {
     @Test
     fun `query gets traversal method for paired to-many edge`() {
         val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
+        val output = QueryGenerator("com.example.ent", TEST_VIEWER)
             .generate("Owner", byName["Owner"]!!, names).toString()
 
         // Traversal methods take the same defaulted receiver block as
@@ -1418,7 +1418,7 @@ class EdgeCodegenTest {
     @Test
     fun `query gets traversal method on the from-side too`() {
         val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
+        val output = QueryGenerator("com.example.ent", TEST_VIEWER)
             .generate("Pet", byName["Pet"]!!, names).toString()
 
         assert(output.contains("fun queryOwner(block: OwnerQueryScope.() -> Unit = {}): OwnerQuery")) {
@@ -1436,7 +1436,7 @@ class EdgeCodegenTest {
     @Test
     fun `does not emit traversal when the inverse edge cannot be resolved`() {
         val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
+        val output = QueryGenerator("com.example.ent", TEST_VIEWER)
             .generate("Owner", byName["Owner"]!!, names).toString()
 
         assert(!output.contains("queryRequiredPets")) {
@@ -1456,7 +1456,7 @@ class EdgeCodegenTest {
         finalize(user, post)
         val names = mapOf<EntSchema, String>(user to "User", post to "Post")
         val error = assertFailsWith<IllegalStateException> {
-            QueryGenerator("com.example.ent").generate("User", user, names)
+            QueryGenerator("com.example.ent", TEST_VIEWER).generate("User", user, names)
         }
         assert(error.message!!.contains("ambiguous")) {
             "Error should mention ambiguity\n${error.message}"
@@ -1523,7 +1523,7 @@ class EdgeCodegenTest {
         // and naming the forward edge ("members"). No reverse-edge
         // name on Pet's SCHEMA is referenced.
         val (_, names, byName) = createAllSchemas()
-        val output = QueryGenerator("com.example.ent")
+        val output = QueryGenerator("com.example.ent", TEST_VIEWER)
             .generate("Team", byName["Team"]!!, names).toString()
 
         assert(output.contains("fun queryMembers(block: PetQueryScope.() -> Unit = {}): PetQuery")) {
@@ -1622,7 +1622,7 @@ class EdgeCodegenTest {
     fun `completed queries have no mutable selected-edge fields or load methods`() {
         val (_, names, byName) = createAllSchemas()
         for (schemaName in listOf("Owner", "Pet", "Team")) {
-            val output = QueryGenerator("com.example.ent")
+            val output = QueryGenerator("com.example.ent", TEST_VIEWER)
                 .generate(schemaName, byName[schemaName]!!, names).toString()
             assert(!Regex("fun (with|load)[A-Z]").containsMatchIn(output)) { output }
             assert(!output.contains("eager")) { output }
@@ -1662,7 +1662,7 @@ class EdgeCodegenTest {
     @Test
     fun `same-orientation alias throughEntity declarations on one schema are rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(M2MAliasGroup()),
                 SchemaInput(M2MAliasUser()),
                 SchemaInput(M2MAliasMembership()),
@@ -1677,7 +1677,7 @@ class EdgeCodegenTest {
     fun `cross-schema pair-swapped throughEntity is allowed`() {
         // BiUser declares (user, group); BiGroup declares (group, user) — same
         // canonical identity, pair-swapped orientations. Both should be accepted.
-        EntGenerator("com.example.ent").generate(listOf(
+        EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
             SchemaInput(BiUser()),
             SchemaInput(BiGroup()),
             SchemaInput(BiMembership()),
@@ -1688,7 +1688,7 @@ class EdgeCodegenTest {
     fun `self-referential pair-swapped throughEntity is allowed`() {
         // FollowUser.following uses (follower, followed); FollowUser.followers
         // uses (followed, follower) — pair-swapped, same canonical identity.
-        EntGenerator("com.example.ent").generate(listOf(
+        EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
             SchemaInput(FollowUser()),
             SchemaInput(Follow()),
         ))
@@ -1699,7 +1699,7 @@ class EdgeCodegenTest {
         // Pair-swapped throughLink declarations are the two endpoints
         // of one symmetric link table. With the unique pair index + a
         // leading-column index per side, this finalizes and generates.
-        EntGenerator("com.example.ent").generate(listOf(
+        EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
             SchemaInput(LinkUser()),
             SchemaInput(LinkGroup()),
             SchemaInput(LinkMembership()),
@@ -1709,7 +1709,7 @@ class EdgeCodegenTest {
     @Test
     fun `same-orientation throughLink aliases are rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(SameOrientUser()),
                 SchemaInput(SameOrientGroup()),
                 SchemaInput(SameOrientMembership()),
@@ -1721,7 +1721,7 @@ class EdgeCodegenTest {
     @Test
     fun `pair-swapped throughLink missing the other-side leading index is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(NoLeadUser()),
                 SchemaInput(NoLeadGroup()),
                 SchemaInput(NoLeadMembership()),
@@ -1733,7 +1733,7 @@ class EdgeCodegenTest {
     @Test
     fun `mixed throughLink and throughEntity on same canonical identity is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(MixedLinkUser()),
                 SchemaInput(MixedLinkGroup()),
                 SchemaInput(MixedLinkMembership()),
@@ -1748,7 +1748,7 @@ class EdgeCodegenTest {
     fun `multi-relationship junction with distinct canonical identities is allowed`() {
         // MultiRelProject declares two manyToMany via MultiRelAssignment but
         // with distinct edge pairs ({project, assignee} vs {project, reviewer}).
-        EntGenerator("com.example.ent").generate(listOf(
+        EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
             SchemaInput(MultiRelProject()),
             SchemaInput(MultiRelPet()),
             SchemaInput(MultiRelAssignment()),
@@ -1819,7 +1819,7 @@ class EdgeCodegenTest {
 
     @Test
     fun `helper-eligible throughLink junction passes validation`() {
-        EntGenerator("com.example.ent").generate(listOf(
+        EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
             SchemaInput(LinkPost()),
             SchemaInput(LinkTag()),
             SchemaInput(LinkPostTag()),
@@ -1829,7 +1829,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction with payload column is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(PayloadLinkPost()),
                 SchemaInput(PayloadLinkTag()),
                 SchemaInput(PayloadLinkPostTag()),
@@ -1842,7 +1842,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction with nullable belongsTo is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(NullableLinkPost()),
                 SchemaInput(NullableLinkTag()),
                 SchemaInput(NullableLinkPostTag()),
@@ -1855,7 +1855,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction without explicit OnDelete CASCADE is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(NoCascadeLinkPost()),
                 SchemaInput(NoCascadeLinkTag()),
                 SchemaInput(NoCascadeLinkPostTag()),
@@ -1868,7 +1868,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction without unique composite index is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(NoIndexLinkPost()),
                 SchemaInput(NoIndexLinkTag()),
                 SchemaInput(NoIndexLinkPostTag()),
@@ -1881,7 +1881,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction with partial unique index is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(PartialIdxLinkPost()),
                 SchemaInput(PartialIdxLinkTag()),
                 SchemaInput(PartialIdxLinkPostTag()),
@@ -1894,7 +1894,7 @@ class EdgeCodegenTest {
     fun `throughLink junction accepts a reverse-order unique pair index`() {
         // The unique pair index matches unordered, so (tag_id, post_id)
         // is accepted for a lone declaration just like (post_id, tag_id).
-        EntGenerator("com.example.ent").generate(listOf(
+        EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
             SchemaInput(ReverseOrderIdxLinkPost()),
             SchemaInput(ReverseOrderIdxLinkTag()),
             SchemaInput(ReverseOrderIdxLinkPostTag()),
@@ -1904,7 +1904,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction with extra synthesized-FK belongsTo is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(TenantLink()),
                 SchemaInput(TenantedLinkPost()),
                 SchemaInput(TenantedLinkTag()),
@@ -1919,7 +1919,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction with extra field-backed belongsTo is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(TenantLink()),
                 SchemaInput(FieldBackedTenantedLinkPost()),
                 SchemaInput(FieldBackedTenantedLinkTag()),
@@ -1934,7 +1934,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction with unique() belongsTo is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(UniqueEdgeLinkPost()),
                 SchemaInput(UniqueEdgeLinkTag()),
                 SchemaInput(UniqueEdgeLinkPostTag()),
@@ -1948,7 +1948,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction with extra unique single-column FK index is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(UniqueSingleIdxLinkPost()),
                 SchemaInput(UniqueSingleIdxLinkTag()),
                 SchemaInput(UniqueSingleIdxLinkPostTag()),
@@ -1961,7 +1961,7 @@ class EdgeCodegenTest {
     @Test
     fun `throughLink junction with EXPLICIT id strategy is rejected`() {
         val err = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(
                 SchemaInput(ExplicitIdLinkPost()),
                 SchemaInput(ExplicitIdLinkTag()),
                 SchemaInput(ExplicitIdLinkPostTag()),

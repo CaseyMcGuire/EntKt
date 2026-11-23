@@ -69,7 +69,7 @@ class JsonCompileFailTest {
     ): List<SourceFile> {
         val registry = mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(schema::class to schema)
         schema.finalize(registry)
-        return EntGenerator("com.example.ent", jsonMapper)
+        return EntGenerator("com.example.ent", TEST_VIEWER_TYPE, jsonMapper)
             .generate(listOf(SchemaInput(schema)))
             .toCompileTestSources()
     }

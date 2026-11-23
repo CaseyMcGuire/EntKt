@@ -163,7 +163,9 @@ The `EntClient` is configured as a Spring bean:
 
 Each controller injects the long-lived `EntClient`, derives a `ViewerContext`
 from the request-scoped `AuthContext`, and passes it explicitly to generated
-execution terminals:
+execution terminals. The viewer is the example's own `AppViewer` type, which
+the `generateEntkt` task names as its `viewerType` argument, so the context is
+a `ViewerContext<AppViewer>` and privacy rules read `context.viewer.userId`:
 
 - `client.users.create { ... }.saveAndLoad(viewerContext).getOrThrow()` -- draft-based creation
 - `client.tags.create(name = "Kotlin", category = TagCategory.LANGUAGE).saveAndLoad(viewerContext).getOrThrow()` -- required fields checked at compilation (see [`TagController`](src/main/kotlin/example/spring/tags/TagController.kt))

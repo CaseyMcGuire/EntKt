@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
 
 class FieldValidationRulesCompileTest {
     private fun compile(rules: String): JvmCompilationResult {
-        val generated = EntGenerator("com.example.ent")
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(Car()), SchemaInput(User())))
             .toCompileTestSources()
         val policy = SourceFile.kotlin(

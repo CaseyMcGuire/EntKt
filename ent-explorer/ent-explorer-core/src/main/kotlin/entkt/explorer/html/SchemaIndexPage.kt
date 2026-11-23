@@ -18,7 +18,7 @@ import kotlinx.html.tr
  * edges) matched the search, when the hit wasn't on the name itself.
  */
 internal data class SchemaMatch(
-    val entity: EntExplorerEntity<*>,
+    val entity: EntExplorerEntity<*, *>,
     val matchedMembers: List<String>,
 )
 

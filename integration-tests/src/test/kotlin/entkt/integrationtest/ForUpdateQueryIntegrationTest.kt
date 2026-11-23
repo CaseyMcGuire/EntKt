@@ -22,7 +22,6 @@ import entkt.runtime.mutation.TransactionRequiredException
 import entkt.runtime.mutation.UnsupportedDriverCapabilityException
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.ForUpdateQuery
 import entkt.runtime.query.GlobalQueryInterceptor
@@ -55,7 +54,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ForUpdateQueryIntegrationTest : PostgresTestBase() {
-    private val viewer = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewer = ViewerContext.AsViewer(TestViewer.User(7L))
 
     @Test
     fun `locking values are inert immutable and retain their original transaction binding`() {
@@ -70,7 +69,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
         assertIs<TransactionRequiredException>(assertIs<ReadCollectionResult.Failed>(rootLock.all(testViewerContext)).exception)
         assertTrue(recording.calls.isEmpty())
 
-        var escaped: ForUpdateQuery<Viewer, User>? = null
+        var escaped: ForUpdateQuery<TestViewer, User>? = null
         client.withTransaction { tx ->
             assertIs<RootOperationInsideTransactionException>(
                 assertIs<ReadCollectionResult.Failed>(rootLock.all(testViewerContext)).exception,
@@ -312,7 +311,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
         val setup = EntClient(driver)
         val selected = user(setup, "A")
         val excluded = user(setup, "B")
-        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
         val client = EntClient(driver) {
             interceptors {
                 users(QueryInterceptor { scope, context ->
@@ -339,7 +338,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
         val otherAuthor = user(setup, "B")
         val selected = article(setup, author)
         val excluded = article(setup, otherAuthor)
-        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
         val client = EntClient(driver) {
             interceptors { global(GlobalQueryInterceptor { _, context -> contexts += context }, name = "trace") }
         }
@@ -368,7 +367,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
             groupId = group.id
             role = "member"
         }.saveAndLoad(testViewerContext).getOrThrow()
-        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
         val client = EntClient(driver) {
             interceptors { global(GlobalQueryInterceptor { _, context -> contexts += context }, name = "trace") }
         }

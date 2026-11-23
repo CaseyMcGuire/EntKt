@@ -61,10 +61,16 @@ factory:
 ```kotlin
 privacy {
     queryVisibility { ctx ->
-        when (val viewer = ctx.viewer) {
-            is Viewer.User -> User.tenantId eq viewer.tenantId
-            Viewer.Anonymous -> User.published eq true
-            is Viewer.PrivacyBypass -> Predicate.alwaysTrue()
+        when (val viewerContext = ctx.viewerContext) {
+            is ViewerContext.AsViewer -> {
+                val viewer = viewerContext.viewer // the application's viewer type
+                if (viewer.userId == null) {
+                    User.published eq true
+                } else {
+                    User.tenantId eq viewer.tenantId
+                }
+            }
+            is ViewerContext.PrivacyBypass -> Predicate.alwaysTrue()
         }
     }
 
@@ -175,7 +181,7 @@ affect its result and distinguish storage access from query visibility.
 One captured `ViewerContext` is shared across visibility predicate creation,
 read interceptors, storage execution, LOAD privacy, traversal, and eager work.
 
-`Viewer.PrivacyBypass` should bypass both query visibility and LOAD privacy.
+`ViewerContext.PrivacyBypass` should bypass both query visibility and LOAD privacy.
 That behavior must be framework-owned and visible in diagnostics. Validation
 and system read postures need an equally explicit contract rather than
 accidentally inheriting viewer scoping.

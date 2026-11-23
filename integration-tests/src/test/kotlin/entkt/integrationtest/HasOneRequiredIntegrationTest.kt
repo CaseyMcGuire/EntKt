@@ -10,7 +10,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.postgres.PostgresDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.query.requireLoaded
@@ -223,7 +222,7 @@ class HasOneRequiredIntegrationTest : PostgresTestBase() {
             }
         }
         val (user, profile) = createPair(client)
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
         assertEquals(user, client.users.findById(viewerContext, user.id).getOrThrow())
 
         val strict = client.users.query { loadProfile() }.firstOrNull(viewerContext)

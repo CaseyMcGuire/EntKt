@@ -2,6 +2,7 @@ package entkt.explorer.spring
 
 import entkt.explorer.EntExplorer
 import entkt.explorer.EntExplorerEntity
+import entkt.runtime.privacy.ViewerContext
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner
 import org.springframework.context.annotation.Bean
@@ -20,13 +21,18 @@ import kotlin.test.assertTrue
  */
 class EntExplorerAutoConfigurationTest {
 
+    private class FakeViewer
+
     private class FakeClient
 
     @Configuration(proxyBeanMethods = false)
     private class ExplorerDeclaringApp {
         @Bean
-        fun entExplorer(): EntExplorer<FakeClient> =
-            EntExplorer(FakeClient(), NO_ENTITIES) { authorize { true } }
+        fun entExplorer(): EntExplorer<FakeViewer, FakeClient> =
+            EntExplorer(FakeClient(), NO_ENTITIES) {
+                authorize { true }
+                viewerContext { ViewerContext.privacyBypass_DANGEROUS("auto-configuration test") }
+            }
     }
 
     private val runner = WebApplicationContextRunner()
@@ -52,8 +58,11 @@ class EntExplorerAutoConfigurationTest {
     @Configuration(proxyBeanMethods = false)
     private class WithResolverApp {
         @Bean
-        fun entExplorer(): EntExplorer<FakeClient> =
-            EntExplorer(FakeClient(), NO_ENTITIES) { authorize { true } }
+        fun entExplorer(): EntExplorer<FakeViewer, FakeClient> =
+            EntExplorer(FakeClient(), NO_ENTITIES) {
+                authorize { true }
+                viewerContext { ViewerContext.privacyBypass_DANGEROUS("auto-configuration test") }
+            }
 
         @Bean
         fun myResolver(): EntExplorerPrincipalResolver = CUSTOM_RESOLVER
@@ -67,7 +76,7 @@ class EntExplorerAutoConfigurationTest {
     }
 
     companion object {
-        private val NO_ENTITIES: List<EntExplorerEntity<FakeClient>> = emptyList()
+        private val NO_ENTITIES: List<EntExplorerEntity<FakeViewer, FakeClient>> = emptyList()
         private val CUSTOM_RESOLVER = EntExplorerPrincipalResolver { "custom" }
     }
 }

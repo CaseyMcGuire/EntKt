@@ -12,7 +12,6 @@ import entkt.integrationtest.ent.UserWriteCandidate
 import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -31,7 +30,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 
 class FieldValidationRulesIntegrationTest : PostgresTestBase() {
-    private val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.Anonymous)
 
     private object UserFieldPolicy : EntityPolicy<User, UserPolicyScope> {
         override fun configure(scope: UserPolicyScope) = scope.run {

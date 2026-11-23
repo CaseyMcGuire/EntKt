@@ -32,12 +32,10 @@ import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.ENTITY_SCHEMA
-import entkt.codegen.metadata.VIEWER
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
-private val MUTATION_RUNTIME =
-    ClassName("entkt.runtime.mutation.execution", "MutationRuntime").parameterizedBy(VIEWER)
+private val MUTATION_RUNTIME = ClassName("entkt.runtime.mutation.execution", "MutationRuntime")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "TransactionRequirement")
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime.mutation", "TransactionRequiredException")
@@ -48,7 +46,7 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
 private val TRANSACTION_EXECUTION_GUARD_FOR_INTERNAL_USE =
     MemberName("entkt.runtime.result", "transactionExecutionGuardForInternalUse")
 private val RESOLVED_ENT_INTERCEPTORS_CONFIG =
-    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig").parameterizedBy(VIEWER)
+    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo together,
@@ -73,6 +71,7 @@ private val RESOLVED_ENT_INTERCEPTORS_CONFIG =
  */
 internal class ClientGenerator(
     private val packageName: String,
+    private val viewer: ClassName,
 ) {
 
     fun generate(schemas: List<SchemaInput>): List<FileSpec> {
@@ -142,7 +141,7 @@ internal class ClientGenerator(
             // existed — the query constructors' `EntReadRuntime?` accepts
             // the full client by upcast.
             addSuperinterface(ClassName(packageName, "EntReadRuntime"))
-            addSuperinterface(MUTATION_RUNTIME)
+            addSuperinterface(MUTATION_RUNTIME.parameterizedBy(viewer))
             addSuperinterface(clientScopeClass)
             primaryConstructor {
                 addModifiers(KModifier.PRIVATE)
@@ -251,7 +250,7 @@ internal class ClientGenerator(
                 // marker kept on the override gates application access.
             property(
                     "entityInterceptors",
-                    RESOLVED_ENT_INTERCEPTORS_CONFIG,
+                    RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer),
                 ) {
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.OVERRIDE)
@@ -524,7 +523,7 @@ internal class ClientGenerator(
             parameter("defaultRelationshipLocking", RELATIONSHIP_LOCKING)
             parameter("hooks", resolvedHooksClass)
             parameter("policies", resolvedPoliciesClass)
-            parameter("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG)
+            parameter("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer))
         }
         property("transactionRequirement", TRANSACTION_REQUIREMENT) {
             initializer("transactionRequirement")
@@ -537,7 +536,7 @@ internal class ClientGenerator(
         }
         property("hooks", resolvedHooksClass) { initializer("hooks") }
         property("policies", resolvedPoliciesClass) { initializer("policies") }
-        property("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG) {
+        property("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer)) {
             initializer("interceptors")
         }
     }
@@ -702,10 +701,10 @@ internal class ClientGenerator(
         schemas: List<SchemaInput>,
     ): TypeSpec {
         val ENT_INTERCEPTORS_CONFIG =
-            ClassName("entkt.runtime.query", "EntInterceptorsConfig").parameterizedBy(VIEWER)
+            ClassName("entkt.runtime.query", "EntInterceptorsConfig").parameterizedBy(viewer)
         val QUERY_INTERCEPTOR = ClassName("entkt.runtime.query", "QueryInterceptor")
         val GLOBAL_QUERY_INTERCEPTOR =
-            ClassName("entkt.runtime.query", "GlobalQueryInterceptor").parameterizedBy(VIEWER)
+            ClassName("entkt.runtime.query", "GlobalQueryInterceptor").parameterizedBy(viewer)
 
         return classType(interceptorsClass) {
             addAnnotation(annotation(ENTKT_DSL))
@@ -730,7 +729,7 @@ internal class ClientGenerator(
         for (input in schemas) {
             val entityClass = ClassName(packageName, input.name)
             val propName = input.clientName
-            val interceptorType = QUERY_INTERCEPTOR.parameterizedBy(VIEWER, entityClass)
+            val interceptorType = QUERY_INTERCEPTOR.parameterizedBy(viewer, entityClass)
             function(propName) {
                 parameter("interceptor", interceptorType)
                 parameter("name", String::class.asClassName())

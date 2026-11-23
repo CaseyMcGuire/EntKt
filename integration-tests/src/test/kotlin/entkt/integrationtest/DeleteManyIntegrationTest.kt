@@ -16,7 +16,6 @@ import entkt.runtime.hook.batchActionHook
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
@@ -49,7 +48,7 @@ import kotlin.test.assertSame
  * for rows the statement actually removed.
  */
 class DeleteManyIntegrationTest : PostgresTestBase() {
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
 
     private data class SeededUser(
         val name: String,
@@ -235,7 +234,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var afterDeleteCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     batch.decideEach { PrivacyDecision.Allow }
                 })
             }
@@ -265,11 +264,11 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         driver.probe.orderReturnedIdsByAscendingId = true
         val callerPredicate = User.name neq "caller-filtered"
         val interceptorPredicate = User.email neq "interceptor-filtered@example.com"
-        val capturedPrivacy = ViewerContext.AsViewer(Viewer.User(7L))
+        val capturedPrivacy = ViewerContext.AsViewer(TestViewer.User(7L))
         var interceptorCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { context, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { context, batch ->
                     assertEquals(0, driver.probe.deleteManyByIdsCalls)
                     assertSame(capturedPrivacy, context.viewerContext)
                     driver.probe.events +=
@@ -357,7 +356,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var hookCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     privacyCalls++
                     batch.decideEach { PrivacyDecision.Allow }
                 })
@@ -410,7 +409,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var beforeDeleteCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     privacyBatches += batch.map { it.entity.name }
                     batch.decideEach { item ->
                         when (item.entity.name) {
@@ -460,7 +459,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val derivedCreateBatches = mutableListOf<List<String>>()
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     deleteBatches += batch.map { it.entity.name }
                     batch.decideEach { item ->
                         when (item.entity.name) {
@@ -470,7 +469,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
                         }
                     }
                 })
-                create(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate> { _, batch ->
+                create(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserWriteCandidate> { _, batch ->
                     derivedCreateBatches += batch.map { it.name }
                     batch.decideEach { PrivacyDecision.Allow }
                 })
@@ -505,7 +504,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         var beforeDeleteCalls = 0
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     privacyBatches += batch.map { it.entity.name }
                     batch.decideEach { PrivacyDecision.Allow }
                 })
@@ -552,7 +551,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val afterBatches = mutableListOf<List<String>>()
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     batch.decideEach { PrivacyDecision.Allow }
                 })
             }
@@ -596,7 +595,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val driver = FallbackThenFailDriver(storage, failure)
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     batch.decideEach { PrivacyDecision.Allow }
                 })
             }
@@ -632,7 +631,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val driver = FallbackThenFailDriver(storage, failure)
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     batch.decideEach { PrivacyDecision.Allow }
                 })
             }
@@ -657,7 +656,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val thrown = IllegalStateException("afterDelete failed")
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     batch.decideEach { PrivacyDecision.Allow }
                 })
             }
@@ -708,7 +707,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val afterBatches = mutableListOf<List<String>>()
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     batch.decideEach { PrivacyDecision.Allow }
                 })
             }
@@ -745,7 +744,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val afterBatches = mutableListOf<List<String>>()
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     batch.decideEach { PrivacyDecision.Allow }
                 })
             }
@@ -782,7 +781,7 @@ class DeleteManyIntegrationTest : PostgresTestBase() {
         val threshold = AtomicLong(2L)
         val configuredPolicy = policy {
             privacy {
-                delete(batchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
+                delete(batchPrivacyRule<TestViewer, ReadOnlyEntClient, UserDeleteRuleInput> { _, batch ->
                     batch.decideEach { PrivacyDecision.Allow }
                 })
             }

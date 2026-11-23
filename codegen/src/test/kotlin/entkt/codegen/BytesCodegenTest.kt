@@ -16,7 +16,7 @@ class BytesCodegenTest {
     private val files: Map<String, String> by lazy {
         val schema = BinaryRecord()
         schema.finalize(mapOf(BinaryRecord::class to schema))
-        EntGenerator("com.example.ent", generateEntExplorer = true)
+        EntGenerator("com.example.ent", TEST_VIEWER_TYPE, generateEntExplorer = true)
             .generate(listOf(SchemaInput(schema)))
             .associate { it.name to it.toString().replace(Regex("\\s+"), " ") }
     }

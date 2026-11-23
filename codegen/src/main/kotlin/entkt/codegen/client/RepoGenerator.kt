@@ -30,7 +30,6 @@ import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.metadata.VIEWER
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 
@@ -62,6 +61,7 @@ private val PENDING_CREATE_MUTATION = ClassName("entkt.runtime.mutation", "Pendi
  */
 internal class RepoGenerator(
     private val packageName: String,
+    private val viewer: ClassName,
 ) {
 
     fun generate(
@@ -84,7 +84,7 @@ internal class RepoGenerator(
         val idType = schema.id().type.toTypeName()
         val generatedId = idStrategyName(schema) != "EXPLICIT"
         val repositoryBase = (if (generatedId) GENERATED_ID_REPOSITORY else EXPLICIT_ID_REPOSITORY).parameterizedBy(
-            VIEWER, entityClass, idType, createDraftClass, updateDraftClass, queryClass, ruleClientClass,
+            viewer, entityClass, idType, createDraftClass, updateDraftClass, queryClass, ruleClientClass,
         )
 
         val typeSpec = classType(className) {
@@ -191,7 +191,7 @@ internal class RepoGenerator(
                 .filter { it.required && it.default == null }
                 .map { parameter(it.propertyName, it.idType.toTypeName()) }
 
-        return function("create", PENDING_CREATE_MUTATION.parameterizedBy(VIEWER, draftClass, entityClass)) {
+        return function("create", PENDING_CREATE_MUTATION.parameterizedBy(viewer, draftClass, entityClass)) {
             addKdoc(
                 "Start a pending creation with every non-null field that has no schema default.\n" +
                     "Defaults, hooks, privacy, and validation run when the mutation is saved.\n",
@@ -269,8 +269,10 @@ internal class RepoGenerator(
 
     /** One schema-specific transaction lookup shared by all inherited bulk terminals. */
     private fun buildWithTransaction(repositoryBase: TypeName, schemaName: String, clientName: String): FunSpec {
+        // The type parameter must not shadow a type named in [repositoryBase].
         val names = NameAllocator()
         names.newName(schemaName)
+        names.newName(viewer.simpleName)
         val result = TypeVariableName(names.newName("Result"))
         return function("withTransaction", TRANSACTION_RESULT.parameterizedBy(result)) {
             addModifiers(KModifier.PROTECTED, KModifier.OVERRIDE)

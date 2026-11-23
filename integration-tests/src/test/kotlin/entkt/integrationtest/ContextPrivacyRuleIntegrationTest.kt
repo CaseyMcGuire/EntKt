@@ -12,7 +12,6 @@ import entkt.runtime.privacy.ContextPrivacyRule
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.PrivacyRuleContext
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntPrivacyDeniedException
@@ -26,12 +25,12 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ContextPrivacyRuleIntegrationTest : PostgresTestBase() {
-    private val viewer = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewer = ViewerContext.AsViewer(TestViewer.User(7L))
 
     @Test
     fun `one context rule handles CRUD across entities including an owned transaction`() {
-        val seen = mutableListOf<PrivacyRuleContext<Viewer, ReadOnlyEntClient>>()
-        val shared = ContextPrivacyRule<Viewer, ReadOnlyEntClient> { context ->
+        val seen = mutableListOf<PrivacyRuleContext<TestViewer, ReadOnlyEntClient>>()
+        val shared = ContextPrivacyRule<TestViewer, ReadOnlyEntClient> { context ->
             seen += context
             PrivacyDecision.Allow
         }
@@ -66,7 +65,7 @@ class ContextPrivacyRuleIntegrationTest : PostgresTestBase() {
     @Test
     fun `context rules deny all four operations while explicit bypass skips them`() {
         var calls = 0
-        val denied = ContextPrivacyRule<Viewer, ReadOnlyEntClient> {
+        val denied = ContextPrivacyRule<TestViewer, ReadOnlyEntClient> {
             calls++
             PrivacyDecision.Deny("context denied")
         }
@@ -92,7 +91,7 @@ class ContextPrivacyRuleIntegrationTest : PostgresTestBase() {
         assertEquals(4, calls, "bypassed reads must not invoke the context rule")
     }
 
-    private fun client(driver: DatabaseDriver, shared: ContextPrivacyRule<Viewer, ReadOnlyEntClient>): EntClient = EntClient(driver) {
+    private fun client(driver: DatabaseDriver, shared: ContextPrivacyRule<TestViewer, ReadOnlyEntClient>): EntClient = EntClient(driver) {
         policies {
             users(object : EntityPolicy<User, UserPolicyScope> {
                 override fun configure(scope: UserPolicyScope) = scope.run {

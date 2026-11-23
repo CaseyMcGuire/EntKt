@@ -28,7 +28,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import entkt.runtime.privacy.Viewer
 
 /**
  * coverage: interceptors fire correctly on edge traversal,
@@ -80,7 +79,7 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
     @Test
     fun `terminal on traversal-derived query sets sourceEntity, edgeName, and path on context`() {
         val driver = freshDriver()
-        var captured: QueryContext<Viewer>? = null
+        var captured: QueryContext<TestViewer>? = null
         val client = EntClient(driver) {
 
             interceptors {
@@ -162,7 +161,7 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
     @Test
     fun `M2M traversal terminal context carries source entity, edge, and path`() {
         val driver = freshDriver()
-        var captured: QueryContext<Viewer>? = null
+        var captured: QueryContext<TestViewer>? = null
         val client = EntClient(driver) {
 
             interceptors {
@@ -220,7 +219,7 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
     @Test
     fun `eager subquery context exposes isEagerSubquery and the source path`() {
         val driver = freshDriver()
-        var captured: QueryContext<Viewer>? = null
+        var captured: QueryContext<TestViewer>? = null
         val client = EntClient(driver) {
 
             interceptors {
@@ -330,7 +329,7 @@ class ReadInterceptorEdgesIntegrationTest : PostgresTestBase() {
     @Test
     fun `edge-predicate context carries sourceEntity, edgeName, and path`() {
         val driver = freshDriver()
-        var captured: QueryContext<Viewer>? = null
+        var captured: QueryContext<TestViewer>? = null
         val client = EntClient(driver) {
 
             interceptors {

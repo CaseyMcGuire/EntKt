@@ -44,7 +44,7 @@ draft types implement operation-specific contracts derived from
 `MutationDraft<Entity>`, while generated repositories supply persistence:
 
 ```kotlin
-val creation: PendingCreateMutation<Viewer, UserCreateDraft, User> =
+val creation: PendingCreateMutation<AppViewer, UserCreateDraft, User> =
     client.users.create { name = "Ada" }
 
 creation.configure { email = "ada@example.com" }

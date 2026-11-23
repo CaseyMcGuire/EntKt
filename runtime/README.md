@@ -10,7 +10,7 @@ Runtime types are grouped by concern under `entkt.runtime.*`:
 | Subpackage | Holds |
 |---|---|
 | `entkt.runtime.driver` | `DatabaseDriver` SPI, `NoopDriver`, `DriverTransactionResult`, `IsolationLevel`, and the schema metadata it consumes (`EntitySchema`, `ColumnMetadata`, `JsonColumnMetadata`, `ForeignKeyRef`, `IndexMetadata`, `EdgeMetadata`, `IdStrategy`) |
-| `entkt.runtime.privacy` | `Viewer`, `ViewerContext`, shared `PrivacyRuleContext`, scalar/batch privacy rules and operation-specific evaluators, `allowAll`, `EntityPolicy` |
+| `entkt.runtime.privacy` | `ViewerContext` (generic over the application's viewer type), shared `PrivacyRuleContext`, scalar/batch privacy rules and operation-specific evaluators, `allowAll`, `EntityPolicy` |
 | `entkt.runtime.validation` | Shared `ValidationRuleContext` plus scalar/batch validation rules and their evaluator |
 | `entkt.runtime.hook` | Scalar/batch lifecycle hook contracts and factories |
 | `entkt.runtime.rule` | Immutable `RuleBatch` inputs and read-only, same-batch `RuleDecisions` outputs for privacy and validation |

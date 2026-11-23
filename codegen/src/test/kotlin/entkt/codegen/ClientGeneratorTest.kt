@@ -16,7 +16,7 @@ private fun finalize(vararg schemas: EntSchema) {
 
 class ClientGeneratorTest {
 
-    private val generator = ClientGenerator("com.example.ent")
+    private val generator = ClientGenerator("com.example.ent", TEST_VIEWER)
 
     private fun buildSchemas(): List<SchemaInput> {
         val car = Car()
@@ -163,7 +163,7 @@ class ClientGeneratorTest {
     fun `EntClient exposes one stable read-only rule client for entity-local evaluators`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains(": EntReadRuntime, MutationRuntime<Viewer>, EntClientScope"))
+        assert(output.contains(": EntReadRuntime, MutationRuntime<AppViewer>, EntClientScope"))
         assert(output.contains("internal val readOnlyClient: ReadOnlyEntClient by lazy"))
         assert(output.contains("ReadOnlyEntClientImpl("))
         assert(!output.contains("CreateMutationOperation"))
@@ -511,7 +511,7 @@ class ClientGeneratorTest {
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
 
-        val output = ClientGenerator("com.example.ent")
+        val output = ClientGenerator("com.example.ent", TEST_VIEWER)
             .generate(schemas.map { SchemaInput(it) })
             .toString()
 

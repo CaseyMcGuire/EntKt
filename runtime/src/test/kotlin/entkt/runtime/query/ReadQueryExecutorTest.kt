@@ -12,7 +12,7 @@ import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.ReadCollectionResult
@@ -51,7 +51,7 @@ class ReadQueryExecutorTest {
 
     }
 
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
 
     private fun query(): EntityQuery<Item> = EntityQuery(
         entity = ItemMapping,
@@ -68,19 +68,19 @@ class ReadQueryExecutorTest {
         val driver = RecordingDriver()
         var interceptorRuns = 0
         var privacyRuns = 0
-        val interceptors = EntInterceptorsConfig<Viewer>().apply {
+        val interceptors = EntInterceptorsConfig<TestViewer>().apply {
             addEntity<Item>("items", "record") { _, _ -> interceptorRuns++ }
         }
-        val executor = ReadQueryExecutor<Viewer, Item>(
+        val executor = ReadQueryExecutor<TestViewer, Item>(
             driver = driver,
-            executionHost = object : ReadQueryExecutionHost<Viewer> {
+            executionHost = object : ReadQueryExecutionHost<TestViewer> {
                 override val entityInterceptors = interceptors.resolveForInternalUse()
 
                 override fun checkReadExecution() = Unit
 
                 override fun <Entity : EntEntity<*>> evaluate(
                     entity: EntityMapping<Entity>,
-                    viewerContext: ViewerContext<Viewer>,
+                    viewerContext: ViewerContext<TestViewer>,
                     entities: List<Entity>,
                 ): PrivacyEvaluation<Entity> {
                     privacyRuns++

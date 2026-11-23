@@ -270,7 +270,7 @@ class FieldBackedFkDeclarationNameTest {
         }
 
         val ex = kotlin.test.assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(
                 listOf(SchemaInput(Target()), SchemaInput(Post())),
             )
         }

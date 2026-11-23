@@ -40,7 +40,7 @@ class MutationNullabilityCompileTest {
         val schemas = listOf(Owner(), Record())
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = EntGenerator("com.example.ent").generate(schemas.map(::SchemaInput))
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(schemas.map(::SchemaInput))
         compileSources(
             generated.toCompileTestSources() + SourceFile.kotlin(
                 "MutationNullability.kt",
@@ -51,7 +51,7 @@ class MutationNullabilityCompileTest {
                 import com.example.ent.*
                 import entkt.runtime.driver.NoopDriver
                 import entkt.runtime.mutation.FieldPatch
-                import entkt.runtime.privacy.Viewer
+                import com.example.auth.AppViewer
                 import entkt.runtime.privacy.ViewerContext
 
                 $body

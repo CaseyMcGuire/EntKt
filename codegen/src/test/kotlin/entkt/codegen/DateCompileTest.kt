@@ -23,19 +23,19 @@ class DateCompileTest {
     private fun compile(body: String): JvmCompilationResult {
         val schema = DateRecord()
         schema.finalize(mapOf(DateRecord::class to schema))
-        val generated = EntGenerator("com.example.ent").generate(listOf(SchemaInput(schema)))
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(SchemaInput(schema)))
         val application = SourceFile.kotlin(
             "DateApiProbe.kt",
             """
             import com.example.ent.DateRecord
             import com.example.ent.EntClient
             import entkt.query.isNotNull
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
             import java.time.Instant
             import java.time.LocalDate
 
-            fun checkApis(client: EntClient, context: ViewerContext<Viewer>) {
+            fun checkApis(client: EntClient, context: ViewerContext<AppViewer>) {
                 $body
             }
             """.trimIndent(),

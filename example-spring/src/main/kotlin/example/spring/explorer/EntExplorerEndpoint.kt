@@ -4,6 +4,7 @@ import entkt.explorer.EntExplorer
 import entkt.explorer.spring.EntExplorerPrincipalResolver
 import example.ent.EntClient
 import example.ent.GeneratedEntExplorerRegistry
+import example.spring.auth.AppViewer
 import example.spring.auth.AuthContext
 import example.spring.auth.viewerContext
 import org.springframework.context.annotation.Bean
@@ -24,7 +25,7 @@ import org.springframework.context.annotation.Configuration
 class EntExplorerConfig {
 
     @Bean
-    fun entExplorer(client: EntClient, auth: AuthContext): EntExplorer<EntClient> =
+    fun entExplorer(client: EntClient, auth: AuthContext): EntExplorer<AppViewer, EntClient> =
         EntExplorer(client, GeneratedEntExplorerRegistry) {
             path = "/_ent"
             authorize { request -> request.principal != null }

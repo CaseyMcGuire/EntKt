@@ -9,7 +9,6 @@ import entkt.integrationtest.support.RecordingDriver
 import entkt.postgres.PostgresDriver
 import entkt.runtime.driver.IsolationLevel
 import entkt.runtime.privacy.EntityPolicy
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntConflictFailure
@@ -362,7 +361,7 @@ class TransactionConflictIntegrationTest : PostgresTestBase() {
 
         val result = client.withTransaction { tx ->
             val read = tx.users.query { where(User.id eq selected.id) }
-                .forUpdate().firstOrNull(ViewerContext.AsViewer(Viewer.User(selected.id)))
+                .forUpdate().firstOrNull(ViewerContext.AsViewer(TestViewer.User(selected.id)))
             val failure = assertIs<ReadResult.Failed>(read)
             assertSame(applicationFailure, failure.exception)
             assertFalse(failure.exception is EntConflictFailure)

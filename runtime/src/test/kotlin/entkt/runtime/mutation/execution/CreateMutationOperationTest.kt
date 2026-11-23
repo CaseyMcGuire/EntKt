@@ -19,7 +19,7 @@ import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
@@ -136,7 +136,7 @@ class CreateMutationOperationTest {
         var beforeCreateAction: () -> Unit = {}
         var beforeCreateTransform: (BeforeCreateState) -> BeforeCreateState = { it }
         var afterCreateAction: (Widget) -> Unit = {}
-        val receivedViewerContexts = mutableListOf<ViewerContext<Viewer>>()
+        val receivedViewerContexts = mutableListOf<ViewerContext<TestViewer>>()
 
         val converter = object : CreateMutationConverter<RecordingInput, Candidate, Widget, BeforeCreateState> {
             override fun requiredInputViolations(state: BeforeCreateState): List<ValidationViolation> {
@@ -158,7 +158,7 @@ class CreateMutationOperationTest {
         val privacy = ResolvedEntityPrivacyConfig(
             loadRules = emptyList<Nothing>(),
             createRules = listOf(
-                batchPrivacyRule<Viewer, TestRuleClient, Candidate> { context, batch ->
+                batchPrivacyRule<TestViewer, TestRuleClient, Candidate> { context, batch ->
                     events += "create-privacy"
                     receivedViewerContexts += context.viewerContext
                     batch.decideEach { createDecision }
@@ -635,7 +635,7 @@ class CreateMutationOperationTest {
     fun `bulk draft constructor failures remain inside the execution boundary`() {
         val fixture = fixture(inTransaction = true)
         val cause = IllegalStateException("draft construction failed")
-        val input = CreateManyMutationInput<Viewer, RecordingInput>(
+        val input = CreateManyMutationInput<TestViewer, RecordingInput>(
             viewerContext = fixture.viewerContext,
             blocks = listOf({}),
             newDraft = { throw cause },
@@ -769,9 +769,9 @@ class CreateMutationOperationTest {
         val mapping = RecordingMapping(events)
         val spec = RecordingSpec(events)
         val input = RecordingInput(events)
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
         val recordedFailures = mutableListOf<EntMutationException>()
-        val mutationRuntime = object : MutationRuntime<Viewer> {
+        val mutationRuntime = object : MutationRuntime<TestViewer> {
             override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
                 events += "transaction-preflight:$operation"
             }
@@ -783,7 +783,7 @@ class CreateMutationOperationTest {
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
-                viewerContext: ViewerContext<Viewer>,
+                viewerContext: ViewerContext<TestViewer>,
                 entities: List<Entity>,
             ): PrivacyEvaluation<Entity> {
                 events += "load-privacy"
@@ -801,12 +801,12 @@ class CreateMutationOperationTest {
         val mutationExecutor = MutationExecutor(driver, mutationRuntime)
         val converter = object :
             CreateMutationConverter<RecordingInput, Candidate, Widget, BeforeCreateState> by spec.converter,
-            CreateMutationHookStateConverter<Viewer, RecordingInput, Widget, BeforeSaveState, BeforeCreateState> {
+            CreateMutationHookStateConverter<TestViewer, RecordingInput, Widget, BeforeSaveState, BeforeCreateState> {
             override fun toBeforeSaveState(draft: RecordingInput): BeforeSaveState =
                 BeforeSaveState(draft.beforeSaveHookValue())
 
             override fun toBeforeCreateState(
-                viewerContext: ViewerContext<Viewer>,
+                viewerContext: ViewerContext<TestViewer>,
                 draft: RecordingInput,
                 beforeSaveState: BeforeSaveState,
             ): BeforeCreateState = BeforeCreateState(
@@ -859,14 +859,14 @@ class CreateMutationOperationTest {
         val driver: RecordingDriver,
         val spec: RecordingSpec,
         val input: RecordingInput,
-        val mutationExecutor: MutationExecutor<Viewer>,
-        val operation: MutationOperation<TestRuleClient, CreateMutationInput<Viewer, RecordingInput>, Widget>,
-        val manyOperation: MutationOperation<TestRuleClient, CreateManyMutationInput<Viewer, RecordingInput>, List<Widget>>,
-        val viewerContext: ViewerContext<Viewer>,
+        val mutationExecutor: MutationExecutor<TestViewer>,
+        val operation: MutationOperation<TestRuleClient, CreateMutationInput<TestViewer, RecordingInput>, Widget>,
+        val manyOperation: MutationOperation<TestRuleClient, CreateManyMutationInput<TestViewer, RecordingInput>, List<Widget>>,
+        val viewerContext: ViewerContext<TestViewer>,
         val recordedFailures: MutableList<EntMutationException>,
     ) {
         fun create(
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<TestViewer>,
             draft: RecordingInput,
             checkReturnedEntityPrivacy: Boolean,
         ): MutationResult<Widget> = mutationExecutor.execute(
@@ -876,9 +876,9 @@ class CreateMutationOperationTest {
         )
 
         fun createManyInput(
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<TestViewer>,
             blocks: List<RecordingInput.() -> Unit>,
-        ): CreateManyMutationInput<Viewer, RecordingInput> = CreateManyMutationInput(
+        ): CreateManyMutationInput<TestViewer, RecordingInput> = CreateManyMutationInput(
             viewerContext,
             blocks,
             newDraft = {
@@ -888,7 +888,7 @@ class CreateMutationOperationTest {
         )
 
         fun createMany(
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<TestViewer>,
             drafts: List<RecordingInput>,
         ): MutationResult<List<Widget>> {
             val blocks: List<RecordingInput.() -> Unit> = drafts.map { draft ->

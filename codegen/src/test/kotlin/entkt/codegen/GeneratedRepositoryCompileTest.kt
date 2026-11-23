@@ -21,7 +21,7 @@ class GeneratedRepositoryCompileTest {
     ): JvmCompilationResult {
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = EntGenerator("com.example.ent").generate(schemas.map(::SchemaInput))
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(schemas.map(::SchemaInput))
 
         val application = SourceFile.kotlin(
             "Application.kt",
@@ -34,7 +34,7 @@ class GeneratedRepositoryCompileTest {
             import entkt.runtime.mutation.PendingUpdateMutation
             import entkt.runtime.mutation.RelationshipLocking
             import entkt.runtime.mutation.UpdateConsistency
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
             import entkt.runtime.result.MutationResult
             import entkt.runtime.result.ReadResult
@@ -51,10 +51,10 @@ class GeneratedRepositoryCompileTest {
     fun `generated repositories preserve concrete inherited APIs on root and transaction clients`() {
         val result = compile(
             """
-            fun useRepositories(client: EntClientScope, viewer: ViewerContext<Viewer>, predicate: Predicate<Car>) {
+            fun useRepositories(client: EntClientScope, viewer: ViewerContext<AppViewer>, predicate: Predicate<Car>) {
                 val query: CarQuery = client.cars.query { where(predicate) }
-                val create: PendingCreateMutation<Viewer, CarCreateDraft, Car> = client.cars.create { model = "new" }
-                val update: PendingUpdateMutation<Viewer, CarUpdateDraft, Car> = client.cars.update(id = 1) { model = "changed" }
+                val create: PendingCreateMutation<AppViewer, CarCreateDraft, Car> = client.cars.create { model = "new" }
+                val update: PendingUpdateMutation<AppViewer, CarUpdateDraft, Car> = client.cars.update(id = 1) { model = "changed" }
                 client.cars.update(
                     id = 1,
                     consistency = UpdateConsistency.Pessimistic,
@@ -66,14 +66,14 @@ class GeneratedRepositoryCompileTest {
                 val count: MutationResult<Int> = client.cars.deleteMany(viewer, predicate)
 
                 val uuidLookup: ReadResult<User?> = client.users.findById(viewer, UUID.randomUUID())
-                val explicit: PendingCreateMutation<Viewer, SessionCreateDraft, Session> = client.sessions.create(id = "session") { token = "new" }
-                val explicitUpdate: PendingUpdateMutation<Viewer, SessionUpdateDraft, Session> = client.sessions.update(id = "session") { token = "changed" }
+                val explicit: PendingCreateMutation<AppViewer, SessionCreateDraft, Session> = client.sessions.create(id = "session") { token = "new" }
+                val explicitUpdate: PendingUpdateMutation<AppViewer, SessionUpdateDraft, Session> = client.sessions.update(id = "session") { token = "changed" }
                 val explicitLookup: ReadResult<Session?> = client.sessions.findById(viewer, "session")
                 val explicitDelete: MutationResult<Boolean> = client.sessions.deleteById(viewer, "session")
                 val explicitBulkDelete: MutationResult<Int> = client.sessions.deleteMany(viewer)
             }
 
-            fun useBoth(client: EntClient, viewer: ViewerContext<Viewer>, predicate: Predicate<Car>) {
+            fun useBoth(client: EntClient, viewer: ViewerContext<AppViewer>, predicate: Predicate<Car>) {
                 useRepositories(client, viewer, predicate)
                 client.withTransaction { tx -> useRepositories(tx, viewer, predicate) }
             }
@@ -87,7 +87,7 @@ class GeneratedRepositoryCompileTest {
     fun `generated repositories do not expose delete by entity on root or transaction clients`() {
         val result = compile(
             """
-            fun invalid(client: EntClient, viewer: ViewerContext<Viewer>, car: Car, session: Session) {
+            fun invalid(client: EntClient, viewer: ViewerContext<AppViewer>, car: Car, session: Session) {
                 client.cars.delete(viewer, car)
                 client.sessions.delete(viewer, session)
                 client.withTransaction { tx ->
@@ -106,7 +106,7 @@ class GeneratedRepositoryCompileTest {
     fun `explicit ID generated repositories cannot omit the ID or create a batch`() {
         val result = compile(
             """
-            fun invalid(client: EntClient, viewer: ViewerContext<Viewer>) {
+            fun invalid(client: EntClient, viewer: ViewerContext<AppViewer>) {
                 client.sessions.create { token = "missing ID" }
                 client.sessions.createMany(viewer, { token = "unsupported" })
             }
@@ -153,7 +153,7 @@ class GeneratedRepositoryCompileTest {
 
         val result = compile(
             """
-            fun useResult(client: EntClient, viewer: ViewerContext<Viewer>) {
+            fun useResult(client: EntClient, viewer: ViewerContext<AppViewer>) {
                 val created: MutationResult<List<com.example.ent.Result>> = client.results.createMany(viewer, {})
             }
             """.trimIndent(),

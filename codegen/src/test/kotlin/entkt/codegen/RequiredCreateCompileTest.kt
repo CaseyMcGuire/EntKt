@@ -66,7 +66,7 @@ class RequiredCreateCompileTest {
     ): JvmCompilationResult {
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = EntGenerator("com.example.ent").generate(schemas.map(::SchemaInput))
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(schemas.map(::SchemaInput))
         val application = SourceFile.kotlin(
             "Application.kt",
             """
@@ -76,7 +76,7 @@ class RequiredCreateCompileTest {
             import entkt.runtime.driver.DatabaseDriver
             import entkt.runtime.driver.NoopDriver
             import entkt.runtime.mutation.PendingCreateMutation
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
             import entkt.types.Bytes
             import java.time.DayOfWeek
@@ -92,8 +92,8 @@ class RequiredCreateCompileTest {
     fun `required parameters and the original DSL coexist on root and transaction clients`() {
         val result = compile(
             """
-            fun use(client: EntClientScope, viewer: ViewerContext<Viewer>) {
-                val pending: PendingCreateMutation<Viewer, RecordCreateDraft, Record> =
+            fun use(client: EntClientScope, viewer: ViewerContext<AppViewer>) {
+                val pending: PendingCreateMutation<AppViewer, RecordCreateDraft, Record> =
                     client.records.create(title = "Typed", ownerId = 7L)
                 pending.saveAndLoad(viewer)
                 client.records.create(ownerId = 7L, title = "Configured") {
@@ -108,7 +108,7 @@ class RequiredCreateCompileTest {
                 client.records.create(block = { title = "Named block"; ownerId = 7L })
             }
 
-            fun useBoth(client: EntClient, viewer: ViewerContext<Viewer>) {
+            fun useBoth(client: EntClient, viewer: ViewerContext<AppViewer>) {
                 use(client, viewer)
                 client.withTransaction { tx -> use(tx, viewer) }
             }

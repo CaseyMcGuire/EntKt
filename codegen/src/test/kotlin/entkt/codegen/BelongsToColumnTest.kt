@@ -99,7 +99,7 @@ class BelongsToColumnTest {
 
     @Test
     fun `generated reads writes and named index helpers preserve Kotlin ID names with literal columns`() {
-        val generated = EntGenerator("com.example.ent").generate(schemas().map(::SchemaInput))
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(schemas().map(::SchemaInput))
         val application = SourceFile.kotlin(
             "Application.kt",
             """
@@ -107,7 +107,7 @@ class BelongsToColumnTest {
             package com.example.app
             import com.example.ent.*
             import entkt.runtime.driver.NoopDriver
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
             import java.util.UUID
 

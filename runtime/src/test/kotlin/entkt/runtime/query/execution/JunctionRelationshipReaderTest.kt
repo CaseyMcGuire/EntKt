@@ -11,7 +11,7 @@ import entkt.runtime.driver.NoopDriver
 import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacy.ViewerContext
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EdgeSelection
 import entkt.runtime.query.EdgeStep
@@ -140,7 +140,7 @@ class JunctionRelationshipReaderTest {
         }
     }
 
-    private val viewerContext: ViewerContext<Viewer> = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext: ViewerContext<TestViewer> = ViewerContext.AsViewer(TestViewer.User(7L))
     private val targetPath = listOf(EdgeStep(Source::class, "targets", Target::class))
     private val relationshipContext = RelationshipReadContext(
         viewerContext = viewerContext,
@@ -166,7 +166,7 @@ class JunctionRelationshipReaderTest {
                 ),
             ),
         )
-        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
         val reader = reader(driver, contexts)
         val relationship = reader.loadRelationship(
             selection = EdgeSelection(
@@ -193,7 +193,7 @@ class JunctionRelationshipReaderTest {
         assertEquals(listOf(null, null), driver.calls.map { it.offset })
         assertEquals(
             listOf(ReadOperation.EAGER_JUNCTION, ReadOperation.EAGER_LOAD),
-            contexts.map(QueryContext<Viewer>::operation),
+            contexts.map(QueryContext<TestViewer>::operation),
         )
         assertTrue(contexts.all { it.edgeName == "targets" && it.path == targetPath })
     }
@@ -201,7 +201,7 @@ class JunctionRelationshipReaderTest {
     @Test
     fun `empty source batch still compiles both interceptor stages without database reads`() {
         val driver = RowsDriver(rows = emptyMap())
-        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
         val reader = reader(driver, contexts)
 
         val relationship = reader.loadRelationship(
@@ -220,15 +220,15 @@ class JunctionRelationshipReaderTest {
         assertEquals(emptyList(), driver.calls)
         assertEquals(
             listOf(ReadOperation.EAGER_JUNCTION, ReadOperation.EAGER_LOAD),
-            contexts.map(QueryContext<Viewer>::operation),
+            contexts.map(QueryContext<TestViewer>::operation),
         )
     }
 
     private fun reader(
         driver: DatabaseDriver,
-        contexts: MutableList<QueryContext<Viewer>>,
-    ): JunctionRelationshipReader<Viewer> {
-        val interceptors = EntInterceptorsConfig<Viewer>().apply {
+        contexts: MutableList<QueryContext<TestViewer>>,
+    ): JunctionRelationshipReader<TestViewer> {
+        val interceptors = EntInterceptorsConfig<TestViewer>().apply {
             addEntity<Membership>("memberships", "junction") { _, context -> contexts += context }
             addEntity<Target>("targets", "target") { _, context -> contexts += context }
         }

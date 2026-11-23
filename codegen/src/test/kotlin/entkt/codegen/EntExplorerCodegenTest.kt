@@ -46,7 +46,7 @@ class EntExplorerCodegenTest {
         val all = listOfNotNull<EntSchema>(user, post, extra)
         val registry = all.associateBy { it::class }
         all.forEach { it.finalize(registry) }
-        return EntGenerator("com.example.ent", generateEntExplorer = generateEntExplorer)
+        return EntGenerator("com.example.ent", TEST_VIEWER_TYPE, generateEntExplorer = generateEntExplorer)
             .generate(all.map { SchemaInput(it) })
             .associate {
                 val source = it.toString()
@@ -168,7 +168,7 @@ class EntExplorerCodegenTest {
     @Test
     fun `generated entity list contains every adapter without a registry wrapper`() {
         val registry = gen(generateEntExplorer = true).getValue("GeneratedEntExplorerRegistry")
-        assertTrue("val GeneratedEntExplorerRegistry: List<EntExplorerEntity<EntClient>>" in registry, registry)
+        assertTrue("val GeneratedEntExplorerRegistry: List<EntExplorerEntity<AppViewer, EntClient>>" in registry, registry)
         assertTrue("listOf(ExplorerUserExplorerEntity, ExplorerPostExplorerEntity)" in registry, registry)
         assertFalse("object GeneratedEntExplorerRegistry" in registry, registry)
         assertFalse("withViewerContext" in registry, registry)

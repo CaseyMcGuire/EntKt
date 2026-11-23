@@ -11,7 +11,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.LoadDenialOrigin
 import entkt.runtime.result.ReadResult
@@ -58,7 +57,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewerContext: ViewerContext<Viewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
+        viewerContext: ViewerContext<TestViewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
     ): EntClient {
         this.viewerContext = viewerContext
@@ -120,7 +119,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `findById returns Failed with a Root denial carrying exactly one keyed denial`() {
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         val result = client.articles.findById(viewerContext, article.id)
@@ -137,7 +136,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `getOrThrow throws the exact stored exception instance on denial`() {
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         val result = client.articles.findById(viewerContext, article.id)
@@ -170,7 +169,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `visibleOrNull maps Root LOAD denial to Success(null)`() {
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         // Invisibility and absence both collapse to null; a caller that
@@ -182,7 +181,7 @@ class ByIdResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `visibleOrNull leaves non-privacy failures unchanged`() {
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         val failed = assertIs<ReadResult.Failed>(client.articles.findById(viewerContext, article.id))

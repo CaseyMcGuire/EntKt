@@ -16,7 +16,7 @@ class ImmutableQueryCompileTest {
         val schemas = listOf(Car(), User())
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = EntGenerator("com.example.ent").generate(schemas.map(::SchemaInput))
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(schemas.map(::SchemaInput))
         val optIn = if (internal) "@file:OptIn(entkt.query.EntktInternal::class)" else ""
         val application = SourceFile.kotlin(
             "Application.kt",
@@ -30,7 +30,7 @@ class ImmutableQueryCompileTest {
             import entkt.query.OrderField
             import entkt.runtime.driver.DatabaseDriver
             import entkt.runtime.driver.NoopDriver
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
             import entkt.runtime.query.EdgeLoad
             import entkt.runtime.query.EdgeVisibility
@@ -50,7 +50,7 @@ class ImmutableQueryCompileTest {
     fun `root read-only index and traversal entries retain typed configuration blocks`() {
         val result = compile(
             """
-            fun use(client: EntClient, rules: ReadOnlyEntClient, context: ViewerContext<Viewer>) {
+            fun use(client: EntClient, rules: ReadOnlyEntClient, context: ViewerContext<AppViewer>) {
                 val base: UserQuery = client.users.query { where(User.active.eq(true)); limit(10) }
                 val refined: UserQuery = base.configure { offset(5); loadCars { limit(2) }.filterVisible() }
                 val page: UserQuery = base.limit(3).offset(1)
@@ -72,7 +72,7 @@ class ImmutableQueryCompileTest {
     fun `configuration scopes do not expose terminals or traversal and queries do not expose loads`() {
         val result = compile(
             """
-            fun invalid(client: EntClient, context: ViewerContext<Viewer>) {
+            fun invalid(client: EntClient, context: ViewerContext<AppViewer>) {
                 client.users.query { all(context) }
                 client.users.query { queryCars() }
                 client.users.query { loadCars { firstOrNull(context) } }

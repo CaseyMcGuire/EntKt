@@ -37,7 +37,7 @@ class NamedIndexHelperGeneratorTest {
 
     private fun output(schema: EntSchema): String {
         finalized(schema)
-        return IndexHelperGenerator("com.example.ent").generate("Record", schema)!!.toString()
+        return IndexHelperGenerator("com.example.ent", TEST_VIEWER).generate("Record", schema)!!.toString()
             .replace("\\s+".toRegex(), " ")
     }
 
@@ -48,7 +48,7 @@ class NamedIndexHelperGeneratorTest {
         finalized(problem, testCase)
         val names = mapOf(problem to "Problem", testCase to "TestCase")
         for (surface in QuerySurface.entries) {
-            val out = IndexHelperGenerator("com.example.ent", surface)
+            val out = IndexHelperGenerator("com.example.ent", TEST_VIEWER, surface)
                 .generate("TestCase", testCase, names)!!.toString().replace("\\s+".toRegex(), " ")
             assertContains(out, "fun byProblemAndPosition(problemId: Long, position: Int): ProblemIdPosition")
             assertContains(out, "= this.problemId(problemId).position(position)")
@@ -56,7 +56,7 @@ class NamedIndexHelperGeneratorTest {
             assertContains(out, "= this.problemId(problemId).label(label)")
             assertContains(out, "fun problemId(problemId: Long)")
             assertContains(out, "fun position(position: Int)")
-            assertContains(out, "fun find(viewerContext: ViewerContext<Viewer>): ReadResult<TestCase?>")
+            assertContains(out, "fun find(viewerContext: ViewerContext<AppViewer>): ReadResult<TestCase?>")
             assertFalse("fun byLabel(" in out, out)
             assertFalse("driver.query" in out, out)
             assertEquals(1, out.split("class ProblemId internal").size - 1, out)
@@ -94,7 +94,7 @@ class NamedIndexHelperGeneratorTest {
         val record = Record()
         val problem = Problem()
         finalized(record, problem)
-        val out = IndexHelperGenerator("com.example.ent")
+        val out = IndexHelperGenerator("com.example.ent", TEST_VIEWER)
             .generate("Record", record, mapOf(record to "Record", problem to "Problem"))!!.toString()
         assertContains(out, "fun byWriter(writer: Long): Writer")
         assertContains(out, "= this.writer(writer)")
@@ -125,7 +125,7 @@ class NamedIndexHelperGeneratorTest {
         val problem = Problem()
         finalized(record, problem)
         val error = assertFailsWith<IllegalStateException> {
-            IndexHelperGenerator("com.example.ent")
+            IndexHelperGenerator("com.example.ent", TEST_VIEWER)
                 .generate("Record", record, mapOf(record to "Record", problem to "Problem"))
         }
         assertContains(error.message!!, "collides with column helper 'problemId'")

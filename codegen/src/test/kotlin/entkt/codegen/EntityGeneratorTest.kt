@@ -678,7 +678,7 @@ class SensitiveColumnMetadataTest {
     fun `sensitive fields are stamped into the SCHEMA literal, non-sensitive are not`() {
         val s = Vault()
         s.finalize(mapOf(s::class to s))
-        val entity = EntGenerator("com.example.ent")
+        val entity = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(s)))
             .first { it.name == "Vault" }
             .toString()

@@ -51,7 +51,7 @@ class HasOneRequiredTest {
 
     @Test
     fun `compiled generated metadata matches the migration schema`() {
-        val generated = EntGenerator("com.example.ent").generate(inputs())
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(inputs())
         val application = SourceFile.kotlin(
             "Application.kt",
             """

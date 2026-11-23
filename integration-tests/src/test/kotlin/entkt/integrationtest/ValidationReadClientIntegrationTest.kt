@@ -17,7 +17,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.requireLoaded
 import entkt.runtime.result.EntPrivacyDeniedException
@@ -151,7 +150,7 @@ private object EdgeCheckedArticlePolicy : EntityPolicy<Article, ArticlePolicySco
  * in `codegen`'s `ValidationReadClientCompileTest`.
  */
 class ValidationReadClientIntegrationTest : PostgresTestBase() {
-    private val anonymousViewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
+    private val anonymousViewerContext = ViewerContext.AsViewer(TestViewer.Anonymous)
 
     private fun freshClient(config: EntClientConfig.() -> Unit): EntClient =
         EntClient(resetAndDriver(), config)
@@ -179,7 +178,7 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
             }
         }
         val client = freshClient { policies { users(policy) } }
-        val operationContext = ViewerContext.AsViewer(Viewer.User("shared-read-client-test"))
+        val operationContext = ViewerContext.AsViewer(TestViewer.User("shared-read-client-test"))
 
         client.users.create { name = "Alice"; email = "alice@test.com" }
             .save(operationContext)
@@ -318,8 +317,8 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `read interceptors run for validator queries and observe the bypass context`() {
-        val seenContexts = mutableListOf<ViewerContext<Viewer>>()
-        val recorder = QueryInterceptor<Viewer, User> { _, context -> seenContexts.add(context.viewerContext) }
+        val seenContexts = mutableListOf<ViewerContext<TestViewer>>()
+        val recorder = QueryInterceptor<TestViewer, User> { _, context -> seenContexts.add(context.viewerContext) }
 
         val client = freshClient {
 

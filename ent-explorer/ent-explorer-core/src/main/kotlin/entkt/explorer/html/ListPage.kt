@@ -8,7 +8,7 @@ import kotlinx.html.h1
 import kotlinx.html.span
 
 internal fun listPage(
-    entity: EntExplorerEntity<*>,
+    entity: EntExplorerEntity<*, *>,
     columns: List<EntExplorerColumn>,
     rows: List<EntExplorerRow>,
     ctx: ListContext,

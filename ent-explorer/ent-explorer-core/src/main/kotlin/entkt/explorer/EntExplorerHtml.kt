@@ -29,23 +29,23 @@ internal class EntExplorerHtml(basePath: String) {
     fun error(status: Int, message: String): EntExplorerResponse =
         errorPage(status, message, urls)
 
-    fun home(entities: List<EntExplorerEntity<*>>): EntExplorerResponse =
+    fun home(entities: List<EntExplorerEntity<*, *>>): EntExplorerResponse =
         homePage(entities, urls)
 
-    fun entityIndex(entities: List<EntExplorerEntity<*>>): EntExplorerResponse =
+    fun entityIndex(entities: List<EntExplorerEntity<*, *>>): EntExplorerResponse =
         entityIndexPage(entities, urls)
 
     fun schemaIndex(matches: List<SchemaMatch>, q: String): EntExplorerResponse =
         schemaIndexPage(matches, q, urls)
 
     fun schemaDetail(
-        entity: EntExplorerEntity<*>,
+        entity: EntExplorerEntity<*, *>,
         columns: List<EntExplorerColumn>,
         visibleRoutes: Set<String>,
     ): EntExplorerResponse = schemaDetailPage(entity, columns, visibleRoutes, urls)
 
     fun listPage(
-        entity: EntExplorerEntity<*>,
+        entity: EntExplorerEntity<*, *>,
         columns: List<EntExplorerColumn>,
         rows: List<EntExplorerRow>,
         filters: List<EntExplorerFilter>,
@@ -65,7 +65,7 @@ internal class EntExplorerHtml(basePath: String) {
     )
 
     fun detailPage(
-        entity: EntExplorerEntity<*>,
+        entity: EntExplorerEntity<*, *>,
         columns: List<EntExplorerColumn>,
         row: EntExplorerRow,
         visibleRoutes: Set<String>,

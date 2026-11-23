@@ -31,7 +31,7 @@ private fun finalize(vararg schemas: EntSchema) {
 
 class UpdateGeneratorTest {
 
-    private val generator = UpdateGenerator("com.example.ent")
+    private val generator = UpdateGenerator("com.example.ent", TEST_VIEWER)
 
     @Test
     fun `long owner value assignment never wraps before equals`() {
@@ -159,12 +159,12 @@ class UpdateGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        val repo = RepoGenerator("com.example.ent").generate("User", user).toString()
+        val repo = RepoGenerator("com.example.ent", TEST_VIEWER).generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
         assert(repo.contains("adapter = UserUpdateAdapter(driver, client.hookClientScopeForInternalUse)"))
         assert(
             output.contains(
-                "override fun toBeforeUpdateState( viewerContext: ViewerContext<Viewer>, before: User, pendingEdges: UserPendingEdgeOps, beforeSaveState: UserBeforeSaveState, ): UserBeforeUpdateState = UserBeforeUpdateState(",
+                "override fun toBeforeUpdateState( viewerContext: ViewerContext<AppViewer>, before: User, pendingEdges: UserPendingEdgeOps, beforeSaveState: UserBeforeSaveState, ): UserBeforeUpdateState = UserBeforeUpdateState(",
             ),
         )
         assert(output.contains("name = beforeSaveState.name"))
@@ -870,9 +870,9 @@ class UpdateGeneratorTest {
         assert(output.contains("UpdatePreparation<M2MPostUpdateRuleInput, M2MPostWriteCandidate>")) {
             "Preparation should expose the typed candidate alongside the rule input\n$output"
         }
-        val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
+        val repo = RepoGenerator("com.example.ent", TEST_VIEWER).generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
-        assert(output.contains("UpdateMutationHookStateConverter<Viewer, M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostBeforeSaveState, M2MPostBeforeUpdateState>") &&
+        assert(output.contains("UpdateMutationHookStateConverter<AppViewer, M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostBeforeSaveState, M2MPostBeforeUpdateState>") &&
             repo.contains("adapter = M2MPostUpdateAdapter(driver, client.hookClientScopeForInternalUse)")) {
             "One schema adapter should implement both runtime preparation and hook-state conversion contracts\n$output"
         }
@@ -975,7 +975,7 @@ class UpdateGeneratorTest {
         assert(output.contains("override fun capturePendingEdges(draft: M2MPostUpdateDraft): M2MPostPendingEdgeOps = draft._buildPendingEdgeOps()")) {
             "the capture adapter should return the snapshot to runtime\n$output"
         }
-        val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
+        val repo = RepoGenerator("com.example.ent", TEST_VIEWER).generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
         assert(repo.contains("adapter = M2MPostUpdateAdapter(driver, client.hookClientScopeForInternalUse)")) {
             "The repository should inject the typed adapter into the operation\n$repo"

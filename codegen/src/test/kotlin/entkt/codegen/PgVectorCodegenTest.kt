@@ -26,7 +26,7 @@ class PgVectorCodegenTest {
     private fun gen(): Map<String, String> {
         val s = VecArticle()
         finalizeVec(s)
-        return EntGenerator("com.example.ent")
+        return EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(s)))
             .associate { it.name to it.toString().replace("\\s+".toRegex(), " ") }
     }

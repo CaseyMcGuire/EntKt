@@ -21,10 +21,10 @@ import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.ColumnDescriptor
 import entkt.codegen.metadata.FIELD_TYPE
-import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.columnMetadataFor
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.resolveEdgeJoin
+import entkt.codegen.metadata.viewerContextType
 import entkt.schema.EdgeKind
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
@@ -57,7 +57,11 @@ private val VISIBLE_OR_NULL = com.squareup.kotlinpoet.MemberName("entkt.runtime.
  * When the flag is off (the default) no explorer files are emitted and the
  * application needs no `io.entkt:ent-explorer-core` dependency.
  */
-internal class EntExplorerGenerator(private val packageName: String) {
+internal class EntExplorerGenerator(
+    private val packageName: String,
+    private val viewer: ClassName,
+) {
+    private val viewerContext = viewerContextType(viewer)
 
     fun generate(schemas: List<SchemaInput>, schemaNames: Map<EntSchema, String>): List<FileSpec> {
         val files = schemas.map { generateAdapter(it, schemaNames) }
@@ -76,7 +80,7 @@ internal class EntExplorerGenerator(private val packageName: String) {
         val columns = columnMetadataFor(schema, schemaNames)
 
         val type = objectType(objectName) {
-            addSuperinterface(EXPLORER_ENTITY.parameterizedBy(clientClass))
+            addSuperinterface(EXPLORER_ENTITY.parameterizedBy(viewer, clientClass))
             property("schema", ClassName("entkt.runtime.driver", "EntitySchema")) {
                 addModifiers(KModifier.OVERRIDE)
                 initializer("%T.SCHEMA", entityClass)
@@ -279,7 +283,7 @@ internal class EntExplorerGenerator(private val packageName: String) {
         return function("list", EXPLORER_LIST_RESULT) {
             addModifiers(KModifier.OVERRIDE)
             parameter("client", clientClass)
-            parameter("viewerContext", VIEWER_CONTEXT)
+            parameter("viewerContext", viewerContext)
             parameter("request", EXPLORER_LIST_REQUEST)
             addCode(body)
         }
@@ -303,7 +307,7 @@ internal class EntExplorerGenerator(private val packageName: String) {
         return function("get", EXPLORER_ROW.copy(nullable = true)) {
             addModifiers(KModifier.OVERRIDE)
             parameter("client", clientClass)
-            parameter("viewerContext", VIEWER_CONTEXT)
+            parameter("viewerContext", viewerContext)
             parameter("id", String::class.asTypeName())
             addCode(codeBlock {
                 // Unparseable id, missing row, and privacy-denied row all return null.
@@ -389,7 +393,7 @@ internal class EntExplorerGenerator(private val packageName: String) {
             property(
                     "GeneratedEntExplorerRegistry",
                     ClassName("kotlin.collections", "List")
-                        .parameterizedBy(EXPLORER_ENTITY.parameterizedBy(clientClass)),
+                        .parameterizedBy(EXPLORER_ENTITY.parameterizedBy(viewer, clientClass)),
                 ) {
                 initializer("listOf(%L)", entityList)
             }

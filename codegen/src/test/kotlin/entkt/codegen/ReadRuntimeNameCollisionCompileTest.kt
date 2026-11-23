@@ -22,10 +22,25 @@ class ReadRuntimeNameCollisionCompileTest {
         override fun id() = EntId.long()
     }
 
+    private class Entity : EntSchema("entity_rows", clientName = "entityRows") {
+        override fun id() = EntId.long()
+    }
+
+    @Test
+    fun `a schema named after the dispatcher's type parameter still compiles`() {
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
+            .generate(listOf(SchemaInput(Entity())))
+            .toCompileTestSources()
+
+        val result = compileSources(generated)
+
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode, result.messages)
+    }
+
     @Test
     fun `client names matching dispatcher parameters compile and reach their own privacy rules`() {
         val schemas = listOf(Item(), Record(), Document())
-        val generated = EntGenerator("com.example.ent")
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(schemas.map(::SchemaInput))
             .toCompileTestSources()
         val probe = SourceFile.kotlin(
@@ -38,13 +53,13 @@ class ReadRuntimeNameCollisionCompileTest {
             import entkt.runtime.driver.NoopDriver
             import entkt.runtime.privacy.EntityPolicy
             import entkt.runtime.privacy.PrivacyDecision
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
 
             object ReadRuntimeNameCollisionProbe {
                 @JvmStatic
                 fun run(): String {
-                    val viewer = ViewerContext.AsViewer(Viewer.User(7L))
+                    val viewer = ViewerContext.AsViewer(AppViewer(userId = java.util.UUID(0L, 7L)))
                     val calls = mutableListOf<String>()
                     val client = EntClient(NoopDriver) {
                         policies {

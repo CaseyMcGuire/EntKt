@@ -11,22 +11,22 @@ import kotlin.test.assertFails
 import kotlin.test.assertSame
 
 class ContextPrivacyRuleTest {
-    private val context = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7)), TestRuleClient())
+    private val context = PrivacyRuleContext(ViewerContext.AsViewer(TestViewer.User(7)), TestRuleClient())
 
     @Test
     fun `one rule accepts different item types without capturing a viewer or client`() {
-        val seen = mutableListOf<PrivacyRuleContext<Viewer, EntRuleClient>>()
-        val shared = ContextPrivacyRule<Viewer, EntRuleClient> { received ->
+        val seen = mutableListOf<PrivacyRuleContext<TestViewer, EntRuleClient>>()
+        val shared = ContextPrivacyRule<TestViewer, EntRuleClient> { received ->
             seen += received
-            if (received.viewerContext.viewer is Viewer.Anonymous) {
+            if (received.viewerContext.viewer is TestViewer.Anonymous) {
                 PrivacyDecision.Deny("authentication required")
             } else {
                 PrivacyDecision.Allow
             }
         }
-        val numbers: PrivacyRule<Viewer, TestRuleClient, Int> = shared
-        val strings: PrivacyRule<Viewer, TestRuleClient, String> = shared
-        val anonymous = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.Anonymous), TestRuleClient())
+        val numbers: PrivacyRule<TestViewer, TestRuleClient, Int> = shared
+        val strings: PrivacyRule<TestViewer, TestRuleClient, String> = shared
+        val anonymous = PrivacyRuleContext(ViewerContext.AsViewer(TestViewer.Anonymous), TestRuleClient())
 
         assertEquals(0, seen.size, "registration must not evaluate or cache a decision")
         assertSame(shared, numbers)
@@ -43,7 +43,7 @@ class ContextPrivacyRuleTest {
     fun `context rules share registration order and per-item short circuiting with scalar and batch rules`() {
         var contextCalls = 0
         val reachedScalar = mutableListOf<Int>()
-        val shared = ContextPrivacyRule<Viewer, TestRuleClient> { received ->
+        val shared = ContextPrivacyRule<TestViewer, TestRuleClient> { received ->
             assertSame(context.viewerContext, received.viewerContext)
             assertSame(context.client, received.client)
             when (contextCalls++) {
@@ -52,7 +52,7 @@ class ContextPrivacyRuleTest {
                 else -> PrivacyDecision.Deny("context denied")
             }
         }
-        val rules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, Int>>(
+        val rules = listOf<BatchPrivacyRule<TestViewer, TestRuleClient, Int>>(
             batchPrivacyRule { _, batch ->
                 batch.decideEach { item ->
                     if (item < 0) PrivacyDecision.Deny("negative") else PrivacyDecision.Continue
@@ -83,7 +83,7 @@ class ContextPrivacyRuleTest {
     @Test
     fun `duplicate items each invoke the context rule without caching decisions`() {
         var calls = 0
-        val rule = ContextPrivacyRule<Viewer, TestRuleClient> {
+        val rule = ContextPrivacyRule<TestViewer, TestRuleClient> {
             calls++
             if (calls == 2) PrivacyDecision.Deny("changed permission") else PrivacyDecision.Allow
         }
@@ -99,8 +99,8 @@ class ContextPrivacyRuleTest {
 
     @Test
     fun `empty batches and earlier decisive rules do not invoke the context rule`() {
-        val unreachable = ContextPrivacyRule<Viewer, TestRuleClient> { error("must not run") }
-        val rules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, Int>>(
+        val unreachable = ContextPrivacyRule<TestViewer, TestRuleClient> { error("must not run") }
+        val rules = listOf<BatchPrivacyRule<TestViewer, TestRuleClient, Int>>(
             denyIf("denied") { _, item -> item < 0 },
             allowIf { _, _ -> true },
             unreachable,
@@ -112,9 +112,9 @@ class ContextPrivacyRuleTest {
 
     @Test
     fun `a context rule that continues does not grant access`() {
-        val rule = ContextPrivacyRule<Viewer, TestRuleClient> { PrivacyDecision.Continue }
+        val rule = ContextPrivacyRule<TestViewer, TestRuleClient> { PrivacyDecision.Continue }
         val items = listOf(7)
-        val evaluation = loadEvaluator("test", listOf<BatchPrivacyRule<Viewer, TestRuleClient, Int>>(rule))
+        val evaluation = loadEvaluator("test", listOf<BatchPrivacyRule<TestViewer, TestRuleClient, Int>>(rule))
             .evaluate(context.viewerContext, context.client, items)
 
         assertEquals(emptyList(), evaluation.allowedSubjects())
@@ -124,7 +124,7 @@ class ContextPrivacyRuleTest {
     @Test
     fun `exceptions cancellation and fatal errors propagate unchanged`() {
         for (failure in listOf(IllegalStateException("failed"), CancellationException("cancelled"), AssertionError("fatal"))) {
-            val rule = ContextPrivacyRule<Viewer, TestRuleClient> { throw failure }
+            val rule = ContextPrivacyRule<TestViewer, TestRuleClient> { throw failure }
 
             assertSame(failure, assertFails { rule.run(context) })
             assertSame(failure, assertFails { evaluate(listOf(7), listOf(rule)) })
@@ -133,7 +133,7 @@ class ContextPrivacyRuleTest {
 
     private fun evaluate(
         items: List<Int>,
-        rules: List<BatchPrivacyRule<Viewer, TestRuleClient, Int>>,
+        rules: List<BatchPrivacyRule<TestViewer, TestRuleClient, Int>>,
     ): List<PrivacyDecision> = evaluateLoadDecisions(
         entityName = "test",
         items = items,

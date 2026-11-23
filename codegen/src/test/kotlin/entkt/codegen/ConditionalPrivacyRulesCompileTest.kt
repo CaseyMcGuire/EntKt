@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
 
 class ConditionalPrivacyRulesCompileTest {
     private fun compile(registration: String): JvmCompilationResult {
-        val generated = EntGenerator("com.example.ent")
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(Car()), SchemaInput(User())))
             .toCompileTestSources()
         val policy = SourceFile.kotlin(
@@ -21,6 +21,7 @@ class ConditionalPrivacyRulesCompileTest {
             package com.example.app
 
             import com.example.ent.*
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.*
 
             object UserPolicy : EntityPolicy<User, UserPolicyScope> {
@@ -41,11 +42,11 @@ class ConditionalPrivacyRulesCompileTest {
             """
             load(
                 denyIf("Authentication required") { context, _ ->
-                    context.viewerContext.viewer is Viewer.Anonymous
+                    context.viewer.userId == null
                 },
                 allowIf { context, user ->
                     val client: ReadOnlyEntClient = context.client
-                    context.viewerContext.userIdOrNull() == user.id
+                    context.viewer.userId == user.id
                 },
             )
             create(allowIf { context, candidate ->
@@ -61,7 +62,7 @@ class ConditionalPrivacyRulesCompileTest {
             delete(allowIf { context, input ->
                 val client: ReadOnlyEntClient = context.client
                 val typed: UserDeleteRuleInput = input
-                context.viewerContext.userIdOrNull() == typed.entity.id
+                context.viewer.userId == typed.entity.id
             })
             """.trimIndent(),
         )
@@ -72,8 +73,8 @@ class ConditionalPrivacyRulesCompileTest {
     @Test
     fun `helpers for another entity cannot register`() {
         val helpers = listOf(
-            "allowIf<Viewer, ReadOnlyEntClient, Car>",
-            "denyIf<Viewer, ReadOnlyEntClient, Car>(\"denied\")",
+            "allowIf<AppViewer, ReadOnlyEntClient, Car>",
+            "denyIf<AppViewer, ReadOnlyEntClient, Car>(\"denied\")",
         )
         for (helper in helpers) {
             val result = compile("load($helper { _, _ -> true })")

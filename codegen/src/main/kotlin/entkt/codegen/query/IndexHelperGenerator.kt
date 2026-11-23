@@ -29,7 +29,7 @@ import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
-import entkt.codegen.metadata.VIEWER_CONTEXT
+import entkt.codegen.metadata.viewerContextType
 import entkt.schema.ColumnStorage
 import entkt.schema.EntSchema
 import entkt.schema.FieldType
@@ -442,8 +442,10 @@ internal fun indexHelperPathsByName(
  */
 internal class IndexHelperGenerator(
     private val packageName: String,
+    viewer: ClassName,
     private val surface: QuerySurface = QuerySurface.Full,
 ) {
+    private val viewerContext = viewerContextType(viewer)
     fun generate(
         schemaName: String,
         schema: EntSchema,
@@ -608,7 +610,7 @@ internal class IndexHelperGenerator(
             function(name, returnType = returns) {
                 parameter(
                     "viewerContext",
-                    VIEWER_CONTEXT,
+                    viewerContext,
                 )
                 seedStatements(this)
                 statement("return q.%L(viewerContext)", call)

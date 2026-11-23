@@ -16,11 +16,18 @@ import java.nio.file.Path
  * tasks.register<JavaExec>("generateEntkt") {
  *     classpath = yourSchemaClasspath
  *     mainClass.set("entkt.codegen.GenerateMainKt")
- *     args(packageName, outputDir)          // optionally: args(packageName, outputDir, jsonMapper)
+ *     args(packageName, outputDir, viewerType)   // optionally followed by jsonMapper
  * }
  * ```
  *
- * Args: [packageName] [outputDir] [jsonMapper] [generateEntExplorer]
+ * Args: [packageName] [outputDir] [viewerType] [jsonMapper] [generateEntExplorer]
+ *
+ * [viewerType] (required) is the fully qualified name of the application's
+ * viewer type, a public, top-level, non-generic class or interface. Generated
+ * terminals take `ViewerContext<ThatType>`. Only the name is used here: the
+ * type is compiled with the generated sources, so a wrong name surfaces as an
+ * unresolved reference when they compile. A type named after a Kotlin built-in
+ * such as `String` or `Any` is rejected.
  *
  * [jsonMapper] (optional, default `kotlinx`) is the JSON mapper id stamped
  * into generated JSON-column metadata — `kotlinx`, `jackson`, or a
@@ -29,12 +36,26 @@ import java.nio.file.Path
  * register() cross-check at startup.
  */
 fun main(args: Array<String>) {
-    require(args.size >= 2) { "Usage: GenerateMain <packageName> <outputDir> [jsonMapper] [generateEntExplorer]" }
+    require(args.size >= 3) {
+        "Usage: GenerateMain <packageName> <outputDir> <viewerType> [jsonMapper] [generateEntExplorer]\n" +
+            "viewerType is required: the fully qualified name of the application's viewer type, " +
+            "such as com.example.auth.AppViewer"
+    }
     val packageName = args[0]
     val outputDir = Path.of(args[1])
-    val jsonMapper = args.getOrNull(2) ?: entkt.runtime.driver.JsonMapperIds.KOTLINX
-    // arg 4 (optional, default false): generate the Ent Explorer adapters and registry.
-    val generateEntExplorer = args.getOrNull(3)?.toBooleanStrictOrNull() ?: false
+    val viewerType = args[2]
+    val jsonMapper = args.getOrNull(3) ?: entkt.runtime.driver.JsonMapperIds.KOTLINX
+    // arg 5 (optional, default false): generate the Ent Explorer adapters and registry.
+    val generateEntExplorer = args.getOrNull(4)?.toBooleanStrictOrNull() ?: false
+
+    val generator = try {
+        EntGenerator(packageName, viewerType, jsonMapper, generateEntExplorer)
+    } catch (e: IllegalArgumentException) {
+        System.err.println("Invalid code generation options:")
+        System.err.println("  - ${e.message ?: e}")
+        System.exit(1)
+        return
+    }
 
     val classpath = System.getProperty("java.class.path")
         .split(File.pathSeparator)
@@ -66,7 +87,6 @@ fun main(args: Array<String>) {
     outputDir.toFile().deleteRecursively()
     outputDir.toFile().mkdirs()
 
-    val generator = EntGenerator(packageName, jsonMapper, generateEntExplorer)
     val files = generator.generate(schemas)
     files.forEach { it.writeTo(outputDir) }
 

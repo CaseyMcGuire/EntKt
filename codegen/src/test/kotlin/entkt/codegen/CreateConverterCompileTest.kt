@@ -32,7 +32,7 @@ class CreateConverterCompileTest {
         val schemas = listOf(Owner(), Record())
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = EntGenerator("com.example.ent").generate(schemas.map(::SchemaInput))
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(schemas.map(::SchemaInput))
         val probe = SourceFile.kotlin(
             "CreatePreparationProbe.kt",
             """
@@ -44,7 +44,7 @@ class CreateConverterCompileTest {
             import com.example.ent.RecordCreateDraft
             import entkt.runtime.driver.DatabaseDriver
             import entkt.runtime.driver.NoopDriver
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
             import java.time.Instant
 
@@ -53,7 +53,7 @@ class CreateConverterCompileTest {
                 fun run(): String {
                     val client = EntClient(NoopDriver)
                     val converter = RecordCreateConverter(NoopDriver, client.hookClientScopeForInternalUse)
-                    val viewer = ViewerContext.AsViewer(Viewer.User(7L))
+                    val viewer = ViewerContext.AsViewer(AppViewer(userId = java.util.UUID(0L, 7L)))
                     val fixedTime = Instant.parse("2000-01-01T00:00:00Z")
                     val draft = RecordCreateDraft("caller-id").apply {
                         title = "original"

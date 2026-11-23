@@ -13,7 +13,7 @@ transaction client safe for concurrent execution or extend its lifetime.
 ## Basic Usage
 
 ```kotlin
-val viewerContext = ViewerContext.AsViewer(Viewer.User(currentUserId()))
+val viewerContext = ViewerContext.AsViewer(AppViewer(userId = currentUserId()))
 val users = client.users.query {
     where(User.active eq true)
     orderBy(User.name.asc())
@@ -796,11 +796,12 @@ Interceptors are registered at client construction:
 val client = EntClient(driver) {
     interceptors {
         // Per-entity: narrow every Post read to the viewer's tenant.
+        // `tenantId` is a property of the application's own viewer type.
         posts(
             interceptor = QueryInterceptor { scope, ctx ->
                 when (val viewerContext = ctx.viewerContext) {
                     is ViewerContext.AsViewer -> scope.addPredicate(
-                        Post.tenantId eq viewerContext.viewer.requireTenantId(),
+                        Post.tenantId eq viewerContext.viewer.tenantId,
                     )
                     // Trusted operations read every tenant.
                     is ViewerContext.PrivacyBypass -> Unit

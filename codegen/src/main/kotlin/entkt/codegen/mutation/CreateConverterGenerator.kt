@@ -14,8 +14,7 @@ import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.scalarFields
-import entkt.codegen.metadata.VIEWER
-import entkt.codegen.metadata.VIEWER_CONTEXT
+import entkt.codegen.metadata.viewerContextType
 import entkt.schema.EntSchema
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
@@ -26,7 +25,11 @@ private val CREATE_MUTATION_HOOK_STATE_CONVERTER =
     ClassName("entkt.runtime.mutation.execution", "CreateMutationHookStateConverter")
 
 /** Schema-specific conversions only; runtime owns hook folding, lifecycle ordering, and I/O. */
-internal class CreateConverterGenerator(private val packageName: String) {
+internal class CreateConverterGenerator(
+    private val packageName: String,
+    private val viewer: ClassName,
+) {
+    private val viewerContext = viewerContextType(viewer)
     private val clientScopeClass = ClassName(packageName, "EntClientScope")
 
     fun generate(
@@ -45,7 +48,7 @@ internal class CreateConverterGenerator(private val packageName: String) {
         val mutableFields = fields.filterNot { it.immutable }
         val mutableEdgeFks = edgeFks.filterNot { it.immutable }
         val converterType = CREATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
-            VIEWER,
+            viewer,
             createDraftClass,
             entityClass,
             beforeSaveStateClass,
@@ -107,7 +110,7 @@ internal class CreateConverterGenerator(private val packageName: String) {
             }
             function("toBeforeCreateState", beforeCreateStateClass) {
                 addModifiers(KModifier.OVERRIDE)
-                parameter("viewerContext", VIEWER_CONTEXT)
+                parameter("viewerContext", viewerContext)
                 parameter("draft", createDraftClass)
                 parameter("beforeSaveState", beforeSaveStateClass)
                 addCode(codeBlock {

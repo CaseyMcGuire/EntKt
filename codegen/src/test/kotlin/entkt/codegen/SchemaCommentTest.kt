@@ -41,7 +41,7 @@ class SchemaCommentTest {
     @Test
     fun `uncommented schemas retain the default without emitting an extra argument`() {
         val inputs = listOf(SchemaInput(Uncommented()))
-        val generated = EntGenerator("com.example.ent").generate(inputs)
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(inputs)
         val entity = generated.single { it.name == "Uncommented" }.toString()
 
         assertNull(buildEntitySchemas(inputs).single().comment)
@@ -51,7 +51,7 @@ class SchemaCommentTest {
     @Test
     fun `compiled generated comments match direct metadata without interpreting their text`() {
         val inputs = listOf(SchemaInput(Commented(comment)), SchemaInput(Uncommented()))
-        val generated = EntGenerator("com.example.ent").generate(inputs)
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(inputs)
         val application = SourceFile.kotlin(
             "SchemaCommentProbe.kt",
             """

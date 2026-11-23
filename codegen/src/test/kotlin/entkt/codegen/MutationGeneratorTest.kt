@@ -27,7 +27,7 @@ class MutationGeneratorTest {
     }
 
     private fun states(schema: EntSchema): Map<String, TypeSpec> =
-        MutationGenerator("com.example.ent")
+        MutationGenerator("com.example.ent", TEST_VIEWER)
             .generate(schema::class.simpleName!!, schema)
             .associate { it.name to it.members.filterIsInstance<TypeSpec>().single() }
 

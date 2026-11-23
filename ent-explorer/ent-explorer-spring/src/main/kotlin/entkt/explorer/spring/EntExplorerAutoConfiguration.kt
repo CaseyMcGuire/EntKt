@@ -41,7 +41,7 @@ fun interface EntExplorerPrincipalResolver {
  *
  * ```kotlin
  * @Bean
- * fun entExplorer(client: EntClient): EntExplorer<EntClient> =
+ * fun entExplorer(client: EntClient): EntExplorer<AppViewer, EntClient> =
  *     EntExplorer(client, GeneratedEntExplorerRegistry) {
  *         authorize { it.principal != null }
  *         viewerContext { ... }
@@ -65,7 +65,7 @@ class EntExplorerAutoConfiguration {
 
     @Bean
     fun entExplorerRoutes(
-        explorer: EntExplorer<*>,
+        explorer: EntExplorer<*, *>,
         principalResolver: EntExplorerPrincipalResolver,
     ): RouterFunction<ServerResponse> {
         val path = explorer.path.trimEnd('/')

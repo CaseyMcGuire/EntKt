@@ -29,6 +29,34 @@ above it.
 
 ## Unreleased
 
+- **Bind generated code to an application-defined viewer type** (`runtime`, `codegen`, `gradle-plugin`, `ent-explorer`)
+  The runtime no longer defines who a viewer is. `Viewer`, `Viewer.Anonymous`,
+  `Viewer.User`, and the ID helpers `userOrNull()`, `userIdOrNull()`,
+  `stringIdOrNull()`, `intIdOrNull()`, `longIdOrNull()`, and `uuidIdOrNull()`
+  are removed. The application declares its own viewer type and names it with
+  the new, required `viewerType` option. Generated terminals, rule aliases,
+  hook states, and interceptor registration are bound to that type, so they
+  take `ViewerContext<AppViewer>`. `GenerateMain` takes `viewerType` as its
+  third argument, ahead of `jsonMapper` and `generateEntExplorer`, and
+  `EntGenerator` takes it as its second constructor parameter.
+  `ent-explorer-core` is generic over the viewer: `EntExplorer<Viewer, C>`,
+  `EntExplorerEntity<Viewer, C>`, and `EntExplorerConfig<Viewer>`. Its
+  `viewerContext { }` provider no longer defaults to an anonymous viewer;
+  constructing an `EntExplorer` without one throws `IllegalArgumentException`.
+  _Migration:_ declare a public, top-level, non-generic viewer type, such as
+  `data class AppViewer(val userId: UUID?)`, and set
+  `entkt { viewerType.set("com.example.auth.AppViewer") }`. If you run
+  `GenerateMain` directly, pass the name as the third argument and move
+  `jsonMapper` and `generateEntExplorer` to the fourth and fifth. Replace
+  `Viewer.User(id)` and `Viewer.Anonymous` with values of your type, replace
+  `Viewer` type arguments with your type
+  (`PrivacyRuleContext<AppViewer, ReadOnlyEntClient>`), and replace the ID
+  helpers with properties of your type (`context.viewer.userId`). If the ID is
+  nullable, resolve it before comparing it with a nullable column, because
+  `null == null` is true. Give every `EntExplorer` a `viewerContext { }`
+  provider, and name the viewer where you declare its type:
+  `EntExplorer<AppViewer, EntClient>`.
+
 - **Thread the viewer type through the runtime** (`runtime`, `codegen`)
   `ViewerContext` is now `ViewerContext<out Viewer : Any>`, and every runtime
   type that carries it takes `Viewer` as its first type parameter:
@@ -40,8 +68,7 @@ above it.
   Generated code binds `Viewer` to the runtime's `Viewer`, so generated
   signatures change only by that type argument and behavior is unchanged.
   `ViewerContext.PrivacyBypass` is a `ViewerContext<Nothing>` and is accepted
-  by every terminal. This is the second stage of
-  [Application-Defined Viewer](../possible-features/privacy-validation/application-defined-viewer.md).
+  by every terminal.
   _Migration:_ add `Viewer` as the first type argument wherever application
   code names one of these types: `PrivacyRuleContext<Viewer, ReadOnlyEntClient>`
   in class-style rules, `ContextPrivacyRule<Viewer, ReadOnlyEntClient>`,
@@ -60,9 +87,7 @@ above it.
   never run for a bypass, so `PrivacyRuleContext.viewerContext` is now a
   `ViewerContext.AsViewer` and `PrivacyRuleContext.viewer` exposes its viewer.
   `ValidationRuleContext.readViewerContext` is typed
-  `ViewerContext.PrivacyBypass`. Bypass behavior is unchanged. This is the
-  first stage of
-  [Application-Defined Viewer](../possible-features/privacy-validation/application-defined-viewer.md).
+  `ViewerContext.PrivacyBypass`. Bypass behavior is unchanged.
   _Migration:_ replace `ViewerContext(viewer)` with
   `ViewerContext.AsViewer(viewer)`, and
   `ViewerContext(Viewer.PrivacyBypass(reason))` with

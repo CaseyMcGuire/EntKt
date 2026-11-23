@@ -18,7 +18,6 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.query.EdgeStep
@@ -136,7 +135,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
     fun `the nested pass sees the ordered distinct union of every parent group's structural values`() {
         val driver = resetAndDriver()
         val nestedPasses = mutableListOf<Pair<List<EdgeStep>, List<Any?>>>()
-        val nestedContexts = mutableListOf<ViewerContext<Viewer>>()
+        val nestedContexts = mutableListOf<ViewerContext<TestViewer>>()
         val rootContext = testBypassContext("test")
         val client = EntClient(driver) {
 
@@ -285,7 +284,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a filterVisible-denied target does not reach the nested pass`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(999L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(999L))
         val nestedPasses = mutableListOf<List<Any?>>()
         val client = EntClient(resetAndDriver()) {
 
@@ -295,7 +294,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 users(object : EntityPolicy<User, UserPolicyScope> {
                     override fun configure(scope: UserPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<Viewer, ReadOnlyEntClient, User> { _, batch ->
+                            load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, User> { _, batch ->
                                 batch.decideEach {
                                     if (it.name == "hidden") {
                                         PrivacyDecision.Deny("member hidden")
@@ -750,7 +749,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `an independent root read does not inherit an earlier eager read's context`() {
-        val contexts = mutableListOf<entkt.runtime.query.QueryContext<Viewer>>()
+        val contexts = mutableListOf<entkt.runtime.query.QueryContext<TestViewer>>()
         val client = EntClient(resetAndDriver()) {
 
             interceptors {
@@ -818,7 +817,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `nested privacy rules receive one ordered distinct union batch per logical edge step`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(999L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(999L))
         val invocations = mutableListOf<List<String>>()
         val driver = resetAndDriver()
         val client = EntClient(driver) {
@@ -829,7 +828,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 articles(object : EntityPolicy<Article, ArticlePolicyScope> {
                     override fun configure(scope: ArticlePolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Article> { _, batch ->
+                            load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, Article> { _, batch ->
                                 invocations += batch.map { it.title }
                                 batch.decideEach { PrivacyDecision.Allow }
                             })
@@ -861,7 +860,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a strict nested denial projects the first denial from the union batch with the full path`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(999L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(999L))
         val driver = resetAndDriver()
         val client = EntClient(driver) {
 
@@ -871,7 +870,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 articles(object : EntityPolicy<Article, ArticlePolicyScope> {
                     override fun configure(scope: ArticlePolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Article> { _, batch ->
+                            load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, Article> { _, batch ->
                                 batch.decideEach {
                                     if (it.title.startsWith("secret")) {
                                         PrivacyDecision.Deny("article hidden")
@@ -934,7 +933,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 users(object : EntityPolicy<User, UserPolicyScope> {
                     override fun configure(scope: UserPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<Viewer, ReadOnlyEntClient, User> { _, batch ->
+                            load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, User> { _, batch ->
                                 userPrivacyBatches += batch.map { it.name }
                                 batch.decideEach { PrivacyDecision.Allow }
                             })
@@ -944,7 +943,7 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
                 articles(object : EntityPolicy<Article, ArticlePolicyScope> {
                     override fun configure(scope: ArticlePolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Article> { _, batch ->
+                            load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, Article> { _, batch ->
                                 articlePrivacyBatches += batch.map { it.title }
                                 batch.decideEach { PrivacyDecision.Allow }
                             })

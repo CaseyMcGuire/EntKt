@@ -12,7 +12,7 @@ import entkt.runtime.entity.EntEntity
 import entkt.runtime.entity.EntityMapping
 import entkt.runtime.privacyEvaluation
 import entkt.runtime.privacy.PrivacyEvaluation
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.result.ReadResult
@@ -63,12 +63,12 @@ class EntityQueryBuilderTest {
         }
     }
 
-    private class RecordingHost : ReadQueryExecutionHost<Viewer> {
+    private class RecordingHost : ReadQueryExecutionHost<TestViewer> {
         var guardCalls: Int = 0
-        val interceptorContexts: MutableList<QueryContext<Viewer>> = mutableListOf()
-        val loadViewerContexts: MutableList<ViewerContext<Viewer>> = mutableListOf()
+        val interceptorContexts: MutableList<QueryContext<TestViewer>> = mutableListOf()
+        val loadViewerContexts: MutableList<ViewerContext<TestViewer>> = mutableListOf()
 
-        override val entityInterceptors = EntInterceptorsConfig<Viewer>().apply {
+        override val entityInterceptors = EntInterceptorsConfig<TestViewer>().apply {
             addEntity<Item>(ItemMapping.clientName, "record") { _, context ->
                 interceptorContexts += context
             }
@@ -80,7 +80,7 @@ class EntityQueryBuilderTest {
 
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<TestViewer>,
             entities: List<Entity>,
         ): PrivacyEvaluation<Entity> {
             loadViewerContexts += viewerContext
@@ -90,9 +90,9 @@ class EntityQueryBuilderTest {
 
     private class ItemQuery(
         driver: DatabaseDriver,
-        private val executionHost: ReadQueryExecutionHost<Viewer>?,
+        private val executionHost: ReadQueryExecutionHost<TestViewer>?,
         query: EntityQuery<Item> = EntityQuery(ItemMapping),
-    ) : EntityQueryBuilder<Viewer, Item, ItemQuery>(
+    ) : EntityQueryBuilder<TestViewer, Item, ItemQuery>(
         driver = driver,
         executionHost = executionHost,
         entityQuery = query,
@@ -108,7 +108,7 @@ class EntityQueryBuilderTest {
         override val self: ItemQueryScope get() = this
     }
 
-    private val vc = ViewerContext.AsViewer(Viewer.User(7L))
+    private val vc = ViewerContext.AsViewer(TestViewer.User(7L))
 
     @Test
     fun `fluent configuration creates independent typed queries`() {

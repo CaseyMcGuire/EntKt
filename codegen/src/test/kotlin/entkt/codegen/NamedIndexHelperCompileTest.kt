@@ -45,6 +45,7 @@ class NamedIndexHelperCompileTest {
         import entkt.query.Predicate
         import entkt.runtime.driver.DatabaseDriver
         import entkt.runtime.driver.NoopDriver
+        import com.example.auth.AppViewer
         import entkt.runtime.privacy.*
         import entkt.runtime.query.*
         import entkt.runtime.result.EntPrivacyDeniedException
@@ -61,7 +62,7 @@ class NamedIndexHelperCompileTest {
         val schemas = listOf(Problem(), TestCase())
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = EntGenerator("com.example.ent")
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(schemas.map(::SchemaInput)).toCompileTestSources()
         return compileSources(generated + application)
     }
@@ -70,7 +71,7 @@ class NamedIndexHelperCompileTest {
     private val validCompilation by lazy {
         compile(
             source("Application", """
-                fun use(client: EntClient, rules: ReadOnlyEntClient, viewer: ViewerContext<Viewer>) {
+                fun use(client: EntClient, rules: ReadOnlyEntClient, viewer: ViewerContext<AppViewer>) {
                     val full: TestCaseIndexes.ProblemIdPosition =
                         client.testCases.indexes.byProblemAndPosition(problemId = 7L, position = 3)
                     val read: TestCaseReadIndexes.ProblemIdPosition =
@@ -131,7 +132,7 @@ class NamedIndexHelperCompileTest {
                     val chained = client.testCases.indexes.problemId(7L).position(3)
                     val read = client.readOnlyClient.testCases.indexes.byProblemAndPosition(7L, 3)
                     val expected = listOf(TestCase.problemId.eq(7L), TestCase.position.eq(3))
-                    val viewer = ViewerContext.AsViewer(Viewer.User(1L))
+                    val viewer = ViewerContext.AsViewer(AppViewer(userId = java.util.UUID(0L, 1L)))
                 }
 
                 fun buildsPredicatesWithoutExecuting() = with(Fixture()) {
@@ -240,7 +241,7 @@ class NamedIndexHelperCompileTest {
         )
         val result = compile(*invalidCalls.map { (name, call) ->
             source(name, """
-                fun invalid$name(client: EntClient, rules: ReadOnlyEntClient, viewer: ViewerContext<Viewer>) {
+                fun invalid$name(client: EntClient, rules: ReadOnlyEntClient, viewer: ViewerContext<AppViewer>) {
                     $call
                 }
             """.trimIndent())

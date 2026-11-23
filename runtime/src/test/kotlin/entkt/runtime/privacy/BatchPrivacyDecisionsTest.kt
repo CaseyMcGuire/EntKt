@@ -13,7 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class BatchPrivacyDecisionsTest {
-    private val context = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7L)), TestRuleClient())
+    private val context = PrivacyRuleContext(ViewerContext.AsViewer(TestViewer.User(7L)), TestRuleClient())
 
     @Test
     fun `allowAll returns an allow for every occurrence including null items`() {
@@ -70,7 +70,7 @@ class BatchPrivacyDecisionsTest {
         val decisions = evaluateLoadDecisions(
             entityName = "test",
             items = listOf(0, 7, 7),
-            rules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, Int>>(
+            rules = listOf<BatchPrivacyRule<TestViewer, TestRuleClient, Int>>(
                 denyIf("already denied") { _, item -> item == 0 },
                 batchPrivacyRule { _, batch ->
                     assertEquals(listOf(7, 7), batch)
@@ -93,7 +93,7 @@ class BatchPrivacyDecisionsTest {
         val decisions = evaluateLoadDecisions(
             entityName = "test",
             items = listOf(0, 7, 7),
-            rules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, Int>>(
+            rules = listOf<BatchPrivacyRule<TestViewer, TestRuleClient, Int>>(
                 allowIf { _, item -> item == 0 },
                 batchPrivacyRule { _, batch ->
                     assertEquals(listOf(7, 7), batch)

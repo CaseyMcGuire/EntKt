@@ -12,7 +12,6 @@ import entkt.integrationtest.support.RecordingDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.result.MutationResult
 import entkt.runtime.result.ReadResult
@@ -56,7 +55,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
     }
 
     private fun recordingClient(
-        viewerContext: ViewerContext<Viewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
+        viewerContext: ViewerContext<TestViewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
     ): Pair<EntClient, RecordingDriver> {
         this.viewerContext = viewerContext
@@ -108,7 +107,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val (client, recording) = recordingClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = countingDeny)
+        val (client, recording) = recordingClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = countingDeny)
         val article = seedArticle(client)
 
         val result = client.articles.findById(viewerContext, article.id)
@@ -124,7 +123,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `getOrThrow on a failed read performs zero driver calls and throws the stored instance`() {
-        val (client, recording) = recordingClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = denyArticles)
+        val (client, recording) = recordingClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = denyArticles)
         val article = seedArticle(client)
 
         val result = client.articles.findById(viewerContext, article.id)
@@ -153,7 +152,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val (client, recording) = recordingClient(ViewerContext.AsViewer(Viewer.User(1L)), policy)
+        val (client, recording) = recordingClient(ViewerContext.AsViewer(TestViewer.User(1L)), policy)
         seedArticle(client)
         val result = assertIs<ReadCollectionResult.Completed<Article>>(client.articles.query().all(viewerContext))
 

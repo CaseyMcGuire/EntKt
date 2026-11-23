@@ -14,7 +14,6 @@ import entkt.runtime.hook.EntityHooks
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.result.EntPrivacyDeniedException
 import entkt.runtime.validation.ValidationDecision
@@ -71,13 +70,13 @@ class ClientConfigurationSnapshotIntegrationTest : PostgresTestBase() {
         }
         assertEquals("Ada", created.name)
 
-        val anonymousContext = ViewerContext.AsViewer(Viewer.Anonymous)
+        val anonymousContext = ViewerContext.AsViewer(TestViewer.Anonymous)
         assertFailsWith<EntPrivacyDeniedException> { client.users.query().all(anonymousContext).getOrThrow() }
 
         val transactionRead = client.withTransaction { transaction ->
             run {
                 val scoped = transaction
-                val testViewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
+                val testViewerContext = ViewerContext.AsViewer(TestViewer.Anonymous)
                 scoped.users.query().all(testViewerContext)
             }
         }.getOrThrow()

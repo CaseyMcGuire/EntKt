@@ -1,5 +1,7 @@
 package entkt.explorer
 
+import entkt.runtime.privacy.ViewerContext
+
 /**
  * The framework-neutral ent explorer: a read-only, server-rendered inspection
  * surface over an application's generated ent API.
@@ -8,13 +10,16 @@ package entkt.explorer
  * val explorer = EntExplorer(client, GeneratedEntExplorerRegistry) {
  *     path = "/_ent"
  *     authorize { request -> request.principal.isAdminOfSomeKind() }
- *     viewerContext { request -> ViewerContext.AsViewer(Viewer.User(...)) }
+ *     viewerContext { request -> ViewerContext.AsViewer(viewerFor(request.principal)) }
  *     entities { exclude("session") }
  * }
  *
  * // host framework:
  * val response = explorer.handle(EntExplorerRequest(path = req.path, query = req.params, principal = req.user))
  * ```
+ *
+ * `viewerContext` is required. Construction fails with an
+ * [IllegalArgumentException] when the configuration does not supply it.
  *
  * Routes (under [EntExplorerConfig.path]):
  * ```
@@ -34,12 +39,18 @@ package entkt.explorer
  * redacted; excluded and unknown entities are the same 404; unknown,
  * unparseable, and privacy-denied ids are the same 404.
  */
-class EntExplorer<C : Any>(
+class EntExplorer<Viewer : Any, C : Any>(
     private val client: C,
-    private val entities: List<EntExplorerEntity<C>>,
-    configure: EntExplorerConfig.() -> Unit = {},
+    private val entities: List<EntExplorerEntity<Viewer, C>>,
+    configure: EntExplorerConfig<Viewer>.() -> Unit,
 ) {
-    private val config = EntExplorerConfig().apply(configure)
+    private val config = EntExplorerConfig<Viewer>().apply(configure)
+    private val viewerContext: (EntExplorerRequest) -> ViewerContext<Viewer> =
+        requireNotNull(config.viewerContext) {
+            "EntExplorer requires a viewerContext { ... } provider. There is no default viewer: " +
+                "say what every explorer read runs as, for example " +
+                "viewerContext { request -> ViewerContext.AsViewer(viewerFor(request.principal)) }"
+        }
     private val html = EntExplorerHtml(config.path)
 
     /** The configured mount path (`/_ent` by default), for host adapters registering routes. */
@@ -116,7 +127,7 @@ class EntExplorer<C : Any>(
         }
     }
 
-    private fun visibleEntities(): List<EntExplorerEntity<C>> =
+    private fun visibleEntities(): List<EntExplorerEntity<Viewer, C>> =
         entities.filterNot { it.routeName in config.visibility.excludedRoutes }
 
     private fun route(request: EntExplorerRequest, segments: List<String>): EntExplorerResponse {
@@ -157,7 +168,7 @@ class EntExplorer<C : Any>(
         return html.schemaIndex(matches, q)
     }
 
-    private fun entityFor(route: String): EntExplorerEntity<C>? =
+    private fun entityFor(route: String): EntExplorerEntity<Viewer, C>? =
         visibleEntities().firstOrNull { it.routeName == route }
 
     /**
@@ -165,7 +176,7 @@ class EntExplorer<C : Any>(
      * extra-redacted column behaves exactly like a `.sensitive()` one —
      * value redacted, not filterable, not orderable.
      */
-    private fun effectiveColumns(entity: EntExplorerEntity<C>): List<EntExplorerColumn> =
+    private fun effectiveColumns(entity: EntExplorerEntity<Viewer, C>): List<EntExplorerColumn> =
         entity.columns.map { col ->
             if ((entity.schema.table to col.name) in config.redaction.extra) {
                 col.copy(sensitive = true, filterable = false, orderable = false)
@@ -175,7 +186,7 @@ class EntExplorer<C : Any>(
         }
 
     /** Re-redact rows for extra-redacted columns the generated adapter doesn't know about. */
-    private fun applyExtraRedaction(entity: EntExplorerEntity<C>, row: EntExplorerRow): EntExplorerRow {
+    private fun applyExtraRedaction(entity: EntExplorerEntity<Viewer, C>, row: EntExplorerRow): EntExplorerRow {
         if (config.redaction.extra.none { it.first == entity.schema.table }) return row
         return row.copy(
             values = row.values.map { v ->
@@ -188,7 +199,7 @@ class EntExplorer<C : Any>(
         )
     }
 
-    private fun listPage(request: EntExplorerRequest, entity: EntExplorerEntity<C>): EntExplorerResponse {
+    private fun listPage(request: EntExplorerRequest, entity: EntExplorerEntity<Viewer, C>): EntExplorerResponse {
         val columns = effectiveColumns(entity)
         val byName = columns.associateBy { it.name }
 
@@ -211,7 +222,7 @@ class EntExplorer<C : Any>(
             pageSize = size,
             offset = offset.toInt(),
         )
-        val context = config.viewerContext(request)
+        val context = viewerContext(request)
         val result = entity.list(client, context, listRequest)
         val rows = result.rows.take(size).map { applyExtraRedaction(entity, it) }
 
@@ -230,10 +241,10 @@ class EntExplorer<C : Any>(
 
     private fun detailPage(
         request: EntExplorerRequest,
-        entity: EntExplorerEntity<C>,
+        entity: EntExplorerEntity<Viewer, C>,
         id: String,
     ): EntExplorerResponse {
-        val context = config.viewerContext(request)
+        val context = viewerContext(request)
         val row = entity.get(client, context, id)
             ?: return html.error(404, "Not found.")
 

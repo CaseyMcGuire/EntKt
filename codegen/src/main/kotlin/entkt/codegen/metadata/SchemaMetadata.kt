@@ -3,6 +3,7 @@ package entkt.codegen.metadata
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.MemberName
+import com.squareup.kotlinpoet.ParameterizedTypeName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
@@ -18,12 +19,7 @@ import entkt.schema.FieldType
 import entkt.schema.OnDelete
 
 internal val ENTITY_SCHEMA = ClassName("entkt.runtime.driver", "EntitySchema")
-/**
- * The viewer type generated code binds the runtime's generics to. It is the
- * runtime's own `Viewer` until the application's viewer type is configurable.
- */
-internal val VIEWER = ClassName("entkt.runtime.privacy", "Viewer")
-internal val VIEWER_CONTEXT = ClassName("entkt.runtime.privacy", "ViewerContext").parameterizedBy(VIEWER)
+internal val VIEWER_CONTEXT = ClassName("entkt.runtime.privacy", "ViewerContext")
 internal val COLUMN_METADATA = ClassName("entkt.runtime.driver", "ColumnMetadata")
 internal val EDGE_METADATA = ClassName("entkt.runtime.driver", "EdgeMetadata")
 internal val INDEX_METADATA = ClassName("entkt.runtime.driver", "IndexMetadata")
@@ -36,6 +32,10 @@ internal val COLUMN_STORAGE_NATIVE = ClassName("entkt.schema", "ColumnStorage").
 internal val JSON_COLUMN_METADATA = ClassName("entkt.runtime.driver", "JsonColumnMetadata")
 internal val JSON_MAPPER_IDS = ClassName("entkt.runtime.driver", "JsonMapperIds")
 private val TYPE_OF = MemberName("kotlin.reflect", "typeOf")
+
+/** The `ViewerContext` type generated code declares for the application's [viewer] type. */
+internal fun viewerContextType(viewer: ClassName): ParameterizedTypeName =
+    VIEWER_CONTEXT.parameterizedBy(viewer)
 
 /**
  * Emission for a JSON column's `mapper` field: the shared constant for the

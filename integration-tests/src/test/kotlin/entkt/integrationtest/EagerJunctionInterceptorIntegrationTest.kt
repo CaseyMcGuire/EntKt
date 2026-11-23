@@ -21,7 +21,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import entkt.runtime.privacy.Viewer
 
 /**
  * Pins the `EAGER_JUNCTION` discovery pass of the junction
@@ -81,7 +80,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `the junction pass exposes the discovery context and the source-ID structural predicate`() {
-        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
         val inValues = mutableListOf<List<Any?>>()
         val client = EntClient(resetAndDriver()) {
 
@@ -123,7 +122,7 @@ class EagerJunctionInterceptorIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a nested M2M step's junction pass carries the full path from the root`() {
-        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val contexts = mutableListOf<QueryContext<TestViewer>>()
         val client = EntClient(resetAndDriver()) {
 
             interceptors {

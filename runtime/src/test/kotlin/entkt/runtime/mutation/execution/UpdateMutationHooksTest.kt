@@ -9,7 +9,7 @@ import entkt.runtime.hook.TransformingHook
 import entkt.runtime.mutation.BeforeSaveHookState
 import entkt.runtime.mutation.BeforeUpdateHookState
 import entkt.runtime.mutation.UpdatePendingEdges
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.privacy.ViewerContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -39,11 +39,11 @@ class UpdateMutationHooksTest {
     @Test
     fun `before phases convert and transform state in lifecycle order`() {
         val events = mutableListOf<String>()
-        val expectedViewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+        val expectedViewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
         val hooks = UpdateMutationHooks(
             converter = object :
                 UpdateMutationHookStateConverter<
-                    Viewer,
+                    TestViewer,
                     String,
                     Widget,
                     PendingEdges,
@@ -56,7 +56,7 @@ class UpdateMutationHooksTest {
                 }
 
                 override fun toBeforeUpdateState(
-                    viewerContext: ViewerContext<Viewer>,
+                    viewerContext: ViewerContext<TestViewer>,
                     before: Widget,
                     pendingEdges: PendingEdges,
                     beforeSaveState: BeforeSaveState,
@@ -109,7 +109,7 @@ class UpdateMutationHooksTest {
         val hooks = UpdateMutationHooks(
             converter = object :
                 UpdateMutationHookStateConverter<
-                    Viewer,
+                    TestViewer,
                     Unit,
                     Widget,
                     PendingEdges,
@@ -119,7 +119,7 @@ class UpdateMutationHooksTest {
                 override fun toBeforeSaveState(draft: Unit) = BeforeSaveState("unused")
 
                 override fun toBeforeUpdateState(
-                    viewerContext: ViewerContext<Viewer>,
+                    viewerContext: ViewerContext<TestViewer>,
                     before: Widget,
                     pendingEdges: PendingEdges,
                     beforeSaveState: BeforeSaveState,

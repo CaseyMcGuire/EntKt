@@ -12,7 +12,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.integrationtest.support.RecordingDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.query.EdgeLoad
@@ -224,7 +223,7 @@ class EdgeLoadConfigurationIntegrationTest : PostgresTestBase() {
         }
         val author = client.users.create { name = "A"; email = "a@example.com" }.saveAndLoad(testViewerContext).getOrThrow()
         client.articles.create { title = "hidden"; authorId = author.id }.save(testViewerContext).getOrThrow()
-        val viewer = ViewerContext.AsViewer(Viewer.User(author.id))
+        val viewer = ViewerContext.AsViewer(TestViewer.User(author.id))
         var handle: EdgeLoad<UserQueryScope>? = null
         val base = client.users.query()
         val query = base.configure { handle = loadArticles() }

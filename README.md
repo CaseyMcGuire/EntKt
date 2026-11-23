@@ -52,14 +52,18 @@ object PostPolicy : EntityPolicy<Post, PostPolicyScope> {
     }
 }
 
-// 3. Use the generated code
+// 3. Declare who operations run as. The type is yours; name it in the build:
+//    entkt { viewerType.set("com.example.auth.AppViewer") }
+data class AppViewer(val userId: UUID?)   // null when unauthenticated
+
+// 4. Use the generated code
 val client = EntClient(PostgresDriver(dataSource)) {
     policies {
         users(UserPolicy)
         posts(PostPolicy)
     }
 }
-val viewerContext = ViewerContext.AsViewer(Viewer.User(currentUserId()))
+val viewerContext = ViewerContext.AsViewer(AppViewer(userId = currentUserId()))
 
 val alice = client.users.create {
     name = "Alice"

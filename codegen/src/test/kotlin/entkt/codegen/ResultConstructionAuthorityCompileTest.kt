@@ -180,7 +180,7 @@ class ResultConstructionAuthorityCompileTest {
         )
         car.finalize(registry)
         user.finalize(registry)
-        val sources = EntGenerator("com.example.ent")
+        val sources = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(car), SchemaInput(user)))
             .toCompileTestSources()
         val result = compileSources(sources)

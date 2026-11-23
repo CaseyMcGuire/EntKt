@@ -14,7 +14,6 @@ import entkt.integrationtest.ent.ReminderCreateDraft
 import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.driver.NoopDriver
 import entkt.runtime.mutation.FieldPatch
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.types.Bytes
 import kotlin.test.Test
@@ -27,7 +26,7 @@ import kotlin.test.assertTrue
 /** Exercise actual generated conversions without allowing any storage I/O. */
 class MutationConverterTest {
     private val client = EntClient(NoopDriver)
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(7L))
 
     @Test
     fun `hook conversion preserves its scope and maps required field-backed relationships`() {

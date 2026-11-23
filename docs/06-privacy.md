@@ -15,9 +15,9 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
             load(
                 // Users can see their own profile
                 PrivacyRule { context, item ->
-                    val v = context.viewerContext.userOrNull()
+                    val viewerId = context.viewer.userId
                         ?: return@PrivacyRule PrivacyDecision.Continue
-                    if (v.id == item.id) PrivacyDecision.Allow
+                    if (viewerId == item.id) PrivacyDecision.Allow
                     else PrivacyDecision.Continue
                 },
             )
@@ -25,7 +25,7 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
                 PrivacyRule { context, _ ->
                     // Privacy is fail-closed, so authenticated callers must be
                     // explicitly allowed — a fallthrough Continue would deny.
-                    if (context.viewerContext.viewer is Viewer.Anonymous)
+                    if (context.viewer.userId == null)
                         PrivacyDecision.Deny("only system can create users")
                     else PrivacyDecision.Allow
                 },
@@ -42,37 +42,65 @@ val client = EntClient(driver) {
     }
 }
 
-val viewerContext = ViewerContext.AsViewer(Viewer.User(currentUserId()))
+val viewerContext = ViewerContext.AsViewer(AppViewer(userId = currentUserId()))
 val users = client.users.query().all(viewerContext).getOrThrow()
 ```
+
+`AppViewer` is the application's own [viewer type](#viewer). Rules read it as
+`context.viewer`.
 
 ## Concepts
 
 ### Viewer
 
-`Viewer` represents the identity performing an operation:
+A viewer is who an operation runs as. The application defines the type. The
+runtime carries a viewer and never inspects, compares, or formats it.
 
 ```kotlin
-sealed interface Viewer {
-    data object Anonymous : Viewer   // unauthenticated
-    data class User(val id: Any) : Viewer  // authenticated user
+package com.example.auth
+
+data class AppViewer(
+    val userId: UUID?, // null when unauthenticated
+    val roles: Set<Role> = emptySet(),
+)
+```
+
+Name the type once in the build. Generated code is bound to it:
+
+```kotlin
+entkt {
+    packageName.set("com.example.ent")
+    viewerType.set("com.example.auth.AppViewer")
 }
 ```
 
-`Viewer.User.id` is `Any` because apps use different ID types. Use the
-runtime helpers instead of handwritten casts:
+`viewerType` is required. It is the fully qualified name of a public,
+top-level, non-generic class or interface; nested and generic types are not
+supported. Code generation uses only the name, so the type can live in the
+module that compiles the generated sources or in anything that module depends
+on. A wrong name surfaces as an unresolved reference when the generated sources
+compile. When you run `GenerateMain` directly, the name is its third argument.
 
-```kotlin
-context.viewerContext.userOrNull()      // Viewer.User?
-context.viewerContext.userIdOrNull()    // Any?
-context.viewerContext.longIdOrNull()    // Long?
-context.viewerContext.intIdOrNull()     // Int?
-context.viewerContext.stringIdOrNull()  // String?
-context.viewerContext.uuidIdOrNull()    // UUID?
-```
+The type must be public because the generated API is public and exposes it. To
+keep an implementation private, name a public interface and implement it with
+an `internal` class. The type cannot share its simple name with a Kotlin
+built-in such as `String`, `Any`, or `Map`; code generation rejects those
+names, because importing the type would shadow the built-in in generated
+sources.
 
-Typed helpers are exact type checks. For example, `longIdOrNull()` returns
-`null` for an `Int` id; it does not coerce numeric values.
+Guidance for the type:
+
+- Make it an immutable value decided once at the application boundary. One
+  context instance is shared across a whole operation, including nested rule
+  reads.
+- Give it the facts your rules, hooks, and interceptors need, such as an ID,
+  roles, or a tenant. They are then typed: `viewer.userId == post.authorId`
+  compiles only when the two types are comparable.
+- Choose how to represent an unauthenticated viewer: a nullable ID, a sealed
+  hierarchy, or a dedicated object. The runtime has no "anonymous" value.
+- With a nullable ID, resolve it before comparing it with a nullable column.
+  `null == null` is true, so `viewer.userId == post.reviewerId` would allow an
+  unauthenticated viewer on every post that has no reviewer.
 
 ### ViewerContext
 
@@ -95,10 +123,11 @@ sealed interface ViewerContext<out Viewer : Any> {
 }
 ```
 
-The type parameter is the kind of viewer an operation runs as. Generated code
-binds it to the runtime's `Viewer`, so generated terminals take
-`ViewerContext<Viewer>`. A `PrivacyBypass` is a `ViewerContext<Nothing>`, which
-every terminal accepts.
+The type parameter is the application's viewer type. Generated code binds it
+to the type named by `viewerType`, so generated terminals take
+`ViewerContext<AppViewer>` and a context built for an unrelated type does not
+compile. A `PrivacyBypass` is a `ViewerContext<Nothing>`, which every terminal
+accepts.
 
 Privacy rules never run for a bypass, so `PrivacyRuleContext.viewerContext` is
 always an `AsViewer`, and `context.viewer` is its viewer. Hooks and query
@@ -130,8 +159,10 @@ order.
 
 `Client` must implement the runtime `EntRuleClient` marker. Generated `ReadOnlyEntClient`
 already does, so rule contexts retain their schema-specific read APIs.
-`Viewer` is the viewer type the operation runs as. Generated rule aliases such
-as `UserLoadPrivacyRule` bind both, so policies normally use the alias names.
+`Viewer` is the application's viewer type. Generated rule aliases such as
+`UserLoadPrivacyRule` bind both, so policies normally use the alias names. A
+class-style rule names the bound context,
+`PrivacyRuleContext<AppViewer, ReadOnlyEntClient>`, in its `run` signature.
 
 ```kotlin
 import entkt.runtime.rule.EntRuleClient
@@ -177,9 +208,9 @@ fun interface ContextPrivacyRule<in Viewer : Any, in Client : EntRuleClient> : P
         run(context)
 }
 
-class RequireAuthenticated : ContextPrivacyRule<Viewer, ReadOnlyEntClient> {
-    override fun run(context: PrivacyRuleContext<Viewer, ReadOnlyEntClient>): PrivacyDecision =
-        if (context.viewerContext.viewer is Viewer.Anonymous) {
+class RequireAuthenticated : ContextPrivacyRule<AppViewer, ReadOnlyEntClient> {
+    override fun run(context: PrivacyRuleContext<AppViewer, ReadOnlyEntClient>): PrivacyDecision =
+        if (context.viewer.userId == null) {
             PrivacyDecision.Deny("Authentication required")
         } else {
             PrivacyDecision.Allow
@@ -215,6 +246,27 @@ implementers only supply `run(context)`.
 Allow/Continue and Deny/Continue semantics. A context-only rule explicitly chooses
 its own Allow, Deny, or Continue decision.
 
+Rules are contravariant in the viewer. A rule written against an interface that
+the viewer type implements registers in any policy, so a rule can state the one
+capability it needs instead of the whole viewer type:
+
+```kotlin
+interface HasRoles {
+    val roles: Set<Role>
+}
+
+data class AppViewer(val userId: UUID?, override val roles: Set<Role>) : HasRoles
+
+class AllowAdmins : ContextPrivacyRule<HasRoles, EntRuleClient> {
+    override fun run(context: PrivacyRuleContext<HasRoles, EntRuleClient>): PrivacyDecision =
+        if (Role.ADMIN in context.viewer.roles) {
+            PrivacyDecision.Allow
+        } else {
+            PrivacyDecision.Continue
+        }
+}
+```
+
 ### BatchPrivacyRule
 
 Use an explicit batch rule when one callback should inspect all items or
@@ -244,7 +296,7 @@ val allowReadablePosts: PostLoadBatchPrivacyRule =
     batchPrivacyRule { context, batch ->
         val readableIds = loadReadablePostIds(
             client = context.client,
-            viewer = context.viewerContext.viewer,
+            viewer = context.viewer,
             postIds = batch.map { it.id },
         )
         batch.decideEach { item ->
@@ -262,13 +314,12 @@ For a uniform decision across the supplied batch, use `batch.allowAll()` or
 `batch.denyAll(reason)`:
 
 ```kotlin
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.privacy.denyAll
 
 val requireAuthenticated: PostLoadBatchPrivacyRule = batchPrivacyRule { context, batch ->
-    if (context.viewerContext.viewer is Viewer.Anonymous) {
+    if (context.viewer.userId == null) {
         batch.denyAll("authentication required")
     } else {
         batch.allowAll()
@@ -341,9 +392,9 @@ it to the shared method; a bare Java lambda targets `BatchPrivacyRule`.
 
 **Stock rule — `allowAll`.** The runtime ships `allowAll`, a rule that
 permits any operation on any entity. Because `PrivacyRule` is contravariant
-in its client and item types, the single value works in every slot on every
-schema, so a public or trusted entity doesn't need its own allow-everything
-rule:
+in its viewer, client, and item types, the single value works in every slot on
+every schema, so a public or trusted entity doesn't need its own
+allow-everything rule:
 
 ```kotlin
 import entkt.runtime.privacy.allowAll
@@ -364,19 +415,17 @@ a rule should allow or deny. They return ordinary `PrivacyRule` values and work
 with the existing `load`, `create`, `update`, and `delete` methods:
 
 ```kotlin
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowIf
 import entkt.runtime.privacy.denyIf
-import entkt.runtime.privacy.userIdOrNull
 
 // Inside a User policy:
 privacy {
     load(
         denyIf("Authentication required") { context, _ ->
-            context.viewerContext.viewer is Viewer.Anonymous
+            context.viewer.userId == null
         },
         allowIf { context, user ->
-            context.viewerContext.userIdOrNull() == user.id
+            context.viewer.userId == user.id
         },
     )
 }
@@ -404,7 +453,7 @@ Construct the context at the application boundary and pass it directly to
 every terminal that executes an entity operation:
 
 ```kotlin
-val viewerContext = ViewerContext.AsViewer(Viewer.User(getCurrentUserId()))
+val viewerContext = ViewerContext.AsViewer(AppViewer(userId = getCurrentUserId()))
 
 client.posts.query { where(Post.published eq true) }
     .all(viewerContext)
@@ -412,8 +461,10 @@ client.posts.create { title = "Hello" }
     .save(viewerContext)
 ```
 
-There is no default, provider, thread-local lookup, or client-scoping API.
-Use `ViewerContext.AsViewer(Viewer.Anonymous)` explicitly for unauthenticated work.
+There is no default, provider, thread-local lookup, or client-scoping API, and
+the runtime has no built-in anonymous viewer. For unauthenticated work, build
+your type's unauthenticated value explicitly, such as
+`ViewerContext.AsViewer(AppViewer(userId = null))`.
 Builders and `withTransaction` remain contextless because they do not execute
 an entity operation.
 
@@ -468,9 +519,9 @@ you opt into access explicitly.
 load(
     // Users can see their own profile
     PrivacyRule { context, item ->
-        val v = context.viewerContext.userOrNull()
+        val viewerId = context.viewer.userId
             ?: return@PrivacyRule PrivacyDecision.Continue
-        if (v.id == item.id) PrivacyDecision.Allow
+        if (viewerId == item.id) PrivacyDecision.Allow
         else PrivacyDecision.Continue
     },
     // Fallthrough: denied (implicit)
@@ -542,7 +593,7 @@ denies one class of viewer and explicitly allows the rest:
 ```kotlin
 create(
     PrivacyRule { context, _ ->
-        if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("login required")
+        if (context.viewer.userId == null) PrivacyDecision.Deny("login required")
         else PrivacyDecision.Allow   // explicit Allow — a Continue here would deny
     },
 )
@@ -624,8 +675,8 @@ LOAD receives entities and CREATE receives prepared write candidates directly.
 ### LOAD: the entity itself
 
 ```kotlin
-typealias UserLoadPrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, User>
-typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, User>
+typealias UserLoadPrivacyRule = PrivacyRule<AppViewer, ReadOnlyEntClient, User>
+typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<AppViewer, ReadOnlyEntClient, User>
 ```
 
 Scalar LOAD rules take `(context, user)`; batch rules take `(context, batch)`
@@ -646,8 +697,8 @@ its separate boundary for detaching caller-owned mutable values.
 ### CREATE: the write candidate itself
 
 ```kotlin
-typealias UserCreatePrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate>
-typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate>
+typealias UserCreatePrivacyRule = PrivacyRule<AppViewer, ReadOnlyEntClient, UserWriteCandidate>
+typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<AppViewer, ReadOnlyEntClient, UserWriteCandidate>
 ```
 
 Scalar CREATE rules take `(context, candidate)`; batch rules receive
@@ -775,11 +826,11 @@ hooks, query interceptors, transactions, and database constraints still apply.
 Use the same long-lived client and pass the intended context to each terminal:
 
 ```kotlin
-val viewer42 = ViewerContext.AsViewer(Viewer.User(42L))
-val viewer99 = ViewerContext.AsViewer(Viewer.User(99L))
+val asAlice = ViewerContext.AsViewer(AppViewer(userId = aliceId))
+val asBob = ViewerContext.AsViewer(AppViewer(userId = bobId))
 
-client.users.query().all(viewer42).getOrThrow()
-client.users.query().all(viewer99).getOrThrow()
+client.users.query().all(asAlice).getOrThrow()
+client.users.query().all(asBob).getOrThrow()
 ```
 
 ### Transactions

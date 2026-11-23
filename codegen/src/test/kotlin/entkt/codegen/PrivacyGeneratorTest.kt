@@ -23,7 +23,7 @@ private fun finalize(vararg schemas: EntSchema) {
 
 class PrivacyGeneratorTest {
 
-    private val generator = PrivacyGenerator("com.example.ent")
+    private val generator = PrivacyGenerator("com.example.ent", TEST_VIEWER)
 
     @Test
     fun `generates rule typealiases for all four operations`() {
@@ -32,14 +32,14 @@ class PrivacyGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assertContains(output, "typealias UserLoadPrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, User>")
-        assertContains(output, "typealias UserCreatePrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate>")
-        assertContains(output, "typealias UserUpdatePrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, UserUpdateRuleInput>")
-        assertContains(output, "typealias UserDeletePrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput>")
-        assertContains(output, "typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, User>")
-        assertContains(output, "typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate>")
-        assertContains(output, "typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, UserUpdateRuleInput>")
-        assertContains(output, "typealias UserDeleteBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput>")
+        assertContains(output, "typealias UserLoadPrivacyRule = PrivacyRule<AppViewer, ReadOnlyEntClient, User>")
+        assertContains(output, "typealias UserCreatePrivacyRule = PrivacyRule<AppViewer, ReadOnlyEntClient, UserWriteCandidate>")
+        assertContains(output, "typealias UserUpdatePrivacyRule = PrivacyRule<AppViewer, ReadOnlyEntClient, UserUpdateRuleInput>")
+        assertContains(output, "typealias UserDeletePrivacyRule = PrivacyRule<AppViewer, ReadOnlyEntClient, UserDeleteRuleInput>")
+        assertContains(output, "typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<AppViewer, ReadOnlyEntClient, User>")
+        assertContains(output, "typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<AppViewer, ReadOnlyEntClient, UserWriteCandidate>")
+        assertContains(output, "typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<AppViewer, ReadOnlyEntClient, UserUpdateRuleInput>")
+        assertContains(output, "typealias UserDeleteBatchPrivacyRule = BatchPrivacyRule<AppViewer, ReadOnlyEntClient, UserDeleteRuleInput>")
     }
 
     @Test
@@ -98,7 +98,7 @@ class PrivacyGeneratorTest {
     }
 
     @Test
-    fun `privacy scope only binds the client and lifecycle items and passes config to the runtime base`() {
+    fun `privacy scope only binds the viewer, the client and lifecycle items and passes config to the runtime base`() {
         val user = User()
         finalize(user, Car())
         val scope = generator.generate("User", user).members.filterIsInstance<TypeSpec>()
@@ -106,7 +106,7 @@ class PrivacyGeneratorTest {
 
         assertEquals(
             ClassName("entkt.runtime.privacy", "EntityPrivacyScope").parameterizedBy(
-                ClassName("entkt.runtime.privacy", "Viewer"),
+                TEST_VIEWER,
                 ClassName("com.example.ent", "ReadOnlyEntClient"),
                 ClassName("com.example.ent", "User"),
                 ClassName("com.example.ent", "UserWriteCandidate"),
@@ -210,7 +210,7 @@ class PrivacyGeneratorTest {
     fun `beforeUpdate state gains a pendingEdges field`() {
         val user = User()
         finalize(user, Car())
-        val output = MutationGenerator("com.example.ent").generate("User", user)
+        val output = MutationGenerator("com.example.ent", TEST_VIEWER).generate("User", user)
             .single { it.name == "UserBeforeUpdateState" }.toString()
             .replace("\\s+".toRegex(), " ")
 
@@ -223,7 +223,7 @@ class PrivacyGeneratorTest {
     fun `beforeSave state implements its lifecycle marker`() {
         val user = User()
         finalize(user, Car())
-        val output = MutationGenerator("com.example.ent").generate("User", user)
+        val output = MutationGenerator("com.example.ent", TEST_VIEWER).generate("User", user)
             .single { it.name == "UserBeforeSaveState" }.toString()
 
         assertContains(output, ": BeforeSaveHookState<User>")
@@ -294,7 +294,7 @@ private fun makeLinkM2MOutput(): String {
     val postTag = PrivM2MPostTagJunction()
     finalize(post, tag, postTag)
     val names = mapOf<EntSchema, String>(post to "PrivM2MPost", tag to "PrivM2MTag", postTag to "PrivM2MPostTagJunction")
-    return PrivacyGenerator("com.example.ent")
+    return PrivacyGenerator("com.example.ent", TEST_VIEWER)
         .generate("PrivM2MPost", post, names)
         .toString()
         .replace("\\s+".toRegex(), " ")
@@ -310,7 +310,7 @@ private fun makeLinkM2MHookStateOutput(): String {
         tag to "PrivM2MTag",
         postTag to "PrivM2MPostTagJunction",
     )
-    return MutationGenerator("com.example.ent")
+    return MutationGenerator("com.example.ent", TEST_VIEWER)
         .generate("PrivM2MPost", post, names)
         .single { it.name == "PrivM2MPostBeforeUpdateState" }
         .toString()

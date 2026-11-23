@@ -43,11 +43,15 @@ support module:
 class PostPolicyTestHarness(
     private val client: EntClient,
 ) {
-    fun assertLoadAllowed(viewer: Viewer, entity: Post)
-    fun assertLoadDenied(viewer: Viewer, entity: Post, reason: String? = null)
-    fun assertCreateDenied(viewer: Viewer, block: PostCreateDraft.() -> Unit)
+    fun assertLoadAllowed(viewer: AppViewer, entity: Post)
+    fun assertLoadDenied(viewer: AppViewer, entity: Post, reason: String? = null)
+    fun assertCreateDenied(viewer: AppViewer, block: PostCreateDraft.() -> Unit)
 }
 ```
+
+`AppViewer` stands for the application's viewer type, the one named by the
+`viewerType` code generation option. A generated harness is bound to it like
+the rest of the generated API.
 
 For validation:
 

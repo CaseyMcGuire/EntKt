@@ -12,7 +12,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.mutation.FieldPatch
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntValidationException
 import entkt.runtime.result.MutationResult
@@ -109,7 +108,7 @@ class RequiredCreateIntegrationTest : PostgresTestBase() {
         }
         assertTrue(events.isEmpty())
 
-        val article = pending.saveAndLoad(ViewerContext.AsViewer(Viewer.User(author.id))).getOrThrow()
+        val article = pending.saveAndLoad(ViewerContext.AsViewer(TestViewer.User(author.id))).getOrThrow()
 
         assertEquals("beforeCreate", article.title)
         assertEquals(author.id, article.authorId)

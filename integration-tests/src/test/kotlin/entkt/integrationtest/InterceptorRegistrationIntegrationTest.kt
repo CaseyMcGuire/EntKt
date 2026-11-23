@@ -7,7 +7,6 @@ import entkt.postgres.PostgresDriver
 import entkt.runtime.query.GlobalQueryInterceptor
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.QueryInterceptor
-import entkt.runtime.privacy.Viewer
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -112,7 +111,7 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
 
         run {
             val scoped = client
-            val testViewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
+            val testViewerContext = ViewerContext.AsViewer(TestViewer.Anonymous)
             scoped.posts
         }
 
@@ -126,7 +125,7 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
         // Compile-only assertion: if the generated DSL ever loses
         // its `posts(...)` per-entity registration method, this
         // expression won't compile.
-        val interceptor: QueryInterceptor<Viewer, Post> = QueryInterceptor { _, _ -> }
+        val interceptor: QueryInterceptor<TestViewer, Post> = QueryInterceptor { _, _ -> }
         // suppress unused — just need the reference to keep the import live.
         assertTrue(interceptor === interceptor)
     }

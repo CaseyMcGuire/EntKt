@@ -30,7 +30,7 @@ class ValidationReadClientCompileTest {
         )
         car.finalize(registry)
         user.finalize(registry)
-        return EntGenerator("com.example.ent")
+        return EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(car), SchemaInput(user)))
             .toCompileTestSources()
     }

@@ -16,7 +16,7 @@ private fun finalize(vararg schemas: EntSchema) {
 
 class QueryGeneratorTest {
 
-    private val generator = QueryGenerator("com.example.ent")
+    private val generator = QueryGenerator("com.example.ent", TEST_VIEWER)
     private val scopeGenerator = QueryScopeGenerator("com.example.ent")
     private val descriptorGenerator = EntityDescriptorGenerator("com.example.ent")
 
@@ -59,7 +59,7 @@ class QueryGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("EntityQueryBuilder<Viewer, Car, CarQuery>"))
+        assert(output.contains("EntityQueryBuilder<AppViewer, Car, CarQuery>"))
         assert(output.contains("driver = driver, executionHost = client, entityQuery = query")) { output }
         assert(output.contains("protected override fun newQuery(query: EntityQuery<Car>): CarQuery")) { output }
         assert(output.contains("CarQuery(driver, client, query)")) { output }

@@ -43,6 +43,9 @@ repositories {
 
 entkt {
     packageName.set("com.example.ent")
+    // Required: your application's viewer type. Generated terminals take
+    // ViewerContext<AppViewer>.
+    viewerType.set("com.example.auth.AppViewer")
 }
 
 entktFlyway {
@@ -76,7 +79,8 @@ circular dependency (`compileKotlin` -> `generateEntkt` -> `compileKotlin`).
 - **`generateEntkt`** -- Scans the `schemas` classpath for `EntSchema`
   classes, generates entity classes into `build/generated/entkt/`, adds
   them to the `main` source set, and runs automatically before
-  `compileKotlin`.
+  `compileKotlin`. Fails with a message naming `entkt.viewerType` when that
+  option is not set.
 - **`validateEntSchemas`** -- Validates the schema graph (finalization,
   cross-schema constraints).
 - **`explainEntSchemas`** -- Prints the resolved relational shape of all

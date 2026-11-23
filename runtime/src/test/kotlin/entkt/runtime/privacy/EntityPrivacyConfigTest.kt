@@ -11,10 +11,10 @@ import kotlin.test.assertTrue
 
 class EntityPrivacyConfigTest {
     private class Config : EntityPrivacyConfig<
-        BatchPrivacyRule<Viewer, TestRuleClient, String>,
-        BatchPrivacyRule<Viewer, TestRuleClient, String>,
-        BatchPrivacyRule<Viewer, TestRuleClient, String>,
-        BatchPrivacyRule<Viewer, TestRuleClient, String>,
+        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
+        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
+        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
+        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
     >()
 
     @Test
@@ -29,7 +29,7 @@ class EntityPrivacyConfigTest {
         assertFalse(config.updateDerivesFromCreate)
         assertFalse(config.deleteDerivesFromCreate)
 
-        config.loadRules += PrivacyRule<Viewer, TestRuleClient, String> { _, _ -> PrivacyDecision.Allow }
+        config.loadRules += PrivacyRule<TestViewer, TestRuleClient, String> { _, _ -> PrivacyDecision.Allow }
 
         assertTrue(config.createRules.isEmpty())
         assertTrue(config.updateRules.isEmpty())
@@ -44,8 +44,8 @@ class EntityPrivacyConfigTest {
 
     @Test
     fun `resolution preserves rule order duplicates and derivation without retaining mutable lists`() {
-        val first = PrivacyRule<Viewer, TestRuleClient, String> { _, _ -> error("resolution must not evaluate rules") }
-        val second = batchPrivacyRule<Viewer, TestRuleClient, String> { _, _ -> error("resolution must not evaluate rules") }
+        val first = PrivacyRule<TestViewer, TestRuleClient, String> { _, _ -> error("resolution must not evaluate rules") }
+        val second = batchPrivacyRule<TestViewer, TestRuleClient, String> { _, _ -> error("resolution must not evaluate rules") }
         val config = Config().apply {
             loadRules.addAll(listOf(first, second, first))
             createRules.addAll(listOf(second, first))

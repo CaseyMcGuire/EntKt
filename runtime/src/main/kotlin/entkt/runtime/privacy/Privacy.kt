@@ -3,35 +3,6 @@ package entkt.runtime.privacy
 import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
-import java.util.UUID
-
-/**
- * Represents the identity of the current viewer performing an operation.
- */
-sealed interface Viewer {
-    /** An unauthenticated viewer. */
-    data object Anonymous : Viewer
-    /** An authenticated user identified by their primary key. */
-    data class User(val id: Any) : Viewer
-}
-
-fun Viewer.userOrNull(): Viewer.User? =
-    this as? Viewer.User
-
-fun Viewer.userIdOrNull(): Any? =
-    userOrNull()?.id
-
-fun Viewer.stringIdOrNull(): String? =
-    userOrNull()?.id as? String
-
-fun Viewer.intIdOrNull(): Int? =
-    userOrNull()?.id as? Int
-
-fun Viewer.longIdOrNull(): Long? =
-    userOrNull()?.id as? Long
-
-fun Viewer.uuidIdOrNull(): UUID? =
-    userOrNull()?.id as? UUID
 
 /**
  * What a generated operation runs as: either a viewer, whose access the
@@ -42,9 +13,11 @@ fun Viewer.uuidIdOrNull(): UUID? =
  * and `createMany` likewise retain the same instance for the complete logical
  * operation rather than once per item.
  *
- * @param Viewer the type of viewer an operation runs as. Generated code binds
- * it, so every generated terminal accepts one viewer type. A [PrivacyBypass]
- * carries no viewer and is accepted wherever any `ViewerContext` is.
+ * @param Viewer the application's viewer type. The runtime carries a viewer
+ * and never inspects it. Generated code binds this parameter to the type named
+ * by the `viewerType` code generation option, so every generated terminal
+ * accepts that one type. A [PrivacyBypass] carries no viewer and is accepted
+ * wherever any `ViewerContext` is.
  */
 sealed interface ViewerContext<out Viewer : Any> {
     /** Run as [viewer]. Privacy rules decide what is allowed. */
@@ -74,28 +47,6 @@ sealed interface ViewerContext<out Viewer : Any> {
             PrivacyBypass(reason)
     }
 }
-
-/** The authenticated user this context runs as, or `null` for any other viewer and for a privacy bypass. */
-fun ViewerContext<Viewer>.userOrNull(): Viewer.User? =
-    when (this) {
-        is ViewerContext.AsViewer -> viewer.userOrNull()
-        is ViewerContext.PrivacyBypass -> null
-    }
-
-fun ViewerContext<Viewer>.userIdOrNull(): Any? =
-    userOrNull()?.id
-
-fun ViewerContext<Viewer>.stringIdOrNull(): String? =
-    userOrNull()?.id as? String
-
-fun ViewerContext<Viewer>.intIdOrNull(): Int? =
-    userOrNull()?.id as? Int
-
-fun ViewerContext<Viewer>.longIdOrNull(): Long? =
-    userOrNull()?.id as? Long
-
-fun ViewerContext<Viewer>.uuidIdOrNull(): UUID? =
-    userOrNull()?.id as? UUID
 
 /**
  * State shared by every item and reached rule in one privacy evaluation phase.

@@ -10,13 +10,13 @@ import kotlin.test.assertSame
 
 class PrivacyEvaluationTest {
     private data class Subject(val value: Int)
-    private val context = PrivacyRuleContext(ViewerContext.AsViewer(Viewer.User(7L)), TestRuleClient())
+    private val context = PrivacyRuleContext(ViewerContext.AsViewer(TestViewer.User(7L)), TestRuleClient())
 
     @Test
     fun `evaluation attaches final decisions to the exact subjects`() {
         val first = Subject(1)
         val equalButDistinct = Subject(1)
-        val evaluator = loadEvaluator("Subject", listOf(batchPrivacyRule<Viewer, TestRuleClient, Subject> { _, batch ->
+        val evaluator = loadEvaluator("Subject", listOf(batchPrivacyRule<TestViewer, TestRuleClient, Subject> { _, batch ->
             batch.decideEachIndexed { index, _ ->
                 if (index == 0) PrivacyDecision.Allow else PrivacyDecision.Deny("hidden")
             }
@@ -35,7 +35,7 @@ class PrivacyEvaluationTest {
     @Test
     fun `evaluation finalizes unresolved privacy as a denial`() {
         val subject = Subject(1)
-        val evaluator = loadEvaluator("Subject", listOf(PrivacyRule<Viewer, TestRuleClient, Subject> { _, _ -> PrivacyDecision.Continue }))
+        val evaluator = loadEvaluator("Subject", listOf(PrivacyRule<TestViewer, TestRuleClient, Subject> { _, _ -> PrivacyDecision.Continue }))
 
         val evaluation = evaluator.evaluate(context.viewerContext, context.client, listOf(subject))
 

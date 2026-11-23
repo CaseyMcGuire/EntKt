@@ -39,7 +39,7 @@ class PrivacyReadClientCompileTest {
         )
         car.finalize(registry)
         user.finalize(registry)
-        return EntGenerator("com.example.ent")
+        return EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(car), SchemaInput(user)))
             .toCompileTestSources()
     }
@@ -52,7 +52,7 @@ class PrivacyReadClientCompileTest {
         import com.example.ent.$ruleType
         import com.example.ent.ReadOnlyEntClient
         import entkt.runtime.privacy.PrivacyDecision
-        import entkt.runtime.privacy.Viewer
+        import com.example.auth.AppViewer
         import entkt.runtime.privacy.ViewerContext
         import entkt.runtime.result.visibleOrNull
         import java.util.UUID
@@ -120,10 +120,10 @@ class PrivacyReadClientCompileTest {
                         import entkt.runtime.mutation.execution.MutationCompletionCapture
                         import entkt.runtime.mutation.execution.MutationExecutor
                         import entkt.runtime.mutation.execution.MutationOperation
-                        import entkt.runtime.privacy.Viewer
+                        import com.example.auth.AppViewer
 
                         fun execute(
-                            executor: MutationExecutor<Viewer>,
+                            executor: MutationExecutor<AppViewer>,
                             operation: MutationOperation<ReadOnlyEntClient, Unit, Unit>,
                             client: $clientType,
                         ) = executor.$method(
@@ -284,7 +284,7 @@ class PrivacyReadClientCompileTest {
 
             import com.example.ent.EntClient
             import entkt.runtime.privacy.ViewerContext
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
 
             fun mint(client: EntClient) {
                 client.$call
@@ -317,7 +317,7 @@ class PrivacyReadClientCompileTest {
     fun `privacy read client factory is absent`() {
         assertAdapterRemoved(
             "asPrivacyReadClientForInternalUse",
-            "asPrivacyReadClientForInternalUse(ViewerContext.AsViewer(Viewer.Anonymous))",
+            "asPrivacyReadClientForInternalUse(ViewerContext.AsViewer(AppViewer(userId = null)))",
         )
     }
 }

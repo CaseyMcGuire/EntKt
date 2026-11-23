@@ -79,7 +79,7 @@ class ShadowedKotlinNameValidationTest {
         val registry = mapOf<kotlin.reflect.KClass<out EntSchema>, EntSchema>(schema::class to schema)
         schema.finalize(registry)
         val ex = assertFailsWith<IllegalStateException> {
-            EntGenerator("com.example.ent").generate(listOf(SchemaInput(schema)))
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(listOf(SchemaInput(schema)))
         }
         assertTrue(
             "Kotlin declaration" in (ex.message ?: ""),

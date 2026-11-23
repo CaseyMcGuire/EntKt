@@ -9,7 +9,7 @@ import kotlinx.html.h1
 import kotlinx.html.h2
 
 internal fun detailPage(
-    entity: EntExplorerEntity<*>,
+    entity: EntExplorerEntity<*, *>,
     columns: List<EntExplorerColumn>,
     row: EntExplorerRow,
     visibleRoutes: Set<String>,

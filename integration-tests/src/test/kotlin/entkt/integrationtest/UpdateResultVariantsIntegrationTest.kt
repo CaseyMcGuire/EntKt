@@ -15,7 +15,6 @@ import entkt.runtime.mutation.PendingUpdateMutation
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntMutationAlreadyConsumedException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
@@ -77,7 +76,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
             email = "update-operation@example.com"
         }.saveAndLoad(testViewerContext).getOrThrow()
 
-        val mutation: PendingUpdateMutation<Viewer, UserUpdateDraft, User> = client.users.update(user.id) {
+        val mutation: PendingUpdateMutation<TestViewer, UserUpdateDraft, User> = client.users.update(user.id) {
             name = "Configured"
         }
         mutation.configure { name = "$name again" }
@@ -278,7 +277,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `a pre-write UPDATE privacy rejection carries operation UPDATE and NotPersisted`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User(1L))
         val denyUpdate = object : EntityPolicy<Article, ArticlePolicyScope> {
             override fun configure(scope: ArticlePolicyScope) = scope.run {
                 privacy {

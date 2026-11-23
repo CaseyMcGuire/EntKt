@@ -18,9 +18,8 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
-import entkt.codegen.metadata.VIEWER
-import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.toTypeName
+import entkt.codegen.metadata.viewerContextType
 import entkt.codegen.query.indexHelperTree
 import entkt.codegen.query.QuerySurface
 import entkt.schema.EntSchema
@@ -29,7 +28,7 @@ private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
 private val LIST = ClassName("kotlin.collections", "List")
 private val RESOLVED_ENT_INTERCEPTORS_CONFIG =
-    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig").parameterizedBy(VIEWER)
+    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val ENT_RULE_CLIENT = ClassName("entkt.runtime.rule", "EntRuleClient")
 private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "TransactionExecutionGuard")
@@ -74,7 +73,9 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
  */
 internal class ReadClientGenerator(
     private val packageName: String,
+    private val viewer: ClassName,
 ) {
+    private val viewerContext = viewerContextType(viewer)
 
     fun generate(
         schemas: List<SchemaInput>,
@@ -155,7 +156,7 @@ internal class ReadClientGenerator(
                 returnType = PRIVACY_EVALUATION.parameterizedBy(entityClass),
             ) {
                 addModifiers(KModifier.OVERRIDE)
-                parameter("viewerContext", VIEWER_CONTEXT)
+                parameter("viewerContext", viewerContext)
                 parameter("entities", LIST.parameterizedBy(entityClass))
                 statement("return host.evaluateLoadPrivacy(viewerContext, entities)")
             }
@@ -165,7 +166,7 @@ internal class ReadClientGenerator(
             if (indexHelperTree(input.schema, schemaNames) != null) {
                 addProperty(buildIndexesProperty(indexesClass, clientRef = "runtime"))
             }
-            addFunction(buildFindById(entityClass, queryClass, idType, clientRef = "runtime"))
+            addFunction(buildFindById(entityClass, queryClass, idType, viewerContext, clientRef = "runtime"))
         }
     }
 
@@ -189,7 +190,7 @@ internal class ReadClientGenerator(
 
             primaryConstructor {
                 parameter("driver", DRIVER)
-                parameter("entityInterceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG)
+                parameter("entityInterceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer))
                 parameter("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD)
                 parameter(
                     "transactionExecutionToken",
@@ -221,7 +222,7 @@ internal class ReadClientGenerator(
                 // the marker needs the `property:` use-site target — opt-in
                 // markers can't annotate a parameter.
                 "entityInterceptors",
-                RESOLVED_ENT_INTERCEPTORS_CONFIG,
+                RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer),
             ) {
                 addAnnotation(
                     annotation(ENTKT_INTERNAL) {

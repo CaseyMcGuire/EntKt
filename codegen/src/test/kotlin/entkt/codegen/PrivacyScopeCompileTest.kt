@@ -20,7 +20,7 @@ class PrivacyScopeCompileTest {
     private fun generatedSources(): List<SourceFile> {
         val schema = Entity()
         return listOf(
-            PrivacyGenerator("com.example.ent").generate("Entity", schema),
+            PrivacyGenerator("com.example.ent", TEST_VIEWER).generate("Entity", schema),
             ValidationGenerator("com.example.ent").generate("Entity", schema),
         ).toCompileTestSources() + SourceFile.kotlin(
             "PrivacyInputs.kt",
@@ -56,7 +56,7 @@ class PrivacyScopeCompileTest {
             import com.example.ent.EntityPrivacyScope
             import com.example.ent.EntityUpdateBatchPrivacyRule
             import com.example.ent.EntityUpdatePrivacyRule
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ContextPrivacyRule
             import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
             import entkt.runtime.rule.EntRuleClient
@@ -68,7 +68,7 @@ class PrivacyScopeCompileTest {
                     val create = EntityCreatePrivacyRule { _, _ -> error("not evaluated") }
                     val update = EntityUpdatePrivacyRule { _, _ -> error("not evaluated") }
                     val delete = EntityDeletePrivacyRule { _, _ -> error("not evaluated") }
-                    val shared = ContextPrivacyRule<Viewer, EntRuleClient> { error("not evaluated") }
+                    val shared = ContextPrivacyRule<AppViewer, EntRuleClient> { error("not evaluated") }
                     val config = EntityPrivacyConfig()
                     EntityPrivacyScope(config).apply {
                         load(load)

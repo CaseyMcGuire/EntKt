@@ -1,7 +1,6 @@
 package entkt.explorer
 
 import entkt.runtime.driver.EntitySchema
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.schema.FieldType
 
@@ -12,8 +11,11 @@ import entkt.schema.FieldType
  * `findById(...).visibleOrNull().getOrThrow()`), which preserves read privacy,
  * read interceptors, soft-delete filters, result decoding, and generated
  * entity construction.
+ *
+ * @param Viewer the application's viewer type, the one the generated client
+ * [C] is bound to.
  */
-interface EntExplorerEntity<C : Any> {
+interface EntExplorerEntity<Viewer : Any, C : Any> {
     /** Runtime schema metadata (columns, edges, indexes) for schema pages. */
     val schema: EntitySchema
 

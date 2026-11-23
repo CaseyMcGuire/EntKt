@@ -5,6 +5,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.NameAllocator
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
@@ -17,8 +18,7 @@ import entkt.codegen.kotlinpoet.interfaceType
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.property
-import entkt.codegen.metadata.VIEWER
-import entkt.codegen.metadata.VIEWER_CONTEXT
+import entkt.codegen.metadata.viewerContextType
 
 private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
 private val LIST = ClassName("kotlin.collections", "List")
@@ -26,7 +26,7 @@ private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val ENT_ENTITY = ClassName("entkt.runtime.entity", "EntEntity")
 private val ENTITY_MAPPING = ClassName("entkt.runtime.entity", "EntityMapping")
 private val READ_QUERY_EXECUTION_HOST =
-    ClassName("entkt.runtime.query.execution", "ReadQueryExecutionHost").parameterizedBy(VIEWER)
+    ClassName("entkt.runtime.query.execution", "ReadQueryExecutionHost")
 
 /**
  * Emits the generated read-runtime contract: `EntReadRuntime` plus one
@@ -51,7 +51,9 @@ private val READ_QUERY_EXECUTION_HOST =
  */
 internal class ReadRuntimeGenerator(
     private val packageName: String,
+    private val viewer: ClassName,
 ) {
+    private val viewerContext = viewerContextType(viewer)
 
     fun generate(schemas: List<SchemaInput>): FileSpec {
         // Same accessor order as EntClient's repo properties.
@@ -83,7 +85,7 @@ internal class ReadRuntimeGenerator(
                 returnType = PRIVACY_EVALUATION.parameterizedBy(entityClass),
             ) {
                 addModifiers(KModifier.ABSTRACT)
-                parameter("viewerContext", VIEWER_CONTEXT)
+                parameter("viewerContext", viewerContext)
                 parameter("entities", LIST.parameterizedBy(entityClass))
             }
         }
@@ -92,7 +94,7 @@ internal class ReadRuntimeGenerator(
     private fun buildReadRuntime(sorted: List<SchemaInput>): TypeSpec {
         return interfaceType("EntReadRuntime") {
             addAnnotation(ENTKT_INTERNAL)
-            addSuperinterface(READ_QUERY_EXECUTION_HOST)
+            addSuperinterface(READ_QUERY_EXECUTION_HOST.parameterizedBy(viewer))
             addFunction(buildEvaluateLoadPrivacy(sorted))
 
             for (input in sorted) {
@@ -104,7 +106,14 @@ internal class ReadRuntimeGenerator(
     }
 
     private fun buildEvaluateLoadPrivacy(sorted: List<SchemaInput>): FunSpec {
-        val entityType = TypeVariableName("Entity", ENT_ENTITY.parameterizedBy(STAR))
+        // A type parameter shadows an imported class of the same name, so it must not
+        // take the simple name of the viewer type or of an entity this function names.
+        val names = NameAllocator()
+        names.newName(viewer.simpleName)
+        for (input in sorted) {
+            names.newName(input.name)
+        }
+        val entityType = TypeVariableName(names.newName("Entity"), ENT_ENTITY.parameterizedBy(STAR))
         val body = codeBlock {
             add("return when (entity) {\n")
             for (input in sorted) {
@@ -139,7 +148,7 @@ internal class ReadRuntimeGenerator(
             addModifiers(KModifier.OVERRIDE)
             addTypeVariable(entityType)
             parameter("entity", ENTITY_MAPPING.parameterizedBy(entityType))
-            parameter("viewerContext", VIEWER_CONTEXT)
+            parameter("viewerContext", viewerContext)
             parameter("entities", LIST.parameterizedBy(entityType))
             addCode(body)
         }

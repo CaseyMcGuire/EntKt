@@ -17,6 +17,7 @@ enable adapter generation and add the explorer module:
 // build.gradle.kts
 entkt {
     packageName.set("com.example.ent")
+    viewerType.set("com.example.auth.AppViewer")
     generateEntExplorer.set(true)
 }
 
@@ -42,12 +43,18 @@ val explorer = EntExplorer(client, GeneratedEntExplorerRegistry) {
     path = "/_ent"
     authorize { request -> request.principal.isAdminOfSomeKind() }
     viewerContext { request ->
-        ViewerContext.AsViewer(Viewer.User((request.principal as Admin).userId))
+        ViewerContext.AsViewer(AppViewer(userId = (request.principal as Admin).userId))
     }
     entities { exclude("session") }
     redaction { extra("users", "legacy_secret_column") }
 }
 ```
+
+`viewerContext` is required: it says what every explorer read runs as, in terms
+of your application's [viewer type](06-privacy.md#viewer). Constructing an
+`EntExplorer` without it fails with an `IllegalArgumentException`. The explorer
+is generic over that viewer type and the generated client, and both are
+inferred from `GeneratedEntExplorerRegistry`.
 
 **Spring Boot:** with `io.entkt:ent-explorer-spring` on the classpath, declaring
 the `EntExplorer` bean is all it takes — the auto-configuration mounts it at
@@ -58,7 +65,7 @@ an optional resolver bean (defaults to the servlet `userPrincipal`):
 
 ```kotlin
 @Bean
-fun entExplorer(client: EntClient): EntExplorer<EntClient> =
+fun entExplorer(client: EntClient): EntExplorer<AppViewer, EntClient> =
     EntExplorer(client, GeneratedEntExplorerRegistry) {
         path = "/_ent"
         authorize { it.principal != null }
@@ -107,7 +114,7 @@ http.authorizeHttpRequests { it.requestMatchers("/_ent/**").hasRole("ADMIN") }
 
 // 3. Whole environments: no bean, no routes — a complete kill switch.
 @Bean @Profile("dev", "staging")
-fun entExplorer(client: EntClient): EntExplorer<EntClient> = ...
+fun entExplorer(client: EntClient): EntExplorer<AppViewer, EntClient> = ...
 ```
 
 Which *rows* are visible is `viewerContext`'s job, not `authorize`'s; which
@@ -129,8 +136,8 @@ is `.sensitive()` / `redaction { extra(...) }` — see below.
   containing any privacy-denied row renders as an explicitly
   privacy-filtered empty page (see below); the detail route reads with
   `findById(viewerContext, id).visibleOrNull()`, so a privacy-denied, missing, or
-  unparseable id is the same 404 — no existence disclosure. The default
-  context is `Viewer.Anonymous` (fail-closed).
+  unparseable id is the same 404 — no existence disclosure. There is no
+  default context: the application must supply the provider.
 - **Read-only.** Non-GET requests are 405, and the explorer exposes no create,
   update, delete, or arbitrary-query API.
 - **Sensitive fields stay sensitive.** `.sensitive()` columns are visible as

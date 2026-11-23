@@ -31,11 +31,11 @@ class WriteCandidateCompileTest {
 
     private fun mutationTypes(candidate: String): List<String> = listOf(
         "CreateMutationConverter<WidgetDraft, $candidate, Widget, BeforeCreate>",
-        "CreateMutationOperation<Viewer, EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
-        "CreateManyMutationOperation<Viewer, EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
+        "CreateMutationOperation<AppViewer, EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
+        "CreateManyMutationOperation<AppViewer, EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
         "DeleteMutationConverter<Widget, $candidate>",
-        "DeleteMutationOperation<Viewer, EntRuleClient, Widget, $candidate>",
-        "DeleteManyMutationOperation<Viewer, EntRuleClient, Widget, $candidate>",
+        "DeleteMutationOperation<AppViewer, EntRuleClient, Widget, $candidate>",
+        "DeleteManyMutationOperation<AppViewer, EntRuleClient, Widget, $candidate>",
         "DeleteRuleInput<Widget, $candidate>",
     ) + updateRuleInputTypes(candidate = candidate)
 
@@ -44,7 +44,7 @@ class WriteCandidateCompileTest {
         candidate: String = "WidgetCandidate",
     ): List<String> = listOf(
         "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, $candidate, BeforeUpdate, $updateInput>",
-        "UpdateMutationOperation<Viewer, EntRuleClient, WidgetUpdateDraft, Widget, PendingEdges, $candidate, BeforeSave, BeforeUpdate, $updateInput>",
+        "UpdateMutationOperation<AppViewer, EntRuleClient, WidgetUpdateDraft, Widget, PendingEdges, $candidate, BeforeSave, BeforeUpdate, $updateInput>",
     )
 
     private fun compileTypes(types: List<String>): JvmCompilationResult = compileSources(
@@ -68,7 +68,7 @@ class WriteCandidateCompileTest {
                 import entkt.runtime.mutation.WriteCandidate
                 import entkt.runtime.mutation.execution.*
                 import entkt.runtime.rule.EntRuleClient
-                import entkt.runtime.privacy.Viewer
+                import com.example.auth.AppViewer
 
                 data class Widget(override val id: Int) : EntEntity.IntId
                 data class Other(override val id: Int) : EntEntity.IntId
@@ -206,11 +206,11 @@ class WriteCandidateCompileTest {
         }
 
         val resultType = when (factory) {
-            "create" -> "CreateMutationOperations<Viewer, EntRuleClient, WidgetCreateDraft, Widget>"
-            "update" -> "MutationOperation<EntRuleClient, UpdateMutationInput<Viewer, WidgetUpdateDraft>, Widget>"
-            "createMany" -> "CreateManyMutationOperation<Viewer, EntRuleClient, WidgetCreateDraft, WidgetCandidate, Widget, BeforeSave, BeforeCreate>"
-            "delete" -> "DeleteMutationOperation<Viewer, EntRuleClient, Widget, WidgetCandidate>"
-            else -> "DeleteManyMutationOperation<Viewer, EntRuleClient, Widget, WidgetCandidate>"
+            "create" -> "CreateMutationOperations<AppViewer, EntRuleClient, WidgetCreateDraft, Widget>"
+            "update" -> "MutationOperation<EntRuleClient, UpdateMutationInput<AppViewer, WidgetUpdateDraft>, Widget>"
+            "createMany" -> "CreateManyMutationOperation<AppViewer, EntRuleClient, WidgetCreateDraft, WidgetCandidate, Widget, BeforeSave, BeforeCreate>"
+            "delete" -> "DeleteMutationOperation<AppViewer, EntRuleClient, Widget, WidgetCandidate>"
+            else -> "DeleteManyMutationOperation<AppViewer, EntRuleClient, Widget, WidgetCandidate>"
         }
 
         return compileSources(
@@ -227,7 +227,7 @@ class WriteCandidateCompileTest {
                     import entkt.runtime.entity.EntityDescriptor
                     import entkt.runtime.mutation.*
                     import entkt.runtime.mutation.execution.*
-                    import entkt.runtime.privacy.Viewer
+                    import com.example.auth.AppViewer
                     import entkt.runtime.privacy.BatchPrivacyRule
                     import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
                     import entkt.runtime.rule.EntRuleClient
@@ -247,32 +247,32 @@ class WriteCandidateCompileTest {
 
                     abstract class CombinedCreateConverter :
                         CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget, BeforeCreate>,
-                        CreateMutationHookStateConverter<Viewer, WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>
+                        CreateMutationHookStateConverter<AppViewer, WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>
 
                     abstract class CombinedUpdateAdapter :
                         UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetCandidate, BeforeUpdate, UpdateInput>,
-                        UpdateMutationHookStateConverter<Viewer, WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>
+                        UpdateMutationHookStateConverter<AppViewer, WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>
 
                     fun bind(
                         entity: EntityDescriptor<$mappingEntity, *>,
                         privacy: ResolvedEntityPrivacyConfig<
-                            Nothing, BatchPrivacyRule<Viewer, EntRuleClient, WidgetCandidate>,
-                            BatchPrivacyRule<Viewer, EntRuleClient, UpdateInput>,
-                            BatchPrivacyRule<Viewer, EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,
+                            Nothing, BatchPrivacyRule<AppViewer, EntRuleClient, WidgetCandidate>,
+                            BatchPrivacyRule<AppViewer, EntRuleClient, UpdateInput>,
+                            BatchPrivacyRule<AppViewer, EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,
                         >,
                         validation: ResolvedEntityValidationConfig<
                             BatchValidationRule<EntRuleClient, WidgetCandidate>,
                             BatchValidationRule<EntRuleClient, UpdateInput>,
                             BatchValidationRule<EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,
                         >,
-                        runtime: MutationRuntime<Viewer>,
+                        runtime: MutationRuntime<AppViewer>,
                         combinedCreateConverter: CombinedCreateConverter,
                         updateAdapter: $updateAdapterType,
                         createConverter: CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget, BeforeCreate>,
-                        createHooks: CreateMutationHookStateConverter<Viewer, WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>,
+                        createHooks: CreateMutationHookStateConverter<AppViewer, WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>,
                         deleteConverter: DeleteMutationConverter<Widget, WidgetCandidate>,
                         driver: DatabaseDriver,
-                        readHost: ReadQueryExecutionHost<Viewer>,
+                        readHost: ReadQueryExecutionHost<AppViewer>,
                     ): $resultType = $call
                     """.trimIndent(),
                 ),
@@ -285,7 +285,7 @@ class WriteCandidateCompileTest {
         val incompleteAdapters = mapOf(
             "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetCandidate, BeforeUpdate, UpdateInput>" to
                 "UpdateMutationHookStateConverter",
-            "UpdateMutationHookStateConverter<Viewer, WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>" to
+            "UpdateMutationHookStateConverter<AppViewer, WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>" to
                 "UpdateMutationAdapter",
         )
         for ((type, missingContract) in incompleteAdapters) {
@@ -320,7 +320,7 @@ class WriteCandidateCompileTest {
         val schemas = listOf(Widget(), WriteCandidate())
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = EntGenerator("com.example.ent")
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(schemas.map { SchemaInput(it) })
             .toCompileTestSources()
         val result = compileSources(
@@ -349,7 +349,7 @@ class WriteCandidateCompileTest {
         val schemas = listOf(Widget(), UpdateRuleInput(), DeleteRuleInput())
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = EntGenerator("com.example.ent")
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(schemas.map { SchemaInput(it) })
             .toCompileTestSources()
         val result = compileSources(

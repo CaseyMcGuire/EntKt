@@ -17,14 +17,13 @@ import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
-import entkt.codegen.metadata.VIEWER
-import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.stagingFieldName
 import entkt.codegen.metadata.toTypeName
+import entkt.codegen.metadata.viewerContextType
 import entkt.codegen.kotlinpoet.annotation
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.codeBlock
@@ -60,7 +59,9 @@ private val UPDATE_MUTATION_HOOK_STATE_CONVERTER =
 
 internal class UpdateGenerator(
     private val packageName: String,
+    private val viewer: ClassName,
 ) {
+    private val viewerContext = viewerContextType(viewer)
 
     fun generate(
         schemaName: String,
@@ -178,7 +179,7 @@ internal class UpdateGenerator(
             }
             addSuperinterface(
                 UPDATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
-                    VIEWER,
+                    viewer,
                     draftClass,
                     entityClass,
                     pendingEdgeOpsClass,
@@ -211,7 +212,7 @@ internal class UpdateGenerator(
         val beforeUpdateStateClass = ClassName(packageName, "${schemaName}BeforeUpdateState")
         return function("toBeforeUpdateState", beforeUpdateStateClass) {
             addModifiers(KModifier.OVERRIDE)
-            parameter("viewerContext", VIEWER_CONTEXT)
+            parameter("viewerContext", viewerContext)
             parameter("before", ClassName(packageName, schemaName))
             parameter("pendingEdges", ClassName(packageName, "${schemaName}PendingEdgeOps"))
             parameter("beforeSaveState", ClassName(packageName, "${schemaName}BeforeSaveState"))

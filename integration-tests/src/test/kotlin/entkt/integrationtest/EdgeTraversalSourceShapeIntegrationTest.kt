@@ -14,7 +14,6 @@ import entkt.postgres.PostgresDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.query.GlobalQueryInterceptor
 import entkt.runtime.query.QueryInterceptor
@@ -326,7 +325,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `source LOAD privacy is not applied implicitly`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
+        val viewerContext = ViewerContext.AsViewer(TestViewer.Anonymous)
         val client = EntClient(resetAndDriver()) {
 
             policies {
@@ -357,7 +356,7 @@ class EdgeTraversalSourceShapeIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `target LOAD privacy still applies to traversal results`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
+        val viewerContext = ViewerContext.AsViewer(TestViewer.Anonymous)
         val client = EntClient(resetAndDriver()) {
 
             policies {

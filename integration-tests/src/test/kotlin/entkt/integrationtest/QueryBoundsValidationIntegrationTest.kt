@@ -15,7 +15,6 @@ import entkt.runtime.driver.DatabaseDriver
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.query.QueryInterceptor
 import entkt.runtime.query.ReadOperation
 import entkt.runtime.query.requireLoaded
@@ -229,7 +228,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `limit(0) on a to-one eager load does not evaluate the excluded target`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User("reader"))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User("reader"))
         val client = clientWithDeniedAuthors()
 
         // Eager-target denial is strict — it fails the read rather than
@@ -246,7 +245,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `offset past a to-one eager target does not evaluate it`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User("reader"))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User("reader"))
         val client = clientWithDeniedAuthors()
 
         val articles = client.articles.query { loadAuthor { offset(1) } }.all(viewerContext).getOrThrow()
@@ -256,7 +255,7 @@ class QueryBoundsValidationIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `an in-window denied eager target still fails the read`() {
-        val viewerContext = ViewerContext.AsViewer(Viewer.User("reader"))
+        val viewerContext = ViewerContext.AsViewer(TestViewer.User("reader"))
         val client = clientWithDeniedAuthors()
 
         // The other half of the contract: skipping privacy for an empty

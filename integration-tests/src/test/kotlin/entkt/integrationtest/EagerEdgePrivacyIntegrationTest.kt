@@ -24,7 +24,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.query.requireLoaded
@@ -53,7 +52,7 @@ import kotlin.test.assertTrue
  * maps an eager denial to root absence.
  */
 class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(1L))
 
     // ---- fixture policies ----
 
@@ -208,7 +207,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Tag> { _, batch ->
+                            load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, Tag> { _, batch ->
                                 invocations += batch.map { it.name }
                                 batch.decideEach {
                                     PrivacyDecision.Deny("tag ${it.name} hidden")

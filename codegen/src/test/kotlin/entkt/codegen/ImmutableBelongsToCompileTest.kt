@@ -54,7 +54,7 @@ class ImmutableBelongsToCompileTest {
         assertEquals("writer_id", fks.getValue("writer").columnName)
         assertEquals(42L, fks.getValue("writer").default)
 
-        val types = EntGenerator("com.example.ent").generate(schemas.map(::SchemaInput))
+        val types = EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(schemas.map(::SchemaInput))
             .flatMap { it.members.filterIsInstance<TypeSpec>() }
             .associateBy { it.name }
         for (name in immutableProperties) {
@@ -70,7 +70,7 @@ class ImmutableBelongsToCompileTest {
     }
 
     private fun compile(body: String): JvmCompilationResult {
-        val generated = EntGenerator("com.example.ent")
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(schemas().map(::SchemaInput)).toCompileTestSources()
         val application = SourceFile.kotlin(
             "Application.kt",
@@ -80,7 +80,7 @@ class ImmutableBelongsToCompileTest {
 
             import com.example.ent.*
             import entkt.runtime.driver.NoopDriver
-            import entkt.runtime.privacy.Viewer
+            import com.example.auth.AppViewer
             import entkt.runtime.privacy.ViewerContext
 
             $body
@@ -181,7 +181,7 @@ class ImmutableBelongsToCompileTest {
     fun `immutable junction endpoints require throughEntity just like immutable backing fields`() {
         for (immutableSource in listOf(true, false)) {
             val error = assertFailsWith<IllegalStateException> {
-                EntGenerator("com.example.ent").generate(
+                EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(
                     listOf(LinkOwner(throughLink = true), LinkTarget(), Link(immutableSource)).map(::SchemaInput),
                 )
             }
@@ -189,7 +189,7 @@ class ImmutableBelongsToCompileTest {
             assertContains(error.message!!, "is `.immutable()`")
             assertContains(error.message!!, "use throughEntity")
 
-            EntGenerator("com.example.ent").generate(
+            EntGenerator("com.example.ent", TEST_VIEWER_TYPE).generate(
                 listOf(LinkOwner(throughLink = false), LinkTarget(), Link(immutableSource)).map(::SchemaInput),
             )
         }

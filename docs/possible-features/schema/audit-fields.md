@@ -45,18 +45,21 @@ updated_by
 
 ## Viewer Integration
 
-For actor fields, generated code can read from `ViewerContext.viewer`:
+The viewer is a type the application defines, so the runtime cannot read an
+actor ID from it. The application supplies an accessor over its viewer type,
+and generated code branches on the two context cases:
 
 ```kotlin
-when (val viewer = viewerContext.viewer) {
-    is Viewer.User -> viewer.id
-    is Viewer.PrivacyBypass -> null
-    Viewer.Anonymous -> null
+when (viewerContext) {
+    is ViewerContext.AsViewer -> actorId(viewerContext.viewer) // application-supplied accessor
+    is ViewerContext.PrivacyBypass -> null
 }
 ```
 
-The exact storage type needs schema configuration because `Viewer.User.id` is
-currently `Any`.
+The accessor's return type can be checked against the column type of
+`created_by` and `updated_by`, so no extra schema configuration is needed to
+choose a storage type. An accessor that returns `null`, for an unauthenticated
+viewer, leaves the actor `null`.
 
 ## Test Requirements
 
@@ -66,6 +69,6 @@ Before implementation, add tests for:
 - update changes `updated_at`
 - create sets `created_by` from viewer when configured
 - update sets `updated_by` from viewer when configured
-- `Viewer.PrivacyBypass` behavior is documented and tested
+- `ViewerContext.PrivacyBypass` behavior is documented and tested
 - audit fields interact correctly with explicit user-provided values
 

@@ -26,9 +26,9 @@ class CreateHookStateCompileTest {
     }
 
     private fun createTypes(beforeSave: String, beforeCreate: String): List<String> = listOf(
-        "CreateMutationOperation<Viewer, EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
-        "CreateManyMutationOperation<Viewer, EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
-        "CreateMutationHookStateConverter<Viewer, WidgetDraft, Widget, $beforeSave, $beforeCreate>",
+        "CreateMutationOperation<AppViewer, EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
+        "CreateManyMutationOperation<AppViewer, EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
+        "CreateMutationHookStateConverter<AppViewer, WidgetDraft, Widget, $beforeSave, $beforeCreate>",
     )
 
     private fun compileTypes(types: List<String>): JvmCompilationResult = compileSources(
@@ -45,7 +45,7 @@ class CreateHookStateCompileTest {
                 import entkt.runtime.mutation.CreateMutationDraft
                 import entkt.runtime.mutation.WriteCandidate
                 import entkt.runtime.mutation.execution.*
-                import entkt.runtime.privacy.Viewer
+                import com.example.auth.AppViewer
                 import entkt.runtime.rule.EntRuleClient
 
                 data class Widget(override val id: Int) : EntEntity.IntId
@@ -115,7 +115,7 @@ class CreateHookStateCompileTest {
         val schemas = listOf(Widget(), EmptyWidget(), BeforeCreateHookState())
         val registry = schemas.associateBy { it::class }
         schemas.forEach { it.finalize(registry) }
-        val generated = EntGenerator("com.example.ent")
+        val generated = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(schemas.map { SchemaInput(it) })
             .toCompileTestSources()
 

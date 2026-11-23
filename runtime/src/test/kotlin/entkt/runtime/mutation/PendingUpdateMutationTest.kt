@@ -3,7 +3,7 @@
 package entkt.runtime.mutation
 
 import entkt.runtime.entity.EntEntity
-import entkt.runtime.privacy.Viewer
+import entkt.runtime.privacy.TestViewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationAlreadyConsumedException
 import entkt.runtime.result.EntOperation
@@ -25,13 +25,13 @@ class PendingUpdateMutationTest {
 
     private class Draft(var title: String? = null) : UpdateMutationDraft<Article>
 
-    private class RecordingRepository : UpdateMutationRepository<Viewer, Draft, Article> {
-        var viewerContext: ViewerContext<Viewer>? = null
+    private class RecordingRepository : UpdateMutationRepository<TestViewer, Draft, Article> {
+        var viewerContext: ViewerContext<TestViewer>? = null
         var request: UpdateMutationRequest<Draft>? = null
         var appliedLoadPrivacy: Boolean? = null
 
         override fun executeUpdate(
-            viewerContext: ViewerContext<Viewer>,
+            viewerContext: ViewerContext<TestViewer>,
             request: UpdateMutationRequest<Draft>,
             applyLoadPrivacy: Boolean,
         ): MutationResult<Article> {

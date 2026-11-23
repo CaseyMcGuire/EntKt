@@ -33,7 +33,7 @@ class EdgeLoadHandleCompileTest {
         )
         car.finalize(registry)
         user.finalize(registry)
-        return EntGenerator("com.example.ent")
+        return EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(car), SchemaInput(user)))
             .toCompileTestSources()
     }
@@ -48,7 +48,7 @@ class EdgeLoadHandleCompileTest {
 
                 import com.example.ent.CarQueryScope
                 import com.example.ent.UserQuery
-                import entkt.runtime.privacy.Viewer
+                import com.example.auth.AppViewer
                 import entkt.runtime.privacy.ViewerContext
                 import entkt.runtime.query.EdgeLoad
 
@@ -66,7 +66,7 @@ class EdgeLoadHandleCompileTest {
                     parent.limit(1)
                 }
 
-                fun fluentToMany(q: UserQuery, viewerContext: ViewerContext<Viewer>) {
+                fun fluentToMany(q: UserQuery, viewerContext: ViewerContext<AppViewer>) {
                     // filterVisible() on a to-many edge chains the same way.
                     val parent: UserQuery = q.configure { loadCars { limit(3) }.filterVisible() }
                     parent.firstOrNull(viewerContext)

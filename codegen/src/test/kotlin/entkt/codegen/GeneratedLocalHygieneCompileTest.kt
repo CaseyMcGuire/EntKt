@@ -59,7 +59,7 @@ class GeneratedLocalHygieneCompileTest {
         )
         target.finalize(registry)
         schema.finalize(registry)
-        val sources = EntGenerator("com.example.ent")
+        val sources = EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(target), SchemaInput(schema)))
             .toCompileTestSources()
         return compileSources(sources)

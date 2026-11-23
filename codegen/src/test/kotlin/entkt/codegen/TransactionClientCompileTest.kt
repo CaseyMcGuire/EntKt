@@ -25,7 +25,7 @@ class TransactionClientCompileTest {
         )
         car.finalize(registry)
         user.finalize(registry)
-        return EntGenerator("com.example.ent")
+        return EntGenerator("com.example.ent", TEST_VIEWER_TYPE)
             .generate(listOf(SchemaInput(car), SchemaInput(user)))
             .toCompileTestSources()
     }
@@ -45,10 +45,10 @@ class TransactionClientCompileTest {
                 import com.example.ent.EntTransactionClient
                 import entkt.runtime.driver.IsolationLevel
                 import entkt.runtime.privacy.ViewerContext
-                import entkt.runtime.privacy.Viewer
+                import com.example.auth.AppViewer
 
                 fun useTransactionClient(client: EntClient) {
-                    val viewerContext = ViewerContext.AsViewer(Viewer.Anonymous)
+                    val viewerContext = ViewerContext.AsViewer(AppViewer(userId = null))
                     client.withTransaction { tx ->
                         val typed: EntTransactionClient = tx
                         typed.cars.query { }.all(viewerContext)
@@ -85,15 +85,15 @@ class TransactionClientCompileTest {
 
                 import com.example.ent.EntClient
                 import com.example.ent.EntClientScope
-                import entkt.runtime.privacy.Viewer
+                import com.example.auth.AppViewer
                 import entkt.runtime.privacy.ViewerContext
 
-                fun sharedHelper(client: EntClientScope, viewerContext: ViewerContext<Viewer>) {
+                fun sharedHelper(client: EntClientScope, viewerContext: ViewerContext<AppViewer>) {
                     client.cars.query { }.all(viewerContext)
                     client.users.create { name = "helper" }.save(viewerContext)
                 }
 
-                fun useBoth(client: EntClient, viewerContext: ViewerContext<Viewer>) {
+                fun useBoth(client: EntClient, viewerContext: ViewerContext<AppViewer>) {
                     sharedHelper(client, viewerContext)
                     client.withTransaction { tx ->
                         sharedHelper(tx, viewerContext)

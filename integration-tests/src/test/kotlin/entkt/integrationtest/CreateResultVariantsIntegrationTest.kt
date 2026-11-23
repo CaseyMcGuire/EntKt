@@ -13,7 +13,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.result.EntConstraintViolationException
 import entkt.runtime.result.EntMutationPrivacyDeniedException
 import entkt.runtime.result.EntOperation
@@ -57,7 +56,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewerContext: ViewerContext<Viewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
+        viewerContext: ViewerContext<TestViewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUser,
     ): EntClient {
@@ -136,7 +135,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = policy)
         val author = run {
             val sys = client
             val viewerContext = testBypassContext("test")
@@ -225,7 +224,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
     @Test
     fun `save returns Failed(EntMutationPrivacyDeniedException) when CREATE privacy denies`() {
         val requireAuth = ArticleCreatePrivacyRule { context, _ ->
-            if (context.viewerContext.viewer is Viewer.Anonymous) PrivacyDecision.Deny("authentication required")
+            if (context.viewerContext.viewer is TestViewer.Anonymous) PrivacyDecision.Deny("authentication required")
             else PrivacyDecision.Allow
         }
         val policy = object : EntityPolicy<Article, ArticlePolicyScope> {
@@ -236,7 +235,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
                 }
             }
         }
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.Anonymous), articlePolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.Anonymous), articlePolicy = policy)
         // Seed an author with a system context — the test's privacy
         // boundary is on Article, not User.
         val author = run {
@@ -274,7 +273,7 @@ class CreateResultVariantsIntegrationTest : PostgresTestBase() {
         }
         // ViewerContext.PrivacyBypass bypasses privacy checks by design — use an
         // authenticated viewer so the deny rule actually fires.
-        val client = freshClient(viewerContext = ViewerContext.AsViewer(Viewer.User(1L)), articlePolicy = policy)
+        val client = freshClient(viewerContext = ViewerContext.AsViewer(TestViewer.User(1L)), articlePolicy = policy)
         val author = run {
             val sys = client
             val viewerContext = testBypassContext("test")

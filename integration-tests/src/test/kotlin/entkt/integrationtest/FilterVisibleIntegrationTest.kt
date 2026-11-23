@@ -18,7 +18,6 @@ import entkt.integrationtest.support.PostgresTestBase
 import entkt.runtime.privacy.EntityPolicy
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.PrivacyDecision
-import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.allowAll
 import entkt.runtime.privacy.batchPrivacyRule
 import entkt.runtime.query.EdgeState
@@ -44,7 +43,7 @@ import kotlin.test.assertSame
  *  - a rule-thrown ordinary exception still fails the terminal
  */
 class FilterVisibleIntegrationTest : PostgresTestBase() {
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(1L))
+    private val viewerContext = ViewerContext.AsViewer(TestViewer.User(1L))
 
     private fun openNotes() = object : EntityPolicy<Note, NotePolicyScope> {
         override fun configure(scope: NotePolicyScope) = scope.run { privacy { load(allowAll) } }
@@ -111,7 +110,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Tag> { _, batch ->
+                            load(batchPrivacyRule<TestViewer, ReadOnlyEntClient, Tag> { _, batch ->
                                 invocations += batch.map { it.name }
                                 batch.decideEach {
                                     if (it.name == "a-denied-shared") {
