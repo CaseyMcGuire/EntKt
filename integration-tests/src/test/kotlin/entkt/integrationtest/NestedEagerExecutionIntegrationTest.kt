@@ -85,8 +85,8 @@ class NestedEagerExecutionIntegrationTest : PostgresTestBase() {
             ).toList()
 
     // Fail-closed fixtures: entities on the read path that aren't the
-    // privacy subject still need an explicit load-allow under a
-    // non-bypass viewer.
+    // privacy subject still need an explicit load-allow when the read
+    // runs as a viewer rather than under a privacy bypass.
     private fun openGroups() = object : EntityPolicy<Group, GroupPolicyScope> {
         override fun configure(scope: GroupPolicyScope) = scope.run { privacy { load(allowAll) } }
     }

@@ -14,7 +14,7 @@ Add generated support for common audit fields such as `created_at`,
 Most applications need to know when a row was created, when it was last
 updated, and which viewer performed those operations.
 
-entkt already has privacy context, hooks, and generated write pipelines. Audit
+entkt already has a viewer context, hooks, and generated write pipelines. Audit
 fields can build on those mechanisms.
 
 ## Non-Goals

@@ -96,7 +96,7 @@ sealed interface LoadSource {
 }
 ```
 
-Current LOAD callbacks receive `PrivacyRuleContext<ReadOnlyEntClient>` plus
+Current LOAD callbacks receive `PrivacyRuleContext<AppViewer, ReadOnlyEntClient>` plus
 the entity, and batch callbacks receive an ordered entity batch. There is no
 per-entity `PostLoadPrivacyContext` to extend.
 

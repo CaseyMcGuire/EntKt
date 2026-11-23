@@ -194,7 +194,7 @@ Cons:
 
 - more API surface
 - needs clear docs explaining which layer provides which guarantee
-- implementation touches query codegen, privacy context access, cursors, and
+- implementation touches query codegen, viewer context access, cursors, and
   result variants
 
 ## Reference Implementation Notes

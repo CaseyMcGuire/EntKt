@@ -1,4 +1,4 @@
-# RFC: Privacy Rule Primitives And Viewer Flavors
+# RFC: Privacy Rule Primitives
 
 ## Status
 

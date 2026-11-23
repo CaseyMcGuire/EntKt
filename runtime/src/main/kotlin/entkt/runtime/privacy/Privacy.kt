@@ -58,6 +58,9 @@ sealed interface ViewerContext<out Viewer : Any> {
  *
  * Privacy rules are never evaluated for a privacy bypass, so [viewerContext]
  * is always the [ViewerContext.AsViewer] the operation was given.
+ *
+ * `Viewer` is the application's viewer type. Rules read it through [viewer],
+ * and generated rule aliases bind it.
  */
 class PrivacyRuleContext<out Viewer : Any, out Client : EntRuleClient>(
     val viewerContext: ViewerContext.AsViewer<Viewer>,
@@ -111,6 +114,10 @@ class PrivacyDeniedException(
  * `batch.denyAll(reason)` helpers. Those operations preserve correlation with
  * the supplied items; callers cannot construct or reorder the result directly.
  * Generated lifecycle evaluators never invoke a rule with an empty batch.
+ *
+ * `Viewer` is the application's viewer type. Rules are contravariant in it, so
+ * a rule written against a supertype of that type, or against `Any`, registers
+ * in a slot typed for it.
  */
 interface BatchPrivacyRule<in Viewer : Any, in Client : EntRuleClient, in Item> {
     @JvmSuppressWildcards
@@ -182,7 +189,7 @@ fun RuleBatch<*>.denyAll(reason: String): RuleDecisions<PrivacyDecision> =
 
 /**
  * A stock rule that allows any operation on any entity. Because [PrivacyRule]
- * is contravariant in both client and item, this single value satisfies every
+ * is contravariant in its viewer, client, and item, this single value satisfies every
  * typed rule slot — `load(allowAll)`, `create(allowAll)`, `update(allowAll)`,
  * `delete(allowAll)` — on any schema, so a public or trusted entity doesn't
  * need a per-type "allow everything" rule.

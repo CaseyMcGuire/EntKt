@@ -91,10 +91,10 @@ Completed full-client query values get a fluent method returning a shared
 runtime wrapper:
 
 ```kotlin
-fun forUpdate(): ForUpdateQuery<AssetPageLayout>
+fun forUpdate(): ForUpdateQuery<AppViewer, AssetPageLayout>
 ```
 
-`ForUpdateQuery<Entity>` exposes only `all(viewerContext)` and
+`ForUpdateQuery<Viewer, Entity>` exposes only `all(viewerContext)` and
 `firstOrNull(viewerContext)`. Finish configuration and traversal before calling
 `forUpdate()`. Creating the wrapper performs no I/O and takes no locks; its
 terminals execute the retained immutable query. Repeated terminals execute new

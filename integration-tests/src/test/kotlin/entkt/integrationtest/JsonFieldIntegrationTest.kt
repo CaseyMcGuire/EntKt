@@ -29,7 +29,7 @@ import kotlin.test.assertTrue
  * `ArticleMeta.serializer()` references compile and the full create/read/
  * update + isNull path runs against Postgres). Terminals follow the
  * canonical result algebra — `saveAndLoad()` / `findById()` / `all()` —
- * projected with `getOrThrow()`. A PrivacyBypass viewer bypasses fail-closed
+ * projected with `getOrThrow()`. A privacy bypass context skips fail-closed
  * privacy.
  */
 class JsonFieldIntegrationTest : PostgresTestBase() {

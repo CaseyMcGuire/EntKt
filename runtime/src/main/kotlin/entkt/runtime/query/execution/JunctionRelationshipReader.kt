@@ -44,7 +44,7 @@ internal class JunctionRelationshipReader<Viewer : Any>(
      * @param selection selected many-to-many edge and recursively captured target query.
      * @param sources source entities whose junction memberships should be loaded together.
      * @param storage typed junction metadata for the selected edge.
-     * @param context viewer and traversal state for this selected relationship.
+     * @param context viewer context and traversal state for this selected relationship.
      * @return the deduplicated target batch and its deferred source-attachment operation.
      */
     fun <

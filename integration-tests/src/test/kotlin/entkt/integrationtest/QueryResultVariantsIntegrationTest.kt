@@ -88,7 +88,7 @@ class QueryResultVariantsIntegrationTest : PostgresTestBase() {
         }
     }
 
-    /** Seed three articles under a bypass viewer, in insertion order. */
+    /** Seed three articles under a privacy bypass, in insertion order. */
     private fun seedThree(client: EntClient): Triple<Article, Article, Article> {
         return run {
             val sys = client

@@ -60,7 +60,7 @@ val b = users.load(userId)
 ```
 
 Both calls should return the same visible entity result for the current
-privacy context.
+viewer context.
 
 ## Loader Surfaces
 

@@ -44,10 +44,11 @@ private val EDGE_CHANGES = ClassName("entkt.runtime.mutation", "EdgeChanges")
  * Emits per-entity privacy infrastructure:
  *
  * - `{Entity}PrivacyConfig` — binds the runtime config to the entity's rule types
- * - `{Entity}PrivacyScope` — binds the runtime registration DSL to the client and lifecycle item types
+ * - `{Entity}PrivacyScope` — binds the runtime registration DSL to the viewer type, the client, and the lifecycle item types
  * - `{Entity}PolicyScope` — outer scope passed to [EntityPolicy.configure]
  * - `{Entity}WriteCandidate` — snapshot of writable fields for write rules
- * - `{Entity}{Op}PrivacyRule` and `{Entity}{Op}BatchPrivacyRule` — typealiases for each operation's rule types
+ * - `{Entity}{Op}PrivacyRule` and `{Entity}{Op}BatchPrivacyRule` — typealiases for each operation's rule types,
+ *   bound to the application's viewer type and the rule client
  *
  * CREATE, UPDATE, and DELETE rules share the lifecycle inputs emitted by
  * `LifecycleRuleInputGenerator` with validation rules.

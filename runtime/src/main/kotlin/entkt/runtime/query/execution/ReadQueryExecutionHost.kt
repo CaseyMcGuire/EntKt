@@ -7,7 +7,7 @@ import entkt.runtime.query.ResolvedEntInterceptorsConfig
  * Contextless services a generated query needs when it executes a read.
  *
  * Generated read runtimes implement this contract once and pass themselves to each query builder.
- * The operation's viewer remains an explicit terminal argument and is never stored here.
+ * The operation's viewer context remains an explicit terminal argument and is never stored here.
  */
 @EntktInternal
 interface ReadQueryExecutionHost<Viewer : Any> : LoadPrivacyDispatcher<Viewer> {

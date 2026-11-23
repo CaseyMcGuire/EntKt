@@ -518,7 +518,7 @@ class ValidationIntegrationTest {
     // ---- ViewerContext.PrivacyBypass does NOT bypass validation ----
 
     @Test
-    fun `PrivacyBypass viewer does not bypass create validation`() {
+    fun `a privacy bypass does not bypass create validation`() {
         val client = freshClient(viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"))
         val author = seedAuthor(client)
 
@@ -533,7 +533,7 @@ class ValidationIntegrationTest {
     }
 
     @Test
-    fun `PrivacyBypass viewer does not bypass update validation`() {
+    fun `a privacy bypass does not bypass update validation`() {
         val client = freshClient(
             viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
             articlePolicy = FullyValidatedArticlePolicy,
@@ -553,7 +553,7 @@ class ValidationIntegrationTest {
     }
 
     @Test
-    fun `PrivacyBypass viewer does not bypass delete validation`() {
+    fun `a privacy bypass does not bypass delete validation`() {
         val client = freshClient(
             viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
             articlePolicy = FullyValidatedArticlePolicy,

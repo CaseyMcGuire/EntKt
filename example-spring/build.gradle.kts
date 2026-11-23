@@ -54,11 +54,11 @@ val generateEntkt = tasks.register<JavaExec>("generateEntkt") {
     classpath = codegenRunner
     mainClass.set("entkt.codegen.GenerateMainKt")
     args(
-        "example.ent",
-        generatedDir.get().asFile.absolutePath,
-        "example.spring.auth.AppViewer",
-        "kotlinx",
-        "true",
+        "example.ent", // packageName
+        generatedDir.get().asFile.absolutePath, // outputDir
+        "example.spring.auth.AppViewer", // viewerType
+        "kotlinx", // jsonMapper
+        "true", // generateEntExplorer
     )
     outputs.dir(generatedDir)
     inputs.files(project(":example-spring:schema").fileTree("src/main/kotlin"))

@@ -61,7 +61,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     private fun freshDriver(): PostgresDriver = resetAndDriver()
 
     @Test
-    fun `one privacy context is shared by traversal edge predicate eager load and LOAD privacy`() {
+    fun `one viewer context is shared by traversal edge predicate eager load and LOAD privacy`() {
         val driver = freshDriver()
         val firstPrivacy = ViewerContext.AsViewer(TestViewer.User("viewer-a"))
         val interceptorObservations = mutableListOf<Pair<ReadOperation, ViewerContext<TestViewer>>>()
@@ -336,7 +336,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        // Seed via bypass viewer (bypasses policies).
+        // Seed under a privacy bypass (skips policies).
         run {
             val sys = client
             val testViewerContext = testBypassContext("test")
@@ -363,9 +363,9 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
         // so with the draft ordered first the result is
         // Failed(EntPrivacyDeniedException(Root, one denial)), and
         // visibleOrNull() projects that to authoritative absence.
-        // Use a non-bypass viewer because PrivacyBypass skips privacy
-        // entirely (in which case the draft would be returned and the
-        // test would defeat itself).
+        // Run as a viewer rather than under a bypass, because PrivacyBypass
+        // skips privacy entirely (in which case the draft would be returned
+        // and the test would defeat itself).
         val client = EntClient(driver) {
 
             policies {
@@ -386,7 +386,7 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
                 })
             }
         }
-        // Seed via bypass viewer so the create path's post-write LOAD
+        // Seed under a privacy bypass so the create path's post-write LOAD
         // check on "draft" doesn't trip.
         run {
             val sys = client

@@ -40,7 +40,7 @@ existence condition. Those rules should participate in the SQL query directly.
 Query visibility answers:
 
 ```text
-Which rows may this query consider for this privacy context?
+Which rows may this query consider for this viewer context?
 ```
 
 LOAD privacy answers:
@@ -176,7 +176,7 @@ The storage-query sketch above would be a new capability, not a rename of an
 existing terminal. If introduced, its builder should expose only clauses that
 affect its result and distinguish storage access from query visibility.
 
-## Privacy Context And Bypass
+## Viewer Context And Bypass
 
 One captured `ViewerContext` is shared across visibility predicate creation,
 read interceptors, storage execution, LOAD privacy, traversal, and eager work.
@@ -217,7 +217,7 @@ The predicate factory runs once per logical query step, not once per row.
   apply the correct entity policy
 - cyclic relationship visibility fails with an actionable path
 - LOAD privacy still runs on materialized results after query visibility
-- one privacy context is shared across every phase of the logical read
+- one viewer context is shared across every phase of the logical read
 - bypass and validation/system postures follow their explicit contracts
 - predicate construction failure performs no driver call
 - explain output attributes visibility predicates without exposing viewer data

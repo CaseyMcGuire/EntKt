@@ -47,6 +47,10 @@ import entkt.query.Predicate
  * need to see soft-deleted rows (restore, admin tooling, audit)
  * use a separate `EntClient` without this interceptor installed.
  * Adding per-query flag DSL later is purely additive.
+ *
+ * The interceptor does not read the viewer, so it is a
+ * `QueryInterceptor<Any, E>` and registers on a client generated for
+ * any viewer type.
  */
 class ExcludeDeleted<E : Any>(
     private val column: String = "deleted_at",

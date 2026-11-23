@@ -6,13 +6,13 @@ that talk to a pluggable `DatabaseDriver`.
 
 ## Guides
 
-- [Getting Started](01-getting-started.md) -- setup, first schema, running codegen
+- [Getting Started](01-getting-started.md) -- setup, declaring your viewer type, first schema, running codegen
 - [Operation Lifecycle](operation-lifecycle.md) -- the order and guarantees for reads, hooks, validation, privacy, and CRUD writes
 - [Schema](02-schema.md) -- fields, edges, indexes, ID strategies, native column types (pgvector, typed JSON)
 - [Edges](03-edges.md) -- how edge types map to tables, columns, and generated code
 - [Queries](04-queries.md) -- predicates, indexed query helpers, ordering, pagination, edge traversal, eager loading, read-path interceptors
 - [Hooks](05-hooks.md) -- lifecycle hooks for create, update, and delete
-- [Privacy](06-privacy.md) -- per-entity privacy rules for read and write operations
+- [Privacy](06-privacy.md) -- the application-defined viewer type and per-entity privacy rules for read and write operations
 - [Validation](07-validation.md) -- entity-level validation rules for data model invariants
 - [Privacy Limitations](08-privacy-limitations.md) -- V1 aggregate, filtering, and pagination caveats
 - [Migrations](09-migrations.md) -- migration planning, snapshots, and SQL file generation

@@ -64,7 +64,7 @@ class EntExplorerEndpointIntegrationTest {
     }
 
     @Test
-    fun `authenticated users get the explorer under their own privacy context`() {
+    fun `authenticated users get the explorer under their own viewer context`() {
         val userId = createUser("explorer-admin")
         val home = mockMvc.get("/_ent") { header("X-User-Id", userId.toString()) }
             .andExpect { status { isOk() } }

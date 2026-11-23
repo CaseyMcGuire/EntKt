@@ -225,7 +225,7 @@ Generated resolvers must use public entkt APIs so privacy remains enforced:
 Generated GraphQL code should not use driver-level APIs.
 
 By-id reads should return `null` when the row is missing or not visible to the
-current privacy context. This matches GraphQL's nullable field model and avoids
+current viewer context. This matches GraphQL's nullable field model and avoids
 existence disclosure by default.
 
 List reads should omit rows denied by load privacy. The generator should use
@@ -394,7 +394,7 @@ A follow-up should add request-scoped batching/DataLoader support:
 - batch by-id `belongsTo`/`hasOne` loads
 - batch `hasMany` loads by parent id
 - batch many-to-many loads through junction tables
-- preserve privacy context per GraphQL request
+- preserve the viewer context per GraphQL request
 - avoid raw driver access
 
 ## Open Questions

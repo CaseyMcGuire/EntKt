@@ -9,7 +9,7 @@ see [EntKt ORM Design Improvements](orm-design-improvements.md).
 ## Privacy And Validation
 
 - [Query-Time Visibility Predicates](privacy-validation/query-time-visibility-predicates.md)
-- [Privacy Rule Primitives And Viewer Flavors](privacy-validation/privacy-rule-primitives-and-viewer-flavors.md)
+- [Privacy Rule Primitives](privacy-validation/privacy-rule-primitives.md)
 - [Privacy / Validation Explain Mode](privacy-validation/privacy-validation-explain-mode.md)
 - [Policy Test Helpers](privacy-validation/policy-test-helpers.md)
 - [Edge-Derived LOAD Privacy](privacy-validation/edge-derived-load-privacy.md)

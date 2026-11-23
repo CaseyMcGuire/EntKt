@@ -340,10 +340,10 @@ class PrivacyIntegrationTest {
         assertEquals(published.id, result.id)
     }
 
-    // ---- ViewerContext.PrivacyBypass bypass ----
+    // ---- ViewerContext.PrivacyBypass ----
 
     @Test
-    fun `PrivacyBypass viewer sees all entities`() {
+    fun `a privacy bypass sees all entities`() {
         val client = freshClient(ViewerContext.privacyBypass_DANGEROUS("test"))
         seedData(client)
 
@@ -352,7 +352,7 @@ class PrivacyIntegrationTest {
     }
 
     @Test
-    fun `PrivacyBypass viewer can create without auth`() {
+    fun `a privacy bypass can create without auth`() {
         val client = freshClient(ViewerContext.privacyBypass_DANGEROUS("test"))
         val user = client.users.create { name = "Sys"; email = "sys@test.com" }.saveAndLoad(viewerContext).getOrThrow()
         val article = client.articles.create {
@@ -364,7 +364,7 @@ class PrivacyIntegrationTest {
     }
 
     @Test
-    fun `PrivacyBypass viewer can delete any entity`() {
+    fun `a privacy bypass can delete any entity`() {
         val client = freshClient(ViewerContext.privacyBypass_DANGEROUS("test"))
         val (alice, _) = seedData(client)
 

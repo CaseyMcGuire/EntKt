@@ -133,7 +133,7 @@ Purpose:
 Allowed:
 
 - read the current row, requested changes, final candidate, edge changes,
-  privacy context, and policy read client
+  viewer context, and policy read client
 - reject with the existing structured privacy failure
 
 Not allowed:

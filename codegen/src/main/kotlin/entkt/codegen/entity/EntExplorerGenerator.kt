@@ -49,7 +49,8 @@ private val VISIBLE_OR_NULL = com.squareup.kotlinpoet.MemberName("entkt.runtime.
 /**
  * Emits the opt-in Ent Explorer adapters (`entkt { generateEntExplorer.set(true) }`): one
  * `<Name>ExplorerEntity` object per entity plus `GeneratedEntExplorerRegistry`.
- * Adapters go through the generated typed repos
+ * Each adapter is an `EntExplorerEntity` bound to the application's viewer type and
+ * `EntClient`. Adapters go through the generated typed repos
  * (`client.<repo>.query { ... }.all()`, `findById(...).visibleOrNull()`) so the
  * explorer inherits read privacy, read interceptors, soft-delete filters, and
  * result decoding — never `DatabaseDriver.query(...)`.

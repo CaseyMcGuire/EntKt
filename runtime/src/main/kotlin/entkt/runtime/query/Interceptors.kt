@@ -21,6 +21,10 @@ import kotlin.reflect.KClass
  * cannot remove caller predicates, raise caller-set limits, change
  * ordering, or swap the table. The narrow public API on
  * [InterceptScope] enforces this at compile time.
+ *
+ * `Viewer` is the application's viewer type. An interceptor that does not
+ * read the viewer can be declared for `Any`, as [ExcludeDeleted] is, and then
+ * registers on a client generated for any viewer type.
  */
 fun interface QueryInterceptor<in Viewer : Any, E : Any> {
     fun intercept(scope: InterceptScope<E>, context: QueryContext<Viewer>)
@@ -36,6 +40,8 @@ fun interface QueryInterceptor<in Viewer : Any, E : Any> {
  * `Predicate<E>` would be unsafe for varying `E`; they operate on
  * the entity-agnostic mutators (limit / annotate / reject) and can
  * inspect the current shape via [GlobalInterceptScope.shape].
+ *
+ * `Viewer` is the application's viewer type, as for [QueryInterceptor].
  */
 fun interface GlobalQueryInterceptor<in Viewer : Any> {
     fun intercept(scope: GlobalInterceptScope, context: QueryContext<Viewer>)
@@ -226,6 +232,11 @@ data class UntypedQueryShape(
  * framework constructs `path` as an unmodifiable snapshot —
  * attempting to mutate it through a cast throws rather than
  * corrupting what later interceptors observe.
+ *
+ * [viewerContext] is the context the terminal was given. Interceptors
+ * also run for a privacy bypass, so it is either a
+ * [ViewerContext.AsViewer] or a [ViewerContext.PrivacyBypass], and an
+ * interceptor that reads the viewer must branch on the two cases.
  */
 data class QueryContext<out Viewer : Any>(
     val viewerContext: ViewerContext<Viewer>,

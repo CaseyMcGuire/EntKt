@@ -30,7 +30,7 @@ class AllowAllRuleTest {
 
     @Test
     fun `allowAll is assignable to any typed rule slot via contravariance`() {
-        // The single value substitutes for every PrivacyRule<Client, SpecificItem> —
+        // The single value substitutes for every PrivacyRule<Viewer, Client, SpecificItem> —
         // this is what lets `load(allowAll)` / `create(allowAll)` compile on any
         // generated entity. Assigning to the typed aliases here is the test.
         val asLoad: PrivacyRule<TestViewer, TestRuleClient, FakeLoadCtx> = allowAll

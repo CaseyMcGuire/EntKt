@@ -10,6 +10,11 @@ family, one schema-set-level client family, and internal adapters that connect
 those types to the runtime. The tables below use a `User` schema as the
 example; `{Entity}` is replaced by each schema class name.
 
+Every generated signature that carries a `ViewerContext` is bound to the
+application's viewer type, which the required `viewerType` option names. The
+examples below call it `AppViewer`. See
+[Privacy](../docs/06-privacy.md#viewer).
+
 ### Per-entity application types
 
 | Generated artifact | Purpose |

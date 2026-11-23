@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 /**
  * End-to-end: the generated explorer registry against real Postgres through
  * the generated client. Proves the generated adapters compile AND behave —
- * privacy context plumbing (fail-closed with Anonymous, visible with a
+ * viewer context plumbing (fail-closed with Anonymous, visible with a
  * bypass context), filters through generated predicates, pagination, and
  * detail/edge rendering.
  */
@@ -71,7 +71,7 @@ class EntExplorerIntegrationTest : PostgresTestBase() {
     }
 
     @Test
-    fun `list and detail read through the privacy context — bypass sees rows, anonymous sees none`() {
+    fun `list and detail read through the viewer context — bypass sees rows, anonymous sees none`() {
         val (sys, plain) = fresh()
         seed(sys)
         val visible = explorer(plain, testBypassContext("explorer-integration-test"))

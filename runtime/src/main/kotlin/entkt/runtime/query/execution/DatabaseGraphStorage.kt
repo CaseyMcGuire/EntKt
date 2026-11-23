@@ -92,7 +92,7 @@ internal class DatabaseGraphStorage<Viewer : Any>(
      *
      * @param selection selected edge and recursively captured target query.
      * @param sources source entities whose relationship targets should be loaded together.
-     * @param context viewer and traversal state for this selected relationship.
+     * @param context viewer context and traversal state for this selected relationship.
      * @return the deduplicated target batch and its deferred source-attachment operation.
      */
     @Suppress("UNCHECKED_CAST")
