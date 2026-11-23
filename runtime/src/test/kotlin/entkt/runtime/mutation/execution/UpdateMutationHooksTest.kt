@@ -43,6 +43,7 @@ class UpdateMutationHooksTest {
         val hooks = UpdateMutationHooks(
             converter = object :
                 UpdateMutationHookStateConverter<
+                    Viewer,
                     String,
                     Widget,
                     PendingEdges,
@@ -55,7 +56,7 @@ class UpdateMutationHooksTest {
                 }
 
                 override fun toBeforeUpdateState(
-                    viewerContext: ViewerContext,
+                    viewerContext: ViewerContext<Viewer>,
                     before: Widget,
                     pendingEdges: PendingEdges,
                     beforeSaveState: BeforeSaveState,
@@ -108,6 +109,7 @@ class UpdateMutationHooksTest {
         val hooks = UpdateMutationHooks(
             converter = object :
                 UpdateMutationHookStateConverter<
+                    Viewer,
                     Unit,
                     Widget,
                     PendingEdges,
@@ -117,7 +119,7 @@ class UpdateMutationHooksTest {
                 override fun toBeforeSaveState(draft: Unit) = BeforeSaveState("unused")
 
                 override fun toBeforeUpdateState(
-                    viewerContext: ViewerContext,
+                    viewerContext: ViewerContext<Viewer>,
                     before: Widget,
                     pendingEdges: PendingEdges,
                     beforeSaveState: BeforeSaveState,

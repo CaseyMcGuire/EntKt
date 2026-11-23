@@ -36,15 +36,15 @@ separate immutable states and return replacements; they cannot execute the
 mutation. Persistence happens through the pending operation returned by the
 repository.
 
-`PendingCreateMutation<Draft, Entity>` and
-`PendingUpdateMutation<Draft, Entity>` are runtime classes, not generated
-classes. Both extend `PendingMutation<Draft, Entity>`, which owns the
+`PendingCreateMutation<Viewer, Draft, Entity>` and
+`PendingUpdateMutation<Viewer, Draft, Entity>` are runtime classes, not generated
+classes. Both extend `PendingMutation<Viewer, Draft, Entity>`, which owns the
 single-use `configure`, `save`, and `saveAndLoad` lifecycle. Their generated
 draft types implement operation-specific contracts derived from
 `MutationDraft<Entity>`, while generated repositories supply persistence:
 
 ```kotlin
-val creation: PendingCreateMutation<UserCreateDraft, User> =
+val creation: PendingCreateMutation<Viewer, UserCreateDraft, User> =
     client.users.create { name = "Ada" }
 
 creation.configure { email = "ada@example.com" }

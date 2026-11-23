@@ -34,6 +34,7 @@ import entkt.runtime.validation.ValidationEvaluator
 /** Assemble scalar and bulk CREATE from one converter serving both preparation and hook conversion. */
 @EntktInternal
 fun <
+    Viewer : Any,
     RuleClient : EntRuleClient,
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
@@ -43,16 +44,16 @@ fun <
     Converter,
 > buildCreateOperations(
     entity: EntityMapping<Entity>,
-    mutationRuntime: MutationRuntime,
+    mutationRuntime: MutationRuntime<Viewer>,
     converter: Converter,
-    privacy: ResolvedEntityPrivacyConfig<*, BatchPrivacyRule<RuleClient, Candidate>, *, *>,
+    privacy: ResolvedEntityPrivacyConfig<*, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, *>,
     validation: ResolvedEntityValidationConfig<BatchValidationRule<RuleClient, Candidate>, *, *>,
     beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
     beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
     afterCreate: List<BatchActionHook<Entity>>,
-): CreateMutationOperations<RuleClient, Draft, Entity>
+): CreateMutationOperations<Viewer, RuleClient, Draft, Entity>
     where Converter : CreateMutationConverter<Draft, Candidate, Entity, BeforeCreateState>,
-          Converter : CreateMutationHookStateConverter<Draft, Entity, BeforeSaveState, BeforeCreateState> {
+          Converter : CreateMutationHookStateConverter<Viewer, Draft, Entity, BeforeSaveState, BeforeCreateState> {
     val many = buildCreateManyMutationOperation(
         entity = entity,
         mutationRuntime = mutationRuntime,
@@ -73,6 +74,7 @@ fun <
 /** Bind CREATE policy and schema-specific dependencies to the shared scalar/batch implementation. */
 @EntktInternal
 fun <
+    Viewer : Any,
     RuleClient : EntRuleClient,
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
@@ -81,15 +83,15 @@ fun <
     BeforeCreateState : BeforeCreateHookState<Entity>,
 > buildCreateManyMutationOperation(
     entity: EntityMapping<Entity>,
-    mutationRuntime: MutationRuntime,
+    mutationRuntime: MutationRuntime<Viewer>,
     converter: CreateMutationConverter<Draft, Candidate, Entity, BeforeCreateState>,
-    privacy: ResolvedEntityPrivacyConfig<*, BatchPrivacyRule<RuleClient, Candidate>, *, *>,
+    privacy: ResolvedEntityPrivacyConfig<*, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, *>,
     validation: ResolvedEntityValidationConfig<BatchValidationRule<RuleClient, Candidate>, *, *>,
-    hookStateConverter: CreateMutationHookStateConverter<Draft, Entity, BeforeSaveState, BeforeCreateState>,
+    hookStateConverter: CreateMutationHookStateConverter<Viewer, Draft, Entity, BeforeSaveState, BeforeCreateState>,
     beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
     beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
     afterCreate: List<BatchActionHook<Entity>>,
-): CreateManyMutationOperation<RuleClient, Draft, Candidate, Entity, BeforeSaveState, BeforeCreateState> {
+): CreateManyMutationOperation<Viewer, RuleClient, Draft, Candidate, Entity, BeforeSaveState, BeforeCreateState> {
     val privacyEvaluator = CreatePrivacyEvaluator(
         entityName = entity.entityName,
         rules = privacy.createRules,
@@ -117,6 +119,7 @@ fun <
 /** Bind UPDATE policy and hooks with one adapter serving preparation and hook conversion. */
 @EntktInternal
 fun <
+    Viewer : Any,
     RuleClient : EntRuleClient,
     Draft : UpdateMutationDraft<Entity>,
     Entity : EntEntity<*>,
@@ -128,9 +131,9 @@ fun <
     Adapter,
 > buildUpdateOperation(
     entity: EntityMapping<Entity>,
-    mutationRuntime: MutationRuntime,
+    mutationRuntime: MutationRuntime<Viewer>,
     privacy: ResolvedEntityPrivacyConfig<
-        *, BatchPrivacyRule<RuleClient, Candidate>, BatchPrivacyRule<RuleClient, RuleInput>, *,
+        *, BatchPrivacyRule<Viewer, RuleClient, Candidate>, BatchPrivacyRule<Viewer, RuleClient, RuleInput>, *,
     >,
     validation: ResolvedEntityValidationConfig<
         BatchValidationRule<RuleClient, Candidate>, BatchValidationRule<RuleClient, RuleInput>, *,
@@ -139,9 +142,9 @@ fun <
     beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
     beforeUpdate: List<BatchTransformingHook<BeforeUpdateState>>,
     afterUpdate: List<BatchActionHook<Entity>>,
-): MutationOperation<RuleClient, UpdateMutationInput<Draft>, Entity>
+): MutationOperation<RuleClient, UpdateMutationInput<Viewer, Draft>, Entity>
     where Adapter : UpdateMutationAdapter<Draft, Entity, PendingEdges, Candidate, BeforeUpdateState, RuleInput>,
-          Adapter : UpdateMutationHookStateConverter<Draft, Entity, PendingEdges, BeforeSaveState, BeforeUpdateState> {
+          Adapter : UpdateMutationHookStateConverter<Viewer, Draft, Entity, PendingEdges, BeforeSaveState, BeforeUpdateState> {
     val privacyEvaluator = UpdatePrivacyEvaluator(
         entityName = entity.entityName,
         rules = privacy.updateRules,
@@ -186,6 +189,7 @@ fun <
 /** Construct one scalar DELETE operation with its own bound evaluators. */
 @EntktInternal
 fun <
+    Viewer : Any,
     RuleClient : EntRuleClient,
     Entity : EntEntity<*>,
     Candidate : WriteCandidate<Entity>,
@@ -193,14 +197,14 @@ fun <
     entity: EntityDescriptor<Entity, *>,
     converter: DeleteMutationConverter<Entity, Candidate>,
     privacy: ResolvedEntityPrivacyConfig<
-        *, BatchPrivacyRule<RuleClient, Candidate>, *, BatchPrivacyRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
+        *, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, BatchPrivacyRule<Viewer, RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
     validation: ResolvedEntityValidationConfig<
         *, *, BatchValidationRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
     beforeDelete: List<BatchActionHook<Entity>>,
     afterDelete: List<BatchActionHook<Entity>>,
-): DeleteMutationOperation<RuleClient, Entity, Candidate> {
+): DeleteMutationOperation<Viewer, RuleClient, Entity, Candidate> {
     val privacyEvaluator = DeletePrivacyEvaluator(
         entityName = entity.entityName,
         rules = privacy.deleteRules,
@@ -226,6 +230,7 @@ fun <
 /** Construct one bulk DELETE operation with its own bound evaluators and candidate query executor. */
 @EntktInternal
 fun <
+    Viewer : Any,
     RuleClient : EntRuleClient,
     Entity : EntEntity<*>,
     Candidate : WriteCandidate<Entity>,
@@ -233,16 +238,16 @@ fun <
     entity: EntityDescriptor<Entity, *>,
     converter: DeleteMutationConverter<Entity, Candidate>,
     privacy: ResolvedEntityPrivacyConfig<
-        *, BatchPrivacyRule<RuleClient, Candidate>, *, BatchPrivacyRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
+        *, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, BatchPrivacyRule<Viewer, RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
     validation: ResolvedEntityValidationConfig<
         *, *, BatchValidationRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
     driver: DatabaseDriver,
-    readExecutionHost: ReadQueryExecutionHost,
+    readExecutionHost: ReadQueryExecutionHost<Viewer>,
     beforeDelete: List<BatchActionHook<Entity>>,
     afterDelete: List<BatchActionHook<Entity>>,
-): DeleteManyMutationOperation<RuleClient, Entity, Candidate> {
+): DeleteManyMutationOperation<Viewer, RuleClient, Entity, Candidate> {
     val privacyEvaluator = DeletePrivacyEvaluator(
         entityName = entity.entityName,
         rules = privacy.deleteRules,

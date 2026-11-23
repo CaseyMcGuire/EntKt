@@ -77,7 +77,7 @@ class UpdateResultVariantsIntegrationTest : PostgresTestBase() {
             email = "update-operation@example.com"
         }.saveAndLoad(testViewerContext).getOrThrow()
 
-        val mutation: PendingUpdateMutation<UserUpdateDraft, User> = client.users.update(user.id) {
+        val mutation: PendingUpdateMutation<Viewer, UserUpdateDraft, User> = client.users.update(user.id) {
             name = "Configured"
         }
         mutation.configure { name = "$name again" }

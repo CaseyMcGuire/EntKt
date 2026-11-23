@@ -17,6 +17,7 @@ import entkt.runtime.result.MutationWriteState
  * [MutationWriteState.TransactionPending], which describes a write inside an unresolved transaction.
  */
 abstract class PendingMutation<
+    Viewer : Any,
     Draft : MutationDraft<Entity>,
     Entity : EntEntity<*>,
 > @EntktInternal internal constructor(
@@ -26,27 +27,27 @@ abstract class PendingMutation<
     private var consumed = false
 
     /** Apply additional changes before this mutation is consumed. */
-    fun configure(block: Draft.() -> Unit): PendingMutation<Draft, Entity> {
+    fun configure(block: Draft.() -> Unit): PendingMutation<Viewer, Draft, Entity> {
         throwIfAlreadyConsumed("configure")
         draft.block()
         return this
     }
 
     /** Persist the configured draft without disclosing the affected entity. */
-    fun save(viewerContext: ViewerContext): MutationResult<Unit> {
+    fun save(viewerContext: ViewerContext<Viewer>): MutationResult<Unit> {
         consume("save")
         return executeSave(viewerContext)
     }
 
     /** Persist the configured draft and return the affected entity under LOAD privacy. */
-    fun saveAndLoad(viewerContext: ViewerContext): MutationResult<Entity> {
+    fun saveAndLoad(viewerContext: ViewerContext<Viewer>): MutationResult<Entity> {
         consume("saveAndLoad")
         return executeSaveAndLoad(viewerContext)
     }
 
-    protected abstract fun executeSave(viewerContext: ViewerContext): MutationResult<Unit>
+    protected abstract fun executeSave(viewerContext: ViewerContext<Viewer>): MutationResult<Unit>
 
-    protected abstract fun executeSaveAndLoad(viewerContext: ViewerContext): MutationResult<Entity>
+    protected abstract fun executeSaveAndLoad(viewerContext: ViewerContext<Viewer>): MutationResult<Entity>
 
     private fun consume(action: String) {
         throwIfAlreadyConsumed(action)

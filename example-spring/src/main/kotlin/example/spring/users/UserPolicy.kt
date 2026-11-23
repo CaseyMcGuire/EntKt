@@ -43,7 +43,7 @@ object UserPolicy : EntityPolicy<User, UserPolicyScope> {
 /** Only the user themselves can update their profile. */
 class AllowSelfUpdate : UserUpdatePrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<ReadOnlyEntClient>,
+        context: PrivacyRuleContext<Viewer, ReadOnlyEntClient>,
         item: UserUpdateRuleInput,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User
@@ -56,7 +56,7 @@ class AllowSelfUpdate : UserUpdatePrivacyRule {
 /** Only the user themselves can delete their account. */
 class AllowSelfDelete : UserDeletePrivacyRule {
     override fun run(
-        context: PrivacyRuleContext<ReadOnlyEntClient>,
+        context: PrivacyRuleContext<Viewer, ReadOnlyEntClient>,
         item: UserDeleteRuleInput,
     ): PrivacyDecision {
         val viewer = context.viewerContext.viewer as? Viewer.User

@@ -65,8 +65,8 @@ class ReadInterceptorRound3FixesIntegrationTest : PostgresTestBase() {
     fun `one privacy context is shared by traversal edge predicate eager load and LOAD privacy`() {
         val driver = freshDriver()
         val firstPrivacy = ViewerContext.AsViewer(Viewer.User("viewer-a"))
-        val interceptorObservations = mutableListOf<Pair<ReadOperation, ViewerContext>>()
-        val loadContexts = mutableListOf<ViewerContext>()
+        val interceptorObservations = mutableListOf<Pair<ReadOperation, ViewerContext<Viewer>>>()
+        val loadContexts = mutableListOf<ViewerContext<Viewer>>()
         val client = EntClient(driver) {
             interceptors {
                 users(

@@ -9,9 +9,9 @@ import entkt.runtime.rule.EntRuleClient
  * and runs once per reached item, including in a batch. Exceptions propagate
  * unchanged. An Allow stops evaluation, including any later denial checks.
  */
-fun <Client : EntRuleClient, Item> allowIf(
-    predicate: (context: PrivacyRuleContext<Client>, item: Item) -> Boolean,
-): PrivacyRule<Client, Item> = PrivacyRule { context, item ->
+fun <Viewer : Any, Client : EntRuleClient, Item> allowIf(
+    predicate: (context: PrivacyRuleContext<Viewer, Client>, item: Item) -> Boolean,
+): PrivacyRule<Viewer, Client, Item> = PrivacyRule { context, item ->
     if (predicate(context, item)) {
         PrivacyDecision.Allow
     } else {
@@ -26,10 +26,10 @@ fun <Client : EntRuleClient, Item> allowIf(
  * and runs once per reached item, including in a batch. Exceptions propagate
  * unchanged. Put mandatory denial checks before rules that can allow access.
  */
-fun <Client : EntRuleClient, Item> denyIf(
+fun <Viewer : Any, Client : EntRuleClient, Item> denyIf(
     reason: String,
-    predicate: (context: PrivacyRuleContext<Client>, item: Item) -> Boolean,
-): PrivacyRule<Client, Item> = PrivacyRule { context, item ->
+    predicate: (context: PrivacyRuleContext<Viewer, Client>, item: Item) -> Boolean,
+): PrivacyRule<Viewer, Client, Item> = PrivacyRule { context, item ->
     if (predicate(context, item)) {
         PrivacyDecision.Deny(reason)
     } else {

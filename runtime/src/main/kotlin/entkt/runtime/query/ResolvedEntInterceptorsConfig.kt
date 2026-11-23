@@ -6,26 +6,26 @@ import java.util.Collections
 
 /** Immutable interceptor registrations used by a constructed client. */
 @EntktInternal
-public class ResolvedEntInterceptorsConfig internal constructor(
-    perEntity: Map<String, List<RegisteredInterceptor<*>>>,
-    globals: List<RegisteredGlobalInterceptor>,
+public class ResolvedEntInterceptorsConfig<Viewer : Any> internal constructor(
+    perEntity: Map<String, List<RegisteredInterceptor<Viewer, *>>>,
+    globals: List<RegisteredGlobalInterceptor<Viewer>>,
 ) {
-    private val perEntity: Map<String, List<RegisteredInterceptor<*>>> =
+    private val perEntity: Map<String, List<RegisteredInterceptor<Viewer, *>>> =
         immutableInterceptorMap(perEntity)
-    private val globalsList: List<RegisteredGlobalInterceptor> =
+    private val globalsList: List<RegisteredGlobalInterceptor<Viewer>> =
         immutableListCopy(globals)
 
     @Suppress("UNCHECKED_CAST")
-    public fun <E : Any> entityInterceptorsFor(scopeKey: String): List<RegisteredInterceptor<E>> =
-        (perEntity[scopeKey] ?: emptyList()) as List<RegisteredInterceptor<E>>
+    public fun <E : Any> entityInterceptorsFor(scopeKey: String): List<RegisteredInterceptor<Viewer, E>> =
+        (perEntity[scopeKey] ?: emptyList()) as List<RegisteredInterceptor<Viewer, E>>
 
-    public fun globals(): List<RegisteredGlobalInterceptor> = globalsList
+    public fun globals(): List<RegisteredGlobalInterceptor<Viewer>> = globalsList
 }
 
-private fun immutableInterceptorMap(
-    source: Map<String, List<RegisteredInterceptor<*>>>,
-): Map<String, List<RegisteredInterceptor<*>>> {
-    val copy = linkedMapOf<String, List<RegisteredInterceptor<*>>>()
+private fun <Viewer : Any> immutableInterceptorMap(
+    source: Map<String, List<RegisteredInterceptor<Viewer, *>>>,
+): Map<String, List<RegisteredInterceptor<Viewer, *>>> {
+    val copy = linkedMapOf<String, List<RegisteredInterceptor<Viewer, *>>>()
     for ((scope, registrations) in source) {
         copy[scope] = immutableListCopy(registrations)
     }

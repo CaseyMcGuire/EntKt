@@ -70,7 +70,7 @@ class NamedIndexHelperCompileTest {
     private val validCompilation by lazy {
         compile(
             source("Application", """
-                fun use(client: EntClient, rules: ReadOnlyEntClient, viewer: ViewerContext) {
+                fun use(client: EntClient, rules: ReadOnlyEntClient, viewer: ViewerContext<Viewer>) {
                     val full: TestCaseIndexes.ProblemIdPosition =
                         client.testCases.indexes.byProblemAndPosition(problemId = 7L, position = 3)
                     val read: TestCaseReadIndexes.ProblemIdPosition =
@@ -240,7 +240,7 @@ class NamedIndexHelperCompileTest {
         )
         val result = compile(*invalidCalls.map { (name, call) ->
             source(name, """
-                fun invalid$name(client: EntClient, rules: ReadOnlyEntClient, viewer: ViewerContext) {
+                fun invalid$name(client: EntClient, rules: ReadOnlyEntClient, viewer: ViewerContext<Viewer>) {
                     $call
                 }
             """.trimIndent())

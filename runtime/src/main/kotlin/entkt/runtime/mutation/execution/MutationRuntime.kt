@@ -8,7 +8,7 @@ import entkt.runtime.result.EntMutationException
 
 /** Client capabilities shared by generated mutation executors. */
 @EntktInternal
-interface MutationRuntime : LoadPrivacyDispatcher {
+interface MutationRuntime<Viewer : Any> : LoadPrivacyDispatcher<Viewer> {
     /** Enforce the configured transaction requirement before lifecycle work begins. */
     fun checkTransactionRequirement(
         operation: String,

@@ -85,14 +85,15 @@ class TransactionClientCompileTest {
 
                 import com.example.ent.EntClient
                 import com.example.ent.EntClientScope
+                import entkt.runtime.privacy.Viewer
                 import entkt.runtime.privacy.ViewerContext
 
-                fun sharedHelper(client: EntClientScope, viewerContext: ViewerContext) {
+                fun sharedHelper(client: EntClientScope, viewerContext: ViewerContext<Viewer>) {
                     client.cars.query { }.all(viewerContext)
                     client.users.create { name = "helper" }.save(viewerContext)
                 }
 
-                fun useBoth(client: EntClient, viewerContext: ViewerContext) {
+                fun useBoth(client: EntClient, viewerContext: ViewerContext<Viewer>) {
                     sharedHelper(client, viewerContext)
                     client.withTransaction { tx ->
                         sharedHelper(tx, viewerContext)

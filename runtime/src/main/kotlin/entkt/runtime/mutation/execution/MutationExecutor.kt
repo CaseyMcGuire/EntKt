@@ -15,9 +15,9 @@ import java.util.concurrent.CancellationException
 
 /** Executes typed operations inside the shared transaction and failure boundary. */
 @EntktInternal
-class MutationExecutor(
+class MutationExecutor<Viewer : Any>(
     private val driver: DatabaseDriver,
-    private val mutationRuntime: MutationRuntime,
+    private val mutationRuntime: MutationRuntime<Viewer>,
 ) {
     /**
      * Check application policy, establish the operation's transaction scope, and resolve its

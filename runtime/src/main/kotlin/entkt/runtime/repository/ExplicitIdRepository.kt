@@ -23,26 +23,28 @@ import entkt.runtime.rule.EntRuleClient
 
 /** CREATE entry point for caller-assigned IDs; intentionally has no no-ID create or batch terminal. */
 abstract class ExplicitIdRepository<
+    Viewer : Any,
     Entity : EntEntity<ID>,
     ID : Any,
     CreateDraft : CreateMutationDraft<Entity>,
     UpdateDraft : UpdateMutationDraft<Entity>,
-    Query : EntityQueryBuilder<Entity, Query>,
+    Query : EntityQueryBuilder<Viewer, Entity, Query>,
     RuleClient : EntRuleClient,
 > @EntktInternal protected constructor(
     entity: EntityDescriptor<Entity, ID>,
     driver: DatabaseDriver,
-    mutationRuntime: MutationRuntime,
-    loadPrivacyRules: List<BatchPrivacyRule<RuleClient, Entity>>,
-    createOperations: CreateMutationOperations<RuleClient, CreateDraft, Entity>,
-    updateOperation: MutationOperation<RuleClient, UpdateMutationInput<UpdateDraft>, Entity>,
-    deleteOperation: MutationOperation<RuleClient, DeleteMutationInput, Boolean>,
-    deleteManyOperation: MutationOperation<RuleClient, DeleteManyMutationInput<Entity>, Int>,
+    mutationRuntime: MutationRuntime<Viewer>,
+    loadPrivacyRules: List<BatchPrivacyRule<Viewer, RuleClient, Entity>>,
+    createOperations: CreateMutationOperations<Viewer, RuleClient, CreateDraft, Entity>,
+    updateOperation: MutationOperation<RuleClient, UpdateMutationInput<Viewer, UpdateDraft>, Entity>,
+    deleteOperation: MutationOperation<RuleClient, DeleteMutationInput<Viewer>, Boolean>,
+    deleteManyOperation: MutationOperation<RuleClient, DeleteManyMutationInput<Viewer, Entity>, Int>,
     defaultUpdateConsistency: UpdateConsistency = UpdateConsistency.ReadCurrent,
     defaultRelationshipLocking: RelationshipLocking = RelationshipLocking.OwnerOnly,
 ) : EntityRepository<
+    Viewer,
     Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient,
-    ExplicitIdRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient>,
+    ExplicitIdRepository<Viewer, Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient>,
 >(
     entity,
     driver,
@@ -55,11 +57,11 @@ abstract class ExplicitIdRepository<
     defaultUpdateConsistency,
     defaultRelationshipLocking,
 ) {
-    final override val self: ExplicitIdRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient>
+    final override val self: ExplicitIdRepository<Viewer, Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient>
         get() = this
 
     protected abstract fun newCreateDraft(id: ID): CreateDraft
 
-    fun create(id: ID, block: CreateDraft.() -> Unit): PendingCreateMutation<CreateDraft, Entity> =
+    fun create(id: ID, block: CreateDraft.() -> Unit): PendingCreateMutation<Viewer, CreateDraft, Entity> =
         pendingCreate(newCreateDraft(id).apply(block))
 }

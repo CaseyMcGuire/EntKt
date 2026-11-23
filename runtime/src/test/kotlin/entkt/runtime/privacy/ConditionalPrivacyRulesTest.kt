@@ -15,7 +15,7 @@ class ConditionalPrivacyRulesTest {
 
     @Test
     fun `allowIf allows matches and continues otherwise`() {
-        val rule: PrivacyRule<TestRuleClient, Int> = allowIf { context, item ->
+        val rule: PrivacyRule<Viewer, TestRuleClient, Int> = allowIf { context, item ->
             context.viewerContext.userIdOrNull() == item
         }
 
@@ -25,7 +25,7 @@ class ConditionalPrivacyRulesTest {
 
     @Test
     fun `denyIf preserves the reason for matches and continues otherwise`() {
-        val rule: PrivacyRule<TestRuleClient, Int> = denyIf("owner cannot perform this operation") { context, item ->
+        val rule: PrivacyRule<Viewer, TestRuleClient, Int> = denyIf("owner cannot perform this operation") { context, item ->
             context.viewerContext.userIdOrNull() == item
         }
 
@@ -37,7 +37,7 @@ class ConditionalPrivacyRulesTest {
     fun `predicates run only on execution and receive the exact context and item`() {
         val item = Any()
         var calls = 0
-        val predicate: (PrivacyRuleContext<TestRuleClient>, Any) -> Boolean = { receivedContext, receivedItem ->
+        val predicate: (PrivacyRuleContext<Viewer, TestRuleClient>, Any) -> Boolean = { receivedContext, receivedItem ->
             calls++
             assertSame(context, receivedContext)
             assertSame(item, receivedItem)
@@ -55,7 +55,7 @@ class ConditionalPrivacyRulesTest {
     @Test
     fun `batch execution visits duplicates in order and does not visit an empty batch`() {
         val seen = mutableListOf<Int>()
-        val predicate: (PrivacyRuleContext<TestRuleClient>, Int) -> Boolean = { _, item ->
+        val predicate: (PrivacyRuleContext<Viewer, TestRuleClient>, Int) -> Boolean = { _, item ->
             seen += item
             item == 7
         }
@@ -80,7 +80,7 @@ class ConditionalPrivacyRulesTest {
     @Test
     fun `only continued items reach later rules and unresolved items remain fail closed`() {
         val reachedAllow = mutableListOf<Int>()
-        val rules = listOf<BatchPrivacyRule<TestRuleClient, Int>>(
+        val rules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, Int>>(
             denyIf("negative") { _, item -> item < 0 },
             allowIf { _, item ->
                 reachedAllow += item
@@ -127,7 +127,7 @@ class ConditionalPrivacyRulesTest {
             AssertionError("fatal"),
         )
         for (failure in failures) {
-            val rules = listOf<PrivacyRule<TestRuleClient, Int>>(
+            val rules = listOf<PrivacyRule<Viewer, TestRuleClient, Int>>(
                 allowIf { _, _ -> throw failure },
                 denyIf("not a denial") { _, _ -> throw failure },
             )

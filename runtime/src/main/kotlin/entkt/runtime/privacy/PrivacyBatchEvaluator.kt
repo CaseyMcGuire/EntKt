@@ -16,18 +16,18 @@ internal class PrivacyBatchEvaluator(
     private val lifecycle = "$entityName ${operation.name} privacy"
     private val unresolvedReason = "no ${operation.name.lowercase()} rule allowed access"
 
-    fun <Client : EntRuleClient, Subject> evaluate(
-        viewerContext: ViewerContext,
+    fun <Viewer : Any, Client : EntRuleClient, Subject> evaluate(
+        viewerContext: ViewerContext<Viewer>,
         client: Client,
         subjects: List<Subject>,
-        rules: List<BatchPrivacyRule<Client, Subject>>,
+        rules: List<BatchPrivacyRule<Viewer, Client, Subject>>,
     ): PrivacyEvaluation<Subject> = evaluate(viewerContext, client, subjects, rules) { it }
 
-    fun <Client : EntRuleClient, Subject, Input> evaluate(
-        viewerContext: ViewerContext,
+    fun <Viewer : Any, Client : EntRuleClient, Subject, Input> evaluate(
+        viewerContext: ViewerContext<Viewer>,
         client: Client,
         subjects: List<Subject>,
-        rules: List<BatchPrivacyRule<Client, Input>>,
+        rules: List<BatchPrivacyRule<Viewer, Client, Input>>,
         toRuleInput: (Subject) -> Input,
     ): PrivacyEvaluation<Subject> =
         evaluatePolicy(viewerContext, client, subjects) { context, decisions ->
@@ -35,13 +35,13 @@ internal class PrivacyBatchEvaluator(
         }
 
     /** Run the second rule list only for subjects left unresolved by the first. */
-    fun <Client : EntRuleClient, Subject, Input, ContinuationInput> evaluate(
-        viewerContext: ViewerContext,
+    fun <Viewer : Any, Client : EntRuleClient, Subject, Input, ContinuationInput> evaluate(
+        viewerContext: ViewerContext<Viewer>,
         client: Client,
         subjects: List<Subject>,
-        rules: List<BatchPrivacyRule<Client, Input>>,
+        rules: List<BatchPrivacyRule<Viewer, Client, Input>>,
         toRuleInput: (Subject) -> Input,
-        continuationRules: List<BatchPrivacyRule<Client, ContinuationInput>>,
+        continuationRules: List<BatchPrivacyRule<Viewer, Client, ContinuationInput>>,
         toContinuationInput: (Subject) -> ContinuationInput,
     ): PrivacyEvaluation<Subject> =
         evaluatePolicy(viewerContext, client, subjects) { context, decisions ->
@@ -53,11 +53,11 @@ internal class PrivacyBatchEvaluator(
      * A privacy bypass allows every subject without building a rule context or
      * running a rule. Otherwise one rule context is shared by the whole phase.
      */
-    private fun <Client : EntRuleClient, Subject> evaluatePolicy(
-        viewerContext: ViewerContext,
+    private fun <Viewer : Any, Client : EntRuleClient, Subject> evaluatePolicy(
+        viewerContext: ViewerContext<Viewer>,
         client: Client,
         subjects: List<Subject>,
-        applyPolicy: (PrivacyRuleContext<Client>, MutableList<PrivacyDecision>) -> Unit,
+        applyPolicy: (PrivacyRuleContext<Viewer, Client>, MutableList<PrivacyDecision>) -> Unit,
     ): PrivacyEvaluation<Subject> =
         when (viewerContext) {
             is ViewerContext.PrivacyBypass -> {
@@ -74,10 +74,10 @@ internal class PrivacyBatchEvaluator(
         }
 
     /** Each rule receives only unresolved subjects, converted afresh at invocation. */
-    private fun <Client : EntRuleClient, Subject, Input> applyRules(
-        context: PrivacyRuleContext<Client>,
+    private fun <Viewer : Any, Client : EntRuleClient, Subject, Input> applyRules(
+        context: PrivacyRuleContext<Viewer, Client>,
         subjects: List<Subject>,
-        rules: List<BatchPrivacyRule<Client, Input>>,
+        rules: List<BatchPrivacyRule<Viewer, Client, Input>>,
         toRuleInput: (Subject) -> Input,
         decisions: MutableList<PrivacyDecision>,
     ) {

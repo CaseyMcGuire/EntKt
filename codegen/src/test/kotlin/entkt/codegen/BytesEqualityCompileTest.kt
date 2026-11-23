@@ -55,10 +55,11 @@ class BytesEqualityCompileTest {
             """
             import com.example.ent.*
             import entkt.runtime.mutation.FieldPatch
+            import entkt.runtime.privacy.Viewer
             import entkt.runtime.privacy.ViewerContext
             import entkt.types.Bytes
 
-            fun checkBinaryApis(client: EntClient, context: ViewerContext) {
+            fun checkBinaryApis(client: EntClient, context: ViewerContext<Viewer>) {
                 val value = Bytes.of(byteArrayOf(1, 2))
                 val created = client.attachments.create {
                     payload = value

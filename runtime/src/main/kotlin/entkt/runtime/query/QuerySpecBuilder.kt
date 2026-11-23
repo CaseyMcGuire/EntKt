@@ -491,13 +491,13 @@ internal class GlobalInterceptScopeImpl(
  * registrations in the order supplied by [EntInterceptors].
  */
 @ConsistentCopyVisibility
-public data class RegisteredInterceptor<E : Any> internal constructor(
+public data class RegisteredInterceptor<Viewer : Any, E : Any> internal constructor(
     val name: String,
-    val interceptor: QueryInterceptor<E>,
+    val interceptor: QueryInterceptor<Viewer, E>,
 )
 
 @ConsistentCopyVisibility
-public data class RegisteredGlobalInterceptor internal constructor(
+public data class RegisteredGlobalInterceptor<Viewer : Any> internal constructor(
     val name: String,
-    val interceptor: GlobalQueryInterceptor,
+    val interceptor: GlobalQueryInterceptor<Viewer>,
 )

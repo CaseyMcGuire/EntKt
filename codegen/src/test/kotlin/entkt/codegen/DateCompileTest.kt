@@ -30,11 +30,12 @@ class DateCompileTest {
             import com.example.ent.DateRecord
             import com.example.ent.EntClient
             import entkt.query.isNotNull
+            import entkt.runtime.privacy.Viewer
             import entkt.runtime.privacy.ViewerContext
             import java.time.Instant
             import java.time.LocalDate
 
-            fun checkApis(client: EntClient, context: ViewerContext) {
+            fun checkApis(client: EntClient, context: ViewerContext<Viewer>) {
                 $body
             }
             """.trimIndent(),

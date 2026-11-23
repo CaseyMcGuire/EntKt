@@ -19,6 +19,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import entkt.runtime.privacy.Viewer
 
 /**
  * coverage: the DSL-side [EntInterceptorsConfig] holder
@@ -34,15 +35,15 @@ class EntInterceptorsConfigTest {
     private class Post
     private class User
 
-    private val noop: QueryInterceptor<Post> = QueryInterceptor { _, _ -> }
-    private val noopUser: QueryInterceptor<User> = QueryInterceptor { _, _ -> }
-    private val noopGlobal: GlobalQueryInterceptor = GlobalQueryInterceptor { _, _ -> }
+    private val noop: QueryInterceptor<Viewer, Post> = QueryInterceptor { _, _ -> }
+    private val noopUser: QueryInterceptor<Viewer, User> = QueryInterceptor { _, _ -> }
+    private val noopGlobal: GlobalQueryInterceptor<Viewer> = GlobalQueryInterceptor { _, _ -> }
 
     @Test
     fun `addEntity registers and entityInterceptorsFor returns in registration order`() {
-        val config = EntInterceptorsConfig()
-        val a: QueryInterceptor<Post> = QueryInterceptor { _, _ -> }
-        val b: QueryInterceptor<Post> = QueryInterceptor { _, _ -> }
+        val config = EntInterceptorsConfig<Viewer>()
+        val a: QueryInterceptor<Viewer, Post> = QueryInterceptor { _, _ -> }
+        val b: QueryInterceptor<Viewer, Post> = QueryInterceptor { _, _ -> }
         config.addEntity("posts", "a", a)
         config.addEntity("posts", "b", b)
 
@@ -54,15 +55,15 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `entityInterceptorsFor returns empty list for unknown scope`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         assertEquals(emptyList(), config.entityInterceptorsFor<Post>("does-not-exist"))
     }
 
     @Test
     fun `addGlobal registers and globals returns in registration order`() {
-        val config = EntInterceptorsConfig()
-        val a: GlobalQueryInterceptor = GlobalQueryInterceptor { _, _ -> }
-        val b: GlobalQueryInterceptor = GlobalQueryInterceptor { _, _ -> }
+        val config = EntInterceptorsConfig<Viewer>()
+        val a: GlobalQueryInterceptor<Viewer> = GlobalQueryInterceptor { _, _ -> }
+        val b: GlobalQueryInterceptor<Viewer> = GlobalQueryInterceptor { _, _ -> }
         config.addGlobal("first", a)
         config.addGlobal("second", b)
 
@@ -74,7 +75,7 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `resolution detaches and freezes entity and global registration containers`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         config.addEntity("posts", "initial-entity", noop)
         config.addGlobal("initial-global", noopGlobal)
 
@@ -96,7 +97,7 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `duplicate name within same entity scope is rejected at registration`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         config.addEntity("posts", "tenant-scope", noop)
         val ex = assertFailsWith<IllegalArgumentException> {
             config.addEntity("posts", "tenant-scope", noop)
@@ -107,7 +108,7 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `duplicate name across globals is rejected at registration`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         config.addGlobal("audit", noopGlobal)
         val ex = assertFailsWith<IllegalArgumentException> {
             config.addGlobal("audit", noopGlobal)
@@ -117,7 +118,7 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `same name is allowed across different entity scopes`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         config.addEntity("posts", "tenant-scope", noop)
         config.addEntity("users", "tenant-scope", noopUser)
 
@@ -127,7 +128,7 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `same name is allowed across one entity scope and globals`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         config.addEntity("posts", "audit", noop)
         config.addGlobal("audit", noopGlobal)
 
@@ -137,7 +138,7 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `blank name on addEntity is rejected`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         val ex = assertFailsWith<IllegalArgumentException> {
             config.addEntity("posts", "  ", noop)
         }
@@ -147,7 +148,7 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `blank name on addGlobal is rejected`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         val ex = assertFailsWith<IllegalArgumentException> {
             config.addGlobal("", noopGlobal)
         }
@@ -157,7 +158,7 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `framework prefix on addEntity is rejected`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         val ex = assertFailsWith<IllegalArgumentException> {
             config.addEntity("posts", "framework:soft-delete", noop)
         }
@@ -167,7 +168,7 @@ class EntInterceptorsConfigTest {
 
     @Test
     fun `framework prefix on addGlobal is rejected`() {
-        val config = EntInterceptorsConfig()
+        val config = EntInterceptorsConfig<Viewer>()
         val ex = assertFailsWith<IllegalArgumentException> {
             config.addGlobal("framework:audit", noopGlobal)
         }

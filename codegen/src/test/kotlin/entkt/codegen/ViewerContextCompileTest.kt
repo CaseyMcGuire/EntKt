@@ -17,24 +17,34 @@ class ViewerContextCompileTest {
             """
             package com.example.app
 
+            import entkt.runtime.privacy.PrivacyDecision
+            import entkt.runtime.privacy.PrivacyRule
             import entkt.runtime.privacy.PrivacyRuleContext
             import entkt.runtime.privacy.Viewer
             import entkt.runtime.privacy.ViewerContext
+            import entkt.runtime.query.QueryInterceptor
             import entkt.runtime.rule.EntRuleClient
 
-            fun contexts(): List<ViewerContext> = listOf(
+            fun contexts(): List<ViewerContext<Viewer>> = listOf(
                 ViewerContext.AsViewer(Viewer.Anonymous),
                 ViewerContext.privacyBypass_DANGEROUS("probe"),
             )
 
-            fun describe(viewerContext: ViewerContext): String =
+            fun describe(viewerContext: ViewerContext<Viewer>): String =
                 when (viewerContext) {
                     is ViewerContext.AsViewer -> "viewer " + viewerContext.viewer
                     is ViewerContext.PrivacyBypass -> "bypass " + viewerContext.reason
                 }
 
-            fun ruleViewers(context: PrivacyRuleContext<EntRuleClient>): List<Viewer> =
+            fun ruleViewers(context: PrivacyRuleContext<Viewer, EntRuleClient>): List<Viewer> =
                 listOf(context.viewer, context.viewerContext.viewer)
+
+            // Rules and interceptors that ignore the viewer fit slots typed for a specific viewer.
+            val anyViewerRule: PrivacyRule<Any, EntRuleClient, Any?> =
+                PrivacyRule { _, _ -> PrivacyDecision.Continue }
+            val typedRule: PrivacyRule<Viewer, EntRuleClient, String> = anyViewerRule
+            val anyViewerInterceptor: QueryInterceptor<Any, String> = QueryInterceptor { _, _ -> }
+            val typedInterceptor: QueryInterceptor<Viewer, String> = anyViewerInterceptor
             """.trimIndent(),
         )
 
@@ -44,12 +54,13 @@ class ViewerContextCompileTest {
     }
 
     @Test
-    fun `application code cannot construct a bypass directly or read a viewer without branching`() {
+    fun `application code cannot construct a bypass directly, read a viewer without branching, or mix viewer types`() {
         val invalidSources = mapOf(
             "DirectBypass" to "fun invalid() = ViewerContext.PrivacyBypass(\"reason\")",
             "CopiedBypass" to
                 "fun invalid(bypass: ViewerContext.PrivacyBypass) = bypass.copy(reason = \"other\")",
-            "UnbranchedViewer" to "fun invalid(viewerContext: ViewerContext) = viewerContext.viewer",
+            "UnbranchedViewer" to "fun invalid(viewerContext: ViewerContext<Viewer>) = viewerContext.viewer",
+            "UnrelatedViewer" to "fun invalid() = typed(ViewerContext.AsViewer(OtherViewer()))",
         )
         val snippets = invalidSources.map { (name, body) ->
             SourceFile.kotlin(
@@ -57,7 +68,12 @@ class ViewerContextCompileTest {
                 """
                 package com.example.app.${name.lowercase()}
 
+                import entkt.runtime.privacy.Viewer
                 import entkt.runtime.privacy.ViewerContext
+
+                class OtherViewer
+
+                fun typed(viewerContext: ViewerContext<Viewer>): ViewerContext<Viewer> = viewerContext
 
                 $body
                 """.trimIndent(),

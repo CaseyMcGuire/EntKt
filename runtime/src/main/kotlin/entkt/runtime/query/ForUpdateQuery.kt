@@ -17,13 +17,13 @@ import entkt.runtime.result.ReadCollectionResult
  * and selected-edge reads follow the normal read pipeline. A denial
  * does not release acquired locks. Native database pagination and locking semantics apply.
  */
-class ForUpdateQuery<Entity : EntEntity<*>> private constructor(
+class ForUpdateQuery<Viewer : Any, Entity : EntEntity<*>> private constructor(
     private val query: EntityQuery<Entity>,
-    private val executor: ReadQueryExecutor<Entity>?,
+    private val executor: ReadQueryExecutor<Viewer, Entity>?,
     private val lockMode: QueryLockMode,
 ) {
     @EntktInternal
-    constructor(query: EntityQuery<Entity>, executor: ReadQueryExecutor<Entity>?) :
+    constructor(query: EntityQuery<Entity>, executor: ReadQueryExecutor<Viewer, Entity>?) :
         this(query, executor, QueryLockMode.ForUpdate)
 
     /**
@@ -33,10 +33,10 @@ class ForUpdateQuery<Entity : EntEntity<*>> private constructor(
      * transaction and driver support. Empty results can mean all matching rows are locked;
      * LOAD privacy is unchanged. This does not prevent waits on table-level locks.
      */
-    fun skipLocked(): ForUpdateQuery<Entity> =
+    fun skipLocked(): ForUpdateQuery<Viewer, Entity> =
         ForUpdateQuery(query, executor, QueryLockMode.ForUpdateSkipLocked)
 
-    fun all(viewerContext: ViewerContext): ReadCollectionResult<Entity> {
+    fun all(viewerContext: ViewerContext<Viewer>): ReadCollectionResult<Entity> {
         val boundExecutor = executor
             ?: return ReadCollectionResult.failedForInternalUse(missingExecutionHostException())
         return boundExecutor.readMany(
@@ -46,7 +46,7 @@ class ForUpdateQuery<Entity : EntEntity<*>> private constructor(
         )
     }
 
-    fun firstOrNull(viewerContext: ViewerContext): ReadResult<Entity?> {
+    fun firstOrNull(viewerContext: ViewerContext<Viewer>): ReadResult<Entity?> {
         val boundExecutor = executor
             ?: return ReadResult.failedForInternalUse(missingExecutionHostException())
         return boundExecutor.readOne(

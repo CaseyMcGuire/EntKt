@@ -10,7 +10,7 @@ import kotlin.reflect.KClass
 /**
  * Read-path interception extension point.
  *
- * Each registered `QueryInterceptor<E>` runs once per terminal read
+ * Each registered `QueryInterceptor<Viewer, E>` runs once per terminal read
  * on the entity it's registered for, with a chance to add predicates,
  * clamp limits, attach annotations, or reject the query before the
  * driver call.
@@ -22,8 +22,8 @@ import kotlin.reflect.KClass
  * ordering, or swap the table. The narrow public API on
  * [InterceptScope] enforces this at compile time.
  */
-fun interface QueryInterceptor<E : Any> {
-    fun intercept(scope: InterceptScope<E>, context: QueryContext)
+fun interface QueryInterceptor<in Viewer : Any, E : Any> {
+    fun intercept(scope: InterceptScope<E>, context: QueryContext<Viewer>)
 }
 
 /**
@@ -37,8 +37,8 @@ fun interface QueryInterceptor<E : Any> {
  * the entity-agnostic mutators (limit / annotate / reject) and can
  * inspect the current shape via [GlobalInterceptScope.shape].
  */
-fun interface GlobalQueryInterceptor {
-    fun intercept(scope: GlobalInterceptScope, context: QueryContext)
+fun interface GlobalQueryInterceptor<in Viewer : Any> {
+    fun intercept(scope: GlobalInterceptScope, context: QueryContext<Viewer>)
 }
 
 /**
@@ -227,8 +227,8 @@ data class UntypedQueryShape(
  * attempting to mutate it through a cast throws rather than
  * corrupting what later interceptors observe.
  */
-data class QueryContext(
-    val viewerContext: ViewerContext,
+data class QueryContext<out Viewer : Any>(
+    val viewerContext: ViewerContext<Viewer>,
     val operation: ReadOperation,
     val rootEntity: KClass<*>,
     val currentEntity: KClass<*>,
@@ -339,9 +339,9 @@ public const val FRAMEWORK_INTERCEPTOR_PREFIX: String = "framework:"
  *    are independent; globals share one namespace) — validated
  *    when the entry is added.
  */
-public class EntInterceptorsConfig public constructor() {
-    private val perEntity: MutableMap<String, MutableList<RegisteredInterceptor<*>>> = linkedMapOf()
-    private val globalsList: MutableList<RegisteredGlobalInterceptor> = mutableListOf()
+public class EntInterceptorsConfig<Viewer : Any> public constructor() {
+    private val perEntity: MutableMap<String, MutableList<RegisteredInterceptor<Viewer, *>>> = linkedMapOf()
+    private val globalsList: MutableList<RegisteredGlobalInterceptor<Viewer>> = mutableListOf()
 
     /**
      * Add a per-entity interceptor scoped to [scopeKey] (the
@@ -352,7 +352,7 @@ public class EntInterceptorsConfig public constructor() {
      * `@EntktInternal` because the pairing between [scopeKey] (a
      * raw string) and the interceptor's `E` type parameter is the
      * typed-scope soundness boundary: register
-     * `QueryInterceptor<User>` under `"posts"` and the cast in
+     * `QueryInterceptor<Viewer, User>` under `"posts"` and the cast in
      * [entityInterceptorsFor] silently produces a wrong-entity
      * interceptor at lookup time. The generated typed DSL
      * (`interceptors { posts(...) }`) pairs them correctly and
@@ -363,7 +363,7 @@ public class EntInterceptorsConfig public constructor() {
     public fun <E : Any> addEntity(
         scopeKey: String,
         name: String,
-        interceptor: QueryInterceptor<E>,
+        interceptor: QueryInterceptor<Viewer, E>,
     ) {
         validateApplicationName(name, scopeKey)
         val list = perEntity.getOrPut(scopeKey) { mutableListOf() }
@@ -382,7 +382,7 @@ public class EntInterceptorsConfig public constructor() {
      * raw-registration opt-in.
      */
     @entkt.query.EntktInternal
-    public fun addGlobal(name: String, interceptor: GlobalQueryInterceptor) {
+    public fun addGlobal(name: String, interceptor: GlobalQueryInterceptor<Viewer>) {
         validateApplicationName(name, "global")
         require(globalsList.none { it.name == name }) {
             "Duplicate global interceptor name '$name'"
@@ -399,16 +399,16 @@ public class EntInterceptorsConfig public constructor() {
      */
     @entkt.query.EntktInternal
     @Suppress("UNCHECKED_CAST")
-    public fun <E : Any> entityInterceptorsFor(scopeKey: String): List<RegisteredInterceptor<E>> =
-        (perEntity[scopeKey] ?: emptyList()) as List<RegisteredInterceptor<E>>
+    public fun <E : Any> entityInterceptorsFor(scopeKey: String): List<RegisteredInterceptor<Viewer, E>> =
+        (perEntity[scopeKey] ?: emptyList()) as List<RegisteredInterceptor<Viewer, E>>
 
     /** Return a stable copy of the configured global interceptor chain. */
     @entkt.query.EntktInternal
-    public fun globals(): List<RegisteredGlobalInterceptor> = globalsList.toList()
+    public fun globals(): List<RegisteredGlobalInterceptor<Viewer>> = globalsList.toList()
 
     /** Resolve every registration into an immutable, independent configuration. */
     @entkt.query.EntktInternal
-    public fun resolveForInternalUse(): ResolvedEntInterceptorsConfig =
+    public fun resolveForInternalUse(): ResolvedEntInterceptorsConfig<Viewer> =
         ResolvedEntInterceptorsConfig(perEntity, globalsList)
 
     private fun validateApplicationName(name: String, scope: String) {

@@ -41,10 +41,14 @@ fun Viewer.uuidIdOrNull(): UUID? =
  * checks. Scalar operations retain one context; batch-aware collection reads
  * and `createMany` likewise retain the same instance for the complete logical
  * operation rather than once per item.
+ *
+ * @param Viewer the type of viewer an operation runs as. Generated code binds
+ * it, so every generated terminal accepts one viewer type. A [PrivacyBypass]
+ * carries no viewer and is accepted wherever any `ViewerContext` is.
  */
-sealed interface ViewerContext {
+sealed interface ViewerContext<out Viewer : Any> {
     /** Run as [viewer]. Privacy rules decide what is allowed. */
-    data class AsViewer(val viewer: Viewer) : ViewerContext
+    data class AsViewer<out Viewer : Any>(val viewer: Viewer) : ViewerContext<Viewer>
 
     /**
      * Trusted framework/application escape hatch that bypasses generated privacy
@@ -56,7 +60,7 @@ sealed interface ViewerContext {
      * authors to say why the escape hatch is being used.
      */
     @ConsistentCopyVisibility
-    data class PrivacyBypass internal constructor(val reason: String) : ViewerContext {
+    data class PrivacyBypass internal constructor(val reason: String) : ViewerContext<Nothing> {
         init {
             require(reason.isNotBlank()) {
                 "ViewerContext.PrivacyBypass requires a non-blank reason"
@@ -72,25 +76,25 @@ sealed interface ViewerContext {
 }
 
 /** The authenticated user this context runs as, or `null` for any other viewer and for a privacy bypass. */
-fun ViewerContext.userOrNull(): Viewer.User? =
+fun ViewerContext<Viewer>.userOrNull(): Viewer.User? =
     when (this) {
         is ViewerContext.AsViewer -> viewer.userOrNull()
         is ViewerContext.PrivacyBypass -> null
     }
 
-fun ViewerContext.userIdOrNull(): Any? =
+fun ViewerContext<Viewer>.userIdOrNull(): Any? =
     userOrNull()?.id
 
-fun ViewerContext.stringIdOrNull(): String? =
+fun ViewerContext<Viewer>.stringIdOrNull(): String? =
     userOrNull()?.id as? String
 
-fun ViewerContext.intIdOrNull(): Int? =
+fun ViewerContext<Viewer>.intIdOrNull(): Int? =
     userOrNull()?.id as? Int
 
-fun ViewerContext.longIdOrNull(): Long? =
+fun ViewerContext<Viewer>.longIdOrNull(): Long? =
     userOrNull()?.id as? Long
 
-fun ViewerContext.uuidIdOrNull(): UUID? =
+fun ViewerContext<Viewer>.uuidIdOrNull(): UUID? =
     userOrNull()?.id as? UUID
 
 /**
@@ -104,8 +108,8 @@ fun ViewerContext.uuidIdOrNull(): UUID? =
  * Privacy rules are never evaluated for a privacy bypass, so [viewerContext]
  * is always the [ViewerContext.AsViewer] the operation was given.
  */
-class PrivacyRuleContext<out Client : EntRuleClient>(
-    val viewerContext: ViewerContext.AsViewer,
+class PrivacyRuleContext<out Viewer : Any, out Client : EntRuleClient>(
+    val viewerContext: ViewerContext.AsViewer<Viewer>,
     val client: Client,
 ) {
     /** The viewer the operation runs as. */
@@ -157,10 +161,10 @@ class PrivacyDeniedException(
  * the supplied items; callers cannot construct or reorder the result directly.
  * Generated lifecycle evaluators never invoke a rule with an empty batch.
  */
-interface BatchPrivacyRule<in Client : EntRuleClient, in Item> {
+interface BatchPrivacyRule<in Viewer : Any, in Client : EntRuleClient, in Item> {
     @JvmSuppressWildcards
     fun runBatch(
-        context: PrivacyRuleContext<Client>,
+        context: PrivacyRuleContext<Viewer, Client>,
         batch: RuleBatch<Item>,
     ): RuleDecisions<PrivacyDecision>
 }
@@ -172,16 +176,16 @@ interface BatchPrivacyRule<in Client : EntRuleClient, in Item> {
  * items serially in encounter order. Rules are evaluated in registration
  * order; the first non-[PrivacyDecision.Continue] result wins for each item.
  */
-fun interface PrivacyRule<in Client : EntRuleClient, in Item> : BatchPrivacyRule<Client, Item> {
+fun interface PrivacyRule<in Viewer : Any, in Client : EntRuleClient, in Item> : BatchPrivacyRule<Viewer, Client, Item> {
     @JvmSuppressWildcards
     fun run(
-        context: PrivacyRuleContext<Client>,
+        context: PrivacyRuleContext<Viewer, Client>,
         item: Item,
     ): PrivacyDecision
 
     @JvmSuppressWildcards
     override fun runBatch(
-        context: PrivacyRuleContext<Client>,
+        context: PrivacyRuleContext<Viewer, Client>,
         batch: RuleBatch<Item>,
     ): RuleDecisions<PrivacyDecision> =
         batch.decideEach { run(context, it) }
@@ -193,14 +197,14 @@ fun interface PrivacyRule<in Client : EntRuleClient, in Item> : BatchPrivacyRule
  * The ordinary interface plus named factory keeps batch-taking callbacks
  * explicit at Kotlin registration sites. Use [PrivacyRule] for a scalar callback.
  */
-fun <Client : EntRuleClient, Item> batchPrivacyRule(
+fun <Viewer : Any, Client : EntRuleClient, Item> batchPrivacyRule(
     block: (
-        context: PrivacyRuleContext<Client>,
+        context: PrivacyRuleContext<Viewer, Client>,
         batch: RuleBatch<Item>,
     ) -> RuleDecisions<PrivacyDecision>,
-): BatchPrivacyRule<Client, Item> = object : BatchPrivacyRule<Client, Item> {
+): BatchPrivacyRule<Viewer, Client, Item> = object : BatchPrivacyRule<Viewer, Client, Item> {
     override fun runBatch(
-        context: PrivacyRuleContext<Client>,
+        context: PrivacyRuleContext<Viewer, Client>,
         batch: RuleBatch<Item>,
     ): RuleDecisions<PrivacyDecision> = block(context, batch)
 }
@@ -235,7 +239,7 @@ fun RuleBatch<*>.denyAll(reason: String): RuleDecisions<PrivacyDecision> =
  * Under fail-closed privacy this is the explicit opt-in to "no restriction" for
  * an operation; use it deliberately.
  */
-val allowAll: PrivacyRule<EntRuleClient, Any?> = PrivacyRule { _, _ -> PrivacyDecision.Allow }
+val allowAll: PrivacyRule<Any, EntRuleClient, Any?> = PrivacyRule { _, _ -> PrivacyDecision.Allow }
 
 /**
  * An entity-scoped policy that configures rules for entity operations

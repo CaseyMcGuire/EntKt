@@ -1095,7 +1095,7 @@ class EdgeCodegenTest {
             .generate("Pet", byName["Pet"]!!, names).toString()
             .replace("\\s+".toRegex(), " ")
         assert(converter.contains("internal class PetCreateConverter"))
-        assert(converter.contains("CreateMutationHookStateConverter<PetCreateDraft, Pet, PetBeforeSaveState, PetBeforeCreateState>"))
+        assert(converter.contains("CreateMutationHookStateConverter<Viewer, PetCreateDraft, Pet, PetBeforeSaveState, PetBeforeCreateState>"))
         assert(converter.contains("CreateMutationConverter<PetCreateDraft, PetWriteCandidate, Pet, PetBeforeCreateState>"))
         assert(output.contains("converter = PetCreateConverter(driver, client.hookClientScopeForInternalUse)")) {
             "the repo should construct its schema-specific converter\n$output"

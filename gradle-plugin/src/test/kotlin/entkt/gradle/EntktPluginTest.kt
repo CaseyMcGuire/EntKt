@@ -169,7 +169,7 @@ class EntktPluginTest {
             assertTrue(queryContent.contains("@EntktDsl"), "Query class should be annotated @EntktDsl")
             val queryFlat = queryContent.replace("\\s+".toRegex(), " ")
             assertTrue(
-                queryFlat.contains("EntityQueryBuilder<Pet, PetQuery>"),
+                queryFlat.contains("EntityQueryBuilder<Viewer, Pet, PetQuery>"),
                 "Query class should inherit its common builder API from EntityQueryBuilder",
             )
             assertTrue(
@@ -188,7 +188,7 @@ class EntktPluginTest {
             assertTrue(repoContent.contains("driver: DatabaseDriver"), "Should take DatabaseDriver in constructor")
             assertTrue(
                 repoFlat.contains(
-                    "GeneratedIdRepository<Pet, Int, PetCreateDraft, PetUpdateDraft, PetQuery, ReadOnlyEntClient>",
+                    "GeneratedIdRepository<Viewer, Pet, Int, PetCreateDraft, PetUpdateDraft, PetQuery, ReadOnlyEntClient>",
                 ),
                 "Repo should inherit its typed CRUD API from GeneratedIdRepository",
             )
@@ -224,7 +224,7 @@ class EntktPluginTest {
             assertTrue(
                 repoFlat.contains(
                     "fun create(name: String, block: PetCreateDraft.() -> Unit = {}): " +
-                        "PendingCreateMutation<PetCreateDraft, Pet> = super.create {",
+                        "PendingCreateMutation<Viewer, PetCreateDraft, Pet> = super.create {",
                 ),
                 "Repo should expose a required-parameter create overload that delegates to the runtime create path",
             )

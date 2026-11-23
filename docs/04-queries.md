@@ -944,7 +944,7 @@ val user = client.withTransaction { tx ->
 }.getOrThrow()
 ```
 
-`forUpdate()` returns `ForUpdateQuery<Entity>`, which exposes
+`forUpdate()` returns `ForUpdateQuery<Viewer, Entity>`, which exposes
 `all(viewerContext): ReadCollectionResult<Entity>` and
 `firstOrNull(viewerContext): ReadResult<Entity?>`, plus the immutable
 `skipLocked()` option described below. Finish filtering, ordering,

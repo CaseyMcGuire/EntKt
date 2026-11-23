@@ -62,7 +62,7 @@ class QuerySurfaceCompileTest {
     @Test
     fun `full and rule clients retain concrete query types without capability generics`() {
         val result = compile(source("Application", """
-            fun use(client: EntClient, rules: ReadOnlyEntClient, ctx: ViewerContext) {
+            fun use(client: EntClient, rules: ReadOnlyEntClient, ctx: ViewerContext<Viewer>) {
                 val full: UserQuery = client.users.query().where(User.active.eq(true))
                     .orderBy(User.name.asc()).limit(10).offset(2).configure { loadCars() }
                 val read: UserReadQuery = rules.users.query().where(User.active.eq(true))
@@ -78,13 +78,13 @@ class QuerySurfaceCompileTest {
                 val rootRange: UserReadQuery = rules.users.indexes.createdAt { gte(Instant.EPOCH) }.query()
                 val fullIndexedTraversal: CarQuery = fullIndex.queryCars()
                 val readIndexedTraversal: CarReadQuery = readIndex.queryCars()
-                val locking: ForUpdateQuery<User> = full.forUpdate()
-                val indexedLock: ForUpdateQuery<User> = fullRange.forUpdate()
-                val traversedLock: ForUpdateQuery<Car> = fullIndexedTraversal.forUpdate()
-                val groupLock: ForUpdateQuery<User> = fullManyToMany.forUpdate()
-                val skipping: ForUpdateQuery<User> = locking.skipLocked()
-                val skippingIndex: ForUpdateQuery<User> = fullRange.forUpdate().skipLocked()
-                val skippingTraversal: ForUpdateQuery<Car> = fullIndexedTraversal.forUpdate().skipLocked()
+                val locking: ForUpdateQuery<Viewer, User> = full.forUpdate()
+                val indexedLock: ForUpdateQuery<Viewer, User> = fullRange.forUpdate()
+                val traversedLock: ForUpdateQuery<Viewer, Car> = fullIndexedTraversal.forUpdate()
+                val groupLock: ForUpdateQuery<Viewer, User> = fullManyToMany.forUpdate()
+                val skipping: ForUpdateQuery<Viewer, User> = locking.skipLocked()
+                val skippingIndex: ForUpdateQuery<Viewer, User> = fullRange.forUpdate().skipLocked()
+                val skippingTraversal: ForUpdateQuery<Viewer, Car> = fullIndexedTraversal.forUpdate().skipLocked()
                 val availableRows: ReadCollectionResult<User> = skipping.all(ctx)
                 val availableOne: ReadResult<User?> = skipping.firstOrNull(ctx)
                 val lockedRows: ReadCollectionResult<User> = locking.all(ctx)
@@ -105,8 +105,8 @@ class QuerySurfaceCompileTest {
                     val txQuery: UserQuery = tx.users.query { loadCars() }
                     val txIndex: UserQuery = tx.users.indexes.email("a@b.c").query()
                     val txTraversal: CarQuery = txIndex.queryCars()
-                    val txLock: ForUpdateQuery<Car> = txTraversal.forUpdate()
-                    val txSkipping: ForUpdateQuery<Car> = txLock.skipLocked()
+                    val txLock: ForUpdateQuery<Viewer, Car> = txTraversal.forUpdate()
+                    val txSkipping: ForUpdateQuery<Viewer, Car> = txLock.skipLocked()
                     val values: List<Car?> = txSkipping.all(ctx).deniedAsNull().orRollback()
                 }
             }
@@ -129,7 +129,7 @@ class QuerySurfaceCompileTest {
     fun `collection results require their own result type and completion before entities access`() {
         val result = compile(
             source("CollectionType", """
-                fun misuse(client: EntClient, ctx: ViewerContext): ReadResult<List<User>> =
+                fun misuse(client: EntClient, ctx: ViewerContext<Viewer>): ReadResult<List<User>> =
                     client.users.query().all(ctx)
             """.trimIndent()),
             source("CollectionEntities", """
@@ -268,7 +268,7 @@ class QuerySurfaceCompileTest {
             "Relock" to "forUpdate()",
         )
         val result = compile(*expressions.map { (name, expression) ->
-            source(name, "fun misuse$name(query: ForUpdateQuery<User>) { query.$expression }")
+            source(name, "fun misuse$name(query: ForUpdateQuery<Viewer, User>) { query.$expression }")
         }.toTypedArray())
         assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode, result.messages)
         for ((name, expression) in expressions) {
@@ -282,7 +282,7 @@ class QuerySurfaceCompileTest {
     @Test
     fun `interceptors cannot assign lock intent`() {
         val result = compile(source("LockMetadata", """
-            fun change(context: QueryContext) {
+            fun change(context: QueryContext<Viewer>) {
                 context.lockMode = QueryLockMode.ForUpdate
             }
         """.trimIndent()))

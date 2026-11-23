@@ -24,9 +24,9 @@ import java.util.concurrent.CancellationException
  * does not assemble or coordinate read execution itself.
  */
 @EntktInternal
-class ReadQueryExecutor<Entity : EntEntity<*>>(
+class ReadQueryExecutor<Viewer : Any, Entity : EntEntity<*>>(
     private val driver: DatabaseDriver,
-    private val executionHost: ReadQueryExecutionHost,
+    private val executionHost: ReadQueryExecutionHost<Viewer>,
 ) {
     private val queryCompiler = ReadQueryCompiler(
         driver = driver,
@@ -40,7 +40,7 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
 
     /** Load at most one authorized root and its selected graph, preserving absence as null. */
     fun readOne(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         captureQuery: () -> EntityQuery<Entity>,
         operation: ReadOperation = ReadOperation.FIRST,
         lockMode: QueryLockMode = QueryLockMode.None,
@@ -62,7 +62,7 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
 
     /** Load a root collection, retaining denials and loading only authorized roots' graphs. */
     fun readMany(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         captureQuery: () -> EntityQuery<Entity>,
         lockMode: QueryLockMode = QueryLockMode.None,
     ): ReadCollectionResult<Entity> = try {
@@ -115,7 +115,7 @@ class ReadQueryExecutor<Entity : EntEntity<*>>(
 
     /** Compile a captured entity query for a framework-owned storage operation. */
     fun compileEntityQuery(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         query: EntityQuery<Entity>,
         operation: ReadOperation,
     ): StorageQuerySpec<Entity> {

@@ -81,7 +81,7 @@ class ForUpdateQueryTest {
         val viewer = ViewerContext.AsViewer(Viewer.User(7L))
         val events = mutableListOf<String>()
         val calls = mutableListOf<Call>()
-        val contexts = mutableListOf<QueryContext>()
+        val contexts = mutableListOf<QueryContext<Viewer>>()
         var transactional = true
         var supported = true
         var skipLockedSupported = true
@@ -92,7 +92,7 @@ class ForUpdateQueryTest {
         val classifiedExceptions = mutableListOf<Exception>()
         var rows = listOf(listOf(mapOf<String, Any?>("id" to 1L, "parent_id" to 2L)))
         var denied = emptySet<Long>()
-        var intercept: (InterceptScope<Item>, QueryContext) -> Unit = { _, _ -> }
+        var intercept: (InterceptScope<Item>, QueryContext<Viewer>) -> Unit = { _, _ -> }
         val driver = object : DatabaseDriver by NoopDriver {
             override val inTransaction: Boolean get() = transactional
             override val supportsQueryForUpdate: Boolean get() = supported
@@ -118,8 +118,8 @@ class ForUpdateQueryTest {
                 return rows[minOf(calls.lastIndex, rows.lastIndex)]
             }
         }
-        private val host = object : ReadQueryExecutionHost {
-            override val entityInterceptors = EntInterceptorsConfig().apply {
+        private val host = object : ReadQueryExecutionHost<Viewer> {
+            override val entityInterceptors = EntInterceptorsConfig<Viewer>().apply {
                 addEntity<Item>("items", "test") { scope, context ->
                     events += "interceptor:${context.operation}"
                     contexts += context
@@ -134,7 +134,7 @@ class ForUpdateQueryTest {
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
-                viewerContext: ViewerContext,
+                viewerContext: ViewerContext<Viewer>,
                 entities: List<Entity>,
             ): PrivacyEvaluation<Entity> {
                 events += "privacy:${entities.joinToString { it.id.toString() }}"
@@ -143,8 +143,8 @@ class ForUpdateQueryTest {
                 })
             }
         }
-        val executor = ReadQueryExecutor<Item>(driver, host)
-        fun locking(query: EntityQuery<Item> = EntityQuery(Items)): ForUpdateQuery<Item> =
+        val executor = ReadQueryExecutor<Viewer, Item>(driver, host)
+        fun locking(query: EntityQuery<Item> = EntityQuery(Items)): ForUpdateQuery<Viewer, Item> =
             ForUpdateQuery(query, executor)
     }
 
@@ -297,7 +297,7 @@ class ForUpdateQueryTest {
         assertEquals(listOf("guard"), expired.events)
 
         assertIs<IllegalStateException>(
-            assertIs<ReadCollectionResult.Failed>(ForUpdateQuery(EntityQuery(Items), null).all(expired.viewer)).exception,
+            assertIs<ReadCollectionResult.Failed>(ForUpdateQuery<Viewer, Item>(EntityQuery(Items), null).all(expired.viewer)).exception,
         )
     }
 

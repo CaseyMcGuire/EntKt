@@ -135,7 +135,7 @@ This is the generated repository surface shared by `EntClient` and
 ```kotlin
 fun emailIsTaken(
     client: EntClientScope,
-    viewerContext: ViewerContext,
+    viewerContext: ViewerContext<Viewer>,
     email: String,
 ): Boolean = client.users.indexes.email(email).find(viewerContext).getOrThrow() != null
 ```

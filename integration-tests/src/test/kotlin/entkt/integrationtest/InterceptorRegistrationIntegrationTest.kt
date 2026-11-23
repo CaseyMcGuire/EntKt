@@ -126,7 +126,7 @@ class InterceptorRegistrationIntegrationTest : PostgresTestBase() {
         // Compile-only assertion: if the generated DSL ever loses
         // its `posts(...)` per-entity registration method, this
         // expression won't compile.
-        val interceptor: QueryInterceptor<Post> = QueryInterceptor { _, _ -> }
+        val interceptor: QueryInterceptor<Viewer, Post> = QueryInterceptor { _, _ -> }
         // suppress unused — just need the reference to keep the import live.
         assertTrue(interceptor === interceptor)
     }

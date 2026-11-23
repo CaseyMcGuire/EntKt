@@ -163,7 +163,7 @@ class ClientGeneratorTest {
     fun `EntClient exposes one stable read-only rule client for entity-local evaluators`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains(": EntReadRuntime, MutationRuntime, EntClientScope"))
+        assert(output.contains(": EntReadRuntime, MutationRuntime<Viewer>, EntClientScope"))
         assert(output.contains("internal val readOnlyClient: ReadOnlyEntClient by lazy"))
         assert(output.contains("ReadOnlyEntClientImpl("))
         assert(!output.contains("CreateMutationOperation"))

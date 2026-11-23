@@ -56,7 +56,7 @@ class ReadProjectionPurityIntegrationTest : PostgresTestBase() {
     }
 
     private fun recordingClient(
-        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
+        viewerContext: ViewerContext<Viewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAll,
     ): Pair<EntClient, RecordingDriver> {
         this.viewerContext = viewerContext

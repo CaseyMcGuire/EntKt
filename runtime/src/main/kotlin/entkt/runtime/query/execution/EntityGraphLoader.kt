@@ -40,15 +40,15 @@ import kotlin.reflect.KClass
  * The unit of batching is one selected relationship path: never one query per source
  * entity, but also not one query for the entire graph.
  */
-internal class EntityGraphLoader(
-    private val storage: GraphStorage,
-    private val loadPrivacyDispatcher: LoadPrivacyDispatcher,
+internal class EntityGraphLoader<Viewer : Any>(
+    private val storage: GraphStorage<Viewer>,
+    private val loadPrivacyDispatcher: LoadPrivacyDispatcher<Viewer>,
 ) {
     /** Reuse batch graph loading with a one-row cap, unwrapping absence or the selected outcome. */
     fun <Entity : EntEntity<*>> loadOne(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         lockMode: QueryLockMode = QueryLockMode.None,
     ): Entity? {
         val entries = loadMany(
@@ -64,7 +64,7 @@ internal class EntityGraphLoader(
     /** Load the root batch, retaining each root's outcome while evaluating authorized graphs. */
     fun <Entity : EntEntity<*>> loadMany(
         query: EntityQuery<Entity>,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         operation: ReadOperation = ReadOperation.ALL,
         maximumRows: Int? = null,
         lockMode: QueryLockMode = QueryLockMode.None,
@@ -110,7 +110,7 @@ internal class EntityGraphLoader(
     private fun <Entity : EntEntity<*>> evaluateRootPrivacy(
         entity: EntityMapping<Entity>,
         entities: List<Entity>,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
     ): List<ReadResult<Entity>> {
         if (entities.isEmpty()) {
             return emptyList()
@@ -135,7 +135,7 @@ internal class EntityGraphLoader(
         query: EntityQuery<Node>,
         entities: List<Node>,
         denialPolicy: LoadDenialPolicy,
-        context: NodeEvaluationContext,
+        context: NodeEvaluationContext<Viewer>,
     ): List<Node> {
         val authorizedEntities = evaluateLoadPrivacy(
             entity = query.entity,
@@ -154,7 +154,7 @@ internal class EntityGraphLoader(
     private fun <Node : EntEntity<*>> evaluateSelectedRelationships(
         query: EntityQuery<Node>,
         entities: List<Node>,
-        context: NodeEvaluationContext,
+        context: NodeEvaluationContext<Viewer>,
     ): List<Node> {
         var entitiesWithRelationships = entities
         for (selection in query.edges) {
@@ -172,7 +172,7 @@ internal class EntityGraphLoader(
     private fun <Source : EntEntity<*>> evaluateSelection(
         selection: EdgeSelection<Source, *>,
         sources: List<Source>,
-        context: NodeEvaluationContext,
+        context: NodeEvaluationContext<Viewer>,
     ): List<Source> = evaluateTypedSelection(
         selection as EdgeSelection<Source, EntEntity<*>>,
         sources,
@@ -183,7 +183,7 @@ internal class EntityGraphLoader(
     private fun <Source : EntEntity<*>, Target : EntEntity<*>> evaluateTypedSelection(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
-        context: NodeEvaluationContext,
+        context: NodeEvaluationContext<Viewer>,
     ): List<Source> {
         val childContext = context.child(selection)
         val loadedRelationship = storage.loadRelationship(
@@ -210,7 +210,7 @@ internal class EntityGraphLoader(
         entity: EntityMapping<Node>,
         entities: List<Node>,
         denialPolicy: LoadDenialPolicy,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
     ): List<Node> {
         val evaluation = loadPrivacyDispatcher.evaluate(entity, viewerContext, entities)
 
@@ -249,13 +249,13 @@ private sealed interface LoadDenialPolicy {
 }
 
 /** Relationship read state and privacy-denial path for one graph node. */
-private class NodeEvaluationContext(
-    val read: RelationshipReadContext,
+private class NodeEvaluationContext<Viewer : Any>(
+    val read: RelationshipReadContext<Viewer>,
     val denialPath: List<SelectedEdgeStep>,
 ) {
     fun <Source : EntEntity<*>, Target : EntEntity<*>> child(
         selection: EdgeSelection<Source, Target>,
-    ): NodeEvaluationContext {
+    ): NodeEvaluationContext<Viewer> {
         val edge = selection.edge
         return NodeEvaluationContext(
             read = read.child(edge),
@@ -284,10 +284,10 @@ private fun traversalPath(query: EntityQuery<*>): List<EdgeStep> = when (val sou
     )
 }
 
-private fun rootContext(
+private fun <Viewer : Any> rootContext(
     query: EntityQuery<*>,
-    viewerContext: ViewerContext,
-): NodeEvaluationContext = NodeEvaluationContext(
+    viewerContext: ViewerContext<Viewer>,
+): NodeEvaluationContext<Viewer> = NodeEvaluationContext(
     read = RelationshipReadContext(
         viewerContext = viewerContext,
         rootEntity = rootEntity(query),

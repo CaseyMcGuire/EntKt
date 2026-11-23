@@ -16,10 +16,10 @@ data class UpdateMutationRequest<Draft : UpdateMutationDraft<*>>(
 
 /** Repository operation used by the generic [PendingUpdateMutation] wrapper. */
 @EntktInternal
-fun interface UpdateMutationRepository<Draft : UpdateMutationDraft<Entity>, Entity : EntEntity<*>> {
+fun interface UpdateMutationRepository<Viewer : Any, Draft : UpdateMutationDraft<Entity>, Entity : EntEntity<*>> {
     /** Execute one update, optionally enforcing LOAD privacy on the returned entity. */
     fun executeUpdate(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         request: UpdateMutationRequest<Draft>,
         applyLoadPrivacy: Boolean,
     ): MutationResult<Entity>

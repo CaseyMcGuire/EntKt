@@ -50,8 +50,8 @@ import entkt.query.Predicate
  */
 class ExcludeDeleted<E : Any>(
     private val column: String = "deleted_at",
-) : QueryInterceptor<E> {
-    override fun intercept(scope: InterceptScope<E>, context: QueryContext) {
+) : QueryInterceptor<Any, E> {
+    override fun intercept(scope: InterceptScope<E>, context: QueryContext<Any>) {
         scope.addPredicate(Predicate.Leaf(column, Op.IS_NULL, null))
     }
 }

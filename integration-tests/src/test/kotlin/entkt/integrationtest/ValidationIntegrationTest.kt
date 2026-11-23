@@ -282,7 +282,7 @@ class ValidationIntegrationTest {
     }
 
     private fun freshClient(
-        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
+        viewerContext: ViewerContext<Viewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = ValidatedArticlePolicy,
         userPolicy: EntityPolicy<User, UserPolicyScope> = OpenUserPolicy,
     ): EntClient {

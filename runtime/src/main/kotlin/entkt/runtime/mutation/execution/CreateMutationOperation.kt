@@ -11,6 +11,7 @@ import entkt.runtime.rule.EntRuleClient
 /** Scalar CREATE reuses the batch operation while retaining scalar storage and transaction policy. */
 @EntktInternal
 class CreateMutationOperation<
+    Viewer : Any,
     RuleClient : EntRuleClient,
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
@@ -18,15 +19,15 @@ class CreateMutationOperation<
     BeforeSaveState : BeforeSaveHookState<Entity>,
     BeforeCreateState : BeforeCreateHookState<Entity>,
     >(
-    private val createManyOperation: CreateManyMutationOperation<RuleClient, Draft, Candidate, Entity, BeforeSaveState, BeforeCreateState>,
-) : MutationOperation<RuleClient, CreateMutationInput<Draft>, Entity> {
-    override fun requirements(input: CreateMutationInput<Draft>): MutationRequirements =
+    private val createManyOperation: CreateManyMutationOperation<Viewer, RuleClient, Draft, Candidate, Entity, BeforeSaveState, BeforeCreateState>,
+) : MutationOperation<RuleClient, CreateMutationInput<Viewer, Draft>, Entity> {
+    override fun requirements(input: CreateMutationInput<Viewer, Draft>): MutationRequirements =
         MutationRequirements("${createManyOperation.entityName} create")
 
     override fun run(
         execution: MutationExecution,
         ruleClient: RuleClient,
-        input: CreateMutationInput<Draft>,
+        input: CreateMutationInput<Viewer, Draft>,
     ): MutationCompletion<Entity> {
         val completion = createManyOperation.createBatch(
             execution = execution,

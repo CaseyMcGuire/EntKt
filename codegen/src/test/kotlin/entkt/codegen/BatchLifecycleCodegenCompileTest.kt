@@ -77,6 +77,7 @@ class BatchLifecycleCodegenCompileTest {
                 import entkt.runtime.hook.TransformingHook
                 import entkt.runtime.hook.batchActionHook
                 import entkt.runtime.hook.batchTransformingHook
+                import entkt.runtime.privacy.Viewer
                 import entkt.runtime.privacy.EntityPolicy
                 import entkt.runtime.privacy.PrivacyDecision
                 import entkt.runtime.privacy.allowAll
@@ -87,7 +88,7 @@ class BatchLifecycleCodegenCompileTest {
                 private val scalarLoad = CarLoadPrivacyRule { _, _ -> PrivacyDecision.Continue }
                 private val scalarLoads = arrayOf(scalarLoad)
                 private val batchLoad: CarLoadBatchPrivacyRule =
-                    batchPrivacyRule<ReadOnlyEntClient, Car> { _, batch ->
+                    batchPrivacyRule<Viewer, ReadOnlyEntClient, Car> { _, batch ->
                         batch.decideEach { PrivacyDecision.Allow }
                     }
 
@@ -320,7 +321,7 @@ class BatchLifecycleCodegenCompileTest {
 
                 private fun loadPolicy(
                     block: (
-                        PrivacyRuleContext<ReadOnlyEntClient>,
+                        PrivacyRuleContext<Viewer, ReadOnlyEntClient>,
                         RuleBatch<Widget>,
                     ) -> RuleDecisions<PrivacyDecision>,
                 ): EntityPolicy<Widget, WidgetPolicyScope> =
@@ -337,7 +338,7 @@ class BatchLifecycleCodegenCompileTest {
                     val batchPolicy = object : EntityPolicy<Widget, WidgetPolicyScope> {
                         override fun configure(scope: WidgetPolicyScope) = scope.run {
                             privacy {
-                                load(batchPrivacyRule<ReadOnlyEntClient, Widget> { _, batch ->
+                                load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Widget> { _, batch ->
                                     batchIds += batch.map { it.id }
                                     batch.decideEach { PrivacyDecision.Allow }
                                 })
@@ -402,7 +403,7 @@ class BatchLifecycleCodegenCompileTest {
                     val emptyPolicy = object : EntityPolicy<Widget, WidgetPolicyScope> {
                         override fun configure(scope: WidgetPolicyScope) = scope.run {
                             privacy {
-                                load(batchPrivacyRule<ReadOnlyEntClient, Widget> { _, batch ->
+                                load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Widget> { _, batch ->
                                     emptyBatchCalls += 1
                                     batch.decideEach { PrivacyDecision.Allow }
                                 })
@@ -459,7 +460,7 @@ class BatchLifecycleCodegenCompileTest {
                     val foreignDecisionsPolicy = object : EntityPolicy<Widget, WidgetPolicyScope> {
                         override fun configure(scope: WidgetPolicyScope) = scope.run {
                             privacy {
-                                load(batchPrivacyRule<ReadOnlyEntClient, Widget> { _, batch ->
+                                load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Widget> { _, batch ->
                                     priorDecisions ?: batch.decideEach { PrivacyDecision.Allow }
                                         .also { priorDecisions = it }
                                 })

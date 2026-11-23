@@ -29,6 +29,29 @@ above it.
 
 ## Unreleased
 
+- **Thread the viewer type through the runtime** (`runtime`, `codegen`)
+  `ViewerContext` is now `ViewerContext<out Viewer : Any>`, and every runtime
+  type that carries it takes `Viewer` as its first type parameter:
+  `PrivacyRuleContext<Viewer, Client>`, `PrivacyRule<Viewer, Client, Item>`,
+  `BatchPrivacyRule`, `ContextPrivacyRule<Viewer, Client>`,
+  `QueryContext<Viewer>`, `QueryInterceptor<Viewer, E>`,
+  `GlobalQueryInterceptor<Viewer>`, the repository, query-builder, and
+  pending-mutation base classes, and the internal mutation and read plumbing.
+  Generated code binds `Viewer` to the runtime's `Viewer`, so generated
+  signatures change only by that type argument and behavior is unchanged.
+  `ViewerContext.PrivacyBypass` is a `ViewerContext<Nothing>` and is accepted
+  by every terminal. This is the second stage of
+  [Application-Defined Viewer](../possible-features/privacy-validation/application-defined-viewer.md).
+  _Migration:_ add `Viewer` as the first type argument wherever application
+  code names one of these types: `PrivacyRuleContext<Viewer, ReadOnlyEntClient>`
+  in class-style rules, `ContextPrivacyRule<Viewer, ReadOnlyEntClient>`,
+  `QueryInterceptor<Viewer, User>`,
+  `PendingCreateMutation<Viewer, UserCreateDraft, User>`, and
+  `ViewerContext<Viewer>` in signatures and fields. Rules and interceptors
+  written as lambdas inside the generated DSL need no change. An interceptor
+  that ignores the viewer can be declared as `QueryInterceptor<Any, E>`, as
+  `ExcludeDeleted` now is.
+
 - **Move privacy bypass from `Viewer` to `ViewerContext`** (`runtime`, `ent-explorer`)
   `ViewerContext` is now a sealed pair: `ViewerContext.AsViewer(viewer)` runs an
   operation as a viewer, and `ViewerContext.PrivacyBypass` skips generated

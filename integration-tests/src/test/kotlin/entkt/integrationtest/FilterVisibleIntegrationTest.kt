@@ -111,7 +111,7 @@ class FilterVisibleIntegrationTest : PostgresTestBase() {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<ReadOnlyEntClient, Tag> { _, batch ->
+                            load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Tag> { _, batch ->
                                 invocations += batch.map { it.name }
                                 batch.decideEach {
                                     if (it.name == "a-denied-shared") {

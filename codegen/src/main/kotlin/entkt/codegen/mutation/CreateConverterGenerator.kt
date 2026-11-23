@@ -14,6 +14,7 @@ import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.scalarFields
+import entkt.codegen.metadata.VIEWER
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.schema.EntSchema
 
@@ -44,6 +45,7 @@ internal class CreateConverterGenerator(private val packageName: String) {
         val mutableFields = fields.filterNot { it.immutable }
         val mutableEdgeFks = edgeFks.filterNot { it.immutable }
         val converterType = CREATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
+            VIEWER,
             createDraftClass,
             entityClass,
             beforeSaveStateClass,

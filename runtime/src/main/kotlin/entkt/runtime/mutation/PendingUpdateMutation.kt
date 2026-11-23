@@ -9,18 +9,18 @@ import entkt.runtime.result.EntOperation
 import entkt.runtime.result.MutationResult
 
 /** A pending mutation that updates one [Entity]. */
-class PendingUpdateMutation<Draft : UpdateMutationDraft<Entity>, Entity : EntEntity<*>> @EntktInternal constructor(
+class PendingUpdateMutation<Viewer : Any, Draft : UpdateMutationDraft<Entity>, Entity : EntEntity<*>> @EntktInternal constructor(
     private val request: UpdateMutationRequest<Draft>,
-    private val repository: UpdateMutationRepository<Draft, Entity>,
-) : PendingMutation<Draft, Entity>(request.draft, EntOperation.UPDATE) {
-    override fun executeSave(viewerContext: ViewerContext): MutationResult<Unit> =
+    private val repository: UpdateMutationRepository<Viewer, Draft, Entity>,
+) : PendingMutation<Viewer, Draft, Entity>(request.draft, EntOperation.UPDATE) {
+    override fun executeSave(viewerContext: ViewerContext<Viewer>): MutationResult<Unit> =
         repository.executeUpdate(
             viewerContext = viewerContext,
             request = request,
             applyLoadPrivacy = false,
         ).withoutValue()
 
-    override fun executeSaveAndLoad(viewerContext: ViewerContext): MutationResult<Entity> =
+    override fun executeSaveAndLoad(viewerContext: ViewerContext<Viewer>): MutationResult<Entity> =
         repository.executeUpdate(
             viewerContext = viewerContext,
             request = request,

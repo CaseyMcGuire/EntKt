@@ -11,11 +11,11 @@ import entkt.runtime.privacy.ViewerContext
  * The evaluator owns deny-by-default and explicit-bypass behavior, including when no rules exist.
  */
 @EntktInternal
-interface LoadPrivacyDispatcher {
+interface LoadPrivacyDispatcher<Viewer : Any> {
     /** Evaluate LOAD privacy while preserving each entity's correlation with its outcome. */
     fun <Entity : EntEntity<*>> evaluate(
         entity: EntityMapping<Entity>,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         entities: List<Entity>,
     ): PrivacyEvaluation<Entity>
 }

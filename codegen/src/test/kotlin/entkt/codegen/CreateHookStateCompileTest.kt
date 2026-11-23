@@ -26,9 +26,9 @@ class CreateHookStateCompileTest {
     }
 
     private fun createTypes(beforeSave: String, beforeCreate: String): List<String> = listOf(
-        "CreateMutationOperation<EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
-        "CreateManyMutationOperation<EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
-        "CreateMutationHookStateConverter<WidgetDraft, Widget, $beforeSave, $beforeCreate>",
+        "CreateMutationOperation<Viewer, EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
+        "CreateManyMutationOperation<Viewer, EntRuleClient, WidgetDraft, WidgetCandidate, Widget, $beforeSave, $beforeCreate>",
+        "CreateMutationHookStateConverter<Viewer, WidgetDraft, Widget, $beforeSave, $beforeCreate>",
     )
 
     private fun compileTypes(types: List<String>): JvmCompilationResult = compileSources(
@@ -45,6 +45,7 @@ class CreateHookStateCompileTest {
                 import entkt.runtime.mutation.CreateMutationDraft
                 import entkt.runtime.mutation.WriteCandidate
                 import entkt.runtime.mutation.execution.*
+                import entkt.runtime.privacy.Viewer
                 import entkt.runtime.rule.EntRuleClient
 
                 data class Widget(override val id: Int) : EntEntity.IntId

@@ -30,8 +30,8 @@ class ContextPrivacyRuleIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `one context rule handles CRUD across entities including an owned transaction`() {
-        val seen = mutableListOf<PrivacyRuleContext<ReadOnlyEntClient>>()
-        val shared = ContextPrivacyRule<ReadOnlyEntClient> { context ->
+        val seen = mutableListOf<PrivacyRuleContext<Viewer, ReadOnlyEntClient>>()
+        val shared = ContextPrivacyRule<Viewer, ReadOnlyEntClient> { context ->
             seen += context
             PrivacyDecision.Allow
         }
@@ -66,7 +66,7 @@ class ContextPrivacyRuleIntegrationTest : PostgresTestBase() {
     @Test
     fun `context rules deny all four operations while explicit bypass skips them`() {
         var calls = 0
-        val denied = ContextPrivacyRule<ReadOnlyEntClient> {
+        val denied = ContextPrivacyRule<Viewer, ReadOnlyEntClient> {
             calls++
             PrivacyDecision.Deny("context denied")
         }
@@ -92,7 +92,7 @@ class ContextPrivacyRuleIntegrationTest : PostgresTestBase() {
         assertEquals(4, calls, "bypassed reads must not invoke the context rule")
     }
 
-    private fun client(driver: DatabaseDriver, shared: ContextPrivacyRule<ReadOnlyEntClient>): EntClient = EntClient(driver) {
+    private fun client(driver: DatabaseDriver, shared: ContextPrivacyRule<Viewer, ReadOnlyEntClient>): EntClient = EntClient(driver) {
         policies {
             users(object : EntityPolicy<User, UserPolicyScope> {
                 override fun configure(scope: UserPolicyScope) = scope.run {

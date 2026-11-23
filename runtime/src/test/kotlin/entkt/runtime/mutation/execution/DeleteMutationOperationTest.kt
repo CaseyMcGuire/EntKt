@@ -155,7 +155,7 @@ class DeleteMutationOperationTest {
     ) {
         val events = mutableListOf<String>()
         val driver = RecordingDriver(events, inTransaction)
-        val viewerContext: ViewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+        val viewerContext: ViewerContext<Viewer> = ViewerContext.AsViewer(Viewer.User(7L))
         val otherViewerContext = ViewerContext.AsViewer(Viewer.User(8L))
         val ruleClient = TestRuleClient()
         val failures = mutableListOf<EntMutationException>()
@@ -165,12 +165,12 @@ class DeleteMutationOperationTest {
         val privacyFallbackCandidates = mutableListOf<Candidate>()
         var effectivePredicates: List<Predicate<Widget>> = emptyList()
         var readExecutionFailure: Exception? = null
-        val receivedViewerContexts = mutableListOf<ViewerContext>()
+        val receivedViewerContexts = mutableListOf<ViewerContext<Viewer>>()
         val receivedReadOperations = mutableListOf<ReadOperation>()
         val receivedRuleClients = mutableListOf<TestRuleClient>()
         val mapping = RecordingDescriptor(events, idColumn)
-        val queryHost = object : ReadQueryExecutionHost {
-            override val entityInterceptors = EntInterceptorsConfig().apply {
+        val queryHost = object : ReadQueryExecutionHost<Viewer> {
+            override val entityInterceptors = EntInterceptorsConfig<Viewer>().apply {
                 addEntity<Widget>(mapping.clientName, "delete-selection") { scope, context ->
                     events += "select"
                     receivedViewerContexts += context.viewerContext
@@ -186,7 +186,7 @@ class DeleteMutationOperationTest {
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
-                viewerContext: ViewerContext,
+                viewerContext: ViewerContext<Viewer>,
                 entities: List<Entity>,
             ): PrivacyEvaluation<Entity> =
                 error("DELETE candidate selection never evaluates LOAD privacy")
@@ -207,7 +207,7 @@ class DeleteMutationOperationTest {
         val privacy = ResolvedEntityPrivacyConfig(
             loadRules = emptyList<Nothing>(),
             createRules = listOf(
-                batchPrivacyRule<TestRuleClient, Candidate> { context, candidates ->
+                batchPrivacyRule<Viewer, TestRuleClient, Candidate> { context, candidates ->
                     assertSame(viewerContext, context.viewerContext)
                     assertSame(ruleClient, context.client)
                     privacyFallbackCandidates += candidates.toList()
@@ -216,7 +216,7 @@ class DeleteMutationOperationTest {
             ),
             updateRules = emptyList<Nothing>(),
             deleteRules = listOf(
-                batchPrivacyRule<TestRuleClient, DeleteRuleInput<Widget, Candidate>> { context, batch ->
+                batchPrivacyRule<Viewer, TestRuleClient, DeleteRuleInput<Widget, Candidate>> { context, batch ->
                     events += "privacy:${batch.joinToString { it.entity.id.toString() }}"
                     receivedViewerContexts += context.viewerContext
                     receivedRuleClients += context.client
@@ -249,7 +249,7 @@ class DeleteMutationOperationTest {
             updateDerivesFromCreate = true,
         )
 
-        val mutationRuntime = object : MutationRuntime {
+        val mutationRuntime = object : MutationRuntime<Viewer> {
             override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
                 events += "preflight:$operation:$multiWrite"
             }
@@ -261,7 +261,7 @@ class DeleteMutationOperationTest {
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
-                viewerContext: ViewerContext,
+                viewerContext: ViewerContext<Viewer>,
                 entities: List<Entity>,
             ): PrivacyEvaluation<Entity> = error("DELETE never evaluates LOAD privacy")
         }
@@ -270,7 +270,7 @@ class DeleteMutationOperationTest {
         fun scalarOperation(
             beforeDelete: List<BatchActionHook<Widget>> = this.beforeDelete,
             afterDelete: List<BatchActionHook<Widget>> = this.afterDelete,
-        ): DeleteMutationOperation<TestRuleClient, Widget, Candidate> = buildDeleteMutationOperation(
+        ): DeleteMutationOperation<Viewer, TestRuleClient, Widget, Candidate> = buildDeleteMutationOperation(
             entity = mapping,
             converter = converter,
             privacy = privacy,
@@ -279,7 +279,7 @@ class DeleteMutationOperationTest {
             afterDelete = afterDelete,
         )
 
-        fun manyOperation(): DeleteManyMutationOperation<TestRuleClient, Widget, Candidate> = buildDeleteManyMutationOperation(
+        fun manyOperation(): DeleteManyMutationOperation<Viewer, TestRuleClient, Widget, Candidate> = buildDeleteManyMutationOperation(
             entity = mapping,
             converter = converter,
             privacy = privacy,
@@ -291,7 +291,7 @@ class DeleteMutationOperationTest {
         )
 
         fun deleteById(
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             id: Any,
             beforeDelete: List<BatchActionHook<Widget>> = this.beforeDelete,
             afterDelete: List<BatchActionHook<Widget>> = this.afterDelete,
@@ -302,7 +302,7 @@ class DeleteMutationOperationTest {
         )
 
         fun deleteMany(
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             predicates: List<Predicate<Widget>>,
         ): MutationResult<Int> = mutationExecutor.execute(
             operation = manyOperation(),

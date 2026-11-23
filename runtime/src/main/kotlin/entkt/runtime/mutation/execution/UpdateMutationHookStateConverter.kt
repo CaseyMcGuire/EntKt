@@ -10,6 +10,7 @@ import entkt.runtime.privacy.ViewerContext
 /** Schema-specific conversions into immutable update hook states. */
 @EntktInternal
 interface UpdateMutationHookStateConverter<
+    Viewer : Any,
     Draft,
     Entity : EntEntity<*>,
     PendingEdges : UpdatePendingEdges<Entity>,
@@ -19,7 +20,7 @@ interface UpdateMutationHookStateConverter<
     fun toBeforeSaveState(draft: Draft): BeforeSaveState
 
     fun toBeforeUpdateState(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         before: Entity,
         pendingEdges: PendingEdges,
         beforeSaveState: BeforeSaveState,

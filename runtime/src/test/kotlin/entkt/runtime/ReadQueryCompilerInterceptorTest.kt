@@ -2,6 +2,7 @@
 
 package entkt.runtime
 import entkt.runtime.driver.NoopDriver
+import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.query.QueryContext
 import entkt.runtime.query.RegisteredGlobalInterceptor
@@ -44,7 +45,7 @@ class ReadQueryCompilerInterceptorTest {
 
     private val queryCompiler = ReadQueryCompiler(
         driver = NoopDriver,
-        registeredInterceptors = EntInterceptorsConfig().resolveForInternalUse(),
+        registeredInterceptors = EntInterceptorsConfig<Viewer>().resolveForInternalUse(),
     )
 
     private fun builder(
@@ -62,7 +63,7 @@ class ReadQueryCompilerInterceptorTest {
         flags = emptySet(),
     )
 
-    private fun rootContext(operation: ReadOperation = ReadOperation.ALL): QueryContext =
+    private fun rootContext(operation: ReadOperation = ReadOperation.ALL): QueryContext<Viewer> =
         QueryContext(
             viewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
             operation = operation,
@@ -76,10 +77,10 @@ class ReadQueryCompilerInterceptorTest {
 
     private fun <Entity : Any> evaluateInterceptors(
         builder: QuerySpecBuilder<Entity>,
-        context: QueryContext,
+        context: QueryContext<Viewer>,
         entity: String,
-        entityInterceptors: List<RegisteredInterceptor<Entity>>,
-        globalInterceptors: List<RegisteredGlobalInterceptor>,
+        entityInterceptors: List<RegisteredInterceptor<Viewer, Entity>>,
+        globalInterceptors: List<RegisteredGlobalInterceptor<Viewer>>,
     ) {
         queryCompiler.runInterceptors(
             builder = builder,
@@ -92,10 +93,10 @@ class ReadQueryCompilerInterceptorTest {
 
     private fun <Entity : Any> applyInterceptors(
         builder: QuerySpecBuilder<Entity>,
-        context: QueryContext,
+        context: QueryContext<Viewer>,
         entity: String,
-        entityInterceptors: List<RegisteredInterceptor<Entity>>,
-        globalInterceptors: List<RegisteredGlobalInterceptor>,
+        entityInterceptors: List<RegisteredInterceptor<Viewer, Entity>>,
+        globalInterceptors: List<RegisteredGlobalInterceptor<Viewer>>,
     ): StorageQuerySpec<Entity> {
         evaluateInterceptors(
             builder,
@@ -131,7 +132,7 @@ class ReadQueryCompilerInterceptorTest {
     fun `scope-shape sees own addPredicate immediately (live property)`() {
         val pX = Predicate.Leaf<Post>("x", Op.EQ, 1)
         val captured = mutableListOf<Int>()  // counts after each read
-        val interceptor = QueryInterceptor<Post> { scope, _ ->
+        val interceptor = QueryInterceptor<Viewer, Post> { scope, _ ->
             captured.add(scope.shape.predicates.size)  // 0
             scope.addPredicate(pX)
             captured.add(scope.shape.predicates.size)  // 1
@@ -150,7 +151,7 @@ class ReadQueryCompilerInterceptorTest {
     fun `captured shape local does NOT reflect subsequent mutations (data-value snapshot)`() {
         var snapCount = -1
         var liveCount = -1
-        val interceptor = QueryInterceptor<Post> { scope, _ ->
+        val interceptor = QueryInterceptor<Viewer, Post> { scope, _ ->
             val snap = scope.shape
             scope.addPredicate(Predicate.Leaf<Post>("y", Op.EQ, 2))
             snapCount = snap.predicates.size           // frozen
@@ -214,8 +215,8 @@ class ReadQueryCompilerInterceptorTest {
         val pY = Predicate.Leaf<Post>("y", Op.EQ, 2)
         var bSawX = false
         var bSawY = false
-        val a = QueryInterceptor<Post> { scope, _ -> scope.addPredicate(pX) }
-        val b = QueryInterceptor<Post> { scope, _ ->
+        val a = QueryInterceptor<Viewer, Post> { scope, _ -> scope.addPredicate(pX) }
+        val b = QueryInterceptor<Viewer, Post> { scope, _ ->
             bSawX = scope.shape.predicates.any { it == pX }
             scope.addPredicate(pY)
             bSawY = scope.shape.predicates.any { it == pY }
@@ -241,10 +242,10 @@ class ReadQueryCompilerInterceptorTest {
         var observedCaller = -1
         var observedStructural = -1
         var observedInterceptor = -1
-        val a = QueryInterceptor<Post> { scope, _ ->
+        val a = QueryInterceptor<Viewer, Post> { scope, _ ->
             scope.addPredicate(Predicate.Leaf<Post>("ax", Op.EQ, 0))
         }
-        val b = QueryInterceptor<Post> { scope, _ ->
+        val b = QueryInterceptor<Viewer, Post> { scope, _ ->
             // Read attribution AFTER A's contribution is visible.
             observedCaller = scope.shape.callerPredicateCount
             observedStructural = scope.shape.structuralPredicateCount
@@ -274,7 +275,7 @@ class ReadQueryCompilerInterceptorTest {
     @Test
     fun `structural predicates land in structural bucket and identity holds`() {
         var observed: QueryShape<Post>? = null
-        val interceptor = QueryInterceptor<Post> { scope, _ ->
+        val interceptor = QueryInterceptor<Viewer, Post> { scope, _ ->
             observed = scope.shape
         }
         applyInterceptors(
@@ -300,10 +301,10 @@ class ReadQueryCompilerInterceptorTest {
     @Test
     fun `callerLimit preserves the caller-authored limit through interceptor mutations`() {
         var snapshot: QueryShape<Post>? = null
-        val defaulter = QueryInterceptor<Post> { scope, _ ->
+        val defaulter = QueryInterceptor<Viewer, Post> { scope, _ ->
             scope.setDefaultLimitIfAbsent(100)
         }
-        val inspector = QueryInterceptor<Post> { scope, _ ->
+        val inspector = QueryInterceptor<Viewer, Post> { scope, _ ->
             snapshot = scope.shape
         }
         // Case 1: caller set a limit.
@@ -342,8 +343,8 @@ class ReadQueryCompilerInterceptorTest {
     @Test
     fun `requireLimitAtMost only narrows`() {
         var observed: Int? = null
-        val cap = QueryInterceptor<Post> { scope, _ -> scope.requireLimitAtMost(30) }
-        val tail = QueryInterceptor<Post> { scope, _ -> observed = scope.shape.limit }
+        val cap = QueryInterceptor<Viewer, Post> { scope, _ -> scope.requireLimitAtMost(30) }
+        val tail = QueryInterceptor<Viewer, Post> { scope, _ -> observed = scope.shape.limit }
         applyInterceptors(
             builder = builder(callerLimit = 50),
             context = rootContext(),
@@ -357,8 +358,8 @@ class ReadQueryCompilerInterceptorTest {
     @Test
     fun `requireLimitAtMost cannot raise a smaller existing limit`() {
         var observed: Int? = null
-        val raiser = QueryInterceptor<Post> { scope, _ -> scope.requireLimitAtMost(100) }
-        val tail = QueryInterceptor<Post> { scope, _ -> observed = scope.shape.limit }
+        val raiser = QueryInterceptor<Viewer, Post> { scope, _ -> scope.requireLimitAtMost(100) }
+        val tail = QueryInterceptor<Viewer, Post> { scope, _ -> observed = scope.shape.limit }
         applyInterceptors(
             builder = builder(callerLimit = 10),
             context = rootContext(),
@@ -372,8 +373,8 @@ class ReadQueryCompilerInterceptorTest {
     @Test
     fun `setDefaultLimitIfAbsent is a no-op when a limit is already in place`() {
         var observed: Int? = null
-        val def = QueryInterceptor<Post> { scope, _ -> scope.setDefaultLimitIfAbsent(100) }
-        val tail = QueryInterceptor<Post> { scope, _ -> observed = scope.shape.limit }
+        val def = QueryInterceptor<Viewer, Post> { scope, _ -> scope.setDefaultLimitIfAbsent(100) }
+        val tail = QueryInterceptor<Viewer, Post> { scope, _ -> observed = scope.shape.limit }
         applyInterceptors(
             builder = builder(callerLimit = 25),
             context = rootContext(),
@@ -386,9 +387,9 @@ class ReadQueryCompilerInterceptorTest {
 
     @Test
     fun `limit mutators reject negative arguments`() {
-        val cap = QueryInterceptor<Post> { scope, _ -> scope.requireLimitAtMost(-1) }
-        val def = QueryInterceptor<Post> { scope, _ -> scope.setDefaultLimitIfAbsent(-1) }
-        val rej = QueryInterceptor<Post> { scope, _ -> scope.rejectIfLimitGreaterThan(-1) { "x" } }
+        val cap = QueryInterceptor<Viewer, Post> { scope, _ -> scope.requireLimitAtMost(-1) }
+        val def = QueryInterceptor<Viewer, Post> { scope, _ -> scope.setDefaultLimitIfAbsent(-1) }
+        val rej = QueryInterceptor<Viewer, Post> { scope, _ -> scope.rejectIfLimitGreaterThan(-1) { "x" } }
         for (interceptor in listOf(cap, def, rej)) {
             assertFailsWith<IllegalArgumentException> {
                 applyInterceptors(
@@ -404,7 +405,7 @@ class ReadQueryCompilerInterceptorTest {
 
     @Test
     fun `rejectIfLimitGreaterThan rejects when unbounded and passes when within max`() {
-        val rejecter = QueryInterceptor<Post> { scope, _ ->
+        val rejecter = QueryInterceptor<Viewer, Post> { scope, _ ->
             scope.rejectIfLimitGreaterThan(50) { "max 50" }
         }
         // Unbounded → reject with code max_limit_exceeded.
@@ -446,11 +447,11 @@ class ReadQueryCompilerInterceptorTest {
     fun `addAnnotation writes are visible to the same interceptor and to later ones`() {
         var aSawOwn = ""
         var bSawA = ""
-        val a = QueryInterceptor<Post> { scope, _ ->
+        val a = QueryInterceptor<Viewer, Post> { scope, _ ->
             scope.addAnnotation("k", "from-a")
             aSawOwn = scope.shape.annotations["k"] ?: "missing"
         }
-        val b = QueryInterceptor<Post> { scope, _ ->
+        val b = QueryInterceptor<Viewer, Post> { scope, _ ->
             bSawA = scope.shape.annotations["k"] ?: "missing"
         }
         applyInterceptors(
@@ -467,8 +468,8 @@ class ReadQueryCompilerInterceptorTest {
     @Test
     fun `annotation last-writer-wins across interceptors`() {
         val frozen = mutableMapOf<String, String>()
-        val a = QueryInterceptor<Post> { scope, _ -> scope.addAnnotation("k", "from-a") }
-        val b = QueryInterceptor<Post> { scope, _ ->
+        val a = QueryInterceptor<Viewer, Post> { scope, _ -> scope.addAnnotation("k", "from-a") }
+        val b = QueryInterceptor<Viewer, Post> { scope, _ ->
             scope.addAnnotation("k", "from-b")
             frozen.putAll(scope.shape.annotations)
         }
@@ -486,7 +487,7 @@ class ReadQueryCompilerInterceptorTest {
 
     @Test
     fun `reject reports the rejecting interceptors name and provided code`() {
-        val rejecter = QueryInterceptor<Post> { scope, _ ->
+        val rejecter = QueryInterceptor<Viewer, Post> { scope, _ ->
             scope.reject("nope", code = "broad_aggregate")
         }
         val rejection = assertFailsWith<EntQueryRejectedException> {
@@ -508,9 +509,9 @@ class ReadQueryCompilerInterceptorTest {
     fun `rejection short-circuits the remaining chain`() {
         var bRan = false
         var globalRan = false
-        val rejecter = QueryInterceptor<Post> { scope, _ -> scope.reject("nope") }
-        val b = QueryInterceptor<Post> { _, _ -> bRan = true }
-        val g = GlobalQueryInterceptor { _, _ -> globalRan = true }
+        val rejecter = QueryInterceptor<Viewer, Post> { scope, _ -> scope.reject("nope") }
+        val b = QueryInterceptor<Viewer, Post> { _, _ -> bRan = true }
+        val g = GlobalQueryInterceptor<Viewer> { _, _ -> globalRan = true }
         assertFailsWith<EntQueryRejectedException> {
             applyInterceptors(
                 builder = builder(),
@@ -534,12 +535,12 @@ class ReadQueryCompilerInterceptorTest {
         val pX = Predicate.Leaf<Post>("x", Op.EQ, 1)
         var g1ObservedPredicates = -1
         var g2ObservedAnnotations: Map<String, String> = emptyMap()
-        val entityI = QueryInterceptor<Post> { scope, _ -> scope.addPredicate(pX) }
-        val g1 = GlobalQueryInterceptor { scope, _ ->
+        val entityI = QueryInterceptor<Viewer, Post> { scope, _ -> scope.addPredicate(pX) }
+        val g1 = GlobalQueryInterceptor<Viewer> { scope, _ ->
             g1ObservedPredicates = scope.shape.predicateCount
             scope.addAnnotation("from-g1", "yes")
         }
-        val g2 = GlobalQueryInterceptor { scope, _ ->
+        val g2 = GlobalQueryInterceptor<Viewer> { scope, _ ->
             g2ObservedAnnotations = scope.shape.annotations
         }
         applyInterceptors(
@@ -566,7 +567,7 @@ class ReadQueryCompilerInterceptorTest {
             callerLimit = 100,
         )
         val pX = Predicate.Leaf<Post>("x", Op.EQ, 3)
-        val interceptor = QueryInterceptor<Post> { scope, _ ->
+        val interceptor = QueryInterceptor<Viewer, Post> { scope, _ ->
             scope.addPredicate(pX)
             scope.requireLimitAtMost(50)
             scope.addAnnotation("k", "v")
@@ -586,7 +587,7 @@ class ReadQueryCompilerInterceptorTest {
 
     @Test
     fun `non-reject interceptor exceptions propagate unchanged through engine`() {
-        val bug = QueryInterceptor<Post> { _, _ -> error("hook bug") }
+        val bug = QueryInterceptor<Viewer, Post> { _, _ -> error("hook bug") }
         val ex = assertFailsWith<IllegalStateException> {
             applyInterceptors(
                 builder = builder(),
@@ -611,7 +612,7 @@ class ReadQueryCompilerInterceptorTest {
         callerIds.add(3)
 
         val interceptorIds = mutableListOf<kotlin.Any?>(7)
-        val hostile = QueryInterceptor<Post> { scope, _ ->
+        val hostile = QueryInterceptor<Viewer, Post> { scope, _ ->
             val exposed = scope.shape.predicates
                 .filterIsInstance<Predicate.Leaf<*>>()
                 .single { it.field == "id" }
@@ -652,12 +653,12 @@ class ReadQueryCompilerInterceptorTest {
             offset = null,
             flags = emptySet(),
         )
-        val hostile = QueryInterceptor<Post> { scope, _ ->
+        val hostile = QueryInterceptor<Viewer, Post> { scope, _ ->
             (scope.shape.callerOrderBy as? ArrayList<*>)?.clear()
         }
         var observed: List<OrderField<Post>>? = null
         var observedHasCallerOrderBy = false
-        val observer = QueryInterceptor<Post> { scope, _ ->
+        val observer = QueryInterceptor<Viewer, Post> { scope, _ ->
             observed = scope.shape.callerOrderBy
             observedHasCallerOrderBy = scope.shape.hasCallerOrderBy
         }

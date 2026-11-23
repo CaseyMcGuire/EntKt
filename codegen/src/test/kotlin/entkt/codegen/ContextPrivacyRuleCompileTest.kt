@@ -38,8 +38,8 @@ class ContextPrivacyRuleCompileTest {
     fun `one context rule class can register across entities and all four operations`() {
         val source = contextRulesSource(
             """
-            class AuthenticatedRule : ContextPrivacyRule<ReadOnlyEntClient> {
-                override fun run(context: PrivacyRuleContext<ReadOnlyEntClient>): PrivacyDecision {
+            class AuthenticatedRule : ContextPrivacyRule<Viewer, ReadOnlyEntClient> {
+                override fun run(context: PrivacyRuleContext<Viewer, ReadOnlyEntClient>): PrivacyDecision {
                     val client: ReadOnlyEntClient = context.client
                     return if (context.viewerContext.viewer is Viewer.Anonymous) {
                         PrivacyDecision.Deny("authentication required")
@@ -84,7 +84,7 @@ class ContextPrivacyRuleCompileTest {
     fun `context scalar and batch rules mix in one call with client and item inference`() {
         val source = contextRulesSource(
             """
-            private val general = ContextPrivacyRule<EntRuleClient> { PrivacyDecision.Continue }
+            private val general = ContextPrivacyRule<Viewer, EntRuleClient> { PrivacyDecision.Continue }
 
             object UserPolicy : EntityPolicy<User, UserPolicyScope> {
                 override fun configure(scope: UserPolicyScope) = scope.run {
@@ -142,7 +142,7 @@ class ContextPrivacyRuleCompileTest {
         val source = contextRulesSource(
             """
             class OtherClient : EntRuleClient
-            val rule = ContextPrivacyRule<OtherClient> { PrivacyDecision.Allow }
+            val rule = ContextPrivacyRule<Viewer, OtherClient> { PrivacyDecision.Allow }
 
             object UserPolicy : EntityPolicy<User, UserPolicyScope> {
                 override fun configure(scope: UserPolicyScope) = scope.run {
@@ -161,7 +161,7 @@ class ContextPrivacyRuleCompileTest {
     fun `context rules cannot write through their read-only client`() {
         val source = contextRulesSource(
             """
-            val rule = ContextPrivacyRule<ReadOnlyEntClient> { context ->
+            val rule = ContextPrivacyRule<Viewer, ReadOnlyEntClient> { context ->
                 context.client.users.create { name = "not allowed" }
                 PrivacyDecision.Allow
             }
@@ -184,24 +184,25 @@ class ContextPrivacyRuleCompileTest {
                 import com.example.ent.ReadOnlyEntClient;
                 import com.example.ent.User;
                 import com.example.ent.UserPrivacyScope;
+                import entkt.runtime.privacy.Viewer;
                 import entkt.runtime.privacy.BatchPrivacyRule;
                 import entkt.runtime.privacy.ContextPrivacyRule;
                 import entkt.runtime.privacy.PrivacyDecision;
                 import entkt.runtime.privacy.PrivacyRule;
                 import entkt.runtime.privacy.PrivacyRuleContext;
 
-                public final class ContextRuleJava implements ContextPrivacyRule<ReadOnlyEntClient> {
+                public final class ContextRuleJava implements ContextPrivacyRule<Viewer, ReadOnlyEntClient> {
                     @Override
-                    public PrivacyDecision run(PrivacyRuleContext<ReadOnlyEntClient> context) {
+                    public PrivacyDecision run(PrivacyRuleContext<Viewer, ReadOnlyEntClient> context) {
                         ReadOnlyEntClient client = context.getClient();
                         return PrivacyDecision.Allow.INSTANCE;
                     }
 
                     public static void register(UserPrivacyScope scope) {
                         ContextRuleJava shared = new ContextRuleJava();
-                        ContextPrivacyRule<ReadOnlyEntClient> lambda = context -> PrivacyDecision.Allow.INSTANCE;
-                        PrivacyRule<ReadOnlyEntClient, User> scalar = (context, item) -> PrivacyDecision.Allow.INSTANCE;
-                        BatchPrivacyRule<ReadOnlyEntClient, User> batch = (context, items) ->
+                        ContextPrivacyRule<Viewer, ReadOnlyEntClient> lambda = context -> PrivacyDecision.Allow.INSTANCE;
+                        PrivacyRule<Viewer, ReadOnlyEntClient, User> scalar = (context, item) -> PrivacyDecision.Allow.INSTANCE;
+                        BatchPrivacyRule<Viewer, ReadOnlyEntClient, User> batch = (context, items) ->
                             items.decideEach(item -> PrivacyDecision.Allow.INSTANCE);
                         scope.load(shared, scalar, batch, lambda);
                         scope.create(shared, lambda);

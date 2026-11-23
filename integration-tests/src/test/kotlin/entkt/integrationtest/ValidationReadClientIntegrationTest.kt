@@ -318,8 +318,8 @@ class ValidationReadClientIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `read interceptors run for validator queries and observe the bypass context`() {
-        val seenContexts = mutableListOf<ViewerContext>()
-        val recorder = QueryInterceptor<User> { _, context -> seenContexts.add(context.viewerContext) }
+        val seenContexts = mutableListOf<ViewerContext<Viewer>>()
+        val recorder = QueryInterceptor<Viewer, User> { _, context -> seenContexts.add(context.viewerContext) }
 
         val client = freshClient {
 

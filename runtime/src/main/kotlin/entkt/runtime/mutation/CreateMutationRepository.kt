@@ -7,10 +7,10 @@ import entkt.runtime.result.MutationResult
 
 /** Repository operations used by the generic [PendingCreateMutation] wrapper. */
 @EntktInternal
-interface CreateMutationRepository<Draft : CreateMutationDraft<Entity>, Entity : EntEntity<*>> {
+interface CreateMutationRepository<Viewer : Any, Draft : CreateMutationDraft<Entity>, Entity : EntEntity<*>> {
     /** Persist a draft without disclosing the created entity. */
-    fun saveCreation(viewerContext: ViewerContext, draft: Draft): MutationResult<Unit>
+    fun saveCreation(viewerContext: ViewerContext<Viewer>, draft: Draft): MutationResult<Unit>
 
     /** Persist a draft and return the created entity under LOAD privacy. */
-    fun saveAndLoadCreation(viewerContext: ViewerContext, draft: Draft): MutationResult<Entity>
+    fun saveAndLoadCreation(viewerContext: ViewerContext<Viewer>, draft: Draft): MutationResult<Entity>
 }

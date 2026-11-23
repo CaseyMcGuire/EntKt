@@ -208,7 +208,7 @@ class EagerEdgePrivacyIntegrationTest : PostgresTestBase() {
                 tags(object : EntityPolicy<Tag, TagPolicyScope> {
                     override fun configure(scope: TagPolicyScope) = scope.run {
                         privacy {
-                            load(batchPrivacyRule<ReadOnlyEntClient, Tag> { _, batch ->
+                            load(batchPrivacyRule<Viewer, ReadOnlyEntClient, Tag> { _, batch ->
                                 invocations += batch.map { it.name }
                                 batch.decideEach {
                                     PrivacyDecision.Deny("tag ${it.name} hidden")

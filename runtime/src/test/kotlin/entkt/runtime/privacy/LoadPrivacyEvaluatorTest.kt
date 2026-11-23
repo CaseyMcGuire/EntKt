@@ -43,9 +43,9 @@ class LoadPrivacyEvaluatorTest {
 
     @Test
     fun `evaluator preserves context correlation and fail-closed outcomes`() {
-        val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
+        val contexts = mutableListOf<PrivacyRuleContext<Viewer, TestRuleClient>>()
         val seenItems = mutableListOf<Record>()
-        val first = PrivacyRule<TestRuleClient, Record> { context, item ->
+        val first = PrivacyRule<Viewer, TestRuleClient, Record> { context, item ->
             contexts += context
             seenItems += item
             when (item.id) {
@@ -54,7 +54,7 @@ class LoadPrivacyEvaluatorTest {
                 else -> PrivacyDecision.Continue
             }
         }
-        val second = PrivacyRule<TestRuleClient, Record> { context, item ->
+        val second = PrivacyRule<Viewer, TestRuleClient, Record> { context, item ->
             contexts += context
             seenItems += item
             PrivacyDecision.Continue
@@ -113,7 +113,7 @@ class LoadPrivacyEvaluatorTest {
         val evaluator = loadEvaluator<TestRuleClient, Record>(
             entityName = RecordDescriptor.entityName,
             rules = listOf(
-                PrivacyRule<TestRuleClient, Record> { _, _ ->
+                PrivacyRule<Viewer, TestRuleClient, Record> { _, _ ->
                     ruleCalls++
                     PrivacyDecision.Deny("must not run")
                 },
@@ -138,7 +138,7 @@ class LoadPrivacyEvaluatorTest {
         val evaluator = loadEvaluator<TestRuleClient, Record>(
             entityName = RecordDescriptor.entityName,
             rules = listOf(
-                PrivacyRule<TestRuleClient, Record> { _, _ -> throw failure },
+                PrivacyRule<Viewer, TestRuleClient, Record> { _, _ -> throw failure },
             ),
         )
 
@@ -194,8 +194,8 @@ class LoadPrivacyEvaluatorTest {
         val nestedClient = TestRuleClient()
         val nestedRecord = Record(2L, "nested")
         val outerRecords = listOf(Record(1L, "allowed"), Record(3L, "denied"))
-        var outerContext: PrivacyRuleContext<TestRuleClient>? = null
-        lateinit var evaluator: LoadPrivacyEvaluator<TestRuleClient, Record>
+        var outerContext: PrivacyRuleContext<Viewer, TestRuleClient>? = null
+        lateinit var evaluator: LoadPrivacyEvaluator<Viewer, TestRuleClient, Record>
         evaluator = LoadPrivacyEvaluator(
             entityName = RecordDescriptor.entityName,
             rules = listOf(
@@ -241,11 +241,11 @@ class LoadPrivacyEvaluatorTest {
 
     @Test
     fun `each evaluation uses the supplied context without retaining a client or viewer`() {
-        val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
+        val contexts = mutableListOf<PrivacyRuleContext<Viewer, TestRuleClient>>()
         val evaluator = loadEvaluator<TestRuleClient, Record>(
             entityName = RecordDescriptor.entityName,
             rules = listOf(
-                PrivacyRule<TestRuleClient, Record> { context, _ ->
+                PrivacyRule<Viewer, TestRuleClient, Record> { context, _ ->
                     contexts += context
                     PrivacyDecision.Allow
                 },

@@ -63,12 +63,12 @@ class EntityQueryBuilderTest {
         }
     }
 
-    private class RecordingHost : ReadQueryExecutionHost {
+    private class RecordingHost : ReadQueryExecutionHost<Viewer> {
         var guardCalls: Int = 0
-        val interceptorContexts: MutableList<QueryContext> = mutableListOf()
-        val loadViewerContexts: MutableList<ViewerContext> = mutableListOf()
+        val interceptorContexts: MutableList<QueryContext<Viewer>> = mutableListOf()
+        val loadViewerContexts: MutableList<ViewerContext<Viewer>> = mutableListOf()
 
-        override val entityInterceptors = EntInterceptorsConfig().apply {
+        override val entityInterceptors = EntInterceptorsConfig<Viewer>().apply {
             addEntity<Item>(ItemMapping.clientName, "record") { _, context ->
                 interceptorContexts += context
             }
@@ -80,7 +80,7 @@ class EntityQueryBuilderTest {
 
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             entities: List<Entity>,
         ): PrivacyEvaluation<Entity> {
             loadViewerContexts += viewerContext
@@ -90,9 +90,9 @@ class EntityQueryBuilderTest {
 
     private class ItemQuery(
         driver: DatabaseDriver,
-        private val executionHost: ReadQueryExecutionHost?,
+        private val executionHost: ReadQueryExecutionHost<Viewer>?,
         query: EntityQuery<Item> = EntityQuery(ItemMapping),
-    ) : EntityQueryBuilder<Item, ItemQuery>(
+    ) : EntityQueryBuilder<Viewer, Item, ItemQuery>(
         driver = driver,
         executionHost = executionHost,
         entityQuery = query,

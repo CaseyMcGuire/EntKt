@@ -18,6 +18,7 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
+import entkt.codegen.metadata.VIEWER
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.toTypeName
 import entkt.codegen.query.indexHelperTree
@@ -28,7 +29,7 @@ private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
 private val LIST = ClassName("kotlin.collections", "List")
 private val RESOLVED_ENT_INTERCEPTORS_CONFIG =
-    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig")
+    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig").parameterizedBy(VIEWER)
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val ENT_RULE_CLIENT = ClassName("entkt.runtime.rule", "EntRuleClient")
 private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "TransactionExecutionGuard")

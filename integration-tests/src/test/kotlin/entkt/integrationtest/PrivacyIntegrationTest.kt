@@ -169,7 +169,7 @@ class PrivacyIntegrationTest {
 
     /** Create a fresh driver with migrated tables, truncate between tests. */
     private fun freshClient(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = ArticlePolicy,
         userPolicy: EntityPolicy<User, UserPolicyScope> = UserPolicy,
     ): EntClient {

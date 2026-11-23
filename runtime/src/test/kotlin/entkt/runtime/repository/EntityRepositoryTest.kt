@@ -104,8 +104,8 @@ class EntityRepositoryTest {
         for (inTransaction in listOf(false, true)) {
             for (explicit in listOf(false, true)) {
                 val fixture = Fixture(inTransaction)
-                val contexts = mutableListOf<PrivacyRuleContext<RuleClient>>()
-                fixture.loadPrivacyRules += PrivacyRule<RuleClient, Widget> { context, entity ->
+                val contexts = mutableListOf<PrivacyRuleContext<Viewer, RuleClient>>()
+                fixture.loadPrivacyRules += PrivacyRule<Viewer, RuleClient, Widget> { context, entity ->
                     contexts += context
                     if (entity.id == 1L) PrivacyDecision.Allow else PrivacyDecision.Deny("hidden")
                 }
@@ -147,7 +147,7 @@ class EntityRepositoryTest {
         assertEquals(MutationResult.Success(Widget(1L, "first second")), pending.saveAndLoad(viewerContext))
 
         val call = fixture.calls.single()
-        val input = assertIs<CreateMutationInput<*>>(call.input)
+        val input = assertIs<CreateMutationInput<*, *>>(call.input)
         assertSame(viewerContext, input.viewerContext)
         assertTrue(input.checkReturnedEntityPrivacy)
         assertSame(client, call.client)
@@ -163,7 +163,7 @@ class EntityRepositoryTest {
             MutationResult.Success(Widget(42L, "assigned")),
             fixture.explicit.create(42L) { name = "assigned" }.saveAndLoad(viewerContext),
         )
-        assertEquals(42L, assertIs<CreateDraft>(assertIs<CreateMutationInput<*>>(fixture.calls.single().input).draft).id)
+        assertEquals(42L, assertIs<CreateDraft>(assertIs<CreateMutationInput<*, *>>(fixture.calls.single().input).draft).id)
     }
 
     @Test
@@ -173,7 +173,7 @@ class EntityRepositoryTest {
 
         assertEquals(MutationResult.Success(Unit), fixture.generated.create { name = "generated" }.save(viewerContext))
         assertEquals(MutationResult.Success(Unit), fixture.explicit.create(9L) { name = "explicit" }.save(viewerContext))
-        assertTrue(fixture.calls.all { !assertIs<CreateMutationInput<*>>(it.input).checkReturnedEntityPrivacy })
+        assertTrue(fixture.calls.all { !assertIs<CreateMutationInput<*, *>>(it.input).checkReturnedEntityPrivacy })
     }
 
     @Test
@@ -183,7 +183,7 @@ class EntityRepositoryTest {
         pending.configure { name += " second" }
         assertEquals(MutationResult.Success(Unit), pending.save(viewerContext))
 
-        val saved = assertIs<UpdateMutationInput<*>>(fixture.calls.single().input)
+        val saved = assertIs<UpdateMutationInput<*, *>>(fixture.calls.single().input)
         assertEquals(5L, saved.request.id)
         assertEquals("first second", assertIs<UpdateDraft>(saved.request.draft).name)
         assertEquals(UpdateConsistency.Pessimistic, saved.request.consistency)
@@ -197,7 +197,7 @@ class EntityRepositoryTest {
                 name = "override"
             }.saveAndLoad(viewerContext),
         )
-        val loaded = assertIs<UpdateMutationInput<*>>(fixture.calls.last().input)
+        val loaded = assertIs<UpdateMutationInput<*, *>>(fixture.calls.last().input)
         assertEquals(UpdateConsistency.ReadCurrent, loaded.request.consistency)
         assertEquals(RelationshipLocking.OwnerOnly, loaded.request.relationshipLocking)
         assertTrue(loaded.applyLoadPrivacy)
@@ -222,7 +222,7 @@ class EntityRepositoryTest {
 
         assertEquals(MutationResult.Success(false), fixture.generated.deleteById(viewerContext, 3L))
         assertEquals(MutationResult.Success(false), fixture.explicit.deleteById(viewerContext, 4L))
-        assertEquals(listOf(3L, 4L), fixture.calls.map { assertIs<DeleteMutationInput>(it.input).id })
+        assertEquals(listOf(3L, 4L), fixture.calls.map { assertIs<DeleteMutationInput<Viewer>>(it.input).id })
         assertEquals(0, fixture.driver.transactions)
     }
 
@@ -290,8 +290,8 @@ class EntityRepositoryTest {
         assertTrue(names.none {
             it in setOf("getRuleClient", "getSelf", "getMutationExecutor", "getReadQueryExecutor", "withTransaction")
         })
-        assertFalse(repo is entkt.runtime.mutation.CreateMutationRepository<*, *>)
-        assertFalse(repo is entkt.runtime.mutation.UpdateMutationRepository<*, *>)
+        assertFalse(repo is entkt.runtime.mutation.CreateMutationRepository<*, *, *>)
+        assertFalse(repo is entkt.runtime.mutation.UpdateMutationRepository<*, *, *>)
     }
 
     @Test
@@ -311,7 +311,7 @@ class EntityRepositoryTest {
 
         assertEquals(MutationResult.Success(listOf(Widget(1L, "one"), Widget(2L, "two"))), result)
         assertOwnedBinding(root, tx, "createMany")
-        assertSame(viewerContext, assertIs<CreateManyMutationInput<*>>(tx.calls.single().input).viewerContext)
+        assertSame(viewerContext, assertIs<CreateManyMutationInput<*, *>>(tx.calls.single().input).viewerContext)
         assertEquals(1, root.driver.commits)
     }
 
@@ -332,7 +332,7 @@ class EntityRepositoryTest {
 
             assertEquals(MutationResult.Success(2), result)
             assertOwnedBinding(root, tx, "deleteMany")
-            val input = assertIs<DeleteManyMutationInput<*>>(tx.calls.single().input)
+            val input = assertIs<DeleteManyMutationInput<*, *>>(tx.calls.single().input)
             assertEquals(listOf(first, second), input.predicates)
             assertSame(viewerContext, input.viewerContext)
         }
@@ -422,7 +422,7 @@ class EntityRepositoryTest {
 
     /** Matches the generated per-entity read surface, implemented by inherited final methods. */
     private interface WidgetReadSurface {
-        fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Widget>): PrivacyEvaluation<Widget>
+        fun evaluateLoadPrivacy(viewerContext: ViewerContext<Viewer>, entities: List<Widget>): PrivacyEvaluation<Widget>
     }
 
     private object Descriptor : EntityDescriptor<Widget, Long> {
@@ -443,13 +443,13 @@ class EntityRepositoryTest {
         val owned: Boolean,
     )
 
-    private class Fixture(inTransaction: Boolean = false) : MutationRuntime, ReadQueryExecutionHost {
+    private class Fixture(inTransaction: Boolean = false) : MutationRuntime<Viewer>, ReadQueryExecutionHost<Viewer> {
         val driver = RecordingDriver(inTransaction)
         val calls = mutableListOf<Call>()
         val preflights = mutableListOf<String>()
         val failures = mutableListOf<EntMutationException>()
         val readOperations = mutableListOf<ReadOperation>()
-        val readViewers = mutableListOf<ViewerContext>()
+        val readViewers = mutableListOf<ViewerContext<Viewer>>()
         var client = RuleClient(driver.scope)
         var clientResolutions = 0
         var draftsCreated = 0
@@ -460,21 +460,21 @@ class EntityRepositoryTest {
         var readFailure: Exception? = null
         var coordinator: TransactionCoordinator? = null
         var transaction: Fixture? = null
-        val loadPrivacyRules = mutableListOf<BatchPrivacyRule<RuleClient, Widget>>()
+        val loadPrivacyRules = mutableListOf<BatchPrivacyRule<Viewer, RuleClient, Widget>>()
         val generated by lazy { GeneratedRepo(this) }
         val explicit by lazy { ExplicitRepo(this) }
 
-        val create = operation<CreateMutationInput<CreateDraft>, Widget>("create") { input ->
+        val create = operation<CreateMutationInput<Viewer, CreateDraft>, Widget>("create") { input ->
             disclose(Widget(input.draft.id ?: 1L, input.draft.name), input.checkReturnedEntityPrivacy)
         }
-        val update = operation<UpdateMutationInput<UpdateDraft>, Widget>("update") { input ->
+        val update = operation<UpdateMutationInput<Viewer, UpdateDraft>, Widget>("update") { input ->
             disclose(Widget(input.request.id as Long, input.request.draft.name), input.applyLoadPrivacy)
         }
-        val delete = operation<DeleteMutationInput, Boolean>("delete") { MutationCompletion.Ready(deleted) }
-        val deleteMany = operation<DeleteManyMutationInput<Widget>, Int>(
+        val delete = operation<DeleteMutationInput<Viewer>, Boolean>("delete") { MutationCompletion.Ready(deleted) }
+        val deleteMany = operation<DeleteManyMutationInput<Viewer, Widget>, Int>(
             "deleteMany", requirements = { MutationRequirements("Widget deleteMany", true, true) },
         ) { MutationCompletion.Ready(2) }
-        val createMany = operation<CreateManyMutationInput<CreateDraft>, List<Widget>>(
+        val createMany = operation<CreateManyMutationInput<Viewer, CreateDraft>, List<Widget>>(
             "createMany",
             requirements = { MutationRequirements("Widget createMany", it.blocks.size > 1, it.blocks.isNotEmpty()) },
         ) { input ->
@@ -522,7 +522,7 @@ class EntityRepositoryTest {
             coordinator?.recordFailure(exception)
         }
 
-        override val entityInterceptors = EntInterceptorsConfig().apply {
+        override val entityInterceptors = EntInterceptorsConfig<Viewer>().apply {
             addEntity<Widget>(Descriptor.clientName, "observe") { _, context -> readOperations += context.operation }
         }.resolveForInternalUse()
 
@@ -531,7 +531,7 @@ class EntityRepositoryTest {
         }
 
         override fun <Entity : EntEntity<*>> evaluate(
-            entity: EntityMapping<Entity>, viewerContext: ViewerContext, entities: List<Entity>,
+            entity: EntityMapping<Entity>, viewerContext: ViewerContext<Viewer>, entities: List<Entity>,
         ): PrivacyEvaluation<Entity> {
             readViewers += viewerContext
             return privacyEvaluation(entities)
@@ -539,7 +539,7 @@ class EntityRepositoryTest {
     }
 
     private class GeneratedRepo(private val fixture: Fixture) :
-        GeneratedIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>(
+        GeneratedIdRepository<Viewer, Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>(
             Descriptor, fixture.driver, fixture, fixture.loadPrivacyRules,
             CreateMutationOperations(fixture.create, fixture.createMany), fixture.update, fixture.delete, fixture.deleteMany,
             UpdateConsistency.Pessimistic, RelationshipLocking.Canonical,
@@ -550,7 +550,7 @@ class EntityRepositoryTest {
         override fun newCreateDraft(): CreateDraft = CreateDraft().also { fixture.draftsCreated++ }
 
         override fun <Result> withTransaction(
-            block: TransactionScope.(GeneratedIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>) -> Result,
+            block: TransactionScope.(GeneratedIdRepository<Viewer, Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>) -> Result,
         ): TransactionResult<Result> = runEntTransaction(
             fixture.driver,
             makeTxClient = { _, coordinator ->
@@ -561,7 +561,7 @@ class EntityRepositoryTest {
     }
 
     private class ExplicitRepo(private val fixture: Fixture) :
-        ExplicitIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>(
+        ExplicitIdRepository<Viewer, Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>(
             Descriptor, fixture.driver, fixture, fixture.loadPrivacyRules,
             CreateMutationOperations(fixture.create, fixture.createMany), fixture.update, fixture.delete, fixture.deleteMany,
         ),
@@ -572,7 +572,7 @@ class EntityRepositoryTest {
         override fun newCreateDraft(id: Long): CreateDraft = CreateDraft(id)
 
         override fun <Result> withTransaction(
-            block: TransactionScope.(ExplicitIdRepository<Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>) -> Result,
+            block: TransactionScope.(ExplicitIdRepository<Viewer, Widget, Long, CreateDraft, UpdateDraft, WidgetQuery, RuleClient>) -> Result,
         ): TransactionResult<Result> = runEntTransaction(
             fixture.driver,
             makeTxClient = { _, coordinator ->
@@ -585,7 +585,7 @@ class EntityRepositoryTest {
     private class WidgetQuery(
         private val fixture: Fixture,
         query: EntityQuery<Widget> = EntityQuery(Descriptor),
-    ) : EntityQueryBuilder<Widget, WidgetQuery>(
+    ) : EntityQueryBuilder<Viewer, Widget, WidgetQuery>(
         fixture.driver, fixture, query,
     ) {
         override fun newQuery(query: EntityQuery<Widget>): WidgetQuery = WidgetQuery(fixture, query)

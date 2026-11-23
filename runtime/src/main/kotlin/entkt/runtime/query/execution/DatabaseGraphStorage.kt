@@ -38,10 +38,10 @@ import entkt.runtime.query.ToOneEdgeMapping
  * @property driver database driver used to execute compiled storage queries.
  * @property queryCompiler compiler that applies traversal and interceptor behavior to each read.
  */
-internal class DatabaseGraphStorage(
+internal class DatabaseGraphStorage<Viewer : Any>(
     private val driver: DatabaseDriver,
-    private val queryCompiler: ReadQueryCompiler,
-) : GraphStorage {
+    private val queryCompiler: ReadQueryCompiler<Viewer>,
+) : GraphStorage<Viewer> {
     private val junctionRelationshipReader = JunctionRelationshipReader(driver, queryCompiler)
 
     /**
@@ -62,7 +62,7 @@ internal class DatabaseGraphStorage(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         lockMode: QueryLockMode,
     ): List<Entity> {
         val queryForStorage = queryCompiler.compile(query, operation, viewerContext, lockMode)
@@ -99,7 +99,7 @@ internal class DatabaseGraphStorage(
     override fun <Source : EntEntity<*>, Target : EntEntity<*>> loadRelationship(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
     ): LoadedRelationship<Source, Target> = when (val storage = selection.edge.storageStrategy) {
         is EdgeStorage.ForeignKeyOnSource<*, *, *> -> loadForeignKeyOnSource(
             selection,
@@ -129,7 +129,7 @@ internal class DatabaseGraphStorage(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
         untypedStorage: EdgeStorage.ForeignKeyOnSource<*, *, *>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
     ): LoadedRelationship<Source, Target> {
         val storage = untypedStorage as EdgeStorage.ForeignKeyOnSource<Source, Target, Any>
         val edge = selection.edge as? ToOneEdgeMapping<Source, Target>
@@ -161,7 +161,7 @@ internal class DatabaseGraphStorage(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
         untypedStorage: EdgeStorage.ForeignKeyOnTarget<*, *, *>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
     ): LoadedRelationship<Source, Target> {
         val storage = untypedStorage as EdgeStorage.ForeignKeyOnTarget<Source, Target, Any>
         val sourceKeys = sources.map(storage.sourceKey)
@@ -195,7 +195,7 @@ internal class DatabaseGraphStorage(
         storage: EdgeStorage.ForeignKeyOnTarget<Source, Target, Any>,
         sources: List<Source>,
         sourceKeys: List<Any>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
     ): LoadedRelationship<Source, Target> {
         val targetQuery = queryCompiler.compileRelationshipTargetQuery(
             query = selection.target,
@@ -230,7 +230,7 @@ internal class DatabaseGraphStorage(
         storage: EdgeStorage.ForeignKeyOnTarget<Source, Target, Any>,
         sources: List<Source>,
         sourceKeys: List<Any>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
     ): LoadedRelationship<Source, Target> {
         val capability = driver.directToManyWindowCapability()
         val targetQuery = queryCompiler.compileRelationshipTargetQuery(

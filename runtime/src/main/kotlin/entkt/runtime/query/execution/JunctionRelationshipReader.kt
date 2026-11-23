@@ -28,9 +28,9 @@ import entkt.runtime.query.ToManyEdgeMapping
  * @property driver database driver used for junction discovery and target reads.
  * @property queryCompiler compiler that applies the appropriate interceptor context to each read.
  */
-internal class JunctionRelationshipReader(
+internal class JunctionRelationshipReader<Viewer : Any>(
     private val driver: DatabaseDriver,
-    private val queryCompiler: ReadQueryCompiler,
+    private val queryCompiler: ReadQueryCompiler<Viewer>,
 ) {
     /**
      * Loads and correlates one junction-backed selected relationship.
@@ -57,7 +57,7 @@ internal class JunctionRelationshipReader(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
         storage: EdgeStorage.Junction<Source, Target, JunctionEntity, SourceKey, TargetKey>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
     ): LoadedRelationship<Source, Target> {
         // Validate the generated edge shape and collect every source key for one batched read.
         val edge = selection.edge as? ToManyEdgeMapping<Source, Target>
@@ -145,7 +145,7 @@ internal class JunctionRelationshipReader(
         > readJunction(
         storage: EdgeStorage.Junction<Source, Target, JunctionEntity, SourceKey, TargetKey>,
         sourceKeys: List<SourceKey>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
     ): JunctionRead<SourceKey, TargetKey> {
         val junctionQuery = queryCompiler.compileJunction(
             entity = storage.junctionEntity,

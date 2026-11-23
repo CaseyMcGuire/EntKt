@@ -35,6 +35,7 @@ import java.util.concurrent.CancellationException
 /** Runs the reusable UPDATE lifecycle around generated schema adapters. */
 @EntktInternal
 class UpdateMutationOperation<
+    Viewer : Any,
     RuleClient : EntRuleClient,
     Draft : UpdateMutationDraft<Entity>,
     Entity : EntEntity<*>,
@@ -45,8 +46,8 @@ class UpdateMutationOperation<
     RuleInput : UpdateRuleInput<Entity>,
     >(
     private val entity: EntityMapping<Entity>,
-    private val mutationRuntime: MutationRuntime,
-    private val privacyEvaluator: UpdatePrivacyEvaluator<RuleClient, Candidate, RuleInput>,
+    private val mutationRuntime: MutationRuntime<Viewer>,
+    private val privacyEvaluator: UpdatePrivacyEvaluator<Viewer, RuleClient, Candidate, RuleInput>,
     private val validationEvaluator: ValidationEvaluator<RuleClient, RuleInput>,
     /** CREATE rules that also validate the candidate; present only when UPDATE validation derives from CREATE. */
     private val derivedCreateValidationEvaluator: ValidationEvaluator<RuleClient, Candidate>?,
@@ -54,20 +55,21 @@ class UpdateMutationOperation<
         UpdateMutationAdapter<Draft, Entity, PendingEdges, Candidate, BeforeUpdateState, RuleInput>,
     private val hooks:
         UpdateMutationHooks<
+            Viewer,
             Draft,
             Entity,
             PendingEdges,
             BeforeSaveState,
             BeforeUpdateState,
         >,
-) : MutationOperation<RuleClient, UpdateMutationInput<Draft>, Entity> {
-    override fun requirements(input: UpdateMutationInput<Draft>): MutationRequirements =
+) : MutationOperation<RuleClient, UpdateMutationInput<Viewer, Draft>, Entity> {
+    override fun requirements(input: UpdateMutationInput<Viewer, Draft>): MutationRequirements =
         MutationRequirements("${entity.entityName} update")
 
     override fun run(
         execution: MutationExecution,
         ruleClient: RuleClient,
-        input: UpdateMutationInput<Draft>,
+        input: UpdateMutationInput<Viewer, Draft>,
     ): MutationCompletion<Entity> {
         val viewerContext = input.viewerContext
         val request = input.request
@@ -100,7 +102,7 @@ class UpdateMutationOperation<
 
     private fun prepareUpdate(
         execution: MutationExecution,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         request: UpdateMutationRequest<Draft>,
         before: Entity,
     ): PreparedUpdate<RuleInput, Candidate> {
@@ -238,7 +240,7 @@ class UpdateMutationOperation<
 
     private fun evaluatePrivacy(
         attempt: MutationExecution,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         ruleClient: RuleClient,
         id: Any,
         prepared: PreparedUpdate<RuleInput, Candidate>,
@@ -355,7 +357,7 @@ class UpdateMutationOperation<
     }
 
     private fun evaluateReturnedEntityPrivacy(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         result: Entity,
     ): MutationCompletion<Entity> = try {
         val evaluation = mutationRuntime.evaluate(

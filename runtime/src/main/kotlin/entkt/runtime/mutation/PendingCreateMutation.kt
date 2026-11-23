@@ -9,13 +9,13 @@ import entkt.runtime.result.EntOperation
 import entkt.runtime.result.MutationResult
 
 /** A pending mutation that creates one [Entity]. */
-class PendingCreateMutation<Draft : CreateMutationDraft<Entity>, Entity : EntEntity<*>> @EntktInternal constructor(
+class PendingCreateMutation<Viewer : Any, Draft : CreateMutationDraft<Entity>, Entity : EntEntity<*>> @EntktInternal constructor(
     draft: Draft,
-    private val repository: CreateMutationRepository<Draft, Entity>,
-) : PendingMutation<Draft, Entity>(draft, EntOperation.CREATE) {
-    override fun executeSave(viewerContext: ViewerContext): MutationResult<Unit> =
+    private val repository: CreateMutationRepository<Viewer, Draft, Entity>,
+) : PendingMutation<Viewer, Draft, Entity>(draft, EntOperation.CREATE) {
+    override fun executeSave(viewerContext: ViewerContext<Viewer>): MutationResult<Unit> =
         repository.saveCreation(viewerContext, draft)
 
-    override fun executeSaveAndLoad(viewerContext: ViewerContext): MutationResult<Entity> =
+    override fun executeSaveAndLoad(viewerContext: ViewerContext<Viewer>): MutationResult<Entity> =
         repository.saveAndLoadCreation(viewerContext, draft)
 }

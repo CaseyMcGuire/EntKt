@@ -63,7 +63,7 @@ class WriteSucceededLoadDeniedIntegrationTest : PostgresTestBase() {
         }
     }
 
-    private fun freshClient(viewerContext: ViewerContext = ViewerContext.AsViewer(Viewer.User(1L))): EntClient {
+    private fun freshClient(viewerContext: ViewerContext<Viewer> = ViewerContext.AsViewer(Viewer.User(1L))): EntClient {
         this.viewerContext = viewerContext
         val driver = resetAndDriver()
         return EntClient(driver) {

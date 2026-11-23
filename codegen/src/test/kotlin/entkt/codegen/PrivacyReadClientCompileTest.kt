@@ -52,6 +52,7 @@ class PrivacyReadClientCompileTest {
         import com.example.ent.$ruleType
         import com.example.ent.ReadOnlyEntClient
         import entkt.runtime.privacy.PrivacyDecision
+        import entkt.runtime.privacy.Viewer
         import entkt.runtime.privacy.ViewerContext
         import entkt.runtime.result.visibleOrNull
         import java.util.UUID
@@ -119,9 +120,10 @@ class PrivacyReadClientCompileTest {
                         import entkt.runtime.mutation.execution.MutationCompletionCapture
                         import entkt.runtime.mutation.execution.MutationExecutor
                         import entkt.runtime.mutation.execution.MutationOperation
+                        import entkt.runtime.privacy.Viewer
 
                         fun execute(
-                            executor: MutationExecutor,
+                            executor: MutationExecutor<Viewer>,
                             operation: MutationOperation<ReadOnlyEntClient, Unit, Unit>,
                             client: $clientType,
                         ) = executor.$method(

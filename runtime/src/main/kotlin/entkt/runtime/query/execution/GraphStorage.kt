@@ -13,13 +13,13 @@ import entkt.runtime.query.ReadOperation
 import kotlin.reflect.KClass
 
 /** Database operations required by the recursive entity-graph algorithm. */
-internal interface GraphStorage {
+internal interface GraphStorage<Viewer : Any> {
     /** Prepare, execute, and decode the root entity query. */
     fun <Entity : EntEntity<*>> loadRoot(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
         maximumRows: Int?,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         lockMode: QueryLockMode = QueryLockMode.None,
     ): List<Entity>
 
@@ -27,14 +27,14 @@ internal interface GraphStorage {
     fun <Source : EntEntity<*>, Target : EntEntity<*>> loadRelationship(
         selection: EdgeSelection<Source, Target>,
         sources: List<Source>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
     ): LoadedRelationship<Source, Target>
 }
 
 /** Read state shared by all storage work for one selected relationship. */
-internal class RelationshipReadContext(
+internal class RelationshipReadContext<Viewer : Any>(
     /** Viewer context supplied to relationship read interceptors. */
-    val viewerContext: ViewerContext,
+    val viewerContext: ViewerContext<Viewer>,
 
     /** Entity type at the root of the complete graph read. */
     val rootEntity: KClass<*>,
@@ -43,7 +43,7 @@ internal class RelationshipReadContext(
     val interceptorPath: List<EdgeStep>,
 ) {
     /** Return the read context for a child selected edge. */
-    fun child(edge: EdgeMapping<*, *>): RelationshipReadContext = RelationshipReadContext(
+    fun child(edge: EdgeMapping<*, *>): RelationshipReadContext<Viewer> = RelationshipReadContext(
         viewerContext = viewerContext,
         rootEntity = rootEntity,
         interceptorPath = interceptorPath + EdgeStep(

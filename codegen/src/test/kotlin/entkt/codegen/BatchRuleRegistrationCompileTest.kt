@@ -182,10 +182,10 @@ class BatchRuleRegistrationCompileTest {
             public final class BatchVarargsJava {
                 public static void privacy(
                     WidgetPrivacyScope scope,
-                    BatchPrivacyRule<ReadOnlyEntClient, Widget>[] load,
-                    BatchPrivacyRule<ReadOnlyEntClient, WidgetWriteCandidate>[] create,
-                    BatchPrivacyRule<ReadOnlyEntClient, WidgetUpdateRuleInput>[] update,
-                    BatchPrivacyRule<ReadOnlyEntClient, DeleteRuleInput<Widget, WidgetWriteCandidate>>[] delete
+                    BatchPrivacyRule<Viewer, ReadOnlyEntClient, Widget>[] load,
+                    BatchPrivacyRule<Viewer, ReadOnlyEntClient, WidgetWriteCandidate>[] create,
+                    BatchPrivacyRule<Viewer, ReadOnlyEntClient, WidgetUpdateRuleInput>[] update,
+                    BatchPrivacyRule<Viewer, ReadOnlyEntClient, DeleteRuleInput<Widget, WidgetWriteCandidate>>[] delete
                 ) {
                     scope.load();
                     scope.load(load[0]);
@@ -197,7 +197,7 @@ class BatchRuleRegistrationCompileTest {
                     scope.update(update);
                     scope.delete(delete[0], delete[1]);
                     scope.delete(delete);
-                    PrivacyRule<ReadOnlyEntClient, Widget> scalar = (context, item) -> PrivacyDecision.Continue.INSTANCE;
+                    PrivacyRule<Viewer, ReadOnlyEntClient, Widget> scalar = (context, item) -> PrivacyDecision.Continue.INSTANCE;
                     scope.load(scalar);
                     scope.load(scalar, load[0], scalar);
                     scope.load(

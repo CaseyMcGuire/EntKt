@@ -25,18 +25,18 @@ import java.util.concurrent.CancellationException
 
 /** Select, authorize, and persist one atomic DELETE batch with correlated acknowledgements. */
 @EntktInternal
-class DeleteManyMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity<*>, Candidate : WriteCandidate<Entity>>(
+class DeleteManyMutationOperation<Viewer : Any, RuleClient : EntRuleClient, Entity : EntEntity<*>, Candidate : WriteCandidate<Entity>>(
     private val entity: EntityDescriptor<Entity, *>,
     private val converter: DeleteMutationConverter<Entity, Candidate>,
     private val privacyEvaluator:
-        DeletePrivacyEvaluator<RuleClient, Candidate, DeleteRuleInput<Entity, Candidate>>,
+        DeletePrivacyEvaluator<Viewer, RuleClient, Candidate, DeleteRuleInput<Entity, Candidate>>,
     private val validationEvaluator:
         ValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
-    private val readQueryExecutor: ReadQueryExecutor<Entity>,
+    private val readQueryExecutor: ReadQueryExecutor<Viewer, Entity>,
     private val beforeDelete: List<BatchActionHook<Entity>>,
     private val afterDelete: List<BatchActionHook<Entity>>,
-) : MutationOperation<RuleClient, DeleteManyMutationInput<Entity>, Int> {
-    override fun requirements(input: DeleteManyMutationInput<Entity>): MutationRequirements =
+) : MutationOperation<RuleClient, DeleteManyMutationInput<Viewer, Entity>, Int> {
+    override fun requirements(input: DeleteManyMutationInput<Viewer, Entity>): MutationRequirements =
         MutationRequirements(
             operationName = "${entity.entityName} deleteMany",
             multiWrite = true,
@@ -46,7 +46,7 @@ class DeleteManyMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity
     override fun run(
         execution: MutationExecution,
         ruleClient: RuleClient,
-        input: DeleteManyMutationInput<Entity>,
+        input: DeleteManyMutationInput<Viewer, Entity>,
     ): MutationCompletion<Int> = MutationCompletion.Ready(
         deleteMany(execution, ruleClient, input.viewerContext, input.predicates),
     )
@@ -55,7 +55,7 @@ class DeleteManyMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity
     private fun deleteMany(
         execution: MutationExecution,
         ruleClient: RuleClient,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         predicates: List<Predicate<Entity>>,
     ): Int {
         val selection = selectMany(execution, viewerContext, predicates)
@@ -125,7 +125,7 @@ class DeleteManyMutationOperation<RuleClient : EntRuleClient, Entity : EntEntity
     /** Compile and execute one raw DELETE_CANDIDATES query without applying LOAD privacy. */
     private fun selectMany(
         execution: MutationExecution,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         predicates: List<Predicate<Entity>>,
     ): DeleteSelection<Entity> {
         val query = EntityQuery(

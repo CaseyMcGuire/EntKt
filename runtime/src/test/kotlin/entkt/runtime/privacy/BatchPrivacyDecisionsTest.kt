@@ -70,7 +70,7 @@ class BatchPrivacyDecisionsTest {
         val decisions = evaluateLoadDecisions(
             entityName = "test",
             items = listOf(0, 7, 7),
-            rules = listOf<BatchPrivacyRule<TestRuleClient, Int>>(
+            rules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, Int>>(
                 denyIf("already denied") { _, item -> item == 0 },
                 batchPrivacyRule { _, batch ->
                     assertEquals(listOf(7, 7), batch)
@@ -93,7 +93,7 @@ class BatchPrivacyDecisionsTest {
         val decisions = evaluateLoadDecisions(
             entityName = "test",
             items = listOf(0, 7, 7),
-            rules = listOf<BatchPrivacyRule<TestRuleClient, Int>>(
+            rules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, Int>>(
                 allowIf { _, item -> item == 0 },
                 batchPrivacyRule { _, batch ->
                     assertEquals(listOf(7, 7), batch)

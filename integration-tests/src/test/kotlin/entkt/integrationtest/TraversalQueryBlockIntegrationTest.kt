@@ -14,6 +14,7 @@ import entkt.runtime.query.ReadOperation
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import entkt.runtime.privacy.Viewer
 
 /**
  * Edge traversal query blocks: `queryX { ... }` accepts the same
@@ -118,7 +119,7 @@ class TraversalQueryBlockIntegrationTest : PostgresTestBase() {
     fun `block form fires the same traversal interceptor context`() {
         val driver = freshDriver()
         val sourceOps = mutableListOf<ReadOperation>()
-        var captured: QueryContext? = null
+        var captured: QueryContext<Viewer>? = null
         val client = EntClient(driver) {
 
             interceptors {

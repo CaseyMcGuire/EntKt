@@ -164,7 +164,7 @@ class UpdateGeneratorTest {
         assert(repo.contains("adapter = UserUpdateAdapter(driver, client.hookClientScopeForInternalUse)"))
         assert(
             output.contains(
-                "override fun toBeforeUpdateState( viewerContext: ViewerContext, before: User, pendingEdges: UserPendingEdgeOps, beforeSaveState: UserBeforeSaveState, ): UserBeforeUpdateState = UserBeforeUpdateState(",
+                "override fun toBeforeUpdateState( viewerContext: ViewerContext<Viewer>, before: User, pendingEdges: UserPendingEdgeOps, beforeSaveState: UserBeforeSaveState, ): UserBeforeUpdateState = UserBeforeUpdateState(",
             ),
         )
         assert(output.contains("name = beforeSaveState.name"))
@@ -872,7 +872,7 @@ class UpdateGeneratorTest {
         }
         val repo = RepoGenerator("com.example.ent").generate("M2MPost", post, names).toString()
             .replace("\\s+".toRegex(), " ")
-        assert(output.contains("UpdateMutationHookStateConverter<M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostBeforeSaveState, M2MPostBeforeUpdateState>") &&
+        assert(output.contains("UpdateMutationHookStateConverter<Viewer, M2MPostUpdateDraft, M2MPost, M2MPostPendingEdgeOps, M2MPostBeforeSaveState, M2MPostBeforeUpdateState>") &&
             repo.contains("adapter = M2MPostUpdateAdapter(driver, client.hookClientScopeForInternalUse)")) {
             "One schema adapter should implement both runtime preparation and hook-state conversion contracts\n$output"
         }

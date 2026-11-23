@@ -5,7 +5,7 @@ import entkt.runtime.privacy.ViewerContext
 
 /** The identity of one row to reload and delete. */
 @EntktInternal
-class DeleteMutationInput(
-    val viewerContext: ViewerContext,
+class DeleteMutationInput<Viewer : Any>(
+    val viewerContext: ViewerContext<Viewer>,
     val id: Any,
 )

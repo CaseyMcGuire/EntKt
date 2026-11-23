@@ -432,8 +432,8 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
 
     @Test
     fun `read interceptors run for rule queries and observe the caller viewer`() {
-        val seenContexts = mutableListOf<ViewerContext>()
-        val recorder = QueryInterceptor<User> { _, context -> seenContexts.add(context.viewerContext) }
+        val seenContexts = mutableListOf<ViewerContext<Viewer>>()
+        val recorder = QueryInterceptor<Viewer, User> { _, context -> seenContexts.add(context.viewerContext) }
 
         val client = freshClient {
 
@@ -471,7 +471,7 @@ class PrivacyReadClientIntegrationTest : PostgresTestBase() {
         val ready = CountDownLatch(2)
         val release = CountDownLatch(1)
         val seenClients = ConcurrentLinkedQueue<ReadOnlyEntClient>()
-        val seenContexts = ConcurrentLinkedQueue<ViewerContext>()
+        val seenContexts = ConcurrentLinkedQueue<ViewerContext<Viewer>>()
         val concurrentRule = ArticleLoadPrivacyRule { context, _ ->
             seenClients.add(context.client)
             seenContexts.add(context.viewerContext)

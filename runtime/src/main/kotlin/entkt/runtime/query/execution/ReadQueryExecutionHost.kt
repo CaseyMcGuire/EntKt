@@ -10,10 +10,10 @@ import entkt.runtime.query.ResolvedEntInterceptorsConfig
  * The operation's viewer remains an explicit terminal argument and is never stored here.
  */
 @EntktInternal
-interface ReadQueryExecutionHost : LoadPrivacyDispatcher {
+interface ReadQueryExecutionHost<Viewer : Any> : LoadPrivacyDispatcher<Viewer> {
     /** Reject reads through an escaped or otherwise stale transaction-scoped client. */
     fun checkReadExecution()
 
     /** Stable interceptor registry shared by queries hosted by this runtime. */
-    val entityInterceptors: ResolvedEntInterceptorsConfig
+    val entityInterceptors: ResolvedEntInterceptorsConfig<Viewer>
 }

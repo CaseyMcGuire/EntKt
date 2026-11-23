@@ -7,10 +7,10 @@ import entkt.runtime.rule.EntRuleClient
 
 /** Evaluates DELETE privacy and optional CREATE derivation for unresolved subjects. */
 @EntktInternal
-class DeletePrivacyEvaluator<Client : EntRuleClient, Candidate, RuleInput>(
+class DeletePrivacyEvaluator<Viewer : Any, Client : EntRuleClient, Candidate, RuleInput>(
     entityName: String,
-    private val rules: List<BatchPrivacyRule<Client, RuleInput>>,
-    private val createRules: List<BatchPrivacyRule<Client, Candidate>>,
+    private val rules: List<BatchPrivacyRule<Viewer, Client, RuleInput>>,
+    private val createRules: List<BatchPrivacyRule<Viewer, Client, Candidate>>,
     private val derivesFromCreate: Boolean,
 ) {
     private val batchEvaluator = PrivacyBatchEvaluator(
@@ -19,7 +19,7 @@ class DeletePrivacyEvaluator<Client : EntRuleClient, Candidate, RuleInput>(
     )
 
     fun <Subject> evaluate(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         client: Client,
         subjects: List<Subject>,
         toRuleInput: (Subject) -> RuleInput,

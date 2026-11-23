@@ -40,6 +40,7 @@ class ReadOnlyEntClientCompileTest {
                 import com.example.ent.CarCreateValidationRule
                 import com.example.ent.CarLoadPrivacyRule
                 import com.example.ent.ReadOnlyEntClient
+                import entkt.runtime.privacy.Viewer
                 import entkt.runtime.privacy.PrivacyDecision
                 import entkt.runtime.privacy.PrivacyRuleContext
                 import entkt.runtime.privacy.ViewerContext
@@ -47,13 +48,13 @@ class ReadOnlyEntClientCompileTest {
                 import entkt.runtime.validation.ValidationDecision
                 import entkt.runtime.validation.ValidationRuleContext
 
-                fun <Client : EntRuleClient> clientFrom(context: PrivacyRuleContext<Client>): Client =
+                fun <Client : EntRuleClient> clientFrom(context: PrivacyRuleContext<Viewer, Client>): Client =
                     context.client
 
                 fun <Client : EntRuleClient> clientFrom(context: ValidationRuleContext<Client>): Client =
                     context.client
 
-                fun anyCarExists(client: ReadOnlyEntClient, viewerContext: ViewerContext): Boolean =
+                fun anyCarExists(client: ReadOnlyEntClient, viewerContext: ViewerContext<Viewer>): Boolean =
                     client.cars.query { }.firstOrNull(viewerContext).getOrThrow() != null
 
                 val validation = CarCreateValidationRule { ctx, _ ->
@@ -80,19 +81,19 @@ class ReadOnlyEntClientCompileTest {
     @Test
     fun `rule client bounds reject unrelated types and the writable client`() {
         val invalidTypes = mapOf(
-            "Repository" to "GeneratedIdRepository<Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, Any>",
-            "ExplicitRepository" to "ExplicitIdRepository<Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, Any>",
+            "Repository" to "GeneratedIdRepository<Viewer, Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, Any>",
+            "ExplicitRepository" to "ExplicitIdRepository<Viewer, Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, Any>",
             "Operation" to "MutationOperation<Any, Unit, Unit>",
-            "LoadEvaluator" to "LoadPrivacyEvaluator<Any, Car>",
-            "CreateEvaluator" to "CreatePrivacyEvaluator<Any, Unit>",
-            "UpdateEvaluator" to "UpdatePrivacyEvaluator<Any, Unit, Unit>",
-            "DeleteEvaluator" to "DeletePrivacyEvaluator<Any, Unit, Unit>",
+            "LoadEvaluator" to "LoadPrivacyEvaluator<Viewer, Any, Car>",
+            "CreateEvaluator" to "CreatePrivacyEvaluator<Viewer, Any, Unit>",
+            "UpdateEvaluator" to "UpdatePrivacyEvaluator<Viewer, Any, Unit, Unit>",
+            "DeleteEvaluator" to "DeletePrivacyEvaluator<Viewer, Any, Unit, Unit>",
             "ValidationEvaluator" to "ValidationEvaluator<Any, Unit>",
-            "PrivacyContext" to "PrivacyRuleContext<Any>",
+            "PrivacyContext" to "PrivacyRuleContext<Viewer, Any>",
             "ValidationContext" to "ValidationRuleContext<Any>",
-            "PrivacyRule" to "BatchPrivacyRule<Any, Car>",
+            "PrivacyRule" to "BatchPrivacyRule<Viewer, Any, Car>",
             "ValidationRule" to "BatchValidationRule<Any, Car>",
-            "WritableClient" to "PrivacyRuleContext<EntClient>",
+            "WritableClient" to "PrivacyRuleContext<Viewer, EntClient>",
         )
         val probes = invalidTypes.map { (name, type) ->
             SourceFile.kotlin(

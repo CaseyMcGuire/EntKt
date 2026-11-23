@@ -7,9 +7,9 @@ import entkt.runtime.rule.EntRuleClient
 
 /** Evaluates CREATE privacy over prepared write candidates. */
 @EntktInternal
-class CreatePrivacyEvaluator<Client : EntRuleClient, Candidate>(
+class CreatePrivacyEvaluator<Viewer : Any, Client : EntRuleClient, Candidate>(
     entityName: String,
-    private val rules: List<BatchPrivacyRule<Client, Candidate>>,
+    private val rules: List<BatchPrivacyRule<Viewer, Client, Candidate>>,
 ) {
     private val batchEvaluator = PrivacyBatchEvaluator(
         entityName = entityName,
@@ -17,7 +17,7 @@ class CreatePrivacyEvaluator<Client : EntRuleClient, Candidate>(
     )
 
     fun evaluate(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         client: Client,
         candidates: List<Candidate>,
     ): PrivacyEvaluation<Candidate> = batchEvaluator.evaluate(

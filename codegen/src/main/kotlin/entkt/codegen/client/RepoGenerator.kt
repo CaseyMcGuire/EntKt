@@ -30,6 +30,7 @@ import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
 import entkt.codegen.metadata.toTypeName
+import entkt.codegen.metadata.VIEWER
 import entkt.codegen.query.indexHelperTree
 import entkt.schema.EntSchema
 
@@ -83,7 +84,7 @@ internal class RepoGenerator(
         val idType = schema.id().type.toTypeName()
         val generatedId = idStrategyName(schema) != "EXPLICIT"
         val repositoryBase = (if (generatedId) GENERATED_ID_REPOSITORY else EXPLICIT_ID_REPOSITORY).parameterizedBy(
-            entityClass, idType, createDraftClass, updateDraftClass, queryClass, ruleClientClass,
+            VIEWER, entityClass, idType, createDraftClass, updateDraftClass, queryClass, ruleClientClass,
         )
 
         val typeSpec = classType(className) {
@@ -190,7 +191,7 @@ internal class RepoGenerator(
                 .filter { it.required && it.default == null }
                 .map { parameter(it.propertyName, it.idType.toTypeName()) }
 
-        return function("create", PENDING_CREATE_MUTATION.parameterizedBy(draftClass, entityClass)) {
+        return function("create", PENDING_CREATE_MUTATION.parameterizedBy(VIEWER, draftClass, entityClass)) {
             addKdoc(
                 "Start a pending creation with every non-null field that has no schema default.\n" +
                     "Defaults, hooks, privacy, and validation run when the mutation is saved.\n",

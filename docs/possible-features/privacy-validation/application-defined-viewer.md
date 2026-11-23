@@ -2,11 +2,12 @@
 
 ## Status
 
-Partly implemented. Stage 1 of the [implementation plan](#implementation-plan)
-is done: `ViewerContext` is the sealed pair `AsViewer` / `PrivacyBypass`, and
-`Viewer.PrivacyBypass` is gone. Stages 2 and 3 are not implemented, so the
-context is not generic yet and the runtime still owns `Viewer`. The Motivation
-section describes the model before stage 1.
+Partly implemented. Stages 1 and 2 of the
+[implementation plan](#implementation-plan) are done: `ViewerContext` is the
+sealed pair `AsViewer` / `PrivacyBypass`, `Viewer.PrivacyBypass` is gone, and
+the context and the runtime types that carry it are generic over the viewer.
+Stage 3 is not implemented, so generated code still binds the runtime's own
+`Viewer`. The Motivation section describes the model before stage 1.
 
 ## Summary
 
@@ -443,16 +444,19 @@ breaking-changes log for what it changes.
    `PrivacyRuleContext.viewerContext` and `readViewerContext` to their cases.
    Generated signatures do not change. This stage is useful on its own: bypass
    becomes a mode of an operation rather than a kind of viewer.
-2. **Thread the viewer type through the runtime.** Add the type parameter to
-   the context, rule types, evaluators, terminals, plumbing, interceptors, and
-   `ent-explorer-core`. Generated code binds the runtime's existing `Viewer`
-   type, so applications change only where they name a type that became
-   generic. Behavior does not change. Until stage 3 removes it, the runtime's
-   `Viewer` type shares its name with the new type parameter.
+2. **Thread the viewer type through the runtime.** (Implemented.) Add the
+   type parameter to the context, rule types, evaluators, terminals, plumbing,
+   and interceptors. Generated code binds the runtime's existing `Viewer` type,
+   so applications change only where they name a type that became generic.
+   Behavior does not change. Until stage 3 removes it, the runtime's `Viewer`
+   type shares its name with the new type parameter. `ent-explorer-core` stays
+   bound to the runtime's `Viewer` in this stage, because making it generic
+   removes its anonymous default.
 3. **Bind the application's type.** Add `viewerType` to the Gradle extension
    and `GenerateMain`, delete `Viewer` and its helpers, give the example
-   application and the integration tests their own viewer types, and make the
-   Ent Explorer context provider required. Revise the proposals listed above.
+   application and the integration tests their own viewer types, and make
+   `ent-explorer-core` generic with a required context provider. Revise the
+   proposals listed above.
 
 ## Test Requirements
 

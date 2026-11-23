@@ -32,14 +32,14 @@ class PrivacyGeneratorTest {
         val output = generator.generate("User", user).toString()
             .replace("\\s+".toRegex(), " ")
 
-        assertContains(output, "typealias UserLoadPrivacyRule = PrivacyRule<ReadOnlyEntClient, User>")
-        assertContains(output, "typealias UserCreatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserWriteCandidate>")
-        assertContains(output, "typealias UserUpdatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserUpdateRuleInput>")
-        assertContains(output, "typealias UserDeletePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserDeleteRuleInput>")
-        assertContains(output, "typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, User>")
-        assertContains(output, "typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserWriteCandidate>")
-        assertContains(output, "typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserUpdateRuleInput>")
-        assertContains(output, "typealias UserDeleteBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserDeleteRuleInput>")
+        assertContains(output, "typealias UserLoadPrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, User>")
+        assertContains(output, "typealias UserCreatePrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate>")
+        assertContains(output, "typealias UserUpdatePrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, UserUpdateRuleInput>")
+        assertContains(output, "typealias UserDeletePrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput>")
+        assertContains(output, "typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, User>")
+        assertContains(output, "typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate>")
+        assertContains(output, "typealias UserUpdateBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, UserUpdateRuleInput>")
+        assertContains(output, "typealias UserDeleteBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, UserDeleteRuleInput>")
     }
 
     @Test
@@ -106,6 +106,7 @@ class PrivacyGeneratorTest {
 
         assertEquals(
             ClassName("entkt.runtime.privacy", "EntityPrivacyScope").parameterizedBy(
+                ClassName("entkt.runtime.privacy", "Viewer"),
                 ClassName("com.example.ent", "ReadOnlyEntClient"),
                 ClassName("com.example.ent", "User"),
                 ClassName("com.example.ent", "UserWriteCandidate"),

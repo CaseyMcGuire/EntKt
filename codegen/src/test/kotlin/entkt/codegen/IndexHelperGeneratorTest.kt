@@ -294,7 +294,7 @@ class IndexHelperGeneratorTest {
         // find() seeds the bound prefix and delegates to the canonical
         // first-row terminal, so its ReadResult carries the same
         // privacy/interceptor behavior as any query.
-        assertTrue("fun find(viewerContext: ViewerContext): ReadResult<User?>" in email, email)
+        assertTrue("fun find(viewerContext: ViewerContext<Viewer>): ReadResult<User?>" in email, email)
         assertTrue("return q.firstOrNull(viewerContext)" in email, email)
         assertTrue("fun query(" in email, email)
         // The orNull/visibleOrNull/orError/orThrow quartet collapsed into
@@ -310,7 +310,7 @@ class IndexHelperGeneratorTest {
         val s = IdxFriendship(); finalize(s)
         val out = gen.generate("Friendship", s)!!.toString().flat()
         // Exactly one stage (the full pair) exposes the unique terminal.
-        assertEquals(1, countOccurrences(out, "fun find(viewerContext: ViewerContext)"), out)
+        assertEquals(1, countOccurrences(out, "fun find(viewerContext: ViewerContext<Viewer>)"), out)
         // The prefix stage exists, exposes query(), but no terminal.
         val prefix = classBody(out, "RequesterId")
         assertTrue("fun recipientId(recipientId: Long)" in prefix, prefix)
@@ -318,7 +318,7 @@ class IndexHelperGeneratorTest {
         assertTrue("fun find(" !in prefix, prefix)
         // The full stage exposes the terminal.
         val full = classBody(out, "RequesterIdRecipientId")
-        assertTrue("fun find(viewerContext: ViewerContext): ReadResult<Friendship?>" in full, full)
+        assertTrue("fun find(viewerContext: ViewerContext<Viewer>): ReadResult<Friendship?>" in full, full)
     }
 
     @Test

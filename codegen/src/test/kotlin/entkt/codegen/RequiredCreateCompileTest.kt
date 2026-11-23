@@ -92,8 +92,8 @@ class RequiredCreateCompileTest {
     fun `required parameters and the original DSL coexist on root and transaction clients`() {
         val result = compile(
             """
-            fun use(client: EntClientScope, viewer: ViewerContext) {
-                val pending: PendingCreateMutation<RecordCreateDraft, Record> =
+            fun use(client: EntClientScope, viewer: ViewerContext<Viewer>) {
+                val pending: PendingCreateMutation<Viewer, RecordCreateDraft, Record> =
                     client.records.create(title = "Typed", ownerId = 7L)
                 pending.saveAndLoad(viewer)
                 client.records.create(ownerId = 7L, title = "Configured") {
@@ -108,7 +108,7 @@ class RequiredCreateCompileTest {
                 client.records.create(block = { title = "Named block"; ownerId = 7L })
             }
 
-            fun useBoth(client: EntClient, viewer: ViewerContext) {
+            fun useBoth(client: EntClient, viewer: ViewerContext<Viewer>) {
                 use(client, viewer)
                 client.withTransaction { tx -> use(tx, viewer) }
             }

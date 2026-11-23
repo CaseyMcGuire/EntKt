@@ -18,13 +18,18 @@ import entkt.runtime.validation.ValidationEvaluator
 import entkt.runtime.validation.ValidationRuleContext
 
 /** Apply the same privacy-before-validation checks to one candidate or a complete DELETE batch. */
-internal fun <RuleClient : EntRuleClient, Entity : EntEntity<*>, Candidate : WriteCandidate<Entity>> evaluateDeleteRules(
+internal fun <
+    Viewer : Any,
+    RuleClient : EntRuleClient,
+    Entity : EntEntity<*>,
+    Candidate : WriteCandidate<Entity>,
+> evaluateDeleteRules(
     execution: MutationExecution,
     ruleClient: RuleClient,
     entityName: String,
-    viewerContext: ViewerContext,
+    viewerContext: ViewerContext<Viewer>,
     ruleInputs: List<DeleteRuleInput<Entity, Candidate>>,
-    privacyEvaluator: DeletePrivacyEvaluator<RuleClient, Candidate, DeleteRuleInput<Entity, Candidate>>,
+    privacyEvaluator: DeletePrivacyEvaluator<Viewer, RuleClient, Candidate, DeleteRuleInput<Entity, Candidate>>,
     validationEvaluator: ValidationEvaluator<RuleClient, DeleteRuleInput<Entity, Candidate>>,
 ) {
     val privacyEvaluation = privacyEvaluator.evaluate(

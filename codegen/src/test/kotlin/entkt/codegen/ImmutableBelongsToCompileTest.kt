@@ -80,6 +80,7 @@ class ImmutableBelongsToCompileTest {
 
             import com.example.ent.*
             import entkt.runtime.driver.NoopDriver
+            import entkt.runtime.privacy.Viewer
             import entkt.runtime.privacy.ViewerContext
 
             $body

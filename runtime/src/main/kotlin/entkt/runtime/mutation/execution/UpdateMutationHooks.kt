@@ -16,6 +16,7 @@ import entkt.runtime.privacy.ViewerContext
 /** Converts and runs the hooks associated with one update lifecycle. */
 @EntktInternal
 class UpdateMutationHooks<
+    Viewer : Any,
     Draft,
     Entity : EntEntity<*>,
     PendingEdges : UpdatePendingEdges<Entity>,
@@ -24,6 +25,7 @@ class UpdateMutationHooks<
     >(
     private val converter:
         UpdateMutationHookStateConverter<
+            Viewer,
             Draft,
             Entity,
             PendingEdges,
@@ -37,7 +39,7 @@ class UpdateMutationHooks<
     /** Run both before phases and return the final immutable update state. */
     fun runBefore(
         entity: EntityMapping<Entity>,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         draft: Draft,
         before: Entity,
         pendingEdges: PendingEdges,

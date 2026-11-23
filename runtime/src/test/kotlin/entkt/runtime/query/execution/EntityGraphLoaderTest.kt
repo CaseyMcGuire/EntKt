@@ -64,7 +64,7 @@ class EntityGraphLoaderTest {
         private val rootEntities: List<Item>,
         private val targetsByEdge: Map<String, List<Item>>,
         private val events: MutableList<String>,
-    ) : GraphStorage {
+    ) : GraphStorage<Viewer> {
         val rootEntitiesByRelationship = mutableListOf<KClass<*>>()
         val paths = mutableListOf<List<String>>()
         val sourceIds = mutableListOf<List<Any>>()
@@ -75,7 +75,7 @@ class EntityGraphLoaderTest {
             query: EntityQuery<Entity>,
             operation: ReadOperation,
             maximumRows: Int?,
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             lockMode: entkt.runtime.query.QueryLockMode,
         ): List<Entity> {
             events += "load:root"
@@ -88,7 +88,7 @@ class EntityGraphLoaderTest {
         override fun <Source : EntEntity<*>, Target : EntEntity<*>> loadRelationship(
             selection: EdgeSelection<Source, Target>,
             sources: List<Source>,
-            context: RelationshipReadContext,
+            context: RelationshipReadContext<Viewer>,
         ): LoadedRelationship<Source, Target> {
             val edgeName = selection.edge.name
             events += "load:$edgeName"
@@ -109,10 +109,10 @@ class EntityGraphLoaderTest {
     private class RecordingPrivacy(
         private val events: MutableList<String>,
         private val deniedIds: Set<Long> = emptySet(),
-    ) : LoadPrivacyDispatcher {
+    ) : LoadPrivacyDispatcher<Viewer> {
         override fun <Entity : EntEntity<*>> evaluate(
             entity: EntityMapping<Entity>,
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             entities: List<Entity>,
         ): PrivacyEvaluation<Entity> {
             events += "privacy:${entities.joinToString { it.id.toString() }}"

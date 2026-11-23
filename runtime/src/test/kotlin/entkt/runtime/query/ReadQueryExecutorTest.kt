@@ -68,19 +68,19 @@ class ReadQueryExecutorTest {
         val driver = RecordingDriver()
         var interceptorRuns = 0
         var privacyRuns = 0
-        val interceptors = EntInterceptorsConfig().apply {
+        val interceptors = EntInterceptorsConfig<Viewer>().apply {
             addEntity<Item>("items", "record") { _, _ -> interceptorRuns++ }
         }
-        val executor = ReadQueryExecutor<Item>(
+        val executor = ReadQueryExecutor<Viewer, Item>(
             driver = driver,
-            executionHost = object : ReadQueryExecutionHost {
+            executionHost = object : ReadQueryExecutionHost<Viewer> {
                 override val entityInterceptors = interceptors.resolveForInternalUse()
 
                 override fun checkReadExecution() = Unit
 
                 override fun <Entity : EntEntity<*>> evaluate(
                     entity: EntityMapping<Entity>,
-                    viewerContext: ViewerContext,
+                    viewerContext: ViewerContext<Viewer>,
                     entities: List<Entity>,
                 ): PrivacyEvaluation<Entity> {
                     privacyRuns++

@@ -7,8 +7,8 @@ import entkt.runtime.privacy.ViewerContext
 
 /** Predicates selecting the candidates of one atomic DELETE batch. */
 @EntktInternal
-class DeleteManyMutationInput<Entity : EntEntity<*>>(
-    val viewerContext: ViewerContext,
+class DeleteManyMutationInput<Viewer : Any, Entity : EntEntity<*>>(
+    val viewerContext: ViewerContext<Viewer>,
     predicates: List<Predicate<Entity>>,
 ) {
     val predicates: List<Predicate<Entity>> = predicates.toList()

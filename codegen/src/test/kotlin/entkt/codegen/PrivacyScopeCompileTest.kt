@@ -56,6 +56,7 @@ class PrivacyScopeCompileTest {
             import com.example.ent.EntityPrivacyScope
             import com.example.ent.EntityUpdateBatchPrivacyRule
             import com.example.ent.EntityUpdatePrivacyRule
+            import entkt.runtime.privacy.Viewer
             import entkt.runtime.privacy.ContextPrivacyRule
             import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
             import entkt.runtime.rule.EntRuleClient
@@ -67,7 +68,7 @@ class PrivacyScopeCompileTest {
                     val create = EntityCreatePrivacyRule { _, _ -> error("not evaluated") }
                     val update = EntityUpdatePrivacyRule { _, _ -> error("not evaluated") }
                     val delete = EntityDeletePrivacyRule { _, _ -> error("not evaluated") }
-                    val shared = ContextPrivacyRule<EntRuleClient> { error("not evaluated") }
+                    val shared = ContextPrivacyRule<Viewer, EntRuleClient> { error("not evaluated") }
                     val config = EntityPrivacyConfig()
                     EntityPrivacyScope(config).apply {
                         load(load)

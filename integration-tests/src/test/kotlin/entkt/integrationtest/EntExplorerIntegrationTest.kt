@@ -27,7 +27,7 @@ class EntExplorerIntegrationTest : PostgresTestBase() {
         return EntClient(driver) to EntClient(newDriver())
     }
 
-    private fun explorer(client: EntClient, context: ViewerContext): EntExplorer<EntClient> =
+    private fun explorer(client: EntClient, context: ViewerContext<Viewer>): EntExplorer<EntClient> =
         EntExplorer(client, GeneratedEntExplorerRegistry) {
             authorize { true }
             viewerContext { context }

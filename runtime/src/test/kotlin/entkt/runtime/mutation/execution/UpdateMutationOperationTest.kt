@@ -167,7 +167,7 @@ class UpdateMutationOperationTest {
         val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
         val ruleClient = TestRuleClient()
         val failures = mutableListOf<EntMutationException>()
-        val receivedContexts = mutableListOf<ViewerContext>()
+        val receivedContexts = mutableListOf<ViewerContext<Viewer>>()
         val receivedClients = mutableListOf<TestRuleClient>()
         var loadedRow: Map<String, Any?>?
             get() = driver.loadedRow
@@ -198,7 +198,7 @@ class UpdateMutationOperationTest {
         val privacy = ResolvedEntityPrivacyConfig(
             loadRules = emptyList<Nothing>(),
             createRules = listOf(
-                batchPrivacyRule<TestRuleClient, Candidate> { context, candidates ->
+                batchPrivacyRule<Viewer, TestRuleClient, Candidate> { context, candidates ->
                     assertSame(viewerContext, context.viewerContext)
                     assertSame(ruleClient, context.client)
                     privacyFallbackCandidates += candidates.toList()
@@ -206,7 +206,7 @@ class UpdateMutationOperationTest {
                 },
             ),
             updateRules = listOf(
-                batchPrivacyRule<TestRuleClient, State> { context, states ->
+                batchPrivacyRule<Viewer, TestRuleClient, State> { context, states ->
                     events += "privacy:${states.single().name}"
                     receivedContexts += context.viewerContext
                     receivedClients += context.client
@@ -239,12 +239,12 @@ class UpdateMutationOperationTest {
 
         private val adapter = object :
             UpdateMutationAdapter<Draft, Widget, PendingEdges, Candidate, BeforeUpdateState, State>,
-            UpdateMutationHookStateConverter<Draft, Widget, PendingEdges, BeforeSaveState, BeforeUpdateState> {
+            UpdateMutationHookStateConverter<Viewer, Draft, Widget, PendingEdges, BeforeSaveState, BeforeUpdateState> {
             override fun toBeforeSaveState(draft: Draft): BeforeSaveState =
                 BeforeSaveState("before-save:before")
 
             override fun toBeforeUpdateState(
-                viewerContext: ViewerContext,
+                viewerContext: ViewerContext<Viewer>,
                 before: Widget,
                 pendingEdges: PendingEdges,
                 beforeSaveState: BeforeSaveState,
@@ -284,7 +284,7 @@ class UpdateMutationOperationTest {
             }
         }
 
-        val mutationRuntime = object : MutationRuntime {
+        val mutationRuntime = object : MutationRuntime<Viewer> {
             override fun checkTransactionRequirement(operation: String, multiWrite: Boolean) {
                 events += "runtime-preflight:$operation:$multiWrite"
             }
@@ -296,7 +296,7 @@ class UpdateMutationOperationTest {
 
             override fun <Entity : EntEntity<*>> evaluate(
                 entity: EntityMapping<Entity>,
-                viewerContext: ViewerContext,
+                viewerContext: ViewerContext<Viewer>,
                 entities: List<Entity>,
             ): PrivacyEvaluation<Entity> {
                 events += "load-privacy"

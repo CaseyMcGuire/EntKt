@@ -140,7 +140,7 @@ class JunctionRelationshipReaderTest {
         }
     }
 
-    private val viewerContext = ViewerContext.AsViewer(Viewer.User(7L))
+    private val viewerContext: ViewerContext<Viewer> = ViewerContext.AsViewer(Viewer.User(7L))
     private val targetPath = listOf(EdgeStep(Source::class, "targets", Target::class))
     private val relationshipContext = RelationshipReadContext(
         viewerContext = viewerContext,
@@ -166,7 +166,7 @@ class JunctionRelationshipReaderTest {
                 ),
             ),
         )
-        val contexts = mutableListOf<QueryContext>()
+        val contexts = mutableListOf<QueryContext<Viewer>>()
         val reader = reader(driver, contexts)
         val relationship = reader.loadRelationship(
             selection = EdgeSelection(
@@ -193,7 +193,7 @@ class JunctionRelationshipReaderTest {
         assertEquals(listOf(null, null), driver.calls.map { it.offset })
         assertEquals(
             listOf(ReadOperation.EAGER_JUNCTION, ReadOperation.EAGER_LOAD),
-            contexts.map(QueryContext::operation),
+            contexts.map(QueryContext<Viewer>::operation),
         )
         assertTrue(contexts.all { it.edgeName == "targets" && it.path == targetPath })
     }
@@ -201,7 +201,7 @@ class JunctionRelationshipReaderTest {
     @Test
     fun `empty source batch still compiles both interceptor stages without database reads`() {
         val driver = RowsDriver(rows = emptyMap())
-        val contexts = mutableListOf<QueryContext>()
+        val contexts = mutableListOf<QueryContext<Viewer>>()
         val reader = reader(driver, contexts)
 
         val relationship = reader.loadRelationship(
@@ -220,15 +220,15 @@ class JunctionRelationshipReaderTest {
         assertEquals(emptyList(), driver.calls)
         assertEquals(
             listOf(ReadOperation.EAGER_JUNCTION, ReadOperation.EAGER_LOAD),
-            contexts.map(QueryContext::operation),
+            contexts.map(QueryContext<Viewer>::operation),
         )
     }
 
     private fun reader(
         driver: DatabaseDriver,
-        contexts: MutableList<QueryContext>,
-    ): JunctionRelationshipReader {
-        val interceptors = EntInterceptorsConfig().apply {
+        contexts: MutableList<QueryContext<Viewer>>,
+    ): JunctionRelationshipReader<Viewer> {
+        val interceptors = EntInterceptorsConfig<Viewer>().apply {
             addEntity<Membership>("memberships", "junction") { _, context -> contexts += context }
             addEntity<Target>("targets", "target") { _, context -> contexts += context }
         }

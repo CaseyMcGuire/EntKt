@@ -3,6 +3,7 @@
 package entkt.runtime.mutation
 
 import entkt.runtime.entity.EntEntity
+import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.result.EntMutationAlreadyConsumedException
 import entkt.runtime.result.EntOperation
@@ -22,12 +23,12 @@ class PendingCreateMutationTest {
 
     private class Draft(var title: String? = null) : CreateMutationDraft<Article>
 
-    private class RecordingRepository : CreateMutationRepository<Draft, Article> {
+    private class RecordingRepository : CreateMutationRepository<Viewer, Draft, Article> {
         var savedDraft: Draft? = null
         var loadedDraft: Draft? = null
 
         override fun saveCreation(
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             draft: Draft,
         ): MutationResult<Unit> {
             savedDraft = draft
@@ -35,7 +36,7 @@ class PendingCreateMutationTest {
         }
 
         override fun saveAndLoadCreation(
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             draft: Draft,
         ): MutationResult<Article> {
             loadedDraft = draft
@@ -47,7 +48,7 @@ class PendingCreateMutationTest {
     fun `configuration remains mutable until the first terminal`() {
         val draft = Draft("first")
         val repository = RecordingRepository()
-        val mutation: PendingMutation<Draft, Article> = PendingCreateMutation(draft, repository)
+        val mutation: PendingMutation<Viewer, Draft, Article> = PendingCreateMutation(draft, repository)
 
         val returned = mutation.configure { title = title.orEmpty() + " second" }
         val result = mutation.saveAndLoad(viewerContext)

@@ -4,10 +4,10 @@ import entkt.query.EntktInternal
 
 /** Mutable privacy registrations whose rule types are supplied by a generated entity subclass. */
 abstract class EntityPrivacyConfig<
-    LoadRule : BatchPrivacyRule<*, *>,
-    CreateRule : BatchPrivacyRule<*, *>,
-    UpdateRule : BatchPrivacyRule<*, *>,
-    DeleteRule : BatchPrivacyRule<*, *>,
+    LoadRule : BatchPrivacyRule<*, *, *>,
+    CreateRule : BatchPrivacyRule<*, *, *>,
+    UpdateRule : BatchPrivacyRule<*, *, *>,
+    DeleteRule : BatchPrivacyRule<*, *, *>,
 > protected constructor() {
     /** LOAD rules in registration order, including repeated registrations. */
     val loadRules: MutableList<LoadRule> = mutableListOf()

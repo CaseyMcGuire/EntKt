@@ -63,7 +63,7 @@ class DeleteResultVariantsIntegrationTest : PostgresTestBase() {
     }
 
     private fun freshClient(
-        viewerContext: ViewerContext = ViewerContext.privacyBypass_DANGEROUS("test"),
+        viewerContext: ViewerContext<Viewer> = ViewerContext.privacyBypass_DANGEROUS("test"),
         articlePolicy: EntityPolicy<Article, ArticlePolicyScope> = AllowAllArticles,
         config: entkt.integrationtest.ent.EntClientConfig.() -> Unit = {},
     ): EntClient {

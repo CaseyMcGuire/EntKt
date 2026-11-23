@@ -56,7 +56,7 @@ class NamedIndexHelperGeneratorTest {
             assertContains(out, "= this.problemId(problemId).label(label)")
             assertContains(out, "fun problemId(problemId: Long)")
             assertContains(out, "fun position(position: Int)")
-            assertContains(out, "fun find(viewerContext: ViewerContext): ReadResult<TestCase?>")
+            assertContains(out, "fun find(viewerContext: ViewerContext<Viewer>): ReadResult<TestCase?>")
             assertFalse("fun byLabel(" in out, out)
             assertFalse("driver.query" in out, out)
             assertEquals(1, out.split("class ProblemId internal").size - 1, out)

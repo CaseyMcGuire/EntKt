@@ -22,11 +22,12 @@ import entkt.runtime.result.ReadCollectionResult
  * retains its transaction-lifetime and concurrency restrictions.
  */
 abstract class EntityQueryBuilder<
+    Viewer : Any,
     Entity : EntEntity<*>,
-    Self : EntityQueryBuilder<Entity, Self>,
+    Self : EntityQueryBuilder<Viewer, Entity, Self>,
 > @EntktInternal protected constructor(
     protected val driver: DatabaseDriver,
-    private val executionHost: ReadQueryExecutionHost?,
+    private val executionHost: ReadQueryExecutionHost<Viewer>?,
     protected val entityQuery: EntityQuery<Entity>,
 ) {
     /** Construct the concrete generated query over an already-owned description. */
@@ -38,7 +39,7 @@ abstract class EntityQueryBuilder<
     /** Caller-authored row offset, or `null` when absent. */
     val queryOffset: Int? get() = entityQuery.offset
 
-    protected val readQueryExecutor: ReadQueryExecutor<Entity>? by lazy(LazyThreadSafetyMode.NONE) {
+    protected val readQueryExecutor: ReadQueryExecutor<Viewer, Entity>? by lazy(LazyThreadSafetyMode.NONE) {
         executionHost?.let { host ->
             ReadQueryExecutor(
                 driver = driver,
@@ -113,7 +114,7 @@ abstract class EntityQueryBuilder<
     /** Execute a framework-owned singular read over this builder's captured shape. */
     @EntktInternal
     fun readOne(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         operation: ReadOperation,
         structuralPredicates: List<Predicate<Entity>> = emptyList(),
     ): ReadResult<Entity?> {
@@ -129,7 +130,7 @@ abstract class EntityQueryBuilder<
     /** Compile this builder's captured shape for a framework-owned storage operation. */
     @EntktInternal
     fun compileEntityQuery(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         operation: ReadOperation,
     ): StorageQuerySpec<Entity> = requireReadQueryExecutor().compileEntityQuery(
         viewerContext = viewerContext,
@@ -138,17 +139,17 @@ abstract class EntityQueryBuilder<
     )
 
     /** Execute this query, retaining each selected root's value or privacy denial. */
-    fun all(viewerContext: ViewerContext): ReadCollectionResult<Entity> {
+    fun all(viewerContext: ViewerContext<Viewer>): ReadCollectionResult<Entity> {
         val executor = readQueryExecutor
             ?: return ReadCollectionResult.failedForInternalUse(missingExecutionHostException())
         return executor.readMany(viewerContext, captureQuery = { captureEntityQuery() })
     }
 
     /** Execute at most one root row, preserving absence as a successful `null`. */
-    fun firstOrNull(viewerContext: ViewerContext): ReadResult<Entity?> =
+    fun firstOrNull(viewerContext: ViewerContext<Viewer>): ReadResult<Entity?> =
         readOne(viewerContext, ReadOperation.FIRST)
 
-    private fun requireReadQueryExecutor(): ReadQueryExecutor<Entity> = readQueryExecutor
+    private fun requireReadQueryExecutor(): ReadQueryExecutor<Viewer, Entity> = readQueryExecutor
         ?: throw missingExecutionHostException()
 
     private fun missingExecutionHostException(): IllegalStateException =

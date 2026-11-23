@@ -107,6 +107,7 @@ class BelongsToColumnTest {
             package com.example.app
             import com.example.ent.*
             import entkt.runtime.driver.NoopDriver
+            import entkt.runtime.privacy.Viewer
             import entkt.runtime.privacy.ViewerContext
             import java.util.UUID
 

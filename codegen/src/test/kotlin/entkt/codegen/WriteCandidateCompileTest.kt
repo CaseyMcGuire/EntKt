@@ -31,11 +31,11 @@ class WriteCandidateCompileTest {
 
     private fun mutationTypes(candidate: String): List<String> = listOf(
         "CreateMutationConverter<WidgetDraft, $candidate, Widget, BeforeCreate>",
-        "CreateMutationOperation<EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
-        "CreateManyMutationOperation<EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
+        "CreateMutationOperation<Viewer, EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
+        "CreateManyMutationOperation<Viewer, EntRuleClient, WidgetDraft, $candidate, Widget, BeforeSave, BeforeCreate>",
         "DeleteMutationConverter<Widget, $candidate>",
-        "DeleteMutationOperation<EntRuleClient, Widget, $candidate>",
-        "DeleteManyMutationOperation<EntRuleClient, Widget, $candidate>",
+        "DeleteMutationOperation<Viewer, EntRuleClient, Widget, $candidate>",
+        "DeleteManyMutationOperation<Viewer, EntRuleClient, Widget, $candidate>",
         "DeleteRuleInput<Widget, $candidate>",
     ) + updateRuleInputTypes(candidate = candidate)
 
@@ -44,7 +44,7 @@ class WriteCandidateCompileTest {
         candidate: String = "WidgetCandidate",
     ): List<String> = listOf(
         "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, $candidate, BeforeUpdate, $updateInput>",
-        "UpdateMutationOperation<EntRuleClient, WidgetUpdateDraft, Widget, PendingEdges, $candidate, BeforeSave, BeforeUpdate, $updateInput>",
+        "UpdateMutationOperation<Viewer, EntRuleClient, WidgetUpdateDraft, Widget, PendingEdges, $candidate, BeforeSave, BeforeUpdate, $updateInput>",
     )
 
     private fun compileTypes(types: List<String>): JvmCompilationResult = compileSources(
@@ -68,6 +68,7 @@ class WriteCandidateCompileTest {
                 import entkt.runtime.mutation.WriteCandidate
                 import entkt.runtime.mutation.execution.*
                 import entkt.runtime.rule.EntRuleClient
+                import entkt.runtime.privacy.Viewer
 
                 data class Widget(override val id: Int) : EntEntity.IntId
                 data class Other(override val id: Int) : EntEntity.IntId
@@ -205,11 +206,11 @@ class WriteCandidateCompileTest {
         }
 
         val resultType = when (factory) {
-            "create" -> "CreateMutationOperations<EntRuleClient, WidgetCreateDraft, Widget>"
-            "update" -> "MutationOperation<EntRuleClient, UpdateMutationInput<WidgetUpdateDraft>, Widget>"
-            "createMany" -> "CreateManyMutationOperation<EntRuleClient, WidgetCreateDraft, WidgetCandidate, Widget, BeforeSave, BeforeCreate>"
-            "delete" -> "DeleteMutationOperation<EntRuleClient, Widget, WidgetCandidate>"
-            else -> "DeleteManyMutationOperation<EntRuleClient, Widget, WidgetCandidate>"
+            "create" -> "CreateMutationOperations<Viewer, EntRuleClient, WidgetCreateDraft, Widget>"
+            "update" -> "MutationOperation<EntRuleClient, UpdateMutationInput<Viewer, WidgetUpdateDraft>, Widget>"
+            "createMany" -> "CreateManyMutationOperation<Viewer, EntRuleClient, WidgetCreateDraft, WidgetCandidate, Widget, BeforeSave, BeforeCreate>"
+            "delete" -> "DeleteMutationOperation<Viewer, EntRuleClient, Widget, WidgetCandidate>"
+            else -> "DeleteManyMutationOperation<Viewer, EntRuleClient, Widget, WidgetCandidate>"
         }
 
         return compileSources(
@@ -226,6 +227,7 @@ class WriteCandidateCompileTest {
                     import entkt.runtime.entity.EntityDescriptor
                     import entkt.runtime.mutation.*
                     import entkt.runtime.mutation.execution.*
+                    import entkt.runtime.privacy.Viewer
                     import entkt.runtime.privacy.BatchPrivacyRule
                     import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
                     import entkt.runtime.rule.EntRuleClient
@@ -245,32 +247,32 @@ class WriteCandidateCompileTest {
 
                     abstract class CombinedCreateConverter :
                         CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget, BeforeCreate>,
-                        CreateMutationHookStateConverter<WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>
+                        CreateMutationHookStateConverter<Viewer, WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>
 
                     abstract class CombinedUpdateAdapter :
                         UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetCandidate, BeforeUpdate, UpdateInput>,
-                        UpdateMutationHookStateConverter<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>
+                        UpdateMutationHookStateConverter<Viewer, WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>
 
                     fun bind(
                         entity: EntityDescriptor<$mappingEntity, *>,
                         privacy: ResolvedEntityPrivacyConfig<
-                            Nothing, BatchPrivacyRule<EntRuleClient, WidgetCandidate>,
-                            BatchPrivacyRule<EntRuleClient, UpdateInput>,
-                            BatchPrivacyRule<EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,
+                            Nothing, BatchPrivacyRule<Viewer, EntRuleClient, WidgetCandidate>,
+                            BatchPrivacyRule<Viewer, EntRuleClient, UpdateInput>,
+                            BatchPrivacyRule<Viewer, EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,
                         >,
                         validation: ResolvedEntityValidationConfig<
                             BatchValidationRule<EntRuleClient, WidgetCandidate>,
                             BatchValidationRule<EntRuleClient, UpdateInput>,
                             BatchValidationRule<EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,
                         >,
-                        runtime: MutationRuntime,
+                        runtime: MutationRuntime<Viewer>,
                         combinedCreateConverter: CombinedCreateConverter,
                         updateAdapter: $updateAdapterType,
                         createConverter: CreateMutationConverter<WidgetCreateDraft, WidgetCandidate, Widget, BeforeCreate>,
-                        createHooks: CreateMutationHookStateConverter<WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>,
+                        createHooks: CreateMutationHookStateConverter<Viewer, WidgetCreateDraft, Widget, BeforeSave, BeforeCreate>,
                         deleteConverter: DeleteMutationConverter<Widget, WidgetCandidate>,
                         driver: DatabaseDriver,
-                        readHost: ReadQueryExecutionHost,
+                        readHost: ReadQueryExecutionHost<Viewer>,
                     ): $resultType = $call
                     """.trimIndent(),
                 ),
@@ -283,7 +285,7 @@ class WriteCandidateCompileTest {
         val incompleteAdapters = mapOf(
             "UpdateMutationAdapter<WidgetUpdateDraft, Widget, PendingEdges, WidgetCandidate, BeforeUpdate, UpdateInput>" to
                 "UpdateMutationHookStateConverter",
-            "UpdateMutationHookStateConverter<WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>" to
+            "UpdateMutationHookStateConverter<Viewer, WidgetUpdateDraft, Widget, PendingEdges, BeforeSave, BeforeUpdate>" to
                 "UpdateMutationAdapter",
         )
         for ((type, missingContract) in incompleteAdapters) {

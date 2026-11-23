@@ -5,8 +5,8 @@ import entkt.runtime.privacy.ViewerContext
 
 /** Capture deferred draft construction so it runs inside the mutation's execution boundary. */
 @EntktInternal
-class CreateManyMutationInput<Draft>(
-    val viewerContext: ViewerContext,
+class CreateManyMutationInput<Viewer : Any, Draft>(
+    val viewerContext: ViewerContext<Viewer>,
     blocks: List<Draft.() -> Unit>,
     internal val newDraft: () -> Draft,
 ) {

@@ -7,8 +7,8 @@ import entkt.runtime.privacy.ViewerContext
 
 /** Typed invocation data consumed by the reusable update operation. */
 @EntktInternal
-data class UpdateMutationInput<Draft : UpdateMutationDraft<*>>(
-    val viewerContext: ViewerContext,
+data class UpdateMutationInput<Viewer : Any, Draft : UpdateMutationDraft<*>>(
+    val viewerContext: ViewerContext<Viewer>,
     val request: UpdateMutationRequest<Draft>,
     val applyLoadPrivacy: Boolean,
 )

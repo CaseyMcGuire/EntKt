@@ -21,23 +21,23 @@ class MutationPrivacyEvaluatorsTest {
     private val ruleClient = TestRuleClient()
 
     /** The evaluator builds the rule context; it must carry the supplied viewer context and client. */
-    private fun assertSuppliedInputs(context: PrivacyRuleContext<TestRuleClient>) {
+    private fun assertSuppliedInputs(context: PrivacyRuleContext<Viewer, TestRuleClient>) {
         assertSame(viewerContext, context.viewerContext)
         assertSame(ruleClient, context.client)
     }
 
     private class Evaluators<Candidate>(
-        val load: LoadPrivacyEvaluator<TestRuleClient, Record>,
-        val create: CreatePrivacyEvaluator<TestRuleClient, Candidate>,
-        val update: UpdatePrivacyEvaluator<TestRuleClient, Candidate, Record>,
-        val delete: DeletePrivacyEvaluator<TestRuleClient, Candidate, Record>,
+        val load: LoadPrivacyEvaluator<Viewer, TestRuleClient, Record>,
+        val create: CreatePrivacyEvaluator<Viewer, TestRuleClient, Candidate>,
+        val update: UpdatePrivacyEvaluator<Viewer, TestRuleClient, Candidate, Record>,
+        val delete: DeletePrivacyEvaluator<Viewer, TestRuleClient, Candidate, Record>,
     )
 
     private fun <Candidate> evaluators(
-        load: List<BatchPrivacyRule<TestRuleClient, Record>> = emptyList(),
-        create: List<BatchPrivacyRule<TestRuleClient, Candidate>>,
-        update: List<BatchPrivacyRule<TestRuleClient, Record>> = emptyList(),
-        delete: List<BatchPrivacyRule<TestRuleClient, Record>> = emptyList(),
+        load: List<BatchPrivacyRule<Viewer, TestRuleClient, Record>> = emptyList(),
+        create: List<BatchPrivacyRule<Viewer, TestRuleClient, Candidate>>,
+        update: List<BatchPrivacyRule<Viewer, TestRuleClient, Record>> = emptyList(),
+        delete: List<BatchPrivacyRule<Viewer, TestRuleClient, Record>> = emptyList(),
         deriveUpdate: Boolean = false,
         deriveDelete: Boolean = false,
     ): Evaluators<Candidate> = Evaluators(
@@ -60,18 +60,18 @@ class MutationPrivacyEvaluatorsTest {
     @Test
     fun `each evaluator requires only its own operation input types`() {
         val calls = mutableListOf<String>()
-        val load = LoadPrivacyEvaluator("StoredRecord", listOf(PrivacyRule<TestRuleClient, Record> { _, item ->
+        val load = LoadPrivacyEvaluator("StoredRecord", listOf(PrivacyRule<Viewer, TestRuleClient, Record> { _, item ->
             calls += "load:${item.id}"
             PrivacyDecision.Allow
         }))
-        val createRules = listOf(PrivacyRule<TestRuleClient, String> { _, item ->
+        val createRules = listOf(PrivacyRule<Viewer, TestRuleClient, String> { _, item ->
             calls += "create:$item"
             PrivacyDecision.Allow
         })
         val create = CreatePrivacyEvaluator("StoredRecord", createRules)
         val update = UpdatePrivacyEvaluator(
             "StoredRecord",
-            listOf(PrivacyRule<TestRuleClient, Long> { _, item ->
+            listOf(PrivacyRule<Viewer, TestRuleClient, Long> { _, item ->
                 calls += "update:$item"
                 PrivacyDecision.Allow
             }),
@@ -80,7 +80,7 @@ class MutationPrivacyEvaluatorsTest {
         )
         val delete = DeletePrivacyEvaluator(
             "StoredRecord",
-            listOf(PrivacyRule<TestRuleClient, Boolean> { _, item ->
+            listOf(PrivacyRule<Viewer, TestRuleClient, Boolean> { _, item ->
                 calls += "delete:$item"
                 PrivacyDecision.Allow
             }),
@@ -100,8 +100,8 @@ class MutationPrivacyEvaluatorsTest {
     @Test
     fun `CREATE preserves duplicate subjects and shares them with every rule`() {
         val seen = mutableListOf<Record>()
-        val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
-        val rules = listOf<BatchPrivacyRule<TestRuleClient, Record>>(
+        val contexts = mutableListOf<PrivacyRuleContext<Viewer, TestRuleClient>>()
+        val rules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, Record>>(
             PrivacyRule { context, item ->
                 contexts += context
                 seen += item
@@ -133,12 +133,12 @@ class MutationPrivacyEvaluatorsTest {
     @Test
     fun `UPDATE and DELETE derive CREATE only for unresolved subjects and convert afresh per rule`() {
         for (operation in listOf(PrivacyOperation.UPDATE, PrivacyOperation.DELETE)) {
-            val contexts = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
+            val contexts = mutableListOf<PrivacyRuleContext<Viewer, TestRuleClient>>()
             val operationBatches = mutableListOf<List<Long>>()
             val createBatches = mutableListOf<List<String>>()
             val converted = mutableListOf<Long>()
             val convertedCandidates = mutableListOf<Long>()
-            val rules = listOf<BatchPrivacyRule<TestRuleClient, Record>>(
+            val rules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, Record>>(
                 batchPrivacyRule { context, batch ->
                     contexts += context
                     operationBatches += batch.map { it.id }
@@ -156,7 +156,7 @@ class MutationPrivacyEvaluatorsTest {
                     batch.decideEach { PrivacyDecision.Continue }
                 },
             )
-            val createRules = listOf<BatchPrivacyRule<TestRuleClient, String>>(
+            val createRules = listOf<BatchPrivacyRule<Viewer, TestRuleClient, String>>(
                 batchPrivacyRule { context, batch ->
                     contexts += context
                     createBatches += batch.toList()
@@ -212,7 +212,7 @@ class MutationPrivacyEvaluatorsTest {
         for (deriveUpdate in listOf(false, true)) {
             for (deriveDelete in listOf(false, true)) {
                 val evaluators = evaluators(
-                    create = listOf(PrivacyRule<TestRuleClient, Record> { _, _ -> PrivacyDecision.Allow }),
+                    create = listOf(PrivacyRule<Viewer, TestRuleClient, Record> { _, _ -> PrivacyDecision.Allow }),
                     deriveUpdate = deriveUpdate,
                     deriveDelete = deriveDelete,
                 )
@@ -232,7 +232,7 @@ class MutationPrivacyEvaluatorsTest {
 
     @Test
     fun `empty rules and Continue fail closed with operation-specific reasons`() {
-        for (rules in listOf(emptyList(), listOf(PrivacyRule<TestRuleClient, Record> { _, _ -> PrivacyDecision.Continue }))) {
+        for (rules in listOf(emptyList(), listOf(PrivacyRule<Viewer, TestRuleClient, Record> { _, _ -> PrivacyDecision.Continue }))) {
             val evaluators = evaluators(create = rules, deriveUpdate = true, deriveDelete = true)
             val record = Record(1)
             val evaluations = listOf(
@@ -250,13 +250,13 @@ class MutationPrivacyEvaluatorsTest {
 
     @Test
     fun `empty and bypassed evaluations skip every rule and converter`() {
-        val unreachable = listOf(PrivacyRule<TestRuleClient, Record> { _, _ -> error("Rule must not run") })
+        val unreachable = listOf(PrivacyRule<Viewer, TestRuleClient, Record> { _, _ -> error("Rule must not run") })
         val evaluators = evaluators(load = unreachable, create = unreachable, update = unreachable, delete = unreachable,
             deriveUpdate = true, deriveDelete = true)
         val unreachableConversion = { _: Record -> error("Input must not be converted") }
         val record = Record(1)
         for (subjects in listOf(emptyList(), listOf(record, record))) {
-            val context: ViewerContext = if (subjects.isEmpty()) {
+            val context: ViewerContext<Viewer> = if (subjects.isEmpty()) {
                 viewerContext
             } else {
                 ViewerContext.privacyBypass_DANGEROUS("evaluator test")
@@ -278,13 +278,13 @@ class MutationPrivacyEvaluatorsTest {
     @Test
     fun `duplicate states retain independent decisions through CREATE derivation`() {
         val record = Record(1)
-        val rules = listOf(batchPrivacyRule<TestRuleClient, Record> { _, batch ->
+        val rules = listOf(batchPrivacyRule<Viewer, TestRuleClient, Record> { _, batch ->
             batch.decideEachIndexed { index, _ ->
                 if (index == 0) PrivacyDecision.Deny("first occurrence") else PrivacyDecision.Continue
             }
         })
         val evaluators = evaluators(update = rules, delete = rules, deriveUpdate = true, deriveDelete = true,
-            create = listOf(batchPrivacyRule<TestRuleClient, Record> { _, batch ->
+            create = listOf(batchPrivacyRule<Viewer, TestRuleClient, Record> { _, batch ->
                 assertEquals(1, batch.size)
                 assertSame(record, batch.single())
                 batch.allowAll()
@@ -304,14 +304,14 @@ class MutationPrivacyEvaluatorsTest {
     fun `operation and derived CREATE exceptions escape unchanged including cancellation`() {
         for (failure in listOf(IllegalStateException("rule failed"), CancellationException("cancelled"))) {
             for (failInCreate in listOf(false, true)) {
-                val rules = listOf(PrivacyRule<TestRuleClient, Record> { _, _ ->
+                val rules = listOf(PrivacyRule<Viewer, TestRuleClient, Record> { _, _ ->
                     if (!failInCreate) {
                         throw failure
                     }
                     PrivacyDecision.Continue
                 })
                 val evaluators = evaluators(update = rules, delete = rules, deriveUpdate = true, deriveDelete = true,
-                    create = listOf(PrivacyRule<TestRuleClient, Record> { _, _ -> throw failure }))
+                    create = listOf(PrivacyRule<Viewer, TestRuleClient, Record> { _, _ -> throw failure }))
                 assertSame(failure, assertFails { evaluators.create.evaluate(viewerContext, ruleClient, listOf(Record(1))) })
                 assertSame(failure, assertFails { evaluators.update.evaluate(viewerContext, ruleClient, listOf(Record(1)), { it }, { it }) })
                 assertSame(failure, assertFails { evaluators.delete.evaluate(viewerContext, ruleClient, listOf(Record(1)), { it }, { it }) })
@@ -324,11 +324,11 @@ class MutationPrivacyEvaluatorsTest {
         val record = Record(1)
         val foreign = RuleBatch.from(listOf(record)).decideEach { PrivacyDecision.Allow }
         for (failInCreate in listOf(false, true)) {
-            val rules = listOf(batchPrivacyRule<TestRuleClient, Record> { _, batch ->
+            val rules = listOf(batchPrivacyRule<Viewer, TestRuleClient, Record> { _, batch ->
                 if (failInCreate) batch.decideEach { PrivacyDecision.Continue } else foreign
             })
             val evaluators = evaluators(update = rules, delete = rules, deriveUpdate = true, deriveDelete = true,
-                create = listOf(batchPrivacyRule<TestRuleClient, Record> { _, _ -> foreign }))
+                create = listOf(batchPrivacyRule<Viewer, TestRuleClient, Record> { _, _ -> foreign }))
             val calls = listOf(
                 PrivacyOperation.CREATE to { evaluators.create.evaluate(viewerContext, ruleClient, listOf(record)) },
                 PrivacyOperation.UPDATE to { evaluators.update.evaluate(viewerContext, ruleClient, listOf(record), { it }, { it }) },
@@ -344,8 +344,8 @@ class MutationPrivacyEvaluatorsTest {
 
     @Test
     fun `each call uses its supplied viewer and client including derived rules`() {
-        val seen = mutableListOf<PrivacyRuleContext<TestRuleClient>>()
-        val evaluators = evaluators(deriveUpdate = true, create = listOf(PrivacyRule<TestRuleClient, Record> { context, _ ->
+        val seen = mutableListOf<PrivacyRuleContext<Viewer, TestRuleClient>>()
+        val evaluators = evaluators(deriveUpdate = true, create = listOf(PrivacyRule<Viewer, TestRuleClient, Record> { context, _ ->
             seen += context
             PrivacyDecision.Allow
         }))

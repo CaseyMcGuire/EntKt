@@ -72,8 +72,8 @@ class ConditionalPrivacyRulesCompileTest {
     @Test
     fun `helpers for another entity cannot register`() {
         val helpers = listOf(
-            "allowIf<ReadOnlyEntClient, Car>",
-            "denyIf<ReadOnlyEntClient, Car>(\"denied\")",
+            "allowIf<Viewer, ReadOnlyEntClient, Car>",
+            "denyIf<Viewer, ReadOnlyEntClient, Car>(\"denied\")",
         )
         for (helper in helpers) {
             val result = compile("load($helper { _, _ -> true })")

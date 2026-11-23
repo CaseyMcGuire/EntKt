@@ -99,7 +99,7 @@ class RepoGeneratorTest {
             val name = schema::class.simpleName!!
             val output = generator.generate(name, schema).toString()
             val expected = """
-                $superclass<$name, $idType, ${name}CreateDraft, ${name}UpdateDraft, ${name}Query, ReadOnlyEntClient>(
+                $superclass<Viewer, $name, $idType, ${name}CreateDraft, ${name}UpdateDraft, ${name}Query, ReadOnlyEntClient>(
                       entity = ${name}Descriptor,
                       driver = driver,
                       mutationRuntime = client,
@@ -134,7 +134,7 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("GeneratedIdRepository<Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, ReadOnlyEntClient>")) {
+        assert(output.contains("GeneratedIdRepository<Viewer, Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, ReadOnlyEntClient>")) {
             "The base should retain concrete entity, ID, drafts, query, and rule client types\n$output"
         }
         for (method in listOf("update", "findById", "delete", "deleteById", "createMany", "deleteMany")) {
@@ -153,7 +153,7 @@ class RepoGeneratorTest {
         finalize(user, Car())
         val output = generator.generate("User", user).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("GeneratedIdRepository<User, UUID, UserCreateDraft, UserUpdateDraft, UserQuery, ReadOnlyEntClient>")) {
+        assert(output.contains("GeneratedIdRepository<Viewer, User, UUID, UserCreateDraft, UserUpdateDraft, UserQuery, ReadOnlyEntClient>")) {
             "Inherited ID parameters should use the schema's UUID type\n$output"
         }
         assert(!output.contains("explainFindById"))
@@ -393,7 +393,7 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("protected override fun <Result> withTransaction(block: TransactionScope.(GeneratedIdRepository<Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, ReadOnlyEntClient>) -> Result): TransactionResult<Result>"))
+        assert(output.contains("protected override fun <Result> withTransaction(block: TransactionScope.(GeneratedIdRepository<Viewer, Car, Int, CarCreateDraft, CarUpdateDraft, CarQuery, ReadOnlyEntClient>) -> Result): TransactionResult<Result>"))
         assert(output.contains("client.withTransaction { tx -> block(tx.cars) }"))
         assert(Regex("client.withTransaction").findAll(output).count() == 1) {
             "CREATE and DELETE bulk operations should share one transaction-bound repo lookup\n$output"
@@ -573,7 +573,7 @@ class RepoGeneratorTest {
         finalize(session)
         val output = generator.generate("Session", session).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("ExplicitIdRepository<Session, String, SessionCreateDraft, SessionUpdateDraft, SessionQuery, ReadOnlyEntClient>"))
+        assert(output.contains("ExplicitIdRepository<Viewer, Session, String, SessionCreateDraft, SessionUpdateDraft, SessionQuery, ReadOnlyEntClient>"))
         assert(!output.contains("GeneratedIdRepository"))
         assert(output.contains("super.create(id) {")) { "Required create parameters must preserve the explicit ID\n$output" }
         assert(output.contains("client.withTransaction { tx -> block(tx.sessions) }"))

@@ -18,6 +18,7 @@ import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.schema.EntSchema
+import entkt.codegen.metadata.VIEWER
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTITY_QUERY_BUILDER = ClassName("entkt.runtime.query", "EntityQueryBuilder")
@@ -41,7 +42,7 @@ internal class QueryGenerator(
         val descriptionType = ENTITY_QUERY.parameterizedBy(resolved.entityClass)
         val type = classType(queryClass) {
             addAnnotation(ClassName("entkt.schema", "EntktDsl"))
-            superclass(ENTITY_QUERY_BUILDER.parameterizedBy(resolved.entityClass, queryClass))
+            superclass(ENTITY_QUERY_BUILDER.parameterizedBy(VIEWER, resolved.entityClass, queryClass))
             primaryConstructor {
                 addModifiers(KModifier.INTERNAL)
                 parameter("driver", DRIVER)
@@ -74,7 +75,7 @@ internal class QueryGenerator(
                 statement("return configureQuery(%T(driver, client, entityQuery), block)", scopeClass)
             }
             if (surface == QuerySurface.Full) {
-                function("forUpdate", FOR_UPDATE_QUERY.parameterizedBy(resolved.entityClass)) {
+                function("forUpdate", FOR_UPDATE_QUERY.parameterizedBy(VIEWER, resolved.entityClass)) {
                     statement("return %T(entityQuery, readQueryExecutor)", FOR_UPDATE_QUERY)
                 }
             }

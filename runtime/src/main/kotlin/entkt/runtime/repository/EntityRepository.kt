@@ -48,22 +48,23 @@ import entkt.runtime.rule.EntRuleClient
  * The two ID-specific bases supply it so generated repositories do not need a recursive type argument.
  */
 abstract class EntityRepository<
+    Viewer : Any,
     Entity : EntEntity<ID>,
     ID : Any,
     CreateDraft : CreateMutationDraft<Entity>,
     UpdateDraft : UpdateMutationDraft<Entity>,
-    Query : EntityQueryBuilder<Entity, Query>,
+    Query : EntityQueryBuilder<Viewer, Entity, Query>,
     RuleClient : EntRuleClient,
-    Self : EntityRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient, Self>,
+    Self : EntityRepository<Viewer, Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient, Self>,
 > @EntktInternal protected constructor(
     private val entity: EntityDescriptor<Entity, ID>,
     driver: DatabaseDriver,
-    mutationRuntime: MutationRuntime,
-    loadPrivacyRules: List<BatchPrivacyRule<RuleClient, Entity>>,
-    protected val createOperations: CreateMutationOperations<RuleClient, CreateDraft, Entity>,
-    protected val updateOperation: MutationOperation<RuleClient, UpdateMutationInput<UpdateDraft>, Entity>,
-    protected val deleteOperation: MutationOperation<RuleClient, DeleteMutationInput, Boolean>,
-    protected val deleteManyOperation: MutationOperation<RuleClient, DeleteManyMutationInput<Entity>, Int>,
+    mutationRuntime: MutationRuntime<Viewer>,
+    loadPrivacyRules: List<BatchPrivacyRule<Viewer, RuleClient, Entity>>,
+    protected val createOperations: CreateMutationOperations<Viewer, RuleClient, CreateDraft, Entity>,
+    protected val updateOperation: MutationOperation<RuleClient, UpdateMutationInput<Viewer, UpdateDraft>, Entity>,
+    protected val deleteOperation: MutationOperation<RuleClient, DeleteMutationInput<Viewer>, Boolean>,
+    protected val deleteManyOperation: MutationOperation<RuleClient, DeleteManyMutationInput<Viewer, Entity>, Int>,
     private val defaultUpdateConsistency: UpdateConsistency = UpdateConsistency.ReadCurrent,
     private val defaultRelationshipLocking: RelationshipLocking = RelationshipLocking.OwnerOnly,
 ) {
@@ -105,7 +106,7 @@ abstract class EntityRepository<
 
     fun query(): Query = newQuery()
 
-    fun findById(viewerContext: ViewerContext, id: ID): ReadResult<Entity?> {
+    fun findById(viewerContext: ViewerContext<Viewer>, id: ID): ReadResult<Entity?> {
         return newQuery().readOne(
             viewerContext = viewerContext,
             operation = ReadOperation.BY_ID,
@@ -118,13 +119,13 @@ abstract class EntityRepository<
         consistency: UpdateConsistency = defaultUpdateConsistency,
         relationshipLocking: RelationshipLocking = defaultRelationshipLocking,
         block: UpdateDraft.() -> Unit,
-    ): PendingUpdateMutation<UpdateDraft, Entity> {
+    ): PendingUpdateMutation<Viewer, UpdateDraft, Entity> {
         val draft = newUpdateDraft().apply(block)
         val request = UpdateMutationRequest(id, draft, consistency, relationshipLocking)
         val executor = mutationExecutor
         val operation = updateOperation
         val client = ruleClient
-        val execution = UpdateMutationRepository<UpdateDraft, Entity> { context, input, applyLoadPrivacy ->
+        val execution = UpdateMutationRepository<Viewer, UpdateDraft, Entity> { context, input, applyLoadPrivacy ->
             executor.execute(
                 operation = operation,
                 ruleClient = client,
@@ -135,37 +136,37 @@ abstract class EntityRepository<
     }
 
     /** Delete the current row by ID, returning false when it is already absent. */
-    fun deleteById(viewerContext: ViewerContext, id: ID): MutationResult<Boolean> =
+    fun deleteById(viewerContext: ViewerContext<Viewer>, id: ID): MutationResult<Boolean> =
         mutationExecutor.execute(
             operation = deleteOperation,
             ruleClient = ruleClient,
             input = DeleteMutationInput(viewerContext, id),
         )
 
-    fun deleteMany(viewerContext: ViewerContext, vararg predicates: Predicate<Entity>): MutationResult<Int> =
+    fun deleteMany(viewerContext: ViewerContext<Viewer>, vararg predicates: Predicate<Entity>): MutationResult<Int> =
         executeMutation(
             input = DeleteManyMutationInput(viewerContext, predicates.asList()),
             operation = { it.deleteManyOperation },
         )
 
     @EntktInternal
-    fun evaluateLoadPrivacy(viewerContext: ViewerContext, entities: List<Entity>): PrivacyEvaluation<Entity> =
+    fun evaluateLoadPrivacy(viewerContext: ViewerContext<Viewer>, entities: List<Entity>): PrivacyEvaluation<Entity> =
         loadPrivacyEvaluator.evaluate(viewerContext, ruleClient, entities)
 
     /** Bind immutable execution dependencies now; saving does not call back into this repository. */
-    protected fun pendingCreate(draft: CreateDraft): PendingCreateMutation<CreateDraft, Entity> {
+    protected fun pendingCreate(draft: CreateDraft): PendingCreateMutation<Viewer, CreateDraft, Entity> {
         val executor = mutationExecutor
         val operation = createOperations.single
         val client = ruleClient
-        val execution = object : CreateMutationRepository<CreateDraft, Entity> {
-            override fun saveCreation(viewerContext: ViewerContext, draft: CreateDraft): MutationResult<Unit> =
+        val execution = object : CreateMutationRepository<Viewer, CreateDraft, Entity> {
+            override fun saveCreation(viewerContext: ViewerContext<Viewer>, draft: CreateDraft): MutationResult<Unit> =
                 executor.execute(
                     operation = operation,
                     ruleClient = client,
                     input = CreateMutationInput(viewerContext, draft, checkReturnedEntityPrivacy = false),
                 ).withoutValue()
 
-            override fun saveAndLoadCreation(viewerContext: ViewerContext, draft: CreateDraft): MutationResult<Entity> =
+            override fun saveAndLoadCreation(viewerContext: ViewerContext<Viewer>, draft: CreateDraft): MutationResult<Entity> =
                 executor.execute(
                     operation = operation,
                     ruleClient = client,
@@ -185,7 +186,7 @@ abstract class EntityRepository<
         input = input,
         ownedTransaction = { transactionInput, completionCapture ->
             withTransaction { transactionRepository ->
-                val bound: EntityRepository<Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient, Self> =
+                val bound: EntityRepository<Viewer, Entity, ID, CreateDraft, UpdateDraft, Query, RuleClient, Self> =
                     transactionRepository
                 bound.mutationExecutor.executeInOwnedTransactionForInternalUse(
                     operation = operation(transactionRepository),

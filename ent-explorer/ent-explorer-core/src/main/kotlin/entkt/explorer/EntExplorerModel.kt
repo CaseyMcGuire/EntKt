@@ -1,6 +1,7 @@
 package entkt.explorer
 
 import entkt.runtime.driver.EntitySchema
+import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.schema.FieldType
 
@@ -47,7 +48,7 @@ interface EntExplorerEntity<C : Any> {
      */
     fun list(
         client: C,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         request: EntExplorerListRequest,
     ): EntExplorerListResult
 
@@ -57,7 +58,7 @@ interface EntExplorerEntity<C : Any> {
      * behavior in all three cases, so the explorer discloses nothing about
      * existence.
      */
-    fun get(client: C, viewerContext: ViewerContext, id: String): EntExplorerRow?
+    fun get(client: C, viewerContext: ViewerContext<Viewer>, id: String): EntExplorerRow?
 }
 
 /** Display/filter metadata for one column, derived from the schema at codegen time. */

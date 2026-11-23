@@ -22,7 +22,7 @@ class EntExplorerConfig internal constructor() {
     var path: String = "/_ent"
 
     internal var authorize: (EntExplorerRequest) -> Boolean = { false }
-    internal var viewerContext: (EntExplorerRequest) -> ViewerContext =
+    internal var viewerContext: (EntExplorerRequest) -> ViewerContext<Viewer> =
         { ViewerContext.AsViewer(Viewer.Anonymous) }
     internal val visibility = EntityVisibility()
     internal val redaction = Redaction()
@@ -41,7 +41,7 @@ class EntExplorerConfig internal constructor() {
      * The data displayed is the data this context is allowed to read —
      * the explorer adds no privileges.
      */
-    fun viewerContext(provider: (EntExplorerRequest) -> ViewerContext) {
+    fun viewerContext(provider: (EntExplorerRequest) -> ViewerContext<Viewer>) {
         viewerContext = provider
     }
 

@@ -7,9 +7,9 @@ import entkt.runtime.rule.EntRuleClient
 
 /** Evaluates LOAD privacy over entities, preserving order and duplicate occurrences. */
 @EntktInternal
-class LoadPrivacyEvaluator<Client : EntRuleClient, Entity>(
+class LoadPrivacyEvaluator<Viewer : Any, Client : EntRuleClient, Entity>(
     entityName: String,
-    private val rules: List<BatchPrivacyRule<Client, Entity>>,
+    private val rules: List<BatchPrivacyRule<Viewer, Client, Entity>>,
 ) {
     private val batchEvaluator = PrivacyBatchEvaluator(
         entityName = entityName,
@@ -17,7 +17,7 @@ class LoadPrivacyEvaluator<Client : EntRuleClient, Entity>(
     )
 
     fun evaluate(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         client: Client,
         entities: List<Entity>,
     ): PrivacyEvaluation<Entity> = batchEvaluator.evaluate(

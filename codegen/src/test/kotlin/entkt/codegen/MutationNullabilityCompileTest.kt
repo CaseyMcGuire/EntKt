@@ -51,6 +51,7 @@ class MutationNullabilityCompileTest {
                 import com.example.ent.*
                 import entkt.runtime.driver.NoopDriver
                 import entkt.runtime.mutation.FieldPatch
+                import entkt.runtime.privacy.Viewer
                 import entkt.runtime.privacy.ViewerContext
 
                 $body

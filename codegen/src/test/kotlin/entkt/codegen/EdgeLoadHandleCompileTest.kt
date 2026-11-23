@@ -48,6 +48,7 @@ class EdgeLoadHandleCompileTest {
 
                 import com.example.ent.CarQueryScope
                 import com.example.ent.UserQuery
+                import entkt.runtime.privacy.Viewer
                 import entkt.runtime.privacy.ViewerContext
                 import entkt.runtime.query.EdgeLoad
 
@@ -65,7 +66,7 @@ class EdgeLoadHandleCompileTest {
                     parent.limit(1)
                 }
 
-                fun fluentToMany(q: UserQuery, viewerContext: ViewerContext) {
+                fun fluentToMany(q: UserQuery, viewerContext: ViewerContext<Viewer>) {
                     // filterVisible() on a to-many edge chains the same way.
                     val parent: UserQuery = q.configure { loadCars { limit(3) }.filterVisible() }
                     parent.firstOrNull(viewerContext)

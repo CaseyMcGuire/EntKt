@@ -50,15 +50,15 @@ private const val EDGE_PREDICATE_MAX_DEPTH: Int = 32
  * edge-predicate stages with their relationship context supplied explicitly.
  */
 @EntktInternal
-class ReadQueryCompiler(
+class ReadQueryCompiler<Viewer : Any>(
     private val driver: DatabaseDriver,
-    private val registeredInterceptors: ResolvedEntInterceptorsConfig,
+    private val registeredInterceptors: ResolvedEntInterceptorsConfig<Viewer>,
 ) {
     /** Apply traversal and interceptor stages at every node in [query]. */
     fun <Entity : EntEntity<*>> compile(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         lockMode: QueryLockMode = QueryLockMode.None,
     ): StorageQuerySpec<Entity> {
         val compiledNode = compileQueryNode(query, operation, viewerContext, lockMode)
@@ -68,7 +68,7 @@ class ReadQueryCompiler(
     /** Compile one selected edge target with its relationship and traversal context. */
     internal fun <Entity : EntEntity<*>> compileSelectedEdge(
         query: EntityQuery<Entity>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
         structuralPredicates: List<Predicate<Entity>>,
         structuralSingleBindTransport: Boolean = false,
     ): StorageQuerySpec<Entity> = compileRelatedNode(
@@ -89,7 +89,7 @@ class ReadQueryCompiler(
         query: EntityQuery<Entity>,
         targetColumn: String,
         targetKeys: Collection<*>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
         structuralSingleBindTransport: Boolean = false,
     ): StorageQuerySpec<Entity> = compileSelectedEdge(
         query = query,
@@ -103,7 +103,7 @@ class ReadQueryCompiler(
     /** Compile the junction-discovery read for a selected many-to-many edge. */
     internal fun <Entity : EntEntity<*>> compileJunction(
         entity: EntityMapping<Entity>,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
         structuralPredicates: List<Predicate<Entity>>,
     ): StorageQuerySpec<Entity> = compileRelatedNode(
         entity = entity,
@@ -125,7 +125,7 @@ class ReadQueryCompiler(
         limit: Int?,
         offset: Int?,
         operation: ReadOperation,
-        context: RelationshipReadContext,
+        context: RelationshipReadContext<Viewer>,
         structuralPredicates: List<Predicate<Entity>>,
         appendPrimaryKeyOrder: Boolean,
         structuralSingleBindTransport: Boolean,
@@ -164,9 +164,9 @@ class ReadQueryCompiler(
     private fun <Entity : EntEntity<*>> compileQueryNode(
         query: EntityQuery<Entity>,
         operation: ReadOperation,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         lockMode: QueryLockMode = QueryLockMode.None,
-    ): CompiledQueryNode<Entity> {
+    ): CompiledQueryNode<Viewer, Entity> {
         val traversal = resolveTraversal(query, viewerContext)
         val context = QueryContext(
             viewerContext = viewerContext,
@@ -196,7 +196,7 @@ class ReadQueryCompiler(
     /** Resolve a chained query source into its storage bridge and interceptor context. */
     private fun <Entity : EntEntity<*>> resolveTraversal(
         query: EntityQuery<Entity>,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
     ): ResolvedTraversal<Entity>? = when (val source = query.source) {
         is QuerySource.Root -> null
         is QuerySource.Traversal<*, *> -> resolveTraversalSource(source, viewerContext)
@@ -205,7 +205,7 @@ class ReadQueryCompiler(
     @Suppress("UNCHECKED_CAST")
     private fun <Target : EntEntity<*>> resolveTraversalSource(
         source: QuerySource.Traversal<*, *>,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
     ): ResolvedTraversal<Target> {
         val typedSource = source as QuerySource.Traversal<EntEntity<*>, Target>
         val sourceNode = compileQueryNode(
@@ -262,7 +262,7 @@ class ReadQueryCompiler(
         offset: Int?,
         structuralPredicates: List<Predicate<Entity>>,
         initialAnnotations: Map<String, String>,
-        context: QueryContext,
+        context: QueryContext<Viewer>,
         structuralSingleBindTransport: Boolean = false,
     ): StorageQuerySpec<Entity> {
         val queryBuilder = QuerySpecBuilder(
@@ -300,10 +300,10 @@ class ReadQueryCompiler(
     /** Run entity interceptors first, followed by global interceptors. */
     internal fun <Entity : Any> runInterceptors(
         builder: QuerySpecBuilder<Entity>,
-        context: QueryContext,
+        context: QueryContext<Viewer>,
         entityName: String,
-        entityInterceptors: List<RegisteredInterceptor<Entity>>,
-        globalInterceptors: List<RegisteredGlobalInterceptor>,
+        entityInterceptors: List<RegisteredInterceptor<Viewer, Entity>>,
+        globalInterceptors: List<RegisteredGlobalInterceptor<Viewer>>,
     ) {
         try {
             for (registered in entityInterceptors) {
@@ -332,7 +332,7 @@ class ReadQueryCompiler(
     private fun <Entity : EntEntity<*>> applyEdgePredicateInterceptors(
         entity: EntityMapping<Entity>,
         query: StorageQuerySpec<Entity>,
-        context: QueryContext,
+        context: QueryContext<Viewer>,
     ): StorageQuerySpec<Entity> {
         val edgeAnnotations = linkedMapOf<String, String>()
         val structuralRange = query.callerPredicateCount until
@@ -358,7 +358,7 @@ class ReadQueryCompiler(
     private fun <Source : EntEntity<*>> applyEdgePredicateInterceptors(
         entity: EntityMapping<Source>,
         predicate: Predicate<Source>,
-        context: QueryContext,
+        context: QueryContext<Viewer>,
         edgeAnnotations: MutableMap<String, String>,
     ): Predicate<Source> = when (predicate) {
         is Predicate.And -> Predicate.And(
@@ -392,7 +392,7 @@ class ReadQueryCompiler(
     private fun <Source : EntEntity<*>> evaluateEdgePredicate(
         entity: EntityMapping<Source>,
         predicate: Predicate.HasEdgeWith<Source, *>,
-        context: QueryContext,
+        context: QueryContext<Viewer>,
         edgeAnnotations: MutableMap<String, String>,
     ): Predicate<Source> {
         val edge = entity.edgeByStorageName(predicate.edge)
@@ -414,7 +414,7 @@ class ReadQueryCompiler(
     private fun <Source : EntEntity<*>> evaluateEdgePredicate(
         entity: EntityMapping<Source>,
         predicate: Predicate.HasEdge<Source>,
-        context: QueryContext,
+        context: QueryContext<Viewer>,
         edgeAnnotations: MutableMap<String, String>,
     ): Predicate<Source> {
         val edge = entity.edgeByStorageName(predicate.edge)
@@ -433,7 +433,7 @@ class ReadQueryCompiler(
     private fun <Source : EntEntity<*>, Target : EntEntity<*>> compileEdgePredicateTarget(
         edge: EdgeMapping<Source, Target>,
         predicates: List<Predicate<Target>>,
-        parentContext: QueryContext,
+        parentContext: QueryContext<Viewer>,
     ): StorageQuerySpec<Target> {
         check(parentContext.path.size < EDGE_PREDICATE_MAX_DEPTH) {
             edgePredicateDepthMessage(parentContext.path)
@@ -484,8 +484,8 @@ class ReadQueryCompiler(
         val path: List<EdgeStep>,
     )
 
-    private data class CompiledQueryNode<Entity : EntEntity<*>>(
+    private data class CompiledQueryNode<Viewer : Any, Entity : EntEntity<*>>(
         val query: StorageQuerySpec<Entity>,
-        val context: QueryContext,
+        val context: QueryContext<Viewer>,
     )
 }

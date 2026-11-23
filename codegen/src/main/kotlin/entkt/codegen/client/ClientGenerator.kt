@@ -32,10 +32,12 @@ import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.ENTITY_SCHEMA
+import entkt.codegen.metadata.VIEWER
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
-private val MUTATION_RUNTIME = ClassName("entkt.runtime.mutation.execution", "MutationRuntime")
+private val MUTATION_RUNTIME =
+    ClassName("entkt.runtime.mutation.execution", "MutationRuntime").parameterizedBy(VIEWER)
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
 private val TRANSACTION_REQUIREMENT = ClassName("entkt.runtime.mutation", "TransactionRequirement")
 private val TRANSACTION_REQUIRED_EXCEPTION = ClassName("entkt.runtime.mutation", "TransactionRequiredException")
@@ -46,7 +48,7 @@ private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "Tra
 private val TRANSACTION_EXECUTION_GUARD_FOR_INTERNAL_USE =
     MemberName("entkt.runtime.result", "transactionExecutionGuardForInternalUse")
 private val RESOLVED_ENT_INTERCEPTORS_CONFIG =
-    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig")
+    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig").parameterizedBy(VIEWER)
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo together,
@@ -98,7 +100,7 @@ internal class ClientGenerator(
         // EntInterceptorsConfig must add its own
         // `@OptIn(EntktInternal::class)` and own the consequences
         // (untyped scope-key-keyed registration can pair a
-        // QueryInterceptor<E> with the wrong scope).
+        // QueryInterceptor<Viewer, E> with the wrong scope).
         val hooksType = buildHooksClass(hooksClass, schemas)
         val resolvedHooksType = buildResolvedHooksClass(resolvedHooksClass, hooksClass, schemas)
 
@@ -238,7 +240,7 @@ internal class ClientGenerator(
                 //
                 // Marked `@EntktInternal` so same-module application
                 // code can't reach the raw EntInterceptorsConfig and
-                // call `addEntity(scopeKey: String, ..., QueryInterceptor<E>)`
+                // call `addEntity(scopeKey: String, ..., QueryInterceptor<Viewer, E>)`
                 // with an arbitrary E — `entityInterceptorsFor<E>(scopeKey)`
                 // does an unchecked cast keyed on the scopeKey string,
                 // so a wrong-entity QueryInterceptor would silently
@@ -699,9 +701,11 @@ internal class ClientGenerator(
         interceptorsClass: ClassName,
         schemas: List<SchemaInput>,
     ): TypeSpec {
-        val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
+        val ENT_INTERCEPTORS_CONFIG =
+            ClassName("entkt.runtime.query", "EntInterceptorsConfig").parameterizedBy(VIEWER)
         val QUERY_INTERCEPTOR = ClassName("entkt.runtime.query", "QueryInterceptor")
-        val GLOBAL_QUERY_INTERCEPTOR = ClassName("entkt.runtime.query", "GlobalQueryInterceptor")
+        val GLOBAL_QUERY_INTERCEPTOR =
+            ClassName("entkt.runtime.query", "GlobalQueryInterceptor").parameterizedBy(VIEWER)
 
         return classType(interceptorsClass) {
             addAnnotation(annotation(ENTKT_DSL))
@@ -709,7 +713,7 @@ internal class ClientGenerator(
             // the per-entity and global interceptor lists. Marked
             // `@EntktInternal internal` so application code in the
             // `interceptors { ... }` block can't reach it as
-            // `config.addEntity("posts", ..., QueryInterceptor<User> { ... })`
+            // `config.addEntity("posts", ..., QueryInterceptor<Viewer, User> { ... })`
             // and bypass the typed DSL — `addEntity` itself is also
             // `@EntktInternal` (defense in depth). The typed helper
             // methods below (`posts(...)`, `users(...)`, `global(...)`)
@@ -726,7 +730,7 @@ internal class ClientGenerator(
         for (input in schemas) {
             val entityClass = ClassName(packageName, input.name)
             val propName = input.clientName
-            val interceptorType = QUERY_INTERCEPTOR.parameterizedBy(entityClass)
+            val interceptorType = QUERY_INTERCEPTOR.parameterizedBy(VIEWER, entityClass)
             function(propName) {
                 parameter("interceptor", interceptorType)
                 parameter("name", String::class.asClassName())

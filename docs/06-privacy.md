@@ -89,11 +89,16 @@ long-lived client can safely execute operations for different viewers,
 including concurrently when each operation uses its own builder.
 
 ```kotlin
-sealed interface ViewerContext {
-    data class AsViewer(val viewer: Viewer) : ViewerContext
-    class PrivacyBypass(val reason: String) : ViewerContext  // built by privacyBypass_DANGEROUS
+sealed interface ViewerContext<out Viewer : Any> {
+    data class AsViewer<out Viewer : Any>(val viewer: Viewer) : ViewerContext<Viewer>
+    class PrivacyBypass(val reason: String) : ViewerContext<Nothing>  // built by privacyBypass_DANGEROUS
 }
 ```
+
+The type parameter is the kind of viewer an operation runs as. Generated code
+binds it to the runtime's `Viewer`, so generated terminals take
+`ViewerContext<Viewer>`. A `PrivacyBypass` is a `ViewerContext<Nothing>`, which
+every terminal accepts.
 
 Privacy rules never run for a bypass, so `PrivacyRuleContext.viewerContext` is
 always an `AsViewer`, and `context.viewer` is its viewer. Hooks and query
@@ -125,25 +130,29 @@ order.
 
 `Client` must implement the runtime `EntRuleClient` marker. Generated `ReadOnlyEntClient`
 already does, so rule contexts retain their schema-specific read APIs.
+`Viewer` is the viewer type the operation runs as. Generated rule aliases such
+as `UserLoadPrivacyRule` bind both, so policies normally use the alias names.
 
 ```kotlin
 import entkt.runtime.rule.EntRuleClient
 
-class PrivacyRuleContext<out Client : EntRuleClient>(
-    val viewerContext: ViewerContext,
+class PrivacyRuleContext<out Viewer : Any, out Client : EntRuleClient>(
+    val viewerContext: ViewerContext.AsViewer<Viewer>,
     val client: Client,
-)
+) {
+    val viewer: Viewer
+}
 
-fun interface PrivacyRule<in Client : EntRuleClient, in Item> :
-    BatchPrivacyRule<Client, Item> {
+fun interface PrivacyRule<in Viewer : Any, in Client : EntRuleClient, in Item> :
+    BatchPrivacyRule<Viewer, Client, Item> {
 
     fun run(
-        context: PrivacyRuleContext<Client>,
+        context: PrivacyRuleContext<Viewer, Client>,
         item: Item,
     ): PrivacyDecision
 
     override fun runBatch(
-        context: PrivacyRuleContext<Client>,
+        context: PrivacyRuleContext<Viewer, Client>,
         batch: RuleBatch<Item>,
     ): RuleDecisions<PrivacyDecision> =
         batch.decideEach { run(context, it) }
@@ -156,20 +165,20 @@ is used by scalar and batch rules.
 
 ### ContextPrivacyRule
 
-Use `ContextPrivacyRule<Client>` when a rule depends on the viewer or read client,
+Use `ContextPrivacyRule<Viewer, Client>` when a rule depends on the viewer or read client,
 but not on an entity, candidate, or mutation input. A single rule can be registered
 for multiple entities and operations without an `Item` generic or an unused parameter:
 
 ```kotlin
-fun interface ContextPrivacyRule<in Client : EntRuleClient> : PrivacyRule<Client, Any?> {
-    fun run(context: PrivacyRuleContext<Client>): PrivacyDecision
+fun interface ContextPrivacyRule<in Viewer : Any, in Client : EntRuleClient> : PrivacyRule<Viewer, Client, Any?> {
+    fun run(context: PrivacyRuleContext<Viewer, Client>): PrivacyDecision
 
-    override fun run(context: PrivacyRuleContext<Client>, item: Any?): PrivacyDecision =
+    override fun run(context: PrivacyRuleContext<Viewer, Client>, item: Any?): PrivacyDecision =
         run(context)
 }
 
-class RequireAuthenticated : ContextPrivacyRule<ReadOnlyEntClient> {
-    override fun run(context: PrivacyRuleContext<ReadOnlyEntClient>): PrivacyDecision =
+class RequireAuthenticated : ContextPrivacyRule<Viewer, ReadOnlyEntClient> {
+    override fun run(context: PrivacyRuleContext<Viewer, ReadOnlyEntClient>): PrivacyDecision =
         if (context.viewerContext.viewer is Viewer.Anonymous) {
             PrivacyDecision.Deny("Authentication required")
         } else {
@@ -217,19 +226,19 @@ import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.rule.RuleBatch
 import entkt.runtime.rule.RuleDecisions
 
-interface BatchPrivacyRule<in Client : EntRuleClient, in Item> {
+interface BatchPrivacyRule<in Viewer : Any, in Client : EntRuleClient, in Item> {
     fun runBatch(
-        context: PrivacyRuleContext<Client>,
+        context: PrivacyRuleContext<Viewer, Client>,
         batch: RuleBatch<Item>,
     ): RuleDecisions<PrivacyDecision>
 }
 
-fun <Client : EntRuleClient, Item> batchPrivacyRule(
+fun <Viewer : Any, Client : EntRuleClient, Item> batchPrivacyRule(
     block: (
-        context: PrivacyRuleContext<Client>,
+        context: PrivacyRuleContext<Viewer, Client>,
         batch: RuleBatch<Item>,
     ) -> RuleDecisions<PrivacyDecision>,
-): BatchPrivacyRule<Client, Item>
+): BatchPrivacyRule<Viewer, Client, Item>
 
 val allowReadablePosts: PostLoadBatchPrivacyRule =
     batchPrivacyRule { context, batch ->
@@ -437,7 +446,7 @@ Each entity's `privacy { }` block exposes four methods matching the
 four operations: `load()`, `create()`, `update()`, `delete()`. Each accepts a
 vararg of context-only, scalar, and/or batch rules in any combination. Java uses
 the same methods; no separate context-only registration is needed. In Java,
-assign a context-only lambda to a `ContextPrivacyRule<Client>` variable before
+assign a context-only lambda to a `ContextPrivacyRule<Viewer, Client>` variable before
 passing it to a registration method.
 
 ## Evaluation Semantics
@@ -615,8 +624,8 @@ LOAD receives entities and CREATE receives prepared write candidates directly.
 ### LOAD: the entity itself
 
 ```kotlin
-typealias UserLoadPrivacyRule = PrivacyRule<ReadOnlyEntClient, User>
-typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, User>
+typealias UserLoadPrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, User>
+typealias UserLoadBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, User>
 ```
 
 Scalar LOAD rules take `(context, user)`; batch rules take `(context, batch)`
@@ -637,8 +646,8 @@ its separate boundary for detaching caller-owned mutable values.
 ### CREATE: the write candidate itself
 
 ```kotlin
-typealias UserCreatePrivacyRule = PrivacyRule<ReadOnlyEntClient, UserWriteCandidate>
-typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<ReadOnlyEntClient, UserWriteCandidate>
+typealias UserCreatePrivacyRule = PrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate>
+typealias UserCreateBatchPrivacyRule = BatchPrivacyRule<Viewer, ReadOnlyEntClient, UserWriteCandidate>
 ```
 
 Scalar CREATE rules take `(context, candidate)`; batch rules receive
@@ -1028,8 +1037,8 @@ For each schema with a policy, entkt provides:
 | Public type | Purpose |
 |-------------|---------|
 | `{Entity}WriteCandidate` | Shared writable-field values; direct input for CREATE privacy and validation rules |
-| `PrivacyRuleContext<Client>` | Shared supplied `viewerContext` and stable privacy read client |
-| `ContextPrivacyRule<Client>` | Reusable runtime rule that only receives the shared context, with no item type |
+| `PrivacyRuleContext<Viewer, Client>` | Shared supplied `viewerContext` and stable privacy read client |
+| `ContextPrivacyRule<Viewer, Client>` | Reusable runtime rule that only receives the shared context, with no item type |
 | `{Entity}` | Direct input for scalar LOAD rules and each item in batch LOAD rules |
 | `{Entity}UpdateRuleInput` | Shared per-entity input for UPDATE privacy and validation rules |
 | `{Entity}DeleteRuleInput` | Shared per-entity input for DELETE privacy and validation rules |

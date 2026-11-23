@@ -17,6 +17,7 @@ import com.squareup.kotlinpoet.asClassName
 import entkt.codegen.columnName
 import entkt.codegen.metadata.EdgeFk
 import entkt.codegen.metadata.HelperEligibleM2M
+import entkt.codegen.metadata.VIEWER
 import entkt.codegen.metadata.VIEWER_CONTEXT
 import entkt.codegen.metadata.computeEdgeFks
 import entkt.codegen.metadata.helperEligibleM2MEdges
@@ -177,6 +178,7 @@ internal class UpdateGenerator(
             }
             addSuperinterface(
                 UPDATE_MUTATION_HOOK_STATE_CONVERTER.parameterizedBy(
+                    VIEWER,
                     draftClass,
                     entityClass,
                     pendingEdgeOpsClass,

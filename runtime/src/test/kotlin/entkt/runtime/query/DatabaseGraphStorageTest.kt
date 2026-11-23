@@ -315,8 +315,8 @@ class DatabaseGraphStorageTest {
                 ),
             ),
         )
-        val contexts = mutableListOf<QueryContext>()
-        val interceptors = EntInterceptorsConfig().apply {
+        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val interceptors = EntInterceptorsConfig<Viewer>().apply {
             addEntity<Parent>("parents", "only-two") { scope, context ->
                 contexts += context
                 scope.addPredicate(Predicate.Leaf("id", Op.EQ, 2L))
@@ -348,8 +348,8 @@ class DatabaseGraphStorageTest {
                 ),
             ),
         )
-        val contexts = mutableListOf<QueryContext>()
-        val interceptors = EntInterceptorsConfig().apply {
+        val contexts = mutableListOf<QueryContext<Viewer>>()
+        val interceptors = EntInterceptorsConfig<Viewer>().apply {
             addEntity<Child>("children", "record") { _, context -> contexts += context }
         }
         val relationship = storage(driver, interceptors).loadRelationship(
@@ -489,8 +489,8 @@ class DatabaseGraphStorageTest {
 
     private fun storage(
         driver: DatabaseDriver,
-        interceptors: EntInterceptorsConfig = EntInterceptorsConfig(),
-    ): DatabaseGraphStorage = DatabaseGraphStorage(
+        interceptors: EntInterceptorsConfig<Viewer> = EntInterceptorsConfig<Viewer>(),
+    ): DatabaseGraphStorage<Viewer> = DatabaseGraphStorage(
         driver = driver,
         queryCompiler = ReadQueryCompiler(
             driver = driver,
@@ -498,7 +498,7 @@ class DatabaseGraphStorageTest {
         ),
     )
 
-    private fun relationshipContext(step: EdgeStep): RelationshipReadContext =
+    private fun relationshipContext(step: EdgeStep): RelationshipReadContext<Viewer> =
         RelationshipReadContext(
             viewerContext = viewerContext,
             rootEntity = Parent::class,

@@ -17,6 +17,7 @@ import entkt.codegen.kotlinpoet.interfaceType
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.property
+import entkt.codegen.metadata.VIEWER
 import entkt.codegen.metadata.VIEWER_CONTEXT
 
 private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
@@ -25,7 +26,7 @@ private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val ENT_ENTITY = ClassName("entkt.runtime.entity", "EntEntity")
 private val ENTITY_MAPPING = ClassName("entkt.runtime.entity", "EntityMapping")
 private val READ_QUERY_EXECUTION_HOST =
-    ClassName("entkt.runtime.query.execution", "ReadQueryExecutionHost")
+    ClassName("entkt.runtime.query.execution", "ReadQueryExecutionHost").parameterizedBy(VIEWER)
 
 /**
  * Emits the generated read-runtime contract: `EntReadRuntime` plus one

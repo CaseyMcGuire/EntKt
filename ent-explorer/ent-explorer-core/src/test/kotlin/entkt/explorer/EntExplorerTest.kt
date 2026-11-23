@@ -3,6 +3,7 @@ package entkt.explorer
 import entkt.runtime.driver.ColumnMetadata
 import entkt.runtime.driver.EntitySchema
 import entkt.runtime.driver.IdStrategy
+import entkt.runtime.privacy.Viewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.schema.FieldType
 import kotlin.test.Test
@@ -30,7 +31,7 @@ class EntExplorerTest {
         comment: String? = null,
     ) : EntExplorerEntity<FakeClient> {
         var lastListRequest: EntExplorerListRequest? = null
-        var lastViewerContext: ViewerContext? = null
+        var lastViewerContext: ViewerContext<Viewer>? = null
         var listResult: List<EntExplorerRow> = emptyList()
 
         override val schema = EntitySchema(
@@ -68,7 +69,7 @@ class EntExplorerTest {
 
         override fun list(
             client: FakeClient,
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             request: EntExplorerListRequest,
         ): EntExplorerListResult {
             lastViewerContext = viewerContext
@@ -83,7 +84,7 @@ class EntExplorerTest {
 
         override fun get(
             client: FakeClient,
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             id: String,
         ): EntExplorerRow? {
             lastViewerContext = viewerContext
@@ -384,7 +385,7 @@ class EntExplorerReviewContractTest {
 
         override fun list(
             client: FakeClient,
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             request: EntExplorerListRequest,
         ): EntExplorerListResult {
             throwOnList?.let { throw it }
@@ -393,7 +394,7 @@ class EntExplorerReviewContractTest {
 
         override fun get(
             client: FakeClient,
-            viewerContext: ViewerContext,
+            viewerContext: ViewerContext<Viewer>,
             id: String,
         ): EntExplorerRow? {
             gotIds.add(id)

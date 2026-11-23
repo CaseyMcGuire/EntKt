@@ -40,6 +40,7 @@ import java.util.concurrent.CancellationException
  */
 @EntktInternal
 class CreateManyMutationOperation<
+    Viewer : Any,
     RuleClient : EntRuleClient,
     Draft : CreateMutationDraft<Entity>,
     Candidate : WriteCandidate<Entity>,
@@ -47,20 +48,20 @@ class CreateManyMutationOperation<
     BeforeSaveState : BeforeSaveHookState<Entity>,
     BeforeCreateState : BeforeCreateHookState<Entity>,
     >(
-    private val mutationRuntime: MutationRuntime,
+    private val mutationRuntime: MutationRuntime<Viewer>,
     private val entity: EntityMapping<Entity>,
     private val converter: CreateMutationConverter<Draft, Candidate, Entity, BeforeCreateState>,
-    private val privacyEvaluator: CreatePrivacyEvaluator<RuleClient, Candidate>,
+    private val privacyEvaluator: CreatePrivacyEvaluator<Viewer, RuleClient, Candidate>,
     private val validationEvaluator: ValidationEvaluator<RuleClient, Candidate>,
     private val hookStateConverter:
-        CreateMutationHookStateConverter<Draft, Entity, BeforeSaveState, BeforeCreateState>,
+        CreateMutationHookStateConverter<Viewer, Draft, Entity, BeforeSaveState, BeforeCreateState>,
     private val beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
     private val beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
     private val afterCreate: List<BatchActionHook<Entity>>,
-) : MutationOperation<RuleClient, CreateManyMutationInput<Draft>, List<Entity>> {
+) : MutationOperation<RuleClient, CreateManyMutationInput<Viewer, Draft>, List<Entity>> {
     internal val entityName: String get() = entity.entityName
 
-    override fun requirements(input: CreateManyMutationInput<Draft>): MutationRequirements =
+    override fun requirements(input: CreateManyMutationInput<Viewer, Draft>): MutationRequirements =
         MutationRequirements(
             operationName = "${entity.entityName} createMany",
             multiWrite = input.blocks.size > 1,
@@ -70,7 +71,7 @@ class CreateManyMutationOperation<
     override fun run(
         execution: MutationExecution,
         ruleClient: RuleClient,
-        input: CreateManyMutationInput<Draft>,
+        input: CreateManyMutationInput<Viewer, Draft>,
     ): MutationCompletion<List<Entity>> {
         if (input.blocks.isEmpty()) return MutationCompletion.Ready(emptyList())
         val drafts = input.blocks.map { block -> input.newDraft().apply(block) }
@@ -88,7 +89,7 @@ class CreateManyMutationOperation<
     internal fun createBatch(
         execution: MutationExecution,
         ruleClient: RuleClient,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         drafts: List<Draft>,
         persistence: CreatePersistence,
         checkReturnedEntityPrivacy: Boolean,
@@ -112,7 +113,7 @@ class CreateManyMutationOperation<
     private fun runCreateLifecycle(
         attempt: MutationExecution,
         ruleClient: RuleClient,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         drafts: List<Draft>,
         persistence: CreatePersistence,
         promoteDriverNotPersisted: Boolean,
@@ -219,7 +220,7 @@ class CreateManyMutationOperation<
         attempt: MutationExecution,
         entityName: String,
         prepared: List<PreparedCreate<Candidate>>,
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         ruleClient: RuleClient,
     ) {
         val candidates = prepared.map { create -> create.candidate }
@@ -325,7 +326,7 @@ class CreateManyMutationOperation<
 
     /** Evaluate only returned LOAD privacy; lifecycle failures must still reject execution. */
     private fun evaluateReturnedEntityPrivacy(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         created: List<Entity>,
         entity: EntityMapping<Entity>,
     ): MutationCompletion<List<Entity>> = try {
@@ -343,7 +344,7 @@ class CreateManyMutationOperation<
 
     /** Return the first LOAD denial without assigning a mutation write state. */
     private fun returnedEntityDenial(
-        viewerContext: ViewerContext,
+        viewerContext: ViewerContext<Viewer>,
         created: List<Entity>,
         entity: EntityMapping<Entity>,
     ): PrivacyDenial? {

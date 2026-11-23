@@ -70,7 +70,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
         assertIs<TransactionRequiredException>(assertIs<ReadCollectionResult.Failed>(rootLock.all(testViewerContext)).exception)
         assertTrue(recording.calls.isEmpty())
 
-        var escaped: ForUpdateQuery<User>? = null
+        var escaped: ForUpdateQuery<Viewer, User>? = null
         client.withTransaction { tx ->
             assertIs<RootOperationInsideTransactionException>(
                 assertIs<ReadCollectionResult.Failed>(rootLock.all(testViewerContext)).exception,
@@ -312,7 +312,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
         val setup = EntClient(driver)
         val selected = user(setup, "A")
         val excluded = user(setup, "B")
-        val contexts = mutableListOf<QueryContext>()
+        val contexts = mutableListOf<QueryContext<Viewer>>()
         val client = EntClient(driver) {
             interceptors {
                 users(QueryInterceptor { scope, context ->
@@ -339,7 +339,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
         val otherAuthor = user(setup, "B")
         val selected = article(setup, author)
         val excluded = article(setup, otherAuthor)
-        val contexts = mutableListOf<QueryContext>()
+        val contexts = mutableListOf<QueryContext<Viewer>>()
         val client = EntClient(driver) {
             interceptors { global(GlobalQueryInterceptor { _, context -> contexts += context }, name = "trace") }
         }
@@ -368,7 +368,7 @@ class ForUpdateQueryIntegrationTest : PostgresTestBase() {
             groupId = group.id
             role = "member"
         }.saveAndLoad(testViewerContext).getOrThrow()
-        val contexts = mutableListOf<QueryContext>()
+        val contexts = mutableListOf<QueryContext<Viewer>>()
         val client = EntClient(driver) {
             interceptors { global(GlobalQueryInterceptor { _, context -> contexts += context }, name = "trace") }
         }

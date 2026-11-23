@@ -14,12 +14,12 @@ import entkt.runtime.rule.EntRuleClient
  * evaluates the rule or captures a viewer/client; each invocation receives the
  * current phase's [PrivacyRuleContext].
  */
-fun interface ContextPrivacyRule<in Client : EntRuleClient> : PrivacyRule<Client, Any?> {
+fun interface ContextPrivacyRule<in Viewer : Any, in Client : EntRuleClient> : PrivacyRule<Viewer, Client, Any?> {
     @JvmSuppressWildcards
-    fun run(context: PrivacyRuleContext<Client>): PrivacyDecision
+    fun run(context: PrivacyRuleContext<Viewer, Client>): PrivacyDecision
 
     /** Ignore the item and reuse the ordinary scalar rule's ordered batch evaluation. */
     @JvmSuppressWildcards
-    override fun run(context: PrivacyRuleContext<Client>, item: Any?): PrivacyDecision =
+    override fun run(context: PrivacyRuleContext<Viewer, Client>, item: Any?): PrivacyDecision =
         run(context)
 }
