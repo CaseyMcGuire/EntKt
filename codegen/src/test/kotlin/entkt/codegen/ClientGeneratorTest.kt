@@ -183,8 +183,10 @@ class ClientGeneratorTest {
     fun `EntClientConfig resolves every mutable configuration registry`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("hooks = ResolvedEntClientHooks(hooksConfig)"))
-        assert(output.contains("source.cars.resolveForInternalUse()"))
+        assert(output.contains("hooks = hooksConfig.deepCopy()"))
+        assert(output.contains("cars = source.cars.deepCopy()"))
+        assert(output.contains("internal fun deepCopy(): EntClientHooks = EntClientHooks(this)"))
+        assert(!output.contains("ResolvedEntClientHooks"))
         assert(output.contains("policies = policiesConfig.deepCopy()"))
         assert(output.contains("usersPrivacyConfig = source.usersPrivacyConfig.deepCopy()"))
         assert(output.contains("usersValidationConfig = source.usersValidationConfig.deepCopy()"))
@@ -210,7 +212,6 @@ class ClientGeneratorTest {
         assertEquals(
             setOf(
                 "EntClientHooks",
-                "ResolvedEntClientHooks",
                 "EntClientPolicies",
                 "EntClientInterceptors",
                 "EntClientConfig",
@@ -348,14 +349,7 @@ class ClientGeneratorTest {
         assert(output.contains("EntityHooks<CarBeforeSaveState, CarBeforeCreateState, CarBeforeUpdateState, Car>"))
         assert(output.contains("EntityHooks<UserBeforeSaveState, UserBeforeCreateState, UserBeforeUpdateState, User>"))
         assert(!output.contains("class CarHooks") && !output.contains("class UserHooks"))
-    }
-
-    @Test
-    fun `resolved entity hooks preserve all schema-specific hook types`() {
-        val schemas = buildSchemas()
-        val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
-
-        assert(output.contains("ResolvedEntityHooks<CarBeforeSaveState, CarBeforeCreateState, CarBeforeUpdateState, Car>"))
+        assert(!output.contains("ResolvedEntityHooks"))
         assert(!output.contains("beforeCreateHooks") && !output.contains("beforeCreateBatchHook"))
     }
 

@@ -287,7 +287,7 @@ class RepoGeneratorTest {
 
         assert(
             output.contains(
-                "adapter = UserUpdateAdapter(driver, client.hookClientScopeForInternalUse), beforeSave = configuredHooks.beforeSave, beforeUpdate = configuredHooks.beforeUpdate, afterUpdate = configuredHooks.afterUpdate,",
+                "adapter = UserUpdateAdapter(driver, client.hookClientScopeForInternalUse), beforeSave = configuredHooks.beforeSave.hooks, beforeUpdate = configuredHooks.beforeUpdate.hooks, afterUpdate = configuredHooks.afterUpdate.hooks,",
             ),
         ) {
             "The repository should supply one combined adapter and hook lists to the runtime factory\n$output"
@@ -334,19 +334,19 @@ class RepoGeneratorTest {
     }
 
     @Test
-    fun `repo uses resolved hooks directly during construction`() {
+    fun `repo reads the configured hooks directly during construction`() {
         val car = Car()
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("configuredHooks: ResolvedEntityHooks<CarBeforeSaveState, CarBeforeCreateState, CarBeforeUpdateState, Car>")) {
-            "The constructor should receive resolved entity hooks\n$output"
+        assert(output.contains("configuredHooks: EntityHooks<CarBeforeSaveState, CarBeforeCreateState, CarBeforeUpdateState, Car>")) {
+            "The constructor should receive the entity's hooks\n$output"
         }
-        assert(output.contains("beforeSave = configuredHooks.beforeSave")) {
-            "Should use the resolved beforeSave hooks directly\n$output"
+        assert(output.contains("beforeSave = configuredHooks.beforeSave.hooks,")) {
+            "Should use the configured beforeSave hooks directly\n$output"
         }
-        assert(output.contains("afterDelete = configuredHooks.afterDelete")) {
-            "Should use the resolved afterDelete hooks directly\n$output"
+        assert(output.contains("afterDelete = configuredHooks.afterDelete.hooks,")) {
+            "Should use the configured afterDelete hooks directly\n$output"
         }
         assert(!output.contains("private val beforeSaveHooks") && !output.contains("private val afterDeleteHooks"))
         assert(!output.contains("HookRunner")) {
@@ -420,8 +420,8 @@ class RepoGeneratorTest {
         val bulkBinding = output.substringAfter("deleteManyOperation =")
             .substringBefore("defaultUpdateConsistency =")
         for (binding in listOf(scalarBinding, bulkBinding)) {
-            assert(binding.contains("beforeDelete = configuredHooks.beforeDelete"))
-            assert(binding.contains("afterDelete = configuredHooks.afterDelete"))
+            assert(binding.contains("beforeDelete = configuredHooks.beforeDelete.hooks,"))
+            assert(binding.contains("afterDelete = configuredHooks.afterDelete.hooks,"))
         }
         assert(!scalarBinding.contains("readQueryExecutor")) {
             "Scalar DELETE must not carry an unused query executor\n$output"

@@ -15,16 +15,20 @@ public class EntityHooks<BeforeSave, BeforeCreate, BeforeUpdate, Entity> {
     public val beforeDelete: ActionHookRegistry<Entity> = ActionHookRegistry()
     public val afterDelete: ActionHookRegistry<Entity> = ActionHookRegistry()
 
-    /** Resolve this mutable construction value into a detached immutable value. */
+    /**
+     * Copy every registry into a new set of hooks.
+     * Later registrations on this one do not reach the copy. The hooks themselves are shared.
+     */
     @EntktInternal
-    public fun resolveForInternalUse(): ResolvedEntityHooks<BeforeSave, BeforeCreate, BeforeUpdate, Entity> =
-        ResolvedEntityHooks(
-            beforeSave = beforeSave.snapshotForInternalUse(),
-            beforeCreate = beforeCreate.snapshotForInternalUse(),
-            afterCreate = afterCreate.snapshotForInternalUse(),
-            beforeUpdate = beforeUpdate.snapshotForInternalUse(),
-            afterUpdate = afterUpdate.snapshotForInternalUse(),
-            beforeDelete = beforeDelete.snapshotForInternalUse(),
-            afterDelete = afterDelete.snapshotForInternalUse(),
-        )
+    public fun deepCopy(): EntityHooks<BeforeSave, BeforeCreate, BeforeUpdate, Entity> {
+        val copy = EntityHooks<BeforeSave, BeforeCreate, BeforeUpdate, Entity>()
+        copy.beforeSave.addAll(beforeSave)
+        copy.beforeCreate.addAll(beforeCreate)
+        copy.afterCreate.addAll(afterCreate)
+        copy.beforeUpdate.addAll(beforeUpdate)
+        copy.afterUpdate.addAll(afterUpdate)
+        copy.beforeDelete.addAll(beforeDelete)
+        copy.afterDelete.addAll(afterDelete)
+        return copy
+    }
 }

@@ -1102,7 +1102,10 @@ class EdgeCodegenTest {
         }
         assert(!converter.contains("toPreparationDraft") && !converter.contains("PetCreateDraft()"))
         assert(!output.contains("::requiredInputViolations") && !output.contains("::resolve") && !output.contains("fun resolve("))
-        assert(output.contains("beforeSave = configuredHooks.beforeSave") && output.contains("beforeCreate = configuredHooks.beforeCreate"))
+        assert(
+            output.contains("beforeSave = configuredHooks.beforeSave.hooks,") &&
+                output.contains("beforeCreate = configuredHooks.beforeCreate.hooks,"),
+        )
         assert(output.contains("createOperations = buildCreateOperations(")) {
             "the runtime factory should construct the operation with its evaluators\n$output"
         }

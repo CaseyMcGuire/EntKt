@@ -29,6 +29,19 @@ above it.
 
 ## Unreleased
 
+- **Copy hook configuration instead of resolving it into a second type** (`runtime`, `codegen`)
+  `ResolvedEntityHooks` and the generated `ResolvedEntClientHooks` are removed.
+  `EntityHooks` has `deepCopy()` in place of `resolveForInternalUse()`, and
+  generated repository constructors take an `EntityHooks`. The hook registries
+  expose their hooks through an internal `hooks` property in place of
+  `snapshotForInternalUse()`, which returned an unmodifiable copy. A client
+  still copies its hook configuration when it is constructed, so a hooks scope
+  kept by the application cannot change a client that already exists.
+  _Migration:_ regenerate entity code. Handwritten internal wiring should pass
+  an `EntityHooks` where it passed a `ResolvedEntityHooks`, call `deepCopy()`
+  instead of `resolveForInternalUse()`, and read `registry.hooks` instead of
+  `registry.snapshotForInternalUse()`.
+
 - **Copy policy configuration instead of resolving it into a second type** (`runtime`, `codegen`)
   `ResolvedEntityPrivacyConfig`, `ResolvedEntityValidationConfig`, and the
   generated `ResolvedEntClientPolicies` are removed. `EntityPrivacyConfig` and

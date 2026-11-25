@@ -90,7 +90,6 @@ internal class ClientGenerator(
         val newHookClientScope = MemberName(packageName, "newEntHookClientScopeForInternalUse")
         val configClass = ClassName(packageName, "EntClientConfig")
         val hooksClass = ClassName(packageName, "EntClientHooks")
-        val resolvedHooksClass = ClassName(packageName, "ResolvedEntClientHooks")
         val resolvedConfigClass = ClassName(packageName, "ResolvedEntClientConfig")
         val t = TypeVariableName("T")
 
@@ -104,7 +103,6 @@ internal class ClientGenerator(
         // (untyped scope-key-keyed registration can pair a
         // QueryInterceptor<Viewer, E> with the wrong scope).
         val hooksType = buildHooksClass(hooksClass, schemas)
-        val resolvedHooksType = buildResolvedHooksClass(resolvedHooksClass, hooksClass, schemas)
 
         // Generate EntClientPolicies
         val policiesClass = ClassName(packageName, "EntClientPolicies")
@@ -120,12 +118,11 @@ internal class ClientGenerator(
             hooksClass,
             policiesClass,
             interceptorsClass,
-            resolvedHooksClass,
             resolvedConfigClass,
         )
         val resolvedConfigType = buildResolvedConfigClass(
             resolvedConfigClass,
-            resolvedHooksClass,
+            hooksClass,
             policiesClass,
         )
 
@@ -328,7 +325,6 @@ internal class ClientGenerator(
 
         return buildList {
             add(buildClientFile(hooksType))
-            add(buildClientFile(resolvedHooksType))
             add(buildClientFile(policiesType))
             add(buildClientFile(interceptorsType))
             add(buildClientFile(configType))
@@ -371,6 +367,10 @@ internal class ClientGenerator(
         hooksClass: ClassName,
         schemas: List<SchemaInput>,
     ): TypeSpec {
+        // Every hooks property is assigned by one of two constructors: the public one
+        // starts empty, and the private one copies another instance for deepCopy().
+        val emptyHooks = CodeBlock.builder()
+        val copiedHooks = CodeBlock.builder()
         return classType(hooksClass) {
             addAnnotation(annotation(ENTKT_DSL))
             for (input in schemas) {
@@ -378,8 +378,10 @@ internal class ClientGenerator(
                 val propName = input.clientName
                 property(propName, entityHooks) {
                     addModifiers(KModifier.INTERNAL)
-                    initializer("%T()", ENTITY_HOOKS)
                 }
+                emptyHooks.addStatement("%L = %T()", propName, ENTITY_HOOKS)
+                copiedHooks.addStatement("%L = source.%L.deepCopy()", propName, propName)
+
                 function(propName) {
                     parameter(
                         "block",
@@ -388,22 +390,20 @@ internal class ClientGenerator(
                     statement("%L.apply(block)", propName)
                 }
             }
-        }
-    }
-
-    private fun buildResolvedHooksClass(
-        resolvedHooksClass: ClassName,
-        hooksClass: ClassName,
-        schemas: List<SchemaInput>,
-    ): TypeSpec = classType(resolvedHooksClass) {
-        addModifiers(KModifier.INTERNAL)
-        primaryConstructor {
-            addModifiers(KModifier.INTERNAL)
-            parameter("source", hooksClass)
-        }
-        for (input in schemas) {
-            property(input.clientName, resolvedEntityHooksType(packageName, input.name)) {
-                initializer("source.%L.resolveForInternalUse()", input.clientName)
+            addFunction(constructor { addCode(emptyHooks.build()) })
+            addFunction(
+                constructor {
+                    addModifiers(KModifier.PRIVATE)
+                    parameter("source", hooksClass)
+                    addCode(copiedHooks.build())
+                },
+            )
+            // Copies every entity's hooks, so later registrations on this instance
+            // do not reach the copy.
+            function("deepCopy", hooksClass) {
+                addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                addModifiers(KModifier.INTERNAL)
+                statement("return %T(this)", hooksClass)
             }
         }
     }
@@ -413,7 +413,6 @@ internal class ClientGenerator(
         hooksClass: ClassName,
         policiesClass: ClassName,
         interceptorsClass: ClassName,
-        resolvedHooksClass: ClassName,
         resolvedConfigClass: ClassName,
     ): TypeSpec {
         val hooksBlockLambda = LambdaTypeName.get(
@@ -475,19 +474,13 @@ internal class ClientGenerator(
                 parameter("block", interceptorsBlockLambda)
                 statement("interceptorsConfig.apply(block)")
             }
-            addFunction(
-                buildConfigResolution(
-                    resolvedConfigClass,
-                    resolvedHooksClass,
-                ),
-            )
+            addFunction(buildConfigResolution(resolvedConfigClass))
         }
     }
 
     /** Resolve the mutable construction DSL into the value shared by every client scope. */
     private fun buildConfigResolution(
         resolvedConfigClass: ClassName,
-        resolvedHooksClass: ClassName,
     ): FunSpec = function("resolveForInternalUse", resolvedConfigClass) {
         addAnnotation(ClassName("entkt.query", "EntktInternal"))
         addModifiers(KModifier.INTERNAL)
@@ -496,18 +489,17 @@ internal class ClientGenerator(
                 "  transactionRequirement = transactionRequirement,\n" +
                 "  defaultUpdateConsistency = defaultUpdateConsistency,\n" +
                 "  defaultRelationshipLocking = defaultRelationshipLocking,\n" +
-                "  hooks = %T(hooksConfig),\n" +
+                "  hooks = hooksConfig.deepCopy(),\n" +
                 "  policies = policiesConfig.deepCopy(),\n" +
                 "  interceptors = interceptorsConfig.config.resolveForInternalUse(),\n" +
                 ")",
             resolvedConfigClass,
-            resolvedHooksClass,
         )
     }
 
     private fun buildResolvedConfigClass(
         resolvedConfigClass: ClassName,
-        resolvedHooksClass: ClassName,
+        hooksClass: ClassName,
         policiesClass: ClassName,
     ): TypeSpec = classType(resolvedConfigClass) {
         addModifiers(KModifier.INTERNAL)
@@ -516,7 +508,7 @@ internal class ClientGenerator(
             parameter("transactionRequirement", TRANSACTION_REQUIREMENT)
             parameter("defaultUpdateConsistency", UPDATE_CONSISTENCY)
             parameter("defaultRelationshipLocking", RELATIONSHIP_LOCKING)
-            parameter("hooks", resolvedHooksClass)
+            parameter("hooks", hooksClass)
             parameter("policies", policiesClass)
             parameter("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer))
         }
@@ -529,7 +521,7 @@ internal class ClientGenerator(
         property("defaultRelationshipLocking", RELATIONSHIP_LOCKING) {
             initializer("defaultRelationshipLocking")
         }
-        property("hooks", resolvedHooksClass) { initializer("hooks") }
+        property("hooks", hooksClass) { initializer("hooks") }
         property("policies", policiesClass) { initializer("policies") }
         property("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer)) {
             initializer("interceptors")

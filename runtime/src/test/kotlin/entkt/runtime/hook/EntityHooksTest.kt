@@ -4,19 +4,22 @@ package entkt.runtime.hook
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 
 class EntityHooksTest {
     @Test
-    fun `resolved hooks retain their original registration order`() {
+    fun `a copy keeps the hooks registered before it was made in their original order`() {
         val calls = mutableListOf<String>()
         val source = EntityHooks<Int, String, Double, Long>()
         source.beforeSave { value ->
-            calls += "initial:$value"
+            calls += "first:$value"
             value + 1
         }
+        source.beforeSave { value ->
+            calls += "second:$value"
+            value * 10
+        }
 
-        val resolved = source.resolveForInternalUse()
+        val copy = source.deepCopy()
         source.beforeSave { value ->
             calls += "late:$value"
             value
@@ -25,38 +28,43 @@ class EntityHooksTest {
         val result = runTransformingHooks(
             "User.beforeSave",
             MutationBatch.from(listOf(1)),
-            resolved.beforeSave,
+            copy.beforeSave.hooks,
         ).single()
-        assertEquals(listOf("initial:1"), calls)
-        assertEquals(2, result)
+        assertEquals(listOf("first:1", "second:2"), calls)
+        assertEquals(20, result)
     }
 
     @Test
-    fun `resolution detaches and freezes every hook registry`() {
+    fun `a copy and its source do not see each other's later registrations in any registry`() {
         val source = EntityHooks<Int, Int, Int, Int>()
-        val transforming = listOf(source.beforeSave, source.beforeCreate, source.beforeUpdate)
-        val actions = listOf(source.afterCreate, source.afterUpdate, source.beforeDelete, source.afterDelete)
-        transforming.forEach { it { state -> state + 1 } }
-        actions.forEach { it { } }
+        registerOneHookInEveryRegistry(source)
 
-        val resolved = source.resolveForInternalUse()
-        transforming.forEach { it { state -> state * 100 } }
-        actions.forEach { it { } }
+        val copy = source.deepCopy()
+        registerOneHookInEveryRegistry(source)
+        registerOneHookInEveryRegistry(source)
+        registerOneHookInEveryRegistry(copy)
 
-        val snapshots = listOf(
-            resolved.beforeSave,
-            resolved.beforeCreate,
-            resolved.afterCreate,
-            resolved.beforeUpdate,
-            resolved.afterUpdate,
-            resolved.beforeDelete,
-            resolved.afterDelete,
-        )
-        for (snapshot in snapshots) {
-            assertEquals(1, snapshot.size)
-            assertFailsWith<UnsupportedOperationException> {
-                (snapshot as MutableList<*>).clear()
-            }
-        }
+        assertEquals(List(7) { 3 }, hookCounts(source))
+        assertEquals(List(7) { 2 }, hookCounts(copy))
     }
+
+    private fun registerOneHookInEveryRegistry(hooks: EntityHooks<Int, Int, Int, Int>) {
+        hooks.beforeSave { state -> state + 1 }
+        hooks.beforeCreate { state -> state + 1 }
+        hooks.afterCreate { }
+        hooks.beforeUpdate { state -> state + 1 }
+        hooks.afterUpdate { }
+        hooks.beforeDelete { }
+        hooks.afterDelete { }
+    }
+
+    private fun hookCounts(hooks: EntityHooks<Int, Int, Int, Int>): List<Int> = listOf(
+        hooks.beforeSave.hooks.size,
+        hooks.beforeCreate.hooks.size,
+        hooks.afterCreate.hooks.size,
+        hooks.beforeUpdate.hooks.size,
+        hooks.afterUpdate.hooks.size,
+        hooks.beforeDelete.hooks.size,
+        hooks.afterDelete.hooks.size,
+    )
 }
