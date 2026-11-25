@@ -125,7 +125,7 @@ class ForUpdateQueryTest {
                     contexts += context
                     intercept(scope, context)
                 }
-            }.resolveForInternalUse()
+            }
 
             override fun checkReadExecution() {
                 events += "guard"

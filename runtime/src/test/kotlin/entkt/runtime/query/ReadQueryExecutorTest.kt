@@ -74,7 +74,7 @@ class ReadQueryExecutorTest {
         val executor = ReadQueryExecutor<TestViewer, Item>(
             driver = driver,
             executionHost = object : ReadQueryExecutionHost<TestViewer> {
-                override val entityInterceptors = interceptors.resolveForInternalUse()
+                override val entityInterceptors = interceptors
 
                 override fun checkReadExecution() = Unit
 

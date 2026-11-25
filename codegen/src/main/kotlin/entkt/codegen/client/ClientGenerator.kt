@@ -49,8 +49,7 @@ private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "Tra
 private val TRANSACTION_EXECUTION_TOKEN = ClassName("entkt.runtime.result", "TransactionExecutionToken")
 private val TRANSACTION_EXECUTION_GUARD_FOR_INTERNAL_USE =
     MemberName("entkt.runtime.result", "transactionExecutionGuardForInternalUse")
-private val RESOLVED_ENT_INTERCEPTORS_CONFIG =
-    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig")
+private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 
 /**
  * Emits the top-level `EntClient` that wires every per-schema repo together,
@@ -230,8 +229,8 @@ internal class ClientGenerator(
                     )
                 statement("transactionCoordinator?.recordFailure(exception)")
             }
-                // Immutable interceptor registrations resolved before client
-                // construction and shared unchanged with transaction clients.
+                // Interceptor registrations copied at client construction
+                // and shared unchanged with transaction clients.
                 // Runtime query compilation reads this value at each terminal.
                 //
                 // Marked `@EntktInternal` so same-module application
@@ -247,7 +246,7 @@ internal class ClientGenerator(
                 // marker kept on the override gates application access.
             property(
                     "entityInterceptors",
-                    RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer),
+                    ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer),
                 ) {
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.OVERRIDE)
@@ -491,7 +490,7 @@ internal class ClientGenerator(
                 "  defaultRelationshipLocking = defaultRelationshipLocking,\n" +
                 "  hooks = hooksConfig.deepCopy(),\n" +
                 "  policies = policiesConfig.deepCopy(),\n" +
-                "  interceptors = interceptorsConfig.config.resolveForInternalUse(),\n" +
+                "  interceptors = interceptorsConfig.config.deepCopy(),\n" +
                 ")",
             resolvedConfigClass,
         )
@@ -510,7 +509,7 @@ internal class ClientGenerator(
             parameter("defaultRelationshipLocking", RELATIONSHIP_LOCKING)
             parameter("hooks", hooksClass)
             parameter("policies", policiesClass)
-            parameter("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer))
+            parameter("interceptors", ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer))
         }
         property("transactionRequirement", TRANSACTION_REQUIREMENT) {
             initializer("transactionRequirement")
@@ -523,7 +522,7 @@ internal class ClientGenerator(
         }
         property("hooks", hooksClass) { initializer("hooks") }
         property("policies", policiesClass) { initializer("policies") }
-        property("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer)) {
+        property("interceptors", ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer)) {
             initializer("interceptors")
         }
     }
@@ -687,8 +686,7 @@ internal class ClientGenerator(
         interceptorsClass: ClassName,
         schemas: List<SchemaInput>,
     ): TypeSpec {
-        val ENT_INTERCEPTORS_CONFIG =
-            ClassName("entkt.runtime.query", "EntInterceptorsConfig").parameterizedBy(viewer)
+        val interceptorsConfigType = ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer)
         val QUERY_INTERCEPTOR = ClassName("entkt.runtime.query", "QueryInterceptor")
         val GLOBAL_QUERY_INTERCEPTOR =
             ClassName("entkt.runtime.query", "GlobalQueryInterceptor").parameterizedBy(viewer)
@@ -706,10 +704,10 @@ internal class ClientGenerator(
             // live in a generated client-support file which carries
             // `@file:OptIn(EntktInternal::class)`, so the call sites
             // here compile cleanly.
-            property("config", ENT_INTERCEPTORS_CONFIG) {
+            property("config", interceptorsConfigType) {
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.INTERNAL)
-                initializer("%T()", ENT_INTERCEPTORS_CONFIG)
+                initializer("%T()", interceptorsConfigType)
             }
 
         // Per-entity DSL methods: `posts(interceptor, name = "...")`.

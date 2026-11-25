@@ -117,7 +117,7 @@ class ReadQueryExecutorRootTest {
                 interceptorContexts += context
                 interceptorBehavior(scope, context)
             }
-        }.resolveForInternalUse()
+        }
 
         override val entityName: String = "Item"
         override val clientName: String = "items"

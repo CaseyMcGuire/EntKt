@@ -175,7 +175,7 @@ class DeleteMutationOperationTest {
                     receivedReadOperations += context.operation
                     effectivePredicates.forEach(scope::addPredicate)
                 }
-            }.resolveForInternalUse()
+            }
 
             override fun checkReadExecution() {
                 events += "read-guard"

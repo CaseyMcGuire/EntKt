@@ -494,7 +494,7 @@ class DatabaseGraphStorageTest {
         driver = driver,
         queryCompiler = ReadQueryCompiler(
             driver = driver,
-            registeredInterceptors = interceptors.resolveForInternalUse(),
+            registeredInterceptors = interceptors,
         ),
     )
 

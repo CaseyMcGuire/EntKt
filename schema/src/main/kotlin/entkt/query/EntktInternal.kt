@@ -34,7 +34,7 @@ package entkt.query
  *   `queryX()` traversal code from the schema; a hand-built mismatch
  *   would lower into a subquery against the wrong table or column.
  * - **Interceptor registry internals** (`EntInterceptorsConfig.addEntity`,
- *   `ResolvedEntInterceptorsConfig` access via `entityInterceptors`):
+ *   registry access via `entityInterceptors`):
  *   registration and lookup are scope-key-keyed with an unchecked cast, so
  *   untyped access could bind or retrieve a wrong-entity interceptor.
  * - **Query traversal seeders** (`snapshotForTraversal`,

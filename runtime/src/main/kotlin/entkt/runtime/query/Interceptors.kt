@@ -337,7 +337,7 @@ public const val FRAMEWORK_INTERCEPTOR_PREFIX: String = "framework:"
  * DSL-side mutable holder generated `EntClientConfig` exposes
  * through an `interceptors { ... }` block. Application code calls
  * `posts(...)` / `users(...)` (one per entity) and `global(...)`
- * to register. Client construction snapshots the completed holder
+ * to register. Client construction copies the completed holder
  * before any generated repository becomes visible.
  *
  * Name validation runs at registration time:
@@ -413,14 +413,23 @@ public class EntInterceptorsConfig<Viewer : Any> public constructor() {
     public fun <E : Any> entityInterceptorsFor(scopeKey: String): List<RegisteredInterceptor<Viewer, E>> =
         (perEntity[scopeKey] ?: emptyList()) as List<RegisteredInterceptor<Viewer, E>>
 
-    /** Return a stable copy of the configured global interceptor chain. */
+    /** The configured global interceptor chain, in registration order. */
     @entkt.query.EntktInternal
-    public fun globals(): List<RegisteredGlobalInterceptor<Viewer>> = globalsList.toList()
+    public fun globals(): List<RegisteredGlobalInterceptor<Viewer>> = globalsList
 
-    /** Resolve every registration into an immutable, independent configuration. */
+    /**
+     * Copy every registration into a new configuration. Later registrations on
+     * this one do not reach the copy. The interceptors themselves are shared.
+     */
     @entkt.query.EntktInternal
-    public fun resolveForInternalUse(): ResolvedEntInterceptorsConfig<Viewer> =
-        ResolvedEntInterceptorsConfig(perEntity, globalsList)
+    public fun deepCopy(): EntInterceptorsConfig<Viewer> {
+        val copy = EntInterceptorsConfig<Viewer>()
+        for ((scopeKey, registrations) in perEntity) {
+            copy.perEntity[scopeKey] = registrations.toMutableList()
+        }
+        copy.globalsList.addAll(globalsList)
+        return copy
+    }
 
     private fun validateApplicationName(name: String, scope: String) {
         require(name.isNotBlank()) { "Interceptor name must not be blank (scope='$scope')" }

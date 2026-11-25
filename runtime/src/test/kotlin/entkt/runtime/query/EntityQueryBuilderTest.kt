@@ -72,7 +72,7 @@ class EntityQueryBuilderTest {
             addEntity<Item>(ItemMapping.clientName, "record") { _, context ->
                 interceptorContexts += context
             }
-        }.resolveForInternalUse()
+        }
 
         override fun checkReadExecution() {
             guardCalls++

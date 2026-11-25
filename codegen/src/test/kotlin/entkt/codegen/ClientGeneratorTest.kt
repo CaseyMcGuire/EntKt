@@ -192,7 +192,8 @@ class ClientGeneratorTest {
         assert(output.contains("usersValidationConfig = source.usersValidationConfig.deepCopy()"))
         assert(output.contains("internal fun deepCopy(): EntClientPolicies = EntClientPolicies(this)"))
         assert(!output.contains("ResolvedEntClientPolicies"))
-        assert(output.contains("interceptors = interceptorsConfig.config.resolveForInternalUse()"))
+        assert(output.contains("interceptors = interceptorsConfig.config.deepCopy()"))
+        assert(!output.contains("ResolvedEntInterceptorsConfig"))
         assert(!output.contains("snapshotForInternalUse") && !output.contains("copyFromForInternalUse"))
     }
 

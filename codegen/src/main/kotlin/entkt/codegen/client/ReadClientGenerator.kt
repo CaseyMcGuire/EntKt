@@ -27,8 +27,7 @@ import entkt.schema.EntSchema
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val PRIVACY_EVALUATION = ClassName("entkt.runtime.privacy", "PrivacyEvaluation")
 private val LIST = ClassName("kotlin.collections", "List")
-private val RESOLVED_ENT_INTERCEPTORS_CONFIG =
-    ClassName("entkt.runtime.query", "ResolvedEntInterceptorsConfig")
+private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInterceptorsConfig")
 private val ENTKT_INTERNAL = ClassName("entkt.query", "EntktInternal")
 private val ENT_RULE_CLIENT = ClassName("entkt.runtime.rule", "EntRuleClient")
 private val TRANSACTION_EXECUTION_GUARD = ClassName("entkt.runtime.result", "TransactionExecutionGuard")
@@ -190,7 +189,7 @@ internal class ReadClientGenerator(
 
             primaryConstructor {
                 parameter("driver", DRIVER)
-                parameter("entityInterceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer))
+                parameter("entityInterceptors", ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer))
                 parameter("transactionExecutionGuard", TRANSACTION_EXECUTION_GUARD)
                 parameter(
                     "transactionExecutionToken",
@@ -222,7 +221,7 @@ internal class ReadClientGenerator(
                 // the marker needs the `property:` use-site target — opt-in
                 // markers can't annotate a parameter.
                 "entityInterceptors",
-                RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer),
+                ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer),
             ) {
                 addAnnotation(
                     annotation(ENTKT_INTERNAL) {

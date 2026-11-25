@@ -74,25 +74,49 @@ class EntInterceptorsConfigTest {
     }
 
     @Test
-    fun `resolution detaches and freezes entity and global registration containers`() {
+    fun `a copy keeps entity and global registrations in their original order`() {
+        val config = EntInterceptorsConfig<TestViewer>()
+        config.addEntity("posts", "first-entity", noop)
+        config.addEntity("posts", "second-entity", noop)
+        config.addEntity("users", "user-entity", noopUser)
+        config.addGlobal("first-global", noopGlobal)
+        config.addGlobal("second-global", noopGlobal)
+
+        val copy = config.deepCopy()
+
+        assertEquals(
+            listOf("first-entity", "second-entity"),
+            copy.entityInterceptorsFor<Post>("posts").map { it.name },
+        )
+        assertEquals(listOf("user-entity"), copy.entityInterceptorsFor<User>("users").map { it.name })
+        assertEquals(listOf("first-global", "second-global"), copy.globals().map { it.name })
+        assertEquals(noop, copy.entityInterceptorsFor<Post>("posts").first().interceptor)
+    }
+
+    @Test
+    fun `a copy and its source do not see each other's later registrations`() {
         val config = EntInterceptorsConfig<TestViewer>()
         config.addEntity("posts", "initial-entity", noop)
         config.addGlobal("initial-global", noopGlobal)
 
-        val resolved = config.resolveForInternalUse()
-
+        val copy = config.deepCopy()
         config.addEntity("posts", "late-entity", noop)
+        config.addEntity("users", "late-scope", noopUser)
         config.addGlobal("late-global", noopGlobal)
+        copy.addEntity("posts", "copy-entity", noop)
+        copy.addGlobal("copy-global", noopGlobal)
 
         assertEquals(
-            listOf("initial-entity"),
-            resolved.entityInterceptorsFor<Post>("posts").map { it.name },
+            listOf("initial-entity", "copy-entity"),
+            copy.entityInterceptorsFor<Post>("posts").map { it.name },
         )
-        assertEquals(listOf("initial-global"), resolved.globals().map { it.name })
-        assertFailsWith<UnsupportedOperationException> {
-            @Suppress("UNCHECKED_CAST")
-            (resolved.globals() as MutableList<Any>).clear()
-        }
+        assertEquals(emptyList(), copy.entityInterceptorsFor<User>("users"))
+        assertEquals(listOf("initial-global", "copy-global"), copy.globals().map { it.name })
+        assertEquals(
+            listOf("initial-entity", "late-entity"),
+            config.entityInterceptorsFor<Post>("posts").map { it.name },
+        )
+        assertEquals(listOf("initial-global", "late-global"), config.globals().map { it.name })
     }
 
     @Test

@@ -524,7 +524,7 @@ class EntityRepositoryTest {
 
         override val entityInterceptors = EntInterceptorsConfig<TestViewer>().apply {
             addEntity<Widget>(Descriptor.clientName, "observe") { _, context -> readOperations += context.operation }
-        }.resolveForInternalUse()
+        }
 
         override fun checkReadExecution() {
             readFailure?.let { throw it }

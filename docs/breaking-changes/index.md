@@ -29,6 +29,19 @@ above it.
 
 ## Unreleased
 
+- **Copy interceptor configuration instead of resolving it into a second type** (`runtime`, `codegen`)
+  `ResolvedEntInterceptorsConfig` is removed. `EntInterceptorsConfig` has
+  `deepCopy()` in place of `resolveForInternalUse()`, and
+  `ReadQueryExecutionHost.entityInterceptors` and `ReadQueryCompiler` take an
+  `EntInterceptorsConfig`. `EntInterceptorsConfig.globals()` returns the
+  configuration's own list instead of a new copy on each call. A client still
+  copies its interceptor configuration when it is constructed, so an
+  interceptors scope kept by the application cannot change a client that
+  already exists.
+  _Migration:_ regenerate entity code. Handwritten internal wiring should pass
+  an `EntInterceptorsConfig` where it passed a `ResolvedEntInterceptorsConfig`
+  and call `deepCopy()` instead of `resolveForInternalUse()`.
+
 - **Copy hook configuration instead of resolving it into a second type** (`runtime`, `codegen`)
   `ResolvedEntityHooks` and the generated `ResolvedEntClientHooks` are removed.
   `EntityHooks` has `deepCopy()` in place of `resolveForInternalUse()`, and

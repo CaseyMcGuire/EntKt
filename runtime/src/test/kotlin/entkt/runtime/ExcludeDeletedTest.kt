@@ -32,7 +32,7 @@ class ExcludeDeletedTest {
 
     private val queryCompiler = ReadQueryCompiler(
         driver = NoopDriver,
-        registeredInterceptors = EntInterceptorsConfig<TestViewer>().resolveForInternalUse(),
+        registeredInterceptors = EntInterceptorsConfig<TestViewer>(),
     )
 
     private fun builder(): QuerySpecBuilder<Post> = QuerySpecBuilder(
