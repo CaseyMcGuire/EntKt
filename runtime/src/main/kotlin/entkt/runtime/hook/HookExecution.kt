@@ -1,24 +1,24 @@
 package entkt.runtime.hook
 
 import entkt.query.EntktInternal
-import entkt.runtime.internal.immutableListCopy
 import entkt.runtime.result.EntBatchMutationHookContractException
 
 /**
- * Invoke hooks in registration order with the same immutable, ordered batch.
+ * Invoke hooks in registration order, passing each the supplied batch as is.
  * Empty batches do not invoke hooks. Hook registrations must remain unchanged
- * during execution; snapshot them when resolving configuration.
+ * during execution.
  */
 @EntktInternal
 fun <T> runActionHooks(
     elements: List<T>,
     hooks: List<BatchActionHook<T>>,
 ) {
-    if (elements.isEmpty() || hooks.isEmpty()) return
+    if (elements.isEmpty()) {
+        return
+    }
 
-    val snapshot = immutableListCopy(elements)
     for (hook in hooks) {
-        hook.runBatch(snapshot)
+        hook.runBatch(elements)
     }
 }
 
@@ -26,7 +26,7 @@ fun <T> runActionHooks(
  * Apply hooks in registration order, passing each result to the next hook
  * while preserving the supplied batch's identity and order.
  * Empty batches do not invoke hooks. Hook registrations must remain unchanged
- * during execution; snapshot them when resolving configuration.
+ * during execution.
  */
 @EntktInternal
 fun <State> runTransformingHooks(

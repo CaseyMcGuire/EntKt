@@ -29,6 +29,13 @@ above it.
 
 ## Unreleased
 
+- **Pass action-hook batches without copying them** (`runtime`)
+  `runActionHooks` hands every hook the list it was given instead of an
+  unmodifiable copy. Batch `afterCreate`, `afterUpdate`, `beforeDelete`, and
+  `afterDelete` hooks therefore receive the operation's own list.
+  _Migration:_ none for hooks that only read their batch. A hook must not
+  modify the list it receives or keep it to modify later.
+
 - **Copy client configuration instead of resolving it into a second type** (`codegen`)
   The generated `ResolvedEntClientConfig` is removed. `EntClientConfig` and
   `EntClientInterceptors` have an internal `deepCopy()`, and `EntClient` is

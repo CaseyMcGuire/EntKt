@@ -26,24 +26,19 @@ class RunActionHooksTest {
     }
 
     @Test
-    fun `hooks share one immutable snapshot detached from the input list`() {
-        val input = mutableListOf(2, 1)
-        var firstBatch: List<Int>? = null
+    fun `every hook receives the supplied list`() {
+        val input = listOf(2, 1)
+        val received = mutableListOf<List<Int>>()
         val hooks = listOf(
-            batchActionHook<Int> { batch ->
-                firstBatch = batch
-                input.clear()
-                assertFailsWith<UnsupportedOperationException> {
-                    (batch as MutableList<Int>).clear()
-                }
-            },
-            batchActionHook<Int> { batch ->
-                assertSame(firstBatch, batch)
-                assertEquals(listOf(2, 1), batch)
-            },
+            batchActionHook<Int> { batch -> received += batch },
+            batchActionHook<Int> { batch -> received += batch },
         )
 
         runActionHooks(input, hooks)
+
+        assertEquals(2, received.size)
+        assertSame(input, received[0])
+        assertSame(input, received[1])
     }
 
     @Test

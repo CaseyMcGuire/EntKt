@@ -391,7 +391,7 @@ class BatchLifecycleEvaluationTest {
     }
 
     @Test
-    fun `callback batches are immutable even when cast`() {
+    fun `rule batches are immutable even when cast`() {
         val privacy = batchPrivacyRule<TestViewer, TestRuleClient, Int> { _, batch ->
             assertFailsWith<ClassCastException> {
                 @Suppress("UNCHECKED_CAST")
@@ -406,12 +406,6 @@ class BatchLifecycleEvaluationTest {
             }
             batch.decideEach { ValidationDecision.Valid }
         }
-        val hook = batchActionHook<Int> { elements ->
-            assertFailsWith<UnsupportedOperationException> {
-                @Suppress("UNCHECKED_CAST")
-                (elements as MutableList<Int>).clear()
-            }
-        }
 
         evaluateLoadDecisions(
             "privacy",
@@ -420,7 +414,6 @@ class BatchLifecycleEvaluationTest {
             viewerContext,
         ) { it }
         evaluateValidation(listOf(1), listOf(validation), validationContext)
-        runActionHooks(listOf(1), listOf(hook))
     }
 
     @Test
