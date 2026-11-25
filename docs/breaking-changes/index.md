@@ -29,6 +29,24 @@ above it.
 
 ## Unreleased
 
+- **Copy policy configuration instead of resolving it into a second type** (`runtime`, `codegen`)
+  `ResolvedEntityPrivacyConfig`, `ResolvedEntityValidationConfig`, and the
+  generated `ResolvedEntClientPolicies` are removed. `EntityPrivacyConfig` and
+  `EntityValidationConfig` are now concrete classes with `deepCopy()` in place of
+  `resolveForInternalUse()`. The per-entity `{Entity}PrivacyConfig` and
+  `{Entity}ValidationConfig` classes are no longer generated; generated code
+  names the runtime classes with the entity's rule types, as it already does
+  for `EntityHooks`. Generated repository constructors and the mutation
+  operation factories take those config types. A client still copies its policy
+  configuration when it is constructed, so a policy scope kept by the
+  application cannot change a client that already exists; the copy's rule lists
+  are no longer unmodifiable.
+  _Migration:_ regenerate entity code. Handwritten internal wiring should pass
+  an `EntityPrivacyConfig` or `EntityValidationConfig` where it passed the
+  resolved type, call `deepCopy()` instead of `resolveForInternalUse()`, and
+  construct `EntityPrivacyConfig<...>` or `EntityValidationConfig<...>` directly
+  where it used a generated `{Entity}PrivacyConfig` or `{Entity}ValidationConfig`.
+
 ## 0.1.0-alpha.4
 
 Upgrade the plugin and all EntKt dependencies together, set `viewerType`, and regenerate the client.

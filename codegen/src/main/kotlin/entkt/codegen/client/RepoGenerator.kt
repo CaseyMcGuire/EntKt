@@ -26,6 +26,8 @@ import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.entityPrivacyConfigType
+import entkt.codegen.metadata.entityValidationConfigType
 import entkt.codegen.metadata.idStrategyName
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
@@ -77,8 +79,8 @@ internal class RepoGenerator(
         val queryClass = ClassName(packageName, "${schemaName}Query")
         val indexesClass = ClassName(packageName, "${schemaName}Indexes")
         val entityHooksType = resolvedEntityHooksType(packageName, schemaName)
-        val privacyConfigType = resolvedEntityPrivacyConfigType(packageName, schemaName)
-        val validationConfigType = resolvedEntityValidationConfigType(packageName, schemaName)
+        val privacyConfigType = entityPrivacyConfigType(packageName, schemaName)
+        val validationConfigType = entityValidationConfigType(packageName, schemaName)
         val clientClass = ClassName(packageName, ENT_CLIENT_NAME)
         val ruleClientClass = ClassName(packageName, "ReadOnlyEntClient")
         val idType = schema.id().type.toTypeName()

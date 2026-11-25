@@ -3,6 +3,7 @@ package entkt.codegen
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.TypeAliasSpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.fixtures.Car
 import entkt.codegen.fixtures.User
@@ -10,6 +11,7 @@ import entkt.codegen.mutation.ValidationGenerator
 import entkt.schema.EntSchema
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 private fun finalize(vararg schemas: EntSchema) {
@@ -63,22 +65,14 @@ class ValidationGeneratorTest {
     }
 
     @Test
-    fun `validation config only binds lifecycle rule types to the runtime base`() {
+    fun `no per-entity validation config type is generated`() {
         val user = User()
         finalize(user, Car())
-        val config = generator.generate("User", user).members.filterIsInstance<TypeSpec>()
-            .single { it.name == "UserValidationConfig" }
+        val file = generator.generate("User", user)
 
-        assertEquals(
-            ClassName("entkt.runtime.validation", "EntityValidationConfig").parameterizedBy(
-                ClassName("com.example.ent", "UserCreateBatchValidationRule"),
-                ClassName("com.example.ent", "UserUpdateBatchValidationRule"),
-                ClassName("com.example.ent", "UserDeleteBatchValidationRule"),
-            ),
-            config.superclass,
-        )
-        assertTrue(config.propertySpecs.isEmpty(), "Rule storage belongs in runtime")
-        assertTrue(config.funSpecs.isEmpty(), "Resolution belongs in runtime")
+        val declaredNames = file.members.filterIsInstance<TypeSpec>().map { it.name } +
+            file.members.filterIsInstance<TypeAliasSpec>().map { it.name }
+        assertFalse("UserValidationConfig" in declaredNames, declaredNames.toString())
     }
 
     @Test
@@ -110,7 +104,14 @@ class ValidationGeneratorTest {
         val constructor = requireNotNull(scope.primaryConstructor)
         assertEquals(setOf(KModifier.INTERNAL), constructor.modifiers)
         assertEquals("config", constructor.parameters.single().name)
-        assertEquals(ClassName("com.example.ent", "UserValidationConfig"), constructor.parameters.single().type)
+        assertEquals(
+            ClassName("entkt.runtime.validation", "EntityValidationConfig").parameterizedBy(
+                ClassName("com.example.ent", "UserCreateBatchValidationRule"),
+                ClassName("com.example.ent", "UserUpdateBatchValidationRule"),
+                ClassName("com.example.ent", "UserDeleteBatchValidationRule"),
+            ),
+            constructor.parameters.single().type,
+        )
         assertEquals(listOf("config"), scope.superclassConstructorParameters.map { it.toString() })
         assertTrue(scope.propertySpecs.isEmpty(), "The config is stored only by the runtime base")
         assertTrue(scope.funSpecs.isEmpty(), "Registration and derivation belong in runtime")

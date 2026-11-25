@@ -4,24 +4,24 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.kotlinpoet.classType
 import entkt.codegen.kotlinpoet.kotlinFile
 import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.typeAlias
+import entkt.codegen.metadata.entityValidationConfigType
 import entkt.schema.EntSchema
 
 private val VALIDATION_RULE = ClassName("entkt.runtime.validation", "ValidationRule")
 private val BATCH_VALIDATION_RULE = ClassName("entkt.runtime.validation", "BatchValidationRule")
-private val ENTITY_VALIDATION_CONFIG = ClassName("entkt.runtime.validation", "EntityValidationConfig")
 private val ENTITY_VALIDATION_SCOPE = ClassName("entkt.runtime.validation", "EntityValidationScope")
 
 /**
  * Emits per-entity validation infrastructure:
  *
- * - `{Entity}ValidationConfig` — binds the runtime config to the entity's rule types
- * - `{Entity}ValidationScope` — binds the runtime registration DSL to the same rule types
+ * - `{Entity}ValidationScope` — binds the runtime registration DSL to the entity's batch rule types
  * - `{Entity}{Op}ValidationRule` and `{Entity}{Op}BatchValidationRule` — typealiases for each operation's rule types
  *
  * Unlike privacy, validation has no LOAD operation and its shared rule context
@@ -46,7 +46,7 @@ internal class ValidationGenerator(
         // type makes the privacy-bypass read posture visible in helper
         // signatures.
         val clientClass = ClassName(packageName, "ReadOnlyEntClient")
-        val configClass = ClassName(packageName, "${schemaName}ValidationConfig")
+        val configType = entityValidationConfigType(packageName, schemaName)
         val scopeClass = ClassName(packageName, "${schemaName}ValidationScope")
 
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
@@ -80,37 +80,12 @@ internal class ValidationGenerator(
             typeAlias(deleteBatchRule, BATCH_VALIDATION_RULE.parameterizedBy(clientClass, deleteInput))
 
             addType(
-                buildValidationConfig(
-                    configClass,
-                    ClassName(packageName, createBatchRule),
-                    ClassName(packageName, updateBatchRule),
-                    ClassName(packageName, deleteBatchRule),
-                ),
-            )
-            addType(
                 buildValidationScope(
                     scopeClass,
-                    configClass,
+                    configType,
                     ClassName(packageName, createBatchRule),
                     ClassName(packageName, updateBatchRule),
                     ClassName(packageName, deleteBatchRule),
-                ),
-            )
-        }
-    }
-
-    private fun buildValidationConfig(
-        configClass: ClassName,
-        createRuleType: ClassName,
-        updateRuleType: ClassName,
-        deleteRuleType: ClassName,
-    ): TypeSpec {
-        return classType(configClass) {
-            superclass(
-                ENTITY_VALIDATION_CONFIG.parameterizedBy(
-                    createRuleType,
-                    updateRuleType,
-                    deleteRuleType,
                 ),
             )
         }
@@ -118,7 +93,7 @@ internal class ValidationGenerator(
 
     private fun buildValidationScope(
         scopeClass: ClassName,
-        configClass: ClassName,
+        configType: TypeName,
         createBatchRuleType: ClassName,
         updateBatchRuleType: ClassName,
         deleteBatchRuleType: ClassName,
@@ -134,7 +109,7 @@ internal class ValidationGenerator(
             addSuperclassConstructorParameter("config")
             primaryConstructor {
                 addModifiers(KModifier.INTERNAL)
-                parameter("config", configClass)
+                parameter("config", configType)
             }
         }
     }

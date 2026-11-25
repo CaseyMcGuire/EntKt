@@ -12,7 +12,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class PrivacyScopeCompileTest {
-    // Produces EntityPrivacyConfig and EntityPrivacyScope, matching the runtime base names.
+    // Produces EntityPrivacyScope, matching the runtime base name.
     private class Entity : EntSchema("entities", clientName = "entities") {
         override fun id() = EntId.long()
     }
@@ -39,7 +39,7 @@ class PrivacyScopeCompileTest {
     }
 
     @Test
-    fun `generated subclasses retain typed resolution even when their names match the runtime bases`() {
+    fun `a generated scope keeps its types even when its name matches the runtime class`() {
         val probe = SourceFile.kotlin(
             "PrivacyScopeProbe.kt",
             """
@@ -52,13 +52,12 @@ class PrivacyScopeCompileTest {
             import com.example.ent.EntityDeletePrivacyRule
             import com.example.ent.EntityLoadBatchPrivacyRule
             import com.example.ent.EntityLoadPrivacyRule
-            import com.example.ent.EntityPrivacyConfig
             import com.example.ent.EntityPrivacyScope
             import com.example.ent.EntityUpdateBatchPrivacyRule
             import com.example.ent.EntityUpdatePrivacyRule
             import com.example.auth.AppViewer
             import entkt.runtime.privacy.ContextPrivacyRule
-            import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
+            import entkt.runtime.privacy.EntityPrivacyConfig
             import entkt.runtime.rule.EntRuleClient
 
             object PrivacyScopeProbe {
@@ -69,7 +68,12 @@ class PrivacyScopeCompileTest {
                     val update = EntityUpdatePrivacyRule { _, _ -> error("not evaluated") }
                     val delete = EntityDeletePrivacyRule { _, _ -> error("not evaluated") }
                     val shared = ContextPrivacyRule<AppViewer, EntRuleClient> { error("not evaluated") }
-                    val config = EntityPrivacyConfig()
+                    val config = EntityPrivacyConfig<
+                        EntityLoadBatchPrivacyRule,
+                        EntityCreateBatchPrivacyRule,
+                        EntityUpdateBatchPrivacyRule,
+                        EntityDeleteBatchPrivacyRule,
+                    >()
                     EntityPrivacyScope(config).apply {
                         load(load)
                         load(shared)
@@ -83,29 +87,28 @@ class PrivacyScopeCompileTest {
                         deleteDerivesFromCreate()
                     }
 
-                    val resolved: ResolvedEntityPrivacyConfig<
-                        EntityLoadBatchPrivacyRule,
-                        EntityCreateBatchPrivacyRule,
-                        EntityUpdateBatchPrivacyRule,
-                        EntityDeleteBatchPrivacyRule,
-                    > = config.resolveForInternalUse()
-                    check(resolved.loadRules.first() === load)
-                    check(resolved.createRules.first() === create)
-                    check(resolved.updateRules.first() === update)
-                    check(resolved.deleteRules.first() === delete)
-                    check(resolved.loadRules.size == 2)
-                    check(resolved.createRules.size == 2)
-                    check(resolved.updateRules.size == 2)
-                    check(resolved.deleteRules.size == 2)
-                    check(resolved.updateDerivesFromCreate)
-                    check(resolved.deleteDerivesFromCreate)
+                    val copy = config.deepCopy()
+                    val loadRules: List<EntityLoadBatchPrivacyRule> = copy.loadRules
+                    val createRules: List<EntityCreateBatchPrivacyRule> = copy.createRules
+                    val updateRules: List<EntityUpdateBatchPrivacyRule> = copy.updateRules
+                    val deleteRules: List<EntityDeleteBatchPrivacyRule> = copy.deleteRules
+                    check(loadRules.first() === load)
+                    check(createRules.first() === create)
+                    check(updateRules.first() === update)
+                    check(deleteRules.first() === delete)
+                    check(loadRules.size == 2)
+                    check(createRules.size == 2)
+                    check(updateRules.size == 2)
+                    check(deleteRules.size == 2)
+                    check(copy.updateDerivesFromCreate)
+                    check(copy.deleteDerivesFromCreate)
                     config.loadRules.clear()
                     config.updateDerivesFromCreate = false
                     config.deleteDerivesFromCreate = false
-                    check(resolved.loadRules.first() === load)
-                    check(resolved.loadRules.size == 2)
-                    check(resolved.updateDerivesFromCreate)
-                    check(resolved.deleteDerivesFromCreate)
+                    check(copy.loadRules.first() === load)
+                    check(copy.loadRules.size == 2)
+                    check(copy.updateDerivesFromCreate)
+                    check(copy.deleteDerivesFromCreate)
                     return "ok"
                 }
             }

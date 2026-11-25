@@ -458,7 +458,7 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        val type = "ResolvedEntityPrivacyConfig<CarLoadBatchPrivacyRule, CarCreateBatchPrivacyRule, CarUpdateBatchPrivacyRule, CarDeleteBatchPrivacyRule>"
+        val type = "EntityPrivacyConfig<CarLoadBatchPrivacyRule, CarCreateBatchPrivacyRule, CarUpdateBatchPrivacyRule, CarDeleteBatchPrivacyRule>"
         assert(output.contains("configuredPrivacy: $type")) {
             "Should accept privacy configuration in the constructor\n$output"
         }
@@ -621,7 +621,7 @@ class RepoGeneratorTest {
         finalize(car, User())
         val output = generator.generate("Car", car).toString().replace("\\s+".toRegex(), " ")
 
-        val type = "ResolvedEntityValidationConfig<CarCreateBatchValidationRule, CarUpdateBatchValidationRule, CarDeleteBatchValidationRule>"
+        val type = "EntityValidationConfig<CarCreateBatchValidationRule, CarUpdateBatchValidationRule, CarDeleteBatchValidationRule>"
         assert(output.contains("configuredValidation: $type")) {
             "Should accept validation configuration in the constructor\n$output"
         }

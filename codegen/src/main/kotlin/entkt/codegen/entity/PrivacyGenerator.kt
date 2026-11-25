@@ -8,6 +8,7 @@ import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.UNIT
 import entkt.codegen.metadata.EdgeFk
@@ -21,6 +22,8 @@ import entkt.codegen.kotlinpoet.statement
 import entkt.codegen.kotlinpoet.typeAlias
 import entkt.codegen.metadata.HelperEligibleM2M
 import entkt.codegen.metadata.computeEdgeFks
+import entkt.codegen.metadata.entityPrivacyConfigType
+import entkt.codegen.metadata.entityValidationConfigType
 import entkt.codegen.metadata.helperEligibleM2MEdges
 import entkt.codegen.metadata.resolvedTypeName
 import entkt.codegen.metadata.scalarFields
@@ -31,7 +34,6 @@ import entkt.schema.Field
 private val PRIVACY_RULE = ClassName("entkt.runtime.privacy", "PrivacyRule")
 private val BATCH_PRIVACY_RULE = ClassName("entkt.runtime.privacy", "BatchPrivacyRule")
 private val ENTITY_POLICY = ClassName("entkt.runtime.privacy", "EntityPolicy")
-private val ENTITY_PRIVACY_CONFIG = ClassName("entkt.runtime.privacy", "EntityPrivacyConfig")
 private val ENTITY_PRIVACY_SCOPE = ClassName("entkt.runtime.privacy", "EntityPrivacyScope")
 private val FIELD_PATCH = ClassName("entkt.runtime.mutation", "FieldPatch")
 private val WRITE_CANDIDATE = ClassName("entkt.runtime.mutation", "WriteCandidate")
@@ -43,7 +45,6 @@ private val EDGE_CHANGES = ClassName("entkt.runtime.mutation", "EdgeChanges")
 /**
  * Emits per-entity privacy infrastructure:
  *
- * - `{Entity}PrivacyConfig` — binds the runtime config to the entity's rule types
  * - `{Entity}PrivacyScope` — binds the runtime registration DSL to the viewer type, the client, and the lifecycle item types
  * - `{Entity}PolicyScope` — outer scope passed to [EntityPolicy.configure]
  * - `{Entity}WriteCandidate` — snapshot of writable fields for write rules
@@ -69,7 +70,7 @@ internal class PrivacyGenerator(
         // pass that context to their terminals. The concrete type makes the
         // viewer-scoped read posture visible in helper signatures.
         val readClientClass = ClassName(packageName, "ReadOnlyEntClient")
-        val configClass = ClassName(packageName, "${schemaName}PrivacyConfig")
+        val configType = entityPrivacyConfigType(packageName, schemaName)
         val privacyScopeClass = ClassName(packageName, "${schemaName}PrivacyScope")
         val policyScopeClass = ClassName(packageName, "${schemaName}PolicyScope")
         val candidateClass = ClassName(packageName, "${schemaName}WriteCandidate")
@@ -162,22 +163,11 @@ internal class PrivacyGenerator(
         // privacy/validation item shape is uniform.
             addType(buildEdgeChangesViewAggregator(edgeChangesViewClass, helperEligibleEdges))
 
-        // PrivacyConfig
-            addType(
-            buildPrivacyConfig(
-                configClass,
-                ClassName(packageName, loadBatchRule),
-                ClassName(packageName, createBatchRule),
-                ClassName(packageName, updateBatchRule),
-                ClassName(packageName, deleteBatchRule),
-            ),
-            )
-
         // PrivacyScope
             addType(
             buildPrivacyScope(
                 privacyScopeClass,
-                configClass,
+                configType,
                 readClientClass,
                 entityClass,
                 candidateClass,
@@ -187,7 +177,7 @@ internal class PrivacyGenerator(
             )
 
         // PolicyScope
-            addType(buildPolicyScope(schemaName, policyScopeClass, privacyScopeClass, configClass))
+            addType(buildPolicyScope(schemaName, policyScopeClass, privacyScopeClass, configType))
         }
     }
 
@@ -348,28 +338,9 @@ internal class PrivacyGenerator(
         }
     }
 
-    private fun buildPrivacyConfig(
-        configClass: ClassName,
-        loadRuleType: ClassName,
-        createRuleType: ClassName,
-        updateRuleType: ClassName,
-        deleteRuleType: ClassName,
-    ): TypeSpec {
-        return classType(configClass) {
-            superclass(
-                ENTITY_PRIVACY_CONFIG.parameterizedBy(
-                    loadRuleType,
-                    createRuleType,
-                    updateRuleType,
-                    deleteRuleType,
-                ),
-            )
-        }
-    }
-
     private fun buildPrivacyScope(
         scopeClass: ClassName,
-        configClass: ClassName,
+        configType: TypeName,
         readClientClass: ClassName,
         entityClass: ClassName,
         candidateClass: ClassName,
@@ -390,7 +361,7 @@ internal class PrivacyGenerator(
             addSuperclassConstructorParameter("config")
             primaryConstructor {
                 addModifiers(KModifier.INTERNAL)
-                parameter("config", configClass)
+                parameter("config", configType)
             }
         }
     }
@@ -399,9 +370,9 @@ internal class PrivacyGenerator(
         schemaName: String,
         policyScopeClass: ClassName,
         privacyScopeClass: ClassName,
-        configClass: ClassName,
+        configType: TypeName,
     ): TypeSpec {
-        val validationConfigClass = ClassName(packageName, "${schemaName}ValidationConfig")
+        val validationConfigType = entityValidationConfigType(packageName, schemaName)
         val validationScopeClass = ClassName(packageName, "${schemaName}ValidationScope")
         val privacyBlockLambda = com.squareup.kotlinpoet.LambdaTypeName.get(
             receiver = privacyScopeClass,
@@ -414,14 +385,14 @@ internal class PrivacyGenerator(
         return classType(policyScopeClass) {
             primaryConstructor {
                 addModifiers(KModifier.INTERNAL)
-                parameter("privacyConfig", configClass)
-                parameter("validationConfig", validationConfigClass)
+                parameter("privacyConfig", configType)
+                parameter("validationConfig", validationConfigType)
             }
-            property("privacyConfig", configClass) {
+            property("privacyConfig", configType) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("privacyConfig")
             }
-            property("validationConfig", validationConfigClass) {
+            property("validationConfig", validationConfigType) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("validationConfig")
             }

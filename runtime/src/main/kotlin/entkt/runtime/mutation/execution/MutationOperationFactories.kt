@@ -21,14 +21,14 @@ import entkt.runtime.mutation.WriteCandidate
 import entkt.runtime.privacy.BatchPrivacyRule
 import entkt.runtime.privacy.CreatePrivacyEvaluator
 import entkt.runtime.privacy.DeletePrivacyEvaluator
+import entkt.runtime.privacy.EntityPrivacyConfig
 import entkt.runtime.privacy.UpdatePrivacyEvaluator
-import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.query.execution.ReadQueryExecutionHost
 import entkt.runtime.query.execution.ReadQueryExecutor
 import entkt.runtime.result.EntOperation
 import entkt.runtime.rule.EntRuleClient
 import entkt.runtime.validation.BatchValidationRule
-import entkt.runtime.validation.ResolvedEntityValidationConfig
+import entkt.runtime.validation.EntityValidationConfig
 import entkt.runtime.validation.ValidationEvaluator
 
 /** Assemble scalar and bulk CREATE from one converter serving both preparation and hook conversion. */
@@ -46,8 +46,8 @@ fun <
     entity: EntityMapping<Entity>,
     mutationRuntime: MutationRuntime<Viewer>,
     converter: Converter,
-    privacy: ResolvedEntityPrivacyConfig<*, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, *>,
-    validation: ResolvedEntityValidationConfig<BatchValidationRule<RuleClient, Candidate>, *, *>,
+    privacy: EntityPrivacyConfig<*, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, *>,
+    validation: EntityValidationConfig<BatchValidationRule<RuleClient, Candidate>, *, *>,
     beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
     beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
     afterCreate: List<BatchActionHook<Entity>>,
@@ -85,8 +85,8 @@ fun <
     entity: EntityMapping<Entity>,
     mutationRuntime: MutationRuntime<Viewer>,
     converter: CreateMutationConverter<Draft, Candidate, Entity, BeforeCreateState>,
-    privacy: ResolvedEntityPrivacyConfig<*, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, *>,
-    validation: ResolvedEntityValidationConfig<BatchValidationRule<RuleClient, Candidate>, *, *>,
+    privacy: EntityPrivacyConfig<*, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, *>,
+    validation: EntityValidationConfig<BatchValidationRule<RuleClient, Candidate>, *, *>,
     hookStateConverter: CreateMutationHookStateConverter<Viewer, Draft, Entity, BeforeSaveState, BeforeCreateState>,
     beforeSave: List<BatchTransformingHook<BeforeSaveState>>,
     beforeCreate: List<BatchTransformingHook<BeforeCreateState>>,
@@ -132,10 +132,10 @@ fun <
 > buildUpdateOperation(
     entity: EntityMapping<Entity>,
     mutationRuntime: MutationRuntime<Viewer>,
-    privacy: ResolvedEntityPrivacyConfig<
+    privacy: EntityPrivacyConfig<
         *, BatchPrivacyRule<Viewer, RuleClient, Candidate>, BatchPrivacyRule<Viewer, RuleClient, RuleInput>, *,
     >,
-    validation: ResolvedEntityValidationConfig<
+    validation: EntityValidationConfig<
         BatchValidationRule<RuleClient, Candidate>, BatchValidationRule<RuleClient, RuleInput>, *,
     >,
     adapter: Adapter,
@@ -196,10 +196,10 @@ fun <
 > buildDeleteMutationOperation(
     entity: EntityDescriptor<Entity, *>,
     converter: DeleteMutationConverter<Entity, Candidate>,
-    privacy: ResolvedEntityPrivacyConfig<
+    privacy: EntityPrivacyConfig<
         *, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, BatchPrivacyRule<Viewer, RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
-    validation: ResolvedEntityValidationConfig<
+    validation: EntityValidationConfig<
         *, *, BatchValidationRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
     beforeDelete: List<BatchActionHook<Entity>>,
@@ -237,10 +237,10 @@ fun <
 > buildDeleteManyMutationOperation(
     entity: EntityDescriptor<Entity, *>,
     converter: DeleteMutationConverter<Entity, Candidate>,
-    privacy: ResolvedEntityPrivacyConfig<
+    privacy: EntityPrivacyConfig<
         *, BatchPrivacyRule<Viewer, RuleClient, Candidate>, *, BatchPrivacyRule<Viewer, RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
-    validation: ResolvedEntityValidationConfig<
+    validation: EntityValidationConfig<
         *, *, BatchValidationRule<RuleClient, DeleteRuleInput<Entity, Candidate>>,
     >,
     driver: DatabaseDriver,

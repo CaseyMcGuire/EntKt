@@ -21,7 +21,6 @@ import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.TestViewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.query.EntInterceptorsConfig
 import entkt.runtime.query.ReadOperation
@@ -37,7 +36,6 @@ import entkt.runtime.result.MutationWriteState
 import entkt.runtime.rule.TestRuleClient
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
-import entkt.runtime.validation.ResolvedEntityValidationConfig
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -204,7 +202,7 @@ class DeleteMutationOperationTest {
         val beforeDelete = listOf(ActionHook<Widget> { entity -> events += "before:${entity.id}" })
         val afterDelete = listOf(ActionHook<Widget> { entity -> events += "after:${entity.id}" })
 
-        val privacy = ResolvedEntityPrivacyConfig(
+        val privacy = privacyConfig(
             loadRules = emptyList<Nothing>(),
             createRules = listOf(
                 batchPrivacyRule<TestViewer, TestRuleClient, Candidate> { context, candidates ->
@@ -229,7 +227,7 @@ class DeleteMutationOperationTest {
             deleteDerivesFromCreate = derivePrivacy,
         )
 
-        val validation = ResolvedEntityValidationConfig(
+        val validation = validationConfig(
             createRules = listOf(
                 batchValidationRule<TestRuleClient, Candidate> { _, _ ->
                     error("DELETE must not derive CREATE validation")

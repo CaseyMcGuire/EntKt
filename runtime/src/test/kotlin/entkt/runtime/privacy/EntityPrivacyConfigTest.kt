@@ -5,22 +5,21 @@ package entkt.runtime.privacy
 import entkt.runtime.rule.TestRuleClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class EntityPrivacyConfigTest {
-    private class Config : EntityPrivacyConfig<
-        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
-        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
-        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
-        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
-    >()
+private typealias TestPrivacyConfig = EntityPrivacyConfig<
+    BatchPrivacyRule<TestViewer, TestRuleClient, String>,
+    BatchPrivacyRule<TestViewer, TestRuleClient, String>,
+    BatchPrivacyRule<TestViewer, TestRuleClient, String>,
+    BatchPrivacyRule<TestViewer, TestRuleClient, String>,
+>
 
+class EntityPrivacyConfigTest {
     @Test
     fun `configurations start empty with independent rule lists and derivation disabled`() {
-        val config = Config()
-        val other = Config()
+        val config = TestPrivacyConfig()
+        val other = TestPrivacyConfig()
 
         assertTrue(config.loadRules.isEmpty())
         assertTrue(config.createRules.isEmpty())
@@ -43,10 +42,10 @@ class EntityPrivacyConfigTest {
     }
 
     @Test
-    fun `resolution preserves rule order duplicates and derivation without retaining mutable lists`() {
-        val first = PrivacyRule<TestViewer, TestRuleClient, String> { _, _ -> error("resolution must not evaluate rules") }
-        val second = batchPrivacyRule<TestViewer, TestRuleClient, String> { _, _ -> error("resolution must not evaluate rules") }
-        val config = Config().apply {
+    fun `a deep copy keeps rule order duplicates and derivation and is detached from the original`() {
+        val first = PrivacyRule<TestViewer, TestRuleClient, String> { _, _ -> error("copying must not evaluate rules") }
+        val second = batchPrivacyRule<TestViewer, TestRuleClient, String> { _, _ -> error("copying must not evaluate rules") }
+        val config = TestPrivacyConfig().apply {
             loadRules.addAll(listOf(first, second, first))
             createRules.addAll(listOf(second, first))
             updateRules.addAll(listOf(first, second))
@@ -55,7 +54,7 @@ class EntityPrivacyConfigTest {
             deleteDerivesFromCreate = true
         }
 
-        val resolved = config.resolveForInternalUse()
+        val copy = config.deepCopy()
         config.loadRules.clear()
         config.createRules.clear()
         config.updateRules.clear()
@@ -63,19 +62,14 @@ class EntityPrivacyConfigTest {
         config.updateDerivesFromCreate = false
         config.deleteDerivesFromCreate = false
 
-        assertEquals(listOf(first, second, first), resolved.loadRules)
-        assertEquals(listOf(second, first), resolved.createRules)
-        assertEquals(listOf(first, second), resolved.updateRules)
-        assertEquals(listOf(second, first, second), resolved.deleteRules)
-        assertTrue(resolved.updateDerivesFromCreate)
-        assertTrue(resolved.deleteDerivesFromCreate)
-        for (rules in listOf(resolved.loadRules, resolved.createRules, resolved.updateRules, resolved.deleteRules)) {
-            assertFailsWith<UnsupportedOperationException> {
-                (rules as MutableList<*>).clear()
-            }
-        }
+        assertEquals(listOf(first, second, first), copy.loadRules)
+        assertEquals(listOf(second, first), copy.createRules)
+        assertEquals(listOf(first, second), copy.updateRules)
+        assertEquals(listOf(second, first, second), copy.deleteRules)
+        assertTrue(copy.updateDerivesFromCreate)
+        assertTrue(copy.deleteDerivesFromCreate)
 
-        val subsequent = config.resolveForInternalUse()
+        val subsequent = config.deepCopy()
         assertTrue(subsequent.loadRules.isEmpty())
         assertTrue(subsequent.createRules.isEmpty())
         assertTrue(subsequent.updateRules.isEmpty())

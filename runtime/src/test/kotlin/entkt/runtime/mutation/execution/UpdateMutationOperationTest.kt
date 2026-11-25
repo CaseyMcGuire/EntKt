@@ -26,7 +26,6 @@ import entkt.runtime.privacy.PrivacyEvaluation
 import entkt.runtime.privacy.TestViewer
 import entkt.runtime.privacy.ViewerContext
 import entkt.runtime.privacy.batchPrivacyRule
-import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
 import entkt.runtime.query.EdgeMapping
 import entkt.runtime.result.EntConflictException
 import entkt.runtime.result.EntMutationException
@@ -43,7 +42,6 @@ import entkt.runtime.result.ValidationViolation
 import entkt.runtime.rule.TestRuleClient
 import entkt.runtime.validation.ValidationDecision
 import entkt.runtime.validation.batchValidationRule
-import entkt.runtime.validation.ResolvedEntityValidationConfig
 import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -195,7 +193,7 @@ class UpdateMutationOperationTest {
             relationshipLocking = RelationshipLocking.OwnerOnly,
         )
 
-        val privacy = ResolvedEntityPrivacyConfig(
+        val privacy = privacyConfig(
             loadRules = emptyList<Nothing>(),
             createRules = listOf(
                 batchPrivacyRule<TestViewer, TestRuleClient, Candidate> { context, candidates ->
@@ -218,7 +216,7 @@ class UpdateMutationOperationTest {
             deleteDerivesFromCreate = false,
         )
 
-        val validation = ResolvedEntityValidationConfig(
+        val validation = validationConfig(
             createRules = listOf(
                 batchValidationRule<TestRuleClient, Candidate> { context, candidates ->
                     assertSame(ruleClient, context.client)

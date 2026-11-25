@@ -117,10 +117,10 @@ class EntGeneratorTest {
         // hook-state files, create draft, create/delete converters, update, full/read queries, query scope, repo, privacy, validation,
         // and same-named compound rule-input files for UPDATE and DELETE.
         // The schema-set-level files are EntReadRuntime, ReadOnlyEntClient, the
-        // public client DSL/facades, and three immutable resolved-config types.
+        // public client DSL/facades, and two immutable resolved-config types.
         // User additionally gets full/read index-helper files; Car has no eligible
         // indexes and therefore has no corresponding file.
-        assertEquals(16 * schemas.size + 13 + 2 + 4, files.size)
+        assertEquals(16 * schemas.size + 12 + 2 + 4, files.size)
         val names = files.map { it.name }.toSet()
         assertEquals(
             setOf(
@@ -140,7 +140,6 @@ class EntGeneratorTest {
                 "EntClientHooks",
                 "ResolvedEntClientHooks",
                 "EntClientPolicies",
-                "ResolvedEntClientPolicies",
                 "EntClientInterceptors",
                 "EntClientConfig",
                 "ResolvedEntClientConfig",
@@ -457,7 +456,6 @@ class EntGeneratorTest {
                 "EntClientHooks.kt",
                 "ResolvedEntClientHooks.kt",
                 "EntClientPolicies.kt",
-                "ResolvedEntClientPolicies.kt",
                 "EntClientInterceptors.kt",
                 "EntClientConfig.kt",
                 "ResolvedEntClientConfig.kt",

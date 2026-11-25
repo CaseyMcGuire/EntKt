@@ -6,20 +6,19 @@ import entkt.runtime.rule.EntRuleClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-class EntityValidationConfigTest {
-    private class Config : EntityValidationConfig<
-        BatchValidationRule<EntRuleClient, String>,
-        BatchValidationRule<EntRuleClient, String>,
-        BatchValidationRule<EntRuleClient, String>,
-    >()
+private typealias TestValidationConfig = EntityValidationConfig<
+    BatchValidationRule<EntRuleClient, String>,
+    BatchValidationRule<EntRuleClient, String>,
+    BatchValidationRule<EntRuleClient, String>,
+>
 
+class EntityValidationConfigTest {
     @Test
     fun `configurations start empty with independent rule lists and derivation disabled`() {
-        val config = Config()
-        val other = Config()
+        val config = TestValidationConfig()
+        val other = TestValidationConfig()
 
         assertTrue(config.createRules.isEmpty())
         assertTrue(config.updateRules.isEmpty())
@@ -37,33 +36,28 @@ class EntityValidationConfigTest {
     }
 
     @Test
-    fun `resolution preserves rule order duplicates and derivation without retaining mutable lists`() {
-        val first = ValidationRule<EntRuleClient, String> { _, _ -> error("resolution must not evaluate rules") }
-        val second = batchValidationRule<EntRuleClient, String> { _, _ -> error("resolution must not evaluate rules") }
-        val config = Config().apply {
+    fun `a deep copy keeps rule order duplicates and derivation and is detached from the original`() {
+        val first = ValidationRule<EntRuleClient, String> { _, _ -> error("copying must not evaluate rules") }
+        val second = batchValidationRule<EntRuleClient, String> { _, _ -> error("copying must not evaluate rules") }
+        val config = TestValidationConfig().apply {
             createRules.addAll(listOf(first, second, first))
             updateRules.addAll(listOf(second, first))
             deleteRules.addAll(listOf(first, second))
             updateDerivesFromCreate = true
         }
 
-        val resolved = config.resolveForInternalUse()
+        val copy = config.deepCopy()
         config.createRules.clear()
         config.updateRules.clear()
         config.deleteRules.clear()
         config.updateDerivesFromCreate = false
 
-        assertEquals(listOf(first, second, first), resolved.createRules)
-        assertEquals(listOf(second, first), resolved.updateRules)
-        assertEquals(listOf(first, second), resolved.deleteRules)
-        assertTrue(resolved.updateDerivesFromCreate)
-        for (rules in listOf(resolved.createRules, resolved.updateRules, resolved.deleteRules)) {
-            assertFailsWith<UnsupportedOperationException> {
-                (rules as MutableList<*>).clear()
-            }
-        }
+        assertEquals(listOf(first, second, first), copy.createRules)
+        assertEquals(listOf(second, first), copy.updateRules)
+        assertEquals(listOf(first, second), copy.deleteRules)
+        assertTrue(copy.updateDerivesFromCreate)
 
-        val subsequent = config.resolveForInternalUse()
+        val subsequent = config.deepCopy()
         assertTrue(subsequent.createRules.isEmpty())
         assertTrue(subsequent.updateRules.isEmpty())
         assertTrue(subsequent.deleteRules.isEmpty())

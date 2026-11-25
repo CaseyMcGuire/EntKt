@@ -6,14 +6,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class EntityValidationScopeTest {
-    private class Config : EntityValidationConfig<
-        BatchValidationRule<EntRuleClient, String>,
-        BatchValidationRule<EntRuleClient, String>,
-        BatchValidationRule<EntRuleClient, String>,
-    >()
+private typealias ScopeTestValidationConfig = EntityValidationConfig<
+    BatchValidationRule<EntRuleClient, String>,
+    BatchValidationRule<EntRuleClient, String>,
+    BatchValidationRule<EntRuleClient, String>,
+>
 
-    private class Scope(config: Config) : EntityValidationScope<
+class EntityValidationScopeTest {
+    private class Scope(config: ScopeTestValidationConfig) : EntityValidationScope<
         BatchValidationRule<EntRuleClient, String>,
         BatchValidationRule<EntRuleClient, String>,
         BatchValidationRule<EntRuleClient, String>,
@@ -23,7 +23,7 @@ class EntityValidationScopeTest {
     fun `registration preserves mixed rule order duplicates and empty inputs in every phase`() {
         val scalar = ValidationRule<EntRuleClient, String> { _, _ -> error("registration must not evaluate rules") }
         val batch = batchValidationRule<EntRuleClient, String> { _, _ -> error("registration must not evaluate rules") }
-        val config = Config()
+        val config = ScopeTestValidationConfig()
         val scope = Scope(config)
 
         scope.create(scalar, batch, scalar)
@@ -47,8 +47,8 @@ class EntityValidationScopeTest {
 
     @Test
     fun `update derivation changes only the supplied configuration flag`() {
-        val config = Config()
-        val other = Config()
+        val config = ScopeTestValidationConfig()
+        val other = ScopeTestValidationConfig()
         val scope = Scope(config)
 
         scope.updateDerivesFromCreate()

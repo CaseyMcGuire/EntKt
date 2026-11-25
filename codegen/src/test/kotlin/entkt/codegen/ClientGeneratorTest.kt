@@ -185,9 +185,11 @@ class ClientGeneratorTest {
 
         assert(output.contains("hooks = ResolvedEntClientHooks(hooksConfig)"))
         assert(output.contains("source.cars.resolveForInternalUse()"))
-        assert(output.contains("policies = ResolvedEntClientPolicies(policiesConfig)"))
-        assert(output.contains("source.usersPrivacyConfig.resolveForInternalUse()"))
-        assert(output.contains("source.usersValidationConfig.resolveForInternalUse()"))
+        assert(output.contains("policies = policiesConfig.deepCopy()"))
+        assert(output.contains("usersPrivacyConfig = source.usersPrivacyConfig.deepCopy()"))
+        assert(output.contains("usersValidationConfig = source.usersValidationConfig.deepCopy()"))
+        assert(output.contains("internal fun deepCopy(): EntClientPolicies = EntClientPolicies(this)"))
+        assert(!output.contains("ResolvedEntClientPolicies"))
         assert(output.contains("interceptors = interceptorsConfig.config.resolveForInternalUse()"))
         assert(!output.contains("snapshotForInternalUse") && !output.contains("copyFromForInternalUse"))
     }
@@ -210,7 +212,6 @@ class ClientGeneratorTest {
                 "EntClientHooks",
                 "ResolvedEntClientHooks",
                 "EntClientPolicies",
-                "ResolvedEntClientPolicies",
                 "EntClientInterceptors",
                 "EntClientConfig",
                 "ResolvedEntClientConfig",

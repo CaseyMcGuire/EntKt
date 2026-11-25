@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ValidationScopeCompileTest {
-    // Produces EntityValidationConfig and EntityValidationScope, matching the runtime base names.
+    // Produces EntityValidationScope, matching the runtime base name.
     private class Entity : EntSchema("entities", clientName = "entities") {
         override fun id() = EntId.long()
         val name by string("name")
@@ -35,7 +35,7 @@ class ValidationScopeCompileTest {
         )
 
     @Test
-    fun `generated subclasses retain typed resolution even when their names match the runtime bases`() {
+    fun `a generated scope keeps its types even when its name matches the runtime class`() {
         val probe = SourceFile.kotlin(
             "ValidationScopeProbe.kt",
             """
@@ -48,9 +48,8 @@ class ValidationScopeCompileTest {
             import com.example.ent.EntityDeleteValidationRule
             import com.example.ent.EntityUpdateBatchValidationRule
             import com.example.ent.EntityUpdateValidationRule
-            import com.example.ent.EntityValidationConfig
             import com.example.ent.EntityValidationScope
-            import entkt.runtime.validation.ResolvedEntityValidationConfig
+            import entkt.runtime.validation.EntityValidationConfig
 
             object ValidationScopeProbe {
                 @JvmStatic
@@ -58,7 +57,11 @@ class ValidationScopeCompileTest {
                     val create = EntityCreateValidationRule { _, _ -> error("not evaluated") }
                     val update = EntityUpdateValidationRule { _, _ -> error("not evaluated") }
                     val delete = EntityDeleteValidationRule { _, _ -> error("not evaluated") }
-                    val config = EntityValidationConfig()
+                    val config = EntityValidationConfig<
+                        EntityCreateBatchValidationRule,
+                        EntityUpdateBatchValidationRule,
+                        EntityDeleteBatchValidationRule,
+                    >()
                     EntityValidationScope(config).apply {
                         create(create)
                         update(update)
@@ -66,19 +69,18 @@ class ValidationScopeCompileTest {
                         updateDerivesFromCreate()
                     }
 
-                    val resolved: ResolvedEntityValidationConfig<
-                        EntityCreateBatchValidationRule,
-                        EntityUpdateBatchValidationRule,
-                        EntityDeleteBatchValidationRule,
-                    > = config.resolveForInternalUse()
-                    check(resolved.createRules.single() === create)
-                    check(resolved.updateRules.single() === update)
-                    check(resolved.deleteRules.single() === delete)
-                    check(resolved.updateDerivesFromCreate)
+                    val copy = config.deepCopy()
+                    val createRules: List<EntityCreateBatchValidationRule> = copy.createRules
+                    val updateRules: List<EntityUpdateBatchValidationRule> = copy.updateRules
+                    val deleteRules: List<EntityDeleteBatchValidationRule> = copy.deleteRules
+                    check(createRules.single() === create)
+                    check(updateRules.single() === update)
+                    check(deleteRules.single() === delete)
+                    check(copy.updateDerivesFromCreate)
                     config.createRules.clear()
                     config.updateDerivesFromCreate = false
-                    check(resolved.createRules.single() === create)
-                    check(resolved.updateDerivesFromCreate)
+                    check(copy.createRules.single() === create)
+                    check(copy.updateDerivesFromCreate)
                     return "ok"
                 }
             }
@@ -96,7 +98,8 @@ class ValidationScopeCompileTest {
         val invalidSources = mapOf(
             "LoadValidation" to "fun invalid(scope: EntityValidationScope) { scope.load() }",
             "DeleteDerivationScope" to "fun invalid(scope: EntityValidationScope) { scope.deleteDerivesFromCreate() }",
-            "DeleteDerivationConfig" to "fun invalid(config: EntityValidationConfig) { config.deleteDerivesFromCreate = true }",
+            "DeleteDerivationConfig" to
+                "fun invalid(config: EntityValidationConfig<*, *, *>) { config.deleteDerivesFromCreate = true }",
         )
         val snippets = invalidSources.map { (name, body) ->
             SourceFile.kotlin(
@@ -104,8 +107,8 @@ class ValidationScopeCompileTest {
                 """
                 package com.example.app
 
-                import com.example.ent.EntityValidationConfig
                 import com.example.ent.EntityValidationScope
+                import entkt.runtime.validation.EntityValidationConfig
 
                 $body
                 """.trimIndent(),

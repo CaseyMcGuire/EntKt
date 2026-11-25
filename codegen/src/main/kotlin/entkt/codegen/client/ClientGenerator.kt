@@ -31,7 +31,11 @@ import entkt.codegen.kotlinpoet.parameter
 import entkt.codegen.kotlinpoet.primaryConstructor
 import entkt.codegen.kotlinpoet.property
 import entkt.codegen.kotlinpoet.statement
+import entkt.codegen.metadata.ENTITY_PRIVACY_CONFIG
 import entkt.codegen.metadata.ENTITY_SCHEMA
+import entkt.codegen.metadata.ENTITY_VALIDATION_CONFIG
+import entkt.codegen.metadata.entityPrivacyConfigType
+import entkt.codegen.metadata.entityValidationConfigType
 
 private val DRIVER = ClassName("entkt.runtime.driver", "DatabaseDriver")
 private val ENTKT_DSL = ClassName("entkt.schema", "EntktDsl")
@@ -87,7 +91,6 @@ internal class ClientGenerator(
         val configClass = ClassName(packageName, "EntClientConfig")
         val hooksClass = ClassName(packageName, "EntClientHooks")
         val resolvedHooksClass = ClassName(packageName, "ResolvedEntClientHooks")
-        val resolvedPoliciesClass = ClassName(packageName, "ResolvedEntClientPolicies")
         val resolvedConfigClass = ClassName(packageName, "ResolvedEntClientConfig")
         val t = TypeVariableName("T")
 
@@ -106,8 +109,6 @@ internal class ClientGenerator(
         // Generate EntClientPolicies
         val policiesClass = ClassName(packageName, "EntClientPolicies")
         val policiesType = buildPoliciesClass(policiesClass, schemas)
-        val resolvedPoliciesType =
-            buildResolvedPoliciesClass(resolvedPoliciesClass, policiesClass, schemas)
 
         // Generate EntClientInterceptors (per-entity + global registration DSL)
         val interceptorsClass = ClassName(packageName, "EntClientInterceptors")
@@ -120,13 +121,12 @@ internal class ClientGenerator(
             policiesClass,
             interceptorsClass,
             resolvedHooksClass,
-            resolvedPoliciesClass,
             resolvedConfigClass,
         )
         val resolvedConfigType = buildResolvedConfigClass(
             resolvedConfigClass,
             resolvedHooksClass,
-            resolvedPoliciesClass,
+            policiesClass,
         )
 
         // Generate EntClient
@@ -330,7 +330,6 @@ internal class ClientGenerator(
             add(buildClientFile(hooksType))
             add(buildClientFile(resolvedHooksType))
             add(buildClientFile(policiesType))
-            add(buildClientFile(resolvedPoliciesType))
             add(buildClientFile(interceptorsType))
             add(buildClientFile(configType))
             add(buildClientFile(resolvedConfigType))
@@ -415,7 +414,6 @@ internal class ClientGenerator(
         policiesClass: ClassName,
         interceptorsClass: ClassName,
         resolvedHooksClass: ClassName,
-        resolvedPoliciesClass: ClassName,
         resolvedConfigClass: ClassName,
     ): TypeSpec {
         val hooksBlockLambda = LambdaTypeName.get(
@@ -481,7 +479,6 @@ internal class ClientGenerator(
                 buildConfigResolution(
                     resolvedConfigClass,
                     resolvedHooksClass,
-                    resolvedPoliciesClass,
                 ),
             )
         }
@@ -491,7 +488,6 @@ internal class ClientGenerator(
     private fun buildConfigResolution(
         resolvedConfigClass: ClassName,
         resolvedHooksClass: ClassName,
-        resolvedPoliciesClass: ClassName,
     ): FunSpec = function("resolveForInternalUse", resolvedConfigClass) {
         addAnnotation(ClassName("entkt.query", "EntktInternal"))
         addModifiers(KModifier.INTERNAL)
@@ -501,19 +497,18 @@ internal class ClientGenerator(
                 "  defaultUpdateConsistency = defaultUpdateConsistency,\n" +
                 "  defaultRelationshipLocking = defaultRelationshipLocking,\n" +
                 "  hooks = %T(hooksConfig),\n" +
-                "  policies = %T(policiesConfig),\n" +
+                "  policies = policiesConfig.deepCopy(),\n" +
                 "  interceptors = interceptorsConfig.config.resolveForInternalUse(),\n" +
                 ")",
             resolvedConfigClass,
             resolvedHooksClass,
-            resolvedPoliciesClass,
         )
     }
 
     private fun buildResolvedConfigClass(
         resolvedConfigClass: ClassName,
         resolvedHooksClass: ClassName,
-        resolvedPoliciesClass: ClassName,
+        policiesClass: ClassName,
     ): TypeSpec = classType(resolvedConfigClass) {
         addModifiers(KModifier.INTERNAL)
         primaryConstructor {
@@ -522,7 +517,7 @@ internal class ClientGenerator(
             parameter("defaultUpdateConsistency", UPDATE_CONSISTENCY)
             parameter("defaultRelationshipLocking", RELATIONSHIP_LOCKING)
             parameter("hooks", resolvedHooksClass)
-            parameter("policies", resolvedPoliciesClass)
+            parameter("policies", policiesClass)
             parameter("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer))
         }
         property("transactionRequirement", TRANSACTION_REQUIREMENT) {
@@ -535,7 +530,7 @@ internal class ClientGenerator(
             initializer("defaultRelationshipLocking")
         }
         property("hooks", resolvedHooksClass) { initializer("hooks") }
-        property("policies", resolvedPoliciesClass) { initializer("policies") }
+        property("policies", policiesClass) { initializer("policies") }
         property("interceptors", RESOLVED_ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer)) {
             initializer("interceptors")
         }
@@ -753,29 +748,41 @@ internal class ClientGenerator(
         policiesClass: ClassName,
         schemas: List<SchemaInput>,
     ): TypeSpec {
+        // Every config property is assigned by one of two constructors: the public one
+        // starts empty, and the private one copies another instance for deepCopy().
+        val emptyConfigs = CodeBlock.builder()
+        val copiedConfigs = CodeBlock.builder()
         return classType(policiesClass) {
             addAnnotation(annotation(ENTKT_DSL))
             for (input in schemas) {
-            val entityClass = ClassName(packageName, input.name)
-            val policyScopeClass = ClassName(packageName, "${input.name}PolicyScope")
-            val privacyConfigClass = ClassName(packageName, "${input.name}PrivacyConfig")
-            val validationConfigClass = ClassName(packageName, "${input.name}ValidationConfig")
-            val propName = input.clientName
-            val policyType = ENTITY_POLICY.parameterizedBy(entityClass, policyScopeClass)
+                val entityClass = ClassName(packageName, input.name)
+                val policyScopeClass = ClassName(packageName, "${input.name}PolicyScope")
+                val privacyConfigType = entityPrivacyConfigType(packageName, input.name)
+                val validationConfigType = entityValidationConfigType(packageName, input.name)
+                val propName = input.clientName
+                val policyType = ENTITY_POLICY.parameterizedBy(entityClass, policyScopeClass)
 
-            // Internal privacy config property
-                property("${propName}PrivacyConfig", privacyConfigClass) {
+                property("${propName}PrivacyConfig", privacyConfigType) {
                     addModifiers(KModifier.INTERNAL)
-                    initializer("%T()", privacyConfigClass)
                 }
+                emptyConfigs.addStatement("%LPrivacyConfig = %T()", propName, ENTITY_PRIVACY_CONFIG)
+                copiedConfigs.addStatement(
+                    "%LPrivacyConfig = source.%LPrivacyConfig.deepCopy()",
+                    propName,
+                    propName,
+                )
 
-            // Internal validation config property
-                property("${propName}ValidationConfig", validationConfigClass) {
+                property("${propName}ValidationConfig", validationConfigType) {
                     addModifiers(KModifier.INTERNAL)
-                    initializer("%T()", validationConfigClass)
                 }
+                emptyConfigs.addStatement("%LValidationConfig = %T()", propName, ENTITY_VALIDATION_CONFIG)
+                copiedConfigs.addStatement(
+                    "%LValidationConfig = source.%LValidationConfig.deepCopy()",
+                    propName,
+                    propName,
+                )
 
-            // DSL method: users(policy)
+                // DSL method: users(policy)
                 function(propName) {
                     parameter("policy", policyType)
                     statement(
@@ -786,32 +793,20 @@ internal class ClientGenerator(
                     )
                 }
             }
-        }
-    }
-
-    private fun buildResolvedPoliciesClass(
-        resolvedPoliciesClass: ClassName,
-        policiesClass: ClassName,
-        schemas: List<SchemaInput>,
-    ): TypeSpec = classType(resolvedPoliciesClass) {
-        addModifiers(KModifier.INTERNAL)
-        primaryConstructor {
-            addModifiers(KModifier.INTERNAL)
-            parameter("source", policiesClass)
-        }
-        for (input in schemas) {
-            val propertyName = input.clientName
-            property(
-                "${propertyName}PrivacyConfig",
-                resolvedEntityPrivacyConfigType(packageName, input.name),
-            ) {
-                initializer("source.%LPrivacyConfig.resolveForInternalUse()", propertyName)
-            }
-            property(
-                "${propertyName}ValidationConfig",
-                resolvedEntityValidationConfigType(packageName, input.name),
-            ) {
-                initializer("source.%LValidationConfig.resolveForInternalUse()", propertyName)
+            addFunction(constructor { addCode(emptyConfigs.build()) })
+            addFunction(
+                constructor {
+                    addModifiers(KModifier.PRIVATE)
+                    parameter("source", policiesClass)
+                    addCode(copiedConfigs.build())
+                },
+            )
+            // Copies every entity's privacy and validation configuration, so later
+            // registrations on this instance do not reach the copy.
+            function("deepCopy", policiesClass) {
+                addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                addModifiers(KModifier.INTERNAL)
+                statement("return %T(this)", policiesClass)
             }
         }
     }

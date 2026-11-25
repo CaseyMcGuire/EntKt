@@ -229,10 +229,10 @@ class WriteCandidateCompileTest {
                     import entkt.runtime.mutation.execution.*
                     import com.example.auth.AppViewer
                     import entkt.runtime.privacy.BatchPrivacyRule
-                    import entkt.runtime.privacy.ResolvedEntityPrivacyConfig
+                    import entkt.runtime.privacy.EntityPrivacyConfig
                     import entkt.runtime.rule.EntRuleClient
                     import entkt.runtime.validation.BatchValidationRule
-                    import entkt.runtime.validation.ResolvedEntityValidationConfig
+                    import entkt.runtime.validation.EntityValidationConfig
 
                     data class Widget(override val id: Int) : EntEntity.IntId
                     data class Other(override val id: Int) : EntEntity.IntId
@@ -255,12 +255,12 @@ class WriteCandidateCompileTest {
 
                     fun bind(
                         entity: EntityDescriptor<$mappingEntity, *>,
-                        privacy: ResolvedEntityPrivacyConfig<
+                        privacy: EntityPrivacyConfig<
                             Nothing, BatchPrivacyRule<AppViewer, EntRuleClient, WidgetCandidate>,
                             BatchPrivacyRule<AppViewer, EntRuleClient, UpdateInput>,
                             BatchPrivacyRule<AppViewer, EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,
                         >,
-                        validation: ResolvedEntityValidationConfig<
+                        validation: EntityValidationConfig<
                             BatchValidationRule<EntRuleClient, WidgetCandidate>,
                             BatchValidationRule<EntRuleClient, UpdateInput>,
                             BatchValidationRule<EntRuleClient, DeleteRuleInput<Widget, WidgetCandidate>>,

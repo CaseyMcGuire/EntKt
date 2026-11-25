@@ -265,7 +265,12 @@ class BatchRuleRegistrationCompileTest {
                 val scalarPrivacy = WidgetLoadPrivacyRule { _, _ -> error("registration must not evaluate rules") }
                 val firstPrivacy: WidgetLoadBatchPrivacyRule = batchPrivacyRule { _, _ -> error("not evaluated") }
                 val secondPrivacy: WidgetLoadBatchPrivacyRule = batchPrivacyRule { _, _ -> error("not evaluated") }
-                val privacyConfig = WidgetPrivacyConfig()
+                val privacyConfig = EntityPrivacyConfig<
+                    WidgetLoadBatchPrivacyRule,
+                    WidgetCreateBatchPrivacyRule,
+                    WidgetUpdateBatchPrivacyRule,
+                    WidgetDeleteBatchPrivacyRule,
+                >()
                 WidgetPrivacyScope(privacyConfig).apply {
                     load(scalarPrivacy)
                     load(firstPrivacy, secondPrivacy)
@@ -290,7 +295,11 @@ class BatchRuleRegistrationCompileTest {
                 val scalarValidation = WidgetCreateValidationRule { _, _ -> error("registration must not evaluate rules") }
                 val firstValidation: WidgetCreateBatchValidationRule = batchValidationRule { _, _ -> error("not evaluated") }
                 val secondValidation: WidgetCreateBatchValidationRule = batchValidationRule { _, _ -> error("not evaluated") }
-                val validationConfig = WidgetValidationConfig()
+                val validationConfig = EntityValidationConfig<
+                    WidgetCreateBatchValidationRule,
+                    WidgetUpdateBatchValidationRule,
+                    WidgetDeleteBatchValidationRule,
+                >()
                 WidgetValidationScope(validationConfig).apply {
                     create(scalarValidation)
                     create(firstValidation, secondValidation)

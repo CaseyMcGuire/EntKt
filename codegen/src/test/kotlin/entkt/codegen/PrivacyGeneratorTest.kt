@@ -3,6 +3,7 @@ package entkt.codegen
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.TypeAliasSpec
 import com.squareup.kotlinpoet.TypeSpec
 import entkt.codegen.entity.PrivacyGenerator
 import entkt.codegen.fixtures.Car
@@ -78,23 +79,14 @@ class PrivacyGeneratorTest {
     }
 
     @Test
-    fun `privacy config only binds lifecycle rule types to the runtime base`() {
+    fun `no per-entity privacy config type is generated`() {
         val user = User()
         finalize(user, Car())
-        val config = generator.generate("User", user).members.filterIsInstance<TypeSpec>()
-            .single { it.name == "UserPrivacyConfig" }
+        val file = generator.generate("User", user)
 
-        assertEquals(
-            ClassName("entkt.runtime.privacy", "EntityPrivacyConfig").parameterizedBy(
-                ClassName("com.example.ent", "UserLoadBatchPrivacyRule"),
-                ClassName("com.example.ent", "UserCreateBatchPrivacyRule"),
-                ClassName("com.example.ent", "UserUpdateBatchPrivacyRule"),
-                ClassName("com.example.ent", "UserDeleteBatchPrivacyRule"),
-            ),
-            config.superclass,
-        )
-        assertTrue(config.propertySpecs.isEmpty(), "Rule storage and derivation flags belong in runtime")
-        assertTrue(config.funSpecs.isEmpty(), "Resolution belongs in runtime")
+        val declaredNames = file.members.filterIsInstance<TypeSpec>().map { it.name } +
+            file.members.filterIsInstance<TypeAliasSpec>().map { it.name }
+        assertFalse("UserPrivacyConfig" in declaredNames, declaredNames.toString())
     }
 
     @Test
@@ -118,7 +110,15 @@ class PrivacyGeneratorTest {
         val constructor = requireNotNull(scope.primaryConstructor)
         assertEquals(setOf(KModifier.INTERNAL), constructor.modifiers)
         assertEquals("config", constructor.parameters.single().name)
-        assertEquals(ClassName("com.example.ent", "UserPrivacyConfig"), constructor.parameters.single().type)
+        assertEquals(
+            ClassName("entkt.runtime.privacy", "EntityPrivacyConfig").parameterizedBy(
+                ClassName("com.example.ent", "UserLoadBatchPrivacyRule"),
+                ClassName("com.example.ent", "UserCreateBatchPrivacyRule"),
+                ClassName("com.example.ent", "UserUpdateBatchPrivacyRule"),
+                ClassName("com.example.ent", "UserDeleteBatchPrivacyRule"),
+            ),
+            constructor.parameters.single().type,
+        )
         assertEquals(listOf("config"), scope.superclassConstructorParameters.map { it.toString() })
         assertTrue(scope.propertySpecs.isEmpty(), "The config is stored only by the runtime base")
         assertTrue(scope.funSpecs.isEmpty(), "All registration forms and derivation belong in runtime")
@@ -167,10 +167,18 @@ class PrivacyGeneratorTest {
     fun `PolicyScope constructor takes both privacy and validation config`() {
         val user = User()
         finalize(user, Car())
-        val output = generator.generate("User", user).toString()
+        val output = generator.generate("User", user).toString().replace("\\s+".toRegex(), " ")
 
-        assertContains(output, "privacyConfig: UserPrivacyConfig")
-        assertContains(output, "validationConfig: UserValidationConfig")
+        assertContains(
+            output,
+            "privacyConfig: EntityPrivacyConfig<UserLoadBatchPrivacyRule, UserCreateBatchPrivacyRule, " +
+                "UserUpdateBatchPrivacyRule, UserDeleteBatchPrivacyRule>",
+        )
+        assertContains(
+            output,
+            "validationConfig: EntityValidationConfig<UserCreateBatchValidationRule, " +
+                "UserUpdateBatchValidationRule, UserDeleteBatchValidationRule>",
+        )
     }
 
     // ---------- link-table M2M helpers PendingEdgeOps aggregator on UpdateHookContext ----------

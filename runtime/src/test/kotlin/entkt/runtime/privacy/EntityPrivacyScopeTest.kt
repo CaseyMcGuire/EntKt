@@ -10,15 +10,15 @@ import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-class EntityPrivacyScopeTest {
-    private class Config : EntityPrivacyConfig<
-        BatchPrivacyRule<TestViewer, TestRuleClient, String>,
-        BatchPrivacyRule<TestViewer, TestRuleClient, Int>,
-        BatchPrivacyRule<TestViewer, TestRuleClient, Boolean>,
-        BatchPrivacyRule<TestViewer, TestRuleClient, Long>,
-    >()
+private typealias ScopeTestPrivacyConfig = EntityPrivacyConfig<
+    BatchPrivacyRule<TestViewer, TestRuleClient, String>,
+    BatchPrivacyRule<TestViewer, TestRuleClient, Int>,
+    BatchPrivacyRule<TestViewer, TestRuleClient, Boolean>,
+    BatchPrivacyRule<TestViewer, TestRuleClient, Long>,
+>
 
-    private class Scope(config: Config) : EntityPrivacyScope<TestViewer, TestRuleClient, String, Int, Boolean, Long>(config)
+class EntityPrivacyScopeTest {
+    private class Scope(config: ScopeTestPrivacyConfig) : EntityPrivacyScope<TestViewer, TestRuleClient, String, Int, Boolean, Long>(config)
 
     @Test
     fun `registration preserves mixed rule order duplicates and empty inputs in every phase`() {
@@ -31,7 +31,7 @@ class EntityPrivacyScopeTest {
         val updateBatch = batchRule<Boolean>()
         val deleteScalar = scalarRule<Long>()
         val deleteBatch = batchRule<Long>()
-        val config = Config()
+        val config = ScopeTestPrivacyConfig()
         val scope = Scope(config)
 
         scope.load(context, loadScalar, loadBatch, loadScalar)
@@ -74,7 +74,7 @@ class EntityPrivacyScopeTest {
                 PrivacyDecision.Allow
             }
         }
-        val config = Config()
+        val config = ScopeTestPrivacyConfig()
         Scope(config).apply {
             load(shared)
             create(shared)
@@ -110,7 +110,7 @@ class EntityPrivacyScopeTest {
     @Test
     fun `context scalar and batch rules share registration order and short circuiting`() {
         val calls = mutableListOf<String>()
-        val config = Config()
+        val config = ScopeTestPrivacyConfig()
         Scope(config).apply {
             load(
                 batchPrivacyRule { _, batch ->
@@ -142,8 +142,8 @@ class EntityPrivacyScopeTest {
 
     @Test
     fun `update and delete derivation flags are independent and affect only the supplied configuration`() {
-        val updateConfig = Config()
-        val deleteConfig = Config()
+        val updateConfig = ScopeTestPrivacyConfig()
+        val deleteConfig = ScopeTestPrivacyConfig()
 
         Scope(updateConfig).updateDerivesFromCreate()
         Scope(deleteConfig).deleteDerivesFromCreate()

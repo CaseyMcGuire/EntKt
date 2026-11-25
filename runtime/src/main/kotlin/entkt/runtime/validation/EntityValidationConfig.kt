@@ -2,12 +2,12 @@ package entkt.runtime.validation
 
 import entkt.query.EntktInternal
 
-/** Mutable validation registrations whose rule types are supplied by a generated entity subclass. */
-abstract class EntityValidationConfig<
+/** Mutable validation registrations for one entity. Generated code binds the rule types. */
+class EntityValidationConfig<
     CreateRule : BatchValidationRule<*, *>,
     UpdateRule : BatchValidationRule<*, *>,
     DeleteRule : BatchValidationRule<*, *>,
-> protected constructor() {
+> {
     /** CREATE rules in registration order, including repeated registrations. */
     val createRules: MutableList<CreateRule> = mutableListOf()
 
@@ -20,13 +20,17 @@ abstract class EntityValidationConfig<
     /** Whether UPDATE also validates its candidate with the registered CREATE rules. */
     var updateDerivesFromCreate: Boolean = false
 
-    /** Capture detached, immutable rule lists and the current derivation setting for a client. */
+    /**
+     * Copy the rule lists and the derivation setting into a new configuration.
+     * Later registrations on this one do not reach the copy. The rules themselves are shared.
+     */
     @EntktInternal
-    fun resolveForInternalUse(): ResolvedEntityValidationConfig<CreateRule, UpdateRule, DeleteRule> =
-        ResolvedEntityValidationConfig(
-            createRules = createRules,
-            updateRules = updateRules,
-            deleteRules = deleteRules,
-            updateDerivesFromCreate = updateDerivesFromCreate,
-        )
+    fun deepCopy(): EntityValidationConfig<CreateRule, UpdateRule, DeleteRule> {
+        val copy = EntityValidationConfig<CreateRule, UpdateRule, DeleteRule>()
+        copy.createRules.addAll(createRules)
+        copy.updateRules.addAll(updateRules)
+        copy.deleteRules.addAll(deleteRules)
+        copy.updateDerivesFromCreate = updateDerivesFromCreate
+        return copy
+    }
 }
