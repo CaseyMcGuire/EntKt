@@ -67,9 +67,9 @@ private val ENT_INTERCEPTORS_CONFIG = ClassName("entkt.runtime.query", "EntInter
  * }
  * ```
  *
- * Configuration is resolved before repositories are constructed, so each
+ * Configuration is copied before repositories are constructed, so each
  * repository receives its complete hooks, privacy, and validation inputs in
- * its constructor. Transactional clients reuse that same resolved
+ * its constructor. Transactional clients reuse that same copied
  * configuration; viewer identity remains operation-scoped.
  */
 internal class ClientGenerator(
@@ -89,7 +89,6 @@ internal class ClientGenerator(
         val newHookClientScope = MemberName(packageName, "newEntHookClientScopeForInternalUse")
         val configClass = ClassName(packageName, "EntClientConfig")
         val hooksClass = ClassName(packageName, "EntClientHooks")
-        val resolvedConfigClass = ClassName(packageName, "ResolvedEntClientConfig")
         val t = TypeVariableName("T")
 
         // Generated EntClient reads / writes the
@@ -117,12 +116,6 @@ internal class ClientGenerator(
             hooksClass,
             policiesClass,
             interceptorsClass,
-            resolvedConfigClass,
-        )
-        val resolvedConfigType = buildResolvedConfigClass(
-            resolvedConfigClass,
-            hooksClass,
-            policiesClass,
         )
 
         // Generate EntClient
@@ -142,14 +135,14 @@ internal class ClientGenerator(
             primaryConstructor {
                 addModifiers(KModifier.PRIVATE)
                 parameter("driver", DRIVER)
-                parameter("configuration", resolvedConfigClass)
+                parameter("configuration", configClass)
             }
             addFunction(constructor {
                 parameter("driver", DRIVER)
                 parameter("config", configLambda) { defaultValue("{}") }
                 callThisConstructor(
                     CodeBlock.of("driver"),
-                    CodeBlock.of("%T().apply(config).resolveForInternalUse()", configClass),
+                    CodeBlock.of("%T().apply(config).deepCopy()", configClass),
                 )
             })
             // Batch-register the complete schema set while initializing
@@ -166,7 +159,7 @@ internal class ClientGenerator(
                 addModifiers(KModifier.PRIVATE)
                 initializer("driver.also { it.registerAll(SCHEMAS) }")
             }
-            property("configuration", resolvedConfigClass) {
+            property("configuration", configClass) {
                 addModifiers(KModifier.PRIVATE)
                 initializer("configuration")
             }
@@ -250,7 +243,7 @@ internal class ClientGenerator(
                 ) {
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.OVERRIDE)
-                initializer("configuration.interceptors")
+                initializer("configuration.interceptorsConfig.config")
             }
                 // Generated saves call this at save() / delete() preflight
                 // (and at the multi-write equivalents once those land) so a
@@ -327,7 +320,6 @@ internal class ClientGenerator(
             add(buildClientFile(policiesType))
             add(buildClientFile(interceptorsType))
             add(buildClientFile(configType))
-            add(buildClientFile(resolvedConfigType))
             add(buildClientFile(clientScopeType))
             add(
                 buildClientFile(requireNotNull(hookClientScopeType.name)) {
@@ -412,7 +404,6 @@ internal class ClientGenerator(
         hooksClass: ClassName,
         policiesClass: ClassName,
         interceptorsClass: ClassName,
-        resolvedConfigClass: ClassName,
     ): TypeSpec {
         val hooksBlockLambda = LambdaTypeName.get(
             receiver = hooksClass,
@@ -428,17 +419,16 @@ internal class ClientGenerator(
         )
         return classType(configClass) {
             addAnnotation(annotation(ENTKT_DSL))
+            // The three nested configurations are assigned by one of two constructors: the
+            // public one starts empty, and the private one copies another instance for deepCopy().
             property("hooksConfig", hooksClass) {
                 addModifiers(KModifier.INTERNAL)
-                initializer("%T()", hooksClass)
             }
             property("policiesConfig", policiesClass) {
                 addModifiers(KModifier.INTERNAL)
-                initializer("%T()", policiesClass)
             }
             property("interceptorsConfig", interceptorsClass) {
                 addModifiers(KModifier.INTERNAL)
-                initializer("%T()", interceptorsClass)
             }
                 // Configurable per-client transaction requirement. The config
                 // exposes it as a public DSL property so callers write
@@ -473,57 +463,32 @@ internal class ClientGenerator(
                 parameter("block", interceptorsBlockLambda)
                 statement("interceptorsConfig.apply(block)")
             }
-            addFunction(buildConfigResolution(resolvedConfigClass))
-        }
-    }
-
-    /** Resolve the mutable construction DSL into the value shared by every client scope. */
-    private fun buildConfigResolution(
-        resolvedConfigClass: ClassName,
-    ): FunSpec = function("resolveForInternalUse", resolvedConfigClass) {
-        addAnnotation(ClassName("entkt.query", "EntktInternal"))
-        addModifiers(KModifier.INTERNAL)
-        statement(
-            "return %T(\n" +
-                "  transactionRequirement = transactionRequirement,\n" +
-                "  defaultUpdateConsistency = defaultUpdateConsistency,\n" +
-                "  defaultRelationshipLocking = defaultRelationshipLocking,\n" +
-                "  hooks = hooksConfig.deepCopy(),\n" +
-                "  policies = policiesConfig.deepCopy(),\n" +
-                "  interceptors = interceptorsConfig.config.deepCopy(),\n" +
-                ")",
-            resolvedConfigClass,
-        )
-    }
-
-    private fun buildResolvedConfigClass(
-        resolvedConfigClass: ClassName,
-        hooksClass: ClassName,
-        policiesClass: ClassName,
-    ): TypeSpec = classType(resolvedConfigClass) {
-        addModifiers(KModifier.INTERNAL)
-        primaryConstructor {
-            addModifiers(KModifier.INTERNAL)
-            parameter("transactionRequirement", TRANSACTION_REQUIREMENT)
-            parameter("defaultUpdateConsistency", UPDATE_CONSISTENCY)
-            parameter("defaultRelationshipLocking", RELATIONSHIP_LOCKING)
-            parameter("hooks", hooksClass)
-            parameter("policies", policiesClass)
-            parameter("interceptors", ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer))
-        }
-        property("transactionRequirement", TRANSACTION_REQUIREMENT) {
-            initializer("transactionRequirement")
-        }
-        property("defaultUpdateConsistency", UPDATE_CONSISTENCY) {
-            initializer("defaultUpdateConsistency")
-        }
-        property("defaultRelationshipLocking", RELATIONSHIP_LOCKING) {
-            initializer("defaultRelationshipLocking")
-        }
-        property("hooks", hooksClass) { initializer("hooks") }
-        property("policies", policiesClass) { initializer("policies") }
-        property("interceptors", ENT_INTERCEPTORS_CONFIG.parameterizedBy(viewer)) {
-            initializer("interceptors")
+            addFunction(
+                constructor {
+                    statement("hooksConfig = %T()", hooksClass)
+                    statement("policiesConfig = %T()", policiesClass)
+                    statement("interceptorsConfig = %T()", interceptorsClass)
+                },
+            )
+            addFunction(
+                constructor {
+                    addModifiers(KModifier.PRIVATE)
+                    parameter("source", configClass)
+                    statement("hooksConfig = source.hooksConfig.deepCopy()")
+                    statement("policiesConfig = source.policiesConfig.deepCopy()")
+                    statement("interceptorsConfig = source.interceptorsConfig.deepCopy()")
+                    statement("transactionRequirement = source.transactionRequirement")
+                    statement("defaultUpdateConsistency = source.defaultUpdateConsistency")
+                    statement("defaultRelationshipLocking = source.defaultRelationshipLocking")
+                },
+            )
+            // Copies the nested configurations and the settings, so later changes to this
+            // instance do not reach the copy. A client is constructed from such a copy.
+            function("deepCopy", configClass) {
+                addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                addModifiers(KModifier.INTERNAL)
+                statement("return %T(this)", configClass)
+            }
         }
     }
 
@@ -704,11 +669,21 @@ internal class ClientGenerator(
             // live in a generated client-support file which carries
             // `@file:OptIn(EntktInternal::class)`, so the call sites
             // here compile cleanly.
+            //
+            // It is assigned by one of two constructors: the public one starts
+            // empty, and the private one copies another instance for deepCopy().
             property("config", interceptorsConfigType) {
                 addAnnotation(ClassName("entkt.query", "EntktInternal"))
                 addModifiers(KModifier.INTERNAL)
-                initializer("%T()", interceptorsConfigType)
             }
+            addFunction(constructor { statement("config = %T()", interceptorsConfigType) })
+            addFunction(
+                constructor {
+                    addModifiers(KModifier.PRIVATE)
+                    parameter("source", interceptorsClass)
+                    statement("config = source.config.deepCopy()")
+                },
+            )
 
         // Per-entity DSL methods: `posts(interceptor, name = "...")`.
         for (input in schemas) {
@@ -730,6 +705,13 @@ internal class ClientGenerator(
                 parameter("interceptor", GLOBAL_QUERY_INTERCEPTOR)
                 parameter("name", String::class.asClassName())
                 statement("config.addGlobal(name, interceptor)")
+            }
+            // Copies the registrations, so later registrations on this instance
+            // do not reach the copy.
+            function("deepCopy", interceptorsClass) {
+                addAnnotation(ClassName("entkt.query", "EntktInternal"))
+                addModifiers(KModifier.INTERNAL)
+                statement("return %T(this)", interceptorsClass)
             }
         }
     }
@@ -813,9 +795,9 @@ internal class ClientGenerator(
                 "%T(\n" +
                     "  driver = driver,\n" +
                     "  client = this,\n" +
-                    "  configuredHooks = configuration.hooks.%L,\n" +
-                    "  configuredPrivacy = configuration.policies.%LPrivacyConfig,\n" +
-                    "  configuredValidation = configuration.policies.%LValidationConfig,\n" +
+                    "  configuredHooks = configuration.hooksConfig.%L,\n" +
+                    "  configuredPrivacy = configuration.policiesConfig.%LPrivacyConfig,\n" +
+                    "  configuredValidation = configuration.policiesConfig.%LValidationConfig,\n" +
                     ")",
                 repoClass,
                 propertyName,

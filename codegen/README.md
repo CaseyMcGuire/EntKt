@@ -72,13 +72,12 @@ These types are generated once for the complete schema set:
 | `EntClientInterceptors` | Schema-typed entity and global read-interceptor registration DSL. |
 
 `EntReadRuntime`, the per-entity `{Entity}ReadSurface` interfaces,
-`ResolvedEntClientConfig`, `ReadOnlyEntClientImpl`, and `_EntHookClientScope`
-are generated framework wiring. They may need public or
-package-visible Kotlin declarations so generated files can compose, but
-application code should not construct or implement them. The same applies to
-internal mappings, mutation specs, and adapters declared inside per-entity
-files. Treat `@EntktInternal` as an explicit boundary rather than an invitation
-to opt in.
+`ReadOnlyEntClientImpl`, and `_EntHookClientScope` are generated framework
+wiring. They may need public or package-visible Kotlin declarations so
+generated files can compose, but application code should not construct or
+implement them. The same applies to internal mappings, mutation specs, and
+adapters declared inside per-entity files. Treat `@EntktInternal` as an
+explicit boundary rather than an invitation to opt in.
 
 ### Optional Ent Explorer types
 

@@ -29,6 +29,15 @@ above it.
 
 ## Unreleased
 
+- **Copy client configuration instead of resolving it into a second type** (`codegen`)
+  The generated `ResolvedEntClientConfig` is removed. `EntClientConfig` and
+  `EntClientInterceptors` have an internal `deepCopy()`, and `EntClient` is
+  constructed from a copy of the `EntClientConfig` its lambda configured. A
+  configuration scope kept by the application still cannot change a client
+  that already exists.
+  _Migration:_ regenerate entity code. Nothing changes for code that
+  configures a client through `EntClient(driver) { ... }`.
+
 - **Copy interceptor configuration instead of resolving it into a second type** (`runtime`, `codegen`)
   `ResolvedEntInterceptorsConfig` is removed. `EntInterceptorsConfig` has
   `deepCopy()` in place of `resolveForInternalUse()`, and

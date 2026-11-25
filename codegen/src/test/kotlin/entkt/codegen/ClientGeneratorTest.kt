@@ -116,11 +116,11 @@ class ClientGeneratorTest {
                 "defaultRelationshipLocking: RelationshipLocking = configuration.defaultRelationshipLocking",
             ),
         ) {
-            "The client must initialize the resolved default from configuration\n$output"
+            "The client must initialize its default from configuration\n$output"
         }
-        // Transaction clients reuse the immutable resolved value.
+        // Transaction clients reuse the client's copied configuration.
         assert(output.contains("val tx = EntClient(txDriver, configuration)")) {
-            "withTransaction must reuse the resolved configuration\n$output"
+            "withTransaction must reuse the client's configuration\n$output"
         }
         assert(!output.contains("tx.defaultRelationshipLocking ="))
         assert(!output.contains("scoped.defaultRelationshipLocking"))
@@ -140,20 +140,23 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClient resolves configuration before constructing complete repos`() {
+    fun `EntClient copies configuration before constructing complete repos`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("EntClientConfig().apply(config).resolveForInternalUse()")) {
-            "The public constructor should resolve its configuration once\n$output"
+        assert(output.contains("EntClientConfig().apply(config).deepCopy()")) {
+            "The public constructor should copy its configuration once\n$output"
         }
-        assert(output.contains("configuredHooks = configuration.hooks.cars")) {
+        assert(output.contains("private val configuration: EntClientConfig,")) {
+            "The client should hold the copied configuration itself\n$output"
+        }
+        assert(output.contains("configuredHooks = configuration.hooksConfig.cars")) {
             "The cars repo should receive configured hooks in its constructor\n$output"
         }
-        assert(output.contains("configuredPrivacy = configuration.policies.usersPrivacyConfig")) {
+        assert(output.contains("configuredPrivacy = configuration.policiesConfig.usersPrivacyConfig")) {
             "The users repo should receive privacy configuration in its constructor\n$output"
         }
-        assert(output.contains("configuredValidation = configuration.policies.usersValidationConfig")) {
+        assert(output.contains("configuredValidation = configuration.policiesConfig.usersValidationConfig")) {
             "The users repo should receive validation configuration in its constructor\n$output"
         }
         assert(!output.contains("attachClientForInternalUse") && !output.contains(".applyHooks("))
@@ -180,19 +183,26 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `EntClientConfig resolves every mutable configuration registry`() {
+    fun `EntClientConfig copies every nested configuration and setting`() {
         val output = generator.generate(buildSchemas()).toString().replace("\\s+".toRegex(), " ")
 
-        assert(output.contains("hooks = hooksConfig.deepCopy()"))
+        assert(output.contains("internal fun deepCopy(): EntClientConfig = EntClientConfig(this)"))
+        assert(output.contains("transactionRequirement = source.transactionRequirement"))
+        assert(output.contains("defaultUpdateConsistency = source.defaultUpdateConsistency"))
+        assert(output.contains("defaultRelationshipLocking = source.defaultRelationshipLocking"))
+        assert(!output.contains("ResolvedEntClientConfig") && !output.contains("resolveForInternalUse"))
+        assert(output.contains("hooksConfig = source.hooksConfig.deepCopy()"))
         assert(output.contains("cars = source.cars.deepCopy()"))
         assert(output.contains("internal fun deepCopy(): EntClientHooks = EntClientHooks(this)"))
         assert(!output.contains("ResolvedEntClientHooks"))
-        assert(output.contains("policies = policiesConfig.deepCopy()"))
+        assert(output.contains("policiesConfig = source.policiesConfig.deepCopy()"))
         assert(output.contains("usersPrivacyConfig = source.usersPrivacyConfig.deepCopy()"))
         assert(output.contains("usersValidationConfig = source.usersValidationConfig.deepCopy()"))
         assert(output.contains("internal fun deepCopy(): EntClientPolicies = EntClientPolicies(this)"))
         assert(!output.contains("ResolvedEntClientPolicies"))
-        assert(output.contains("interceptors = interceptorsConfig.config.deepCopy()"))
+        assert(output.contains("interceptorsConfig = source.interceptorsConfig.deepCopy()"))
+        assert(output.contains("config = source.config.deepCopy()"))
+        assert(output.contains("internal fun deepCopy(): EntClientInterceptors = EntClientInterceptors(this)"))
         assert(!output.contains("ResolvedEntInterceptorsConfig"))
         assert(!output.contains("snapshotForInternalUse") && !output.contains("copyFromForInternalUse"))
     }
@@ -216,7 +226,6 @@ class ClientGeneratorTest {
                 "EntClientPolicies",
                 "EntClientInterceptors",
                 "EntClientConfig",
-                "ResolvedEntClientConfig",
                 "EntClientScope",
                 "_EntHookClientScope",
                 "EntTransactionClient",
@@ -260,7 +269,7 @@ class ClientGeneratorTest {
             "withTransaction should forward isolation unchanged to the runtime\n$output"
         }
         assert(output.contains("val tx = EntClient(txDriver, configuration)")) {
-            "makeTxClient should build the transactional client with the resolved configuration\n$output"
+            "makeTxClient should build the transactional client with the client's configuration\n$output"
         }
         assert(output.contains("tx.transactionCoordinator = coordinator")) {
             "makeTxClient should wire the coordinator into the tx client\n$output"
@@ -332,12 +341,12 @@ class ClientGeneratorTest {
     }
 
     @Test
-    fun `withTransaction reuses resolved repository configuration`() {
+    fun `withTransaction reuses the client's repository configuration`() {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
         assert(output.contains("val tx = EntClient(txDriver, configuration)")) {
-            "Transactional repositories should be constructed from the resolved configuration\n$output"
+            "Transactional repositories should be constructed from the client's configuration\n$output"
         }
         assert(!output.contains("copyHooksFrom"))
     }
@@ -479,10 +488,10 @@ class ClientGeneratorTest {
         val schemas = buildSchemas()
         val output = generator.generate(schemas).toString()
 
-        assert(output.contains("configuredPrivacy = configuration.policies.carsPrivacyConfig"))
-        assert(output.contains("configuredPrivacy = configuration.policies.usersPrivacyConfig"))
-        assert(output.contains("configuredValidation = configuration.policies.carsValidationConfig"))
-        assert(output.contains("configuredValidation = configuration.policies.usersValidationConfig"))
+        assert(output.contains("configuredPrivacy = configuration.policiesConfig.carsPrivacyConfig"))
+        assert(output.contains("configuredPrivacy = configuration.policiesConfig.usersPrivacyConfig"))
+        assert(output.contains("configuredValidation = configuration.policiesConfig.carsValidationConfig"))
+        assert(output.contains("configuredValidation = configuration.policiesConfig.usersValidationConfig"))
         assert(!output.contains("applyPrivacy") && !output.contains("applyValidation"))
     }
 

@@ -242,18 +242,18 @@ class EntktPluginTest {
             assertTrue(
                 clientFlat.contains(
                     "override val pets: PetRepo = PetRepo( driver = driver, client = this, " +
-                        "configuredHooks = configuration.hooks.pets, " +
-                        "configuredPrivacy = configuration.policies.petsPrivacyConfig, " +
-                        "configuredValidation = configuration.policies.petsValidationConfig, )",
+                        "configuredHooks = configuration.hooksConfig.pets, " +
+                        "configuredPrivacy = configuration.policiesConfig.petsPrivacyConfig, " +
+                        "configuredValidation = configuration.policiesConfig.petsValidationConfig, )",
                 ),
                 "Client should expose pets: PetRepo",
             )
             assertTrue(
                 clientFlat.contains(
                     "override val owners: OwnerRepo = OwnerRepo( driver = driver, client = this, " +
-                        "configuredHooks = configuration.hooks.owners, " +
-                        "configuredPrivacy = configuration.policies.ownersPrivacyConfig, " +
-                        "configuredValidation = configuration.policies.ownersValidationConfig, )",
+                        "configuredHooks = configuration.hooksConfig.owners, " +
+                        "configuredPrivacy = configuration.policiesConfig.ownersPrivacyConfig, " +
+                        "configuredValidation = configuration.policiesConfig.ownersValidationConfig, )",
                 ),
                 "Client should expose owners: OwnerRepo",
             )
