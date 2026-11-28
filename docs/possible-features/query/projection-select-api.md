@@ -25,6 +25,8 @@ be wasteful when:
 - Do not expose untyped maps as the primary API.
 - Do not support arbitrary SQL expressions in the first version.
 - Do not replace full entity queries.
+- Do not traverse edges in the first version. A projection binds to fields of
+  the root entity only; the FK column a `belongsTo` edge creates is a field.
 
 ## Proposed API
 
@@ -50,8 +52,9 @@ val rows: ReadResult<List<SelectedRow2<Long, String>>> =
     client.posts.query().select(viewerContext, Post.id, Post.title)
 ```
 
-Named generated projections are preferable when a projection is reused across
-application boundaries:
+Named projections are preferable when a projection is reused across
+application boundaries. A named projection is an app-owned data structure
+whose properties bind by name and type to fields of the root entity:
 
 ```kotlin
 val rows: ReadResult<List<PostSummary>> = client.posts.query {
@@ -59,30 +62,34 @@ val rows: ReadResult<List<PostSummary>> = client.posts.query {
 }.select(viewerContext, PostSummary::class)
 ```
 
-The exact declaration mechanism is open. The public result must provide named
-typed properties rather than an untyped map.
+The public result must provide named typed properties rather than an untyped
+map.
 
 ## Privacy Behavior
 
 Projection reads still reveal entity existence and selected field values. They
 must define privacy behavior explicitly.
 
-Recommended behavior:
+The privacy model for projections is field-level read privacy, specified in
+[Field-Level Read Privacy](../privacy-validation/field-level-read-privacy.md).
+In brief:
 
 - query-time visibility predicates apply before projection, ordering, and bounds
 - an empty LOAD rule list remains fail-closed; absence of rules is not permission
-- under ordinary viewer contexts, fetch every field required by LOAD rules,
-  enforce privacy, then map the successful entity to the projection
-- fewer storage columns may be fetched only when an explicit authorization
-  contract, such as a privacy-bypass context, permits skipping full hydration
+- entity LOAD rules run for every returned row, exactly as for full-entity
+  reads; a projection never weakens the entity-level claim
+- a projection asserts the viewability of exactly the fields it returns.
+  Policies may attach LOAD rules to individual fields; field rules evaluate
+  for the returned fields only, and a denied field fails that row's entry in
+  the result — fields are never silently dropped or masked
+- a field with no field rules inherits the entity LOAD decision; a field with
+  rules needs an explicit `Allow` from its own rules
+- v1 hydrates full rows before mapping. Fewer storage columns may be fetched
+  only under the column-pruning contract in the field-privacy RFC: the
+  projected fields' rules are all context-only and the policy declares its
+  rule dependencies
 - never change the terminal's authorization claim merely because a policy list
   happens to be empty at runtime
-
-This is slower but preserves the existing rule model.
-
-A future policy-dependency declaration may let EntKt fetch fewer than all
-entity columns while still evaluating LOAD rules. V1 should prefer full,
-obviously correct policy input over an inferred field set.
 
 Projection terminals return `ReadResult`; they do not introduce throwing and
 structured-result twins.
@@ -111,3 +118,12 @@ Before implementation, add tests for:
 - failures use the canonical `ReadResult` contract
 - cursor projection selects hidden ordering fields without exposing them
 - columns from another entity are rejected at compile time
+- field rules are enforced for the fields a projection returns
+- a field with no field rules inherits the entity LOAD decision
+- a field with rules and no matching `Allow` fails the row's result entry,
+  with the denial naming the field and never carrying its value
+- a context-only field denial fails the read before any rows are fetched
+- a projection structure property that binds to no field fails as an
+  operational error, not a privacy denial
+- a `belongsTo` FK column is selectable in a projection
+- a projection structure property naming an edge is rejected
